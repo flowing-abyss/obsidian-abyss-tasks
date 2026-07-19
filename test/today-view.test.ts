@@ -17,6 +17,7 @@ function callbacks() {
     onDrop: vi.fn(),
     onDropTime: vi.fn(),
     onCreateAtTime: vi.fn(),
+    onKeyboardIntent: vi.fn(),
     onTimeChange: vi.fn(),
     onDurationChange: vi.fn(),
     onStartChange: vi.fn(),
@@ -30,6 +31,22 @@ function callbacks() {
 }
 
 describe('TodayView', () => {
+  it('threads relative keyboard intents from timed blocks', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new TodayView(cbs);
+    const t = task({ planning: { due: '2026-07-10', time: '15:00', duration: 60 } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
+
+    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
+
+    expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
+      type: 'move-time',
+      deltaMinutes: 15,
+    });
+  });
+
   it('renders a timed task in the hour grid for the configured day', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());

@@ -29,6 +29,7 @@ function callbacks() {
     app: fakeApp,
     component: new Component(),
     onTaskClick: vi.fn(),
+    onKeyboardIntent: vi.fn(),
     onTimeChange: vi.fn(),
     onDurationChange: vi.fn(),
     onExtendToSpan: vi.fn(),
@@ -48,6 +49,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -190,6 +192,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -217,6 +220,7 @@ describe('renderTimedBlocksForDay', () => {
         app: fakeApp,
         component: new Component(),
         onTaskClick: vi.fn(),
+        onKeyboardIntent: vi.fn(),
         onTimeChange: vi.fn(),
         onDurationChange: vi.fn(),
         onExtendToSpan: vi.fn(),
@@ -273,6 +277,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -296,6 +301,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -317,6 +323,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick,
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -339,6 +346,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick,
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -361,6 +369,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick,
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -383,6 +392,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -407,6 +417,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange,
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -436,6 +447,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange,
       onDurationChange,
       onExtendToSpan: vi.fn(),
@@ -465,6 +477,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange,
       onDurationChange: vi.fn(),
       onExtendToSpan: vi.fn(),
@@ -636,6 +649,7 @@ describe('renderTimedBlocksForDay', () => {
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
+      onKeyboardIntent: vi.fn(),
       onTimeChange: vi.fn(),
       onDurationChange,
       onExtendToSpan: vi.fn(),
@@ -981,7 +995,22 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('Task 39: keyboard nudge while the block has native DOM focus', () => {
+  describe('relative keyboard intents', () => {
+    it('stores stable task identity and visual start data on every block root', () => {
+      const container = freshContainer();
+      const t = task({
+        source: { filePath: 'Folder/task.md', line: 17 },
+        planning: { time: '09:30', duration: 60 },
+      });
+
+      renderTimedBlocksForDay(container, [t], callbacks());
+
+      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      expect(block.dataset['tcTaskFile']).toBe('Folder/task.md');
+      expect(block.dataset['tcTaskLine']).toBe('17');
+      expect(block.dataset['tcStartMinutes']).toBe('570');
+    });
+
     it('the block is a keyboard-focusable target (tabindex="0")', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
@@ -990,97 +1019,245 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.getAttribute('tabindex')).toBe('0');
     });
 
-    it('ArrowDown nudges the time later by one snap increment (15 min) via onTimeChange', () => {
+    it.each([
+      ['ArrowUp', false, { type: 'move-time', deltaMinutes: -15 }],
+      ['ArrowDown', false, { type: 'move-time', deltaMinutes: 15 }],
+      ['ArrowUp', true, { type: 'resize-duration', deltaMinutes: -5 }],
+      ['ArrowDown', true, { type: 'resize-duration', deltaMinutes: 5 }],
+      ['ArrowLeft', false, { type: 'shift-schedule', days: -1 }],
+      ['ArrowRight', false, { type: 'shift-schedule', days: 1 }],
+      ['ArrowLeft', true, { type: 'extend-start', days: -1 }],
+      ['ArrowRight', true, { type: 'extend-due', days: 1 }],
+    ] as const)(
+      '%s with shift=%s emits the exact relative intent and prevents default',
+      (key, shiftKey, intent) => {
+        const container = freshContainer();
+        const cbs = callbacks();
+        const t = task({ planning: { time: '09:00', duration: 60 } });
+        renderTimedBlocksForDay(container, [t], cbs);
+        const block = container.querySelector('.tc-tg-block') as HTMLElement;
+        const event = new KeyboardEvent('keydown', {
+          key,
+          shiftKey,
+          bubbles: true,
+          cancelable: true,
+        });
+
+        block.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(true);
+        expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, intent);
+        expect(cbs.onTimeChange).not.toHaveBeenCalled();
+        expect(cbs.onDurationChange).not.toHaveBeenCalled();
+        expect(cbs.onStartChange).not.toHaveBeenCalled();
+        expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['ctrlKey', { ctrlKey: true }],
+      ['metaKey', { metaKey: true }],
+      ['altKey', { altKey: true }],
+    ] as const)(
+      '%s bypasses every arrow-key intent without preventing default',
+      (_name, modifier) => {
+        const container = freshContainer();
+        const cbs = callbacks();
+        const t = task({ planning: { time: '09:00', duration: 60 } });
+        renderTimedBlocksForDay(container, [t], cbs);
+        const block = container.querySelector('.tc-tg-block') as HTMLElement;
+
+        for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
+          const event = new KeyboardEvent('keydown', {
+            key,
+            shiftKey: true,
+            ...modifier,
+            bubbles: true,
+            cancelable: true,
+          });
+          block.dispatchEvent(event);
+          expect(event.defaultPrevented).toBe(false);
+        }
+
+        expect(cbs.onKeyboardIntent).not.toHaveBeenCalled();
+        expect(cbs.onTimeChange).not.toHaveBeenCalled();
+        expect(cbs.onDurationChange).not.toHaveBeenCalled();
+        expect(cbs.onStartChange).not.toHaveBeenCalled();
+        expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
+      },
+    );
+
+    it('handles an arrow key bubbled from an embedded link, but ignores non-arrow keys', () => {
       const container = freshContainer();
-      const onTimeChange = vi.fn();
+      const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
+      renderTimedBlocksForDay(container, [t], cbs);
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 9 * 60 + 15);
-    });
+      const link = block.querySelector('.tc-tg-block-title')!.createEl('a');
 
-    it('ArrowUp nudges the time earlier by one snap increment (15 min) via onTimeChange', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 9 * 60 - 15);
-    });
+      link.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
 
-    it('repeated ArrowDown presses each nudge by one increment (uses the render-time start, matching how a re-render after each commit would supply the next base)', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-      expect(onTimeChange).toHaveBeenNthCalledWith(1, t, 9 * 60 + 15);
-      expect(onTimeChange).toHaveBeenNthCalledWith(2, t, 9 * 60 + 15);
-    });
-
-    it('ArrowUp at 00:00 clamps to 0, never going negative', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '00:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp' }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 0);
-    });
-
-    it('ArrowDown at 23:45 (the last valid slot) clamps there, never exceeding MAX_START_MINUTES', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '23:45', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 24 * 60 - 15);
-    });
-
-    it('a non-arrow key is ignored (no onTimeChange call)', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
-      expect(onTimeChange).not.toHaveBeenCalled();
-    });
-
-    it('a keydown bubbling up from a descendant INSIDE the block (e.g. focus having moved onto its own embedded link) still nudges — the guard is scoped to the block subtree, not the exact focused element', () => {
-      // Bug fix (review): renderTaskText.ts can render real, focusable <a href> elements inside
-      // .tc-tg-block-title. Tabbing onto one of those moves focus off `block` itself, and a real
-      // arrow-key keydown fired while it has focus bubbles up from it, not from `block` — so this
-      // must still be handled (previously used the stricter `e.target !== block`, which silently
-      // broke arrow-key handling for the rest of that focus session).
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
-      title.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 555);
-    });
-
-    it('a keydown from an element truly outside the block is still ignored', () => {
-      const container = freshContainer();
-      const onTimeChange = vi.fn();
-      const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const outsider = container.createDiv();
-      outsider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      expect(onTimeChange).not.toHaveBeenCalled();
+      expect(cbs.onKeyboardIntent).toHaveBeenCalledTimes(1);
+      expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
+        type: 'move-time',
+        deltaMinutes: 15,
+      });
     });
 
     it('.tc-tg-block:focus-visible gets a distinct outline so a keyboard user can see which block arrow keys will nudge', () => {
       const rule = declarationsFor('.tc-tg-block:focus-visible');
       expect(rule).toMatch(/outline\s*:/u);
+    });
+  });
+
+  describe('cyclic same-day Tab navigation', () => {
+    it('follows visual start order, uses DOM order for tied starts, wraps, and stays in the current day', () => {
+      const container = freshContainer();
+      document.body.appendChild(container);
+      const firstDay = container.createDiv({ cls: 'tc-tg-day-column' });
+      const firstHourColumn = firstDay.createDiv({ cls: 'tc-tg-hour-column' });
+      const secondDay = container.createDiv({ cls: 'tc-tg-day-column' });
+      const secondHourColumn = secondDay.createDiv({ cls: 'tc-tg-hour-column' });
+      const late = task({
+        source: { filePath: 'late.md', line: 1 },
+        planning: { time: '10:00', duration: 60 },
+      });
+      const tiedFirst = task({
+        source: { filePath: 'tied-first.md', line: 2 },
+        planning: { time: '09:00', duration: 60 },
+      });
+      const tiedSecond = task({
+        source: { filePath: 'tied-second.md', line: 3 },
+        planning: { time: '09:00', duration: 60 },
+      });
+      const otherDay = task({
+        source: { filePath: 'other-day.md', line: 4 },
+        planning: { time: '09:15', duration: 60 },
+      });
+      renderTimedBlocksForDay(firstHourColumn, [late, tiedFirst, tiedSecond], callbacks());
+      renderTimedBlocksForDay(secondHourColumn, [otherDay], callbacks());
+      const byFile = (filePath: string): HTMLElement =>
+        container.querySelector(`[data-tc-task-file="${filePath}"]`) as HTMLElement;
+      const tiedFirstBlock = byFile('tied-first.md');
+      const tiedSecondBlock = byFile('tied-second.md');
+      const lateBlock = byFile('late.md');
+      const otherDayBlock = byFile('other-day.md');
+
+      tiedFirstBlock.focus();
+      const firstTab = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        cancelable: true,
+      });
+      tiedFirstBlock.dispatchEvent(firstTab);
+      expect(firstTab.defaultPrevented).toBe(true);
+      expect(document.activeElement).toBe(tiedSecondBlock);
+
+      tiedSecondBlock.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(lateBlock);
+
+      lateBlock.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(tiedFirstBlock);
+      expect(document.activeElement).not.toBe(otherDayBlock);
+
+      tiedFirstBlock.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(document.activeElement).toBe(lateBlock);
+      container.remove();
+    });
+
+    it('moves from an embedded link to the next block root', () => {
+      const container = freshContainer();
+      document.body.appendChild(container);
+      const day = container.createDiv({ cls: 'tc-tg-day-column' });
+      const hourColumn = day.createDiv({ cls: 'tc-tg-hour-column' });
+      const first = task({
+        source: { filePath: 'first.md', line: 1 },
+        planning: { time: '09:00' },
+      });
+      const second = task({
+        source: { filePath: 'second.md', line: 2 },
+        planning: { time: '10:00' },
+      });
+      renderTimedBlocksForDay(hourColumn, [first, second], callbacks());
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      const link = blocks[0]!.querySelector('.tc-tg-block-title')!.createEl('a');
+      link.href = '#';
+      link.focus();
+
+      link.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+
+      expect(document.activeElement).toBe(blocks[1]);
+      container.remove();
+    });
+
+    it('wraps a single isolated hour-column item onto its own root', () => {
+      const hourColumn = freshContainer();
+      hourColumn.addClass('tc-tg-hour-column');
+      document.body.appendChild(hourColumn);
+      renderTimedBlocksForDay(hourColumn, [task({ planning: { time: '09:00' } })], callbacks());
+      const block = hourColumn.querySelector('.tc-tg-block') as HTMLElement;
+      block.focus();
+
+      block.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+      );
+      expect(document.activeElement).toBe(block);
+      block.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(document.activeElement).toBe(block);
+      hourColumn.remove();
+    });
+
+    it.each([
+      ['ctrlKey', { ctrlKey: true }],
+      ['metaKey', { metaKey: true }],
+      ['altKey', { altKey: true }],
+    ] as const)('%s bypasses Tab and Shift+Tab without preventing default', (_name, modifier) => {
+      const container = freshContainer();
+      document.body.appendChild(container);
+      const day = container.createDiv({ cls: 'tc-tg-day-column' });
+      const hourColumn = day.createDiv({ cls: 'tc-tg-hour-column' });
+      renderTimedBlocksForDay(
+        hourColumn,
+        [task({ planning: { time: '09:00' } }), task({ planning: { time: '10:00' } })],
+        callbacks(),
+      );
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      blocks[0]!.focus();
+
+      for (const shiftKey of [false, true]) {
+        const event = new KeyboardEvent('keydown', {
+          key: 'Tab',
+          shiftKey,
+          ...modifier,
+          bubbles: true,
+          cancelable: true,
+        });
+        blocks[0]!.dispatchEvent(event);
+        expect(event.defaultPrevented).toBe(false);
+        expect(document.activeElement).toBe(blocks[0]);
+      }
+      container.remove();
     });
   });
 
@@ -1166,12 +1343,12 @@ describe('renderTimedBlocksForDay', () => {
       outsider.remove();
     });
 
-    it('Bug fix (focus/blur robustness): keyboard-nudge keeps working while focus sits on an embedded link inside the block', () => {
+    it('Bug fix (focus/blur robustness): keyboard intent handling keeps working while focus sits on an embedded link inside the block', () => {
       const container = freshContainer();
       document.body.appendChild(container);
-      const onTimeChange = vi.fn();
+      const onKeyboardIntent = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
+      renderTimedBlocksForDay(container, [t], { ...callbacks(), onKeyboardIntent });
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
       const link = document.createElement('a');
@@ -1181,136 +1358,11 @@ describe('renderTimedBlocksForDay', () => {
 
       link.focus();
       link.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-      expect(onTimeChange).toHaveBeenCalledWith(t, 555);
-      container.remove();
-    });
-  });
-
-  describe('Task 49: ArrowLeft/ArrowRight horizontal day-resize while the block has native DOM focus', () => {
-    it('ArrowRight extends due one day forward via onExtendToSpan (same mutation as the mouse-driven right-edge drag)', () => {
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      expect(onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-11');
-    });
-
-    it('ArrowLeft moves start one day earlier via onStartChange (same mutation as the mouse-driven left-edge drag), anchored on due when the task has no start yet', () => {
-      const container = freshContainer();
-      const onStartChange = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onStartChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-      expect(onStartChange).toHaveBeenCalledWith(t, '2026-07-09');
-    });
-
-    it('ArrowLeft on a task that already spans (has its own start) moves that start one day further back, not due-1', () => {
-      const container = freshContainer();
-      const onStartChange = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10', start: '2026-07-08' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onStartChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-      expect(onStartChange).toHaveBeenCalledWith(t, '2026-07-07');
-    });
-
-    it("Bug B regression: ArrowRight computes from `scheduled`, not `due`, for a non-span task with both set to DIFFERENT dates — matching bucketTasksForDate's scheduled-wins anchor priority", () => {
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      // "Deadline" pattern: interactive body renders on the scheduled day, a separate
-      // non-interactive deadline marker renders on the due day — the block under test here (the
-      // one the user is actually looking at and pressing arrow keys on) is anchored on scheduled.
-      const t = task({ planning: { time: '09:00', scheduled: '2026-07-05', due: '2026-07-20' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      expect(onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-06');
-    });
-
-    it('Bug B regression: ArrowLeft computes from `scheduled`, not `due`, for a non-span task with both set to DIFFERENT dates', () => {
-      const container = freshContainer();
-      const onStartChange = vi.fn();
-      const t = task({ planning: { time: '09:00', scheduled: '2026-07-05', due: '2026-07-20' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onStartChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-      expect(onStartChange).toHaveBeenCalledWith(t, '2026-07-04');
-    });
-
-    it("a task already spanning (start && due both set) keeps stepping from due/start even if it also happens to carry a scheduled value — scheduled is irrelevant once bucketTasksForDate's own span check matches", () => {
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      const onStartChange = vi.fn();
-      const t = task({
-        planning: {
-          time: '09:00',
-          start: '2026-07-08',
-          due: '2026-07-10',
-          scheduled: '2026-07-01',
-        },
+      expect(onKeyboardIntent).toHaveBeenCalledWith(t, {
+        type: 'move-time',
+        deltaMinutes: 15,
       });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan, onStartChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-      expect(onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-11');
-      expect(onStartChange).toHaveBeenCalledWith(t, '2026-07-07');
-    });
-
-    it('repeated ArrowRight presses each extend by one more day from the render-time due (matching how a re-render after each commit would supply the next base)', () => {
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      expect(onExtendToSpan).toHaveBeenNthCalledWith(1, t, '2026-07-11');
-      expect(onExtendToSpan).toHaveBeenNthCalledWith(2, t, '2026-07-11');
-    });
-
-    it('ArrowRight/ArrowLeft never call onTimeChange/onDurationChange (stay on the horizontal mutation path only)', () => {
-      const container = freshContainer();
-      const cbs = callbacks();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10', start: '2026-07-08' } });
-      renderTimedBlocksForDay(container, [t], cbs);
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
-      block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
-      expect(cbs.onTimeChange).not.toHaveBeenCalled();
-      expect(cbs.onDurationChange).not.toHaveBeenCalled();
-    });
-
-    it('a keydown bubbling up from a descendant INSIDE the block (e.g. an embedded link) still resizes for ArrowLeft/ArrowRight too', () => {
-      // Same subtree-scoped guard fix as the vertical-nudge suite above, applied to the
-      // horizontal resize path.
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      const onStartChange = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan, onStartChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
-      title.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-      title.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-      expect(onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-11');
-      expect(onStartChange).toHaveBeenCalledWith(t, '2026-07-09');
-    });
-
-    it('a keydown from an element truly outside the block is still ignored for ArrowLeft/ArrowRight', () => {
-      const container = freshContainer();
-      const onExtendToSpan = vi.fn();
-      const onStartChange = vi.fn();
-      const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
-      renderTimedBlocksForDay(container, [t], { ...callbacks(), onExtendToSpan, onStartChange });
-      const outsider = container.createDiv();
-      outsider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-      outsider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
-      expect(onExtendToSpan).not.toHaveBeenCalled();
-      expect(onStartChange).not.toHaveBeenCalled();
+      container.remove();
     });
   });
 

@@ -22,10 +22,18 @@ import {
 } from './layout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
 
+export type TimedBlockKeyboardIntent =
+  | { readonly type: 'move-time'; readonly deltaMinutes: -15 | 15 }
+  | { readonly type: 'resize-duration'; readonly deltaMinutes: -5 | 5 }
+  | { readonly type: 'shift-schedule'; readonly days: -1 | 1 }
+  | { readonly type: 'extend-start'; readonly days: -1 }
+  | { readonly type: 'extend-due'; readonly days: 1 };
+
 export interface TimedBlockCallbacks {
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
+  onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
   /** Task 29: horizontal right-edge drag-resize, extending the block into a multi-day timed
@@ -148,10 +156,11 @@ export function renderTimedBlocksForDay(
   for (const p of positioned) {
     const widthPct = 100 / p.columns;
     const block = hourColumnEl.createDiv({ cls: 'tc-tg-block' });
-    // Task 39: makes the block a native keyboard-focus target (Tab/Shift+Tab reach it, click
-    // focuses it) so attachKeyboardNudge's arrow-key handling below has something to hang off
-    // — see that function's own doc comment for why this stays scoped to "has native DOM
-    // focus" rather than a broader "selected task" concept.
+    block.setAttribute('data-tc-task-file', p.task.source.filePath);
+    block.setAttribute('data-tc-task-line', String(p.task.source.line));
+    block.setAttribute('data-tc-start-minutes', String(p.startMinutes));
+    // Keep each block as the stable focus root used by relative arrow intents and same-day
+    // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
     block.setAttribute('tabindex', '0');
     block.style.top = `${minutesToPixels(p.startMinutes)}px`;
     const heightPx = minutesToPixels(p.durationMinutes);
@@ -301,17 +310,7 @@ export function renderTimedBlocksForDay(
     });
 
     attachDrag(block, handle, p.startMinutes, p.durationMinutes, callbacks, p.task);
-    // Task 39: keyboard nudge. This codebase has no pre-existing "selected task" concept to
-    // hang this off, and building one is a larger architectural change than this task's scope
-    // — per the brief's own explicit permission to narrow, this is scoped to native DOM focus:
-    // give the block `tabindex="0"` and nudge its time by one snap increment (the same
-    // SNAP_MINUTES the pointer-drag/live-preview above already use) while it has focus, up =
-    // earlier, down = later. Routes through the SAME `onTimeChange` callback pointer-drag
-    // commits through (the validated TaskApplicationApi command lives one layer up in whatever
-    // wires `onTimeChange`, so this inherits it rather than needing its own mutation path).
-    // Task 49: ArrowLeft/ArrowRight extended onto the same handler — see
-    // attachKeyboardNudge's own doc comment for the day-resolution/mutation-routing details.
-    attachKeyboardNudge(block, p.startMinutes, callbacks, p.task);
+    attachKeyboardHandling(block, callbacks, p.task);
     attachSelectedState(block);
   }
 }
@@ -401,121 +400,70 @@ export function renderTimedSpanContinuation(
 }
 
 /**
- * Task 39: keyboard nudge — ArrowUp/ArrowDown move the block's start time earlier/later by one
- * `SNAP_MINUTES` increment, exactly mirroring the pointer-drag's own snap step, while the block
- * has native DOM focus (see `tabindex="0"` set on it above). Scoped deliberately narrow: this
- * codebase has no "selected task" concept broader than "which element currently has focus", and
- * introducing one is a bigger architectural change than this task's brief calls for — the brief
- * explicitly permits narrowing to native focus alone, so a blur (clicking/tabbing elsewhere)
- * simply stops the block from responding to arrow keys, same as any other focusable control.
- *
- * `!block.contains(e.target)` guards against a bubbled keydown from OUTSIDE this block entirely
- * (e.g. a keydown that bubbled up past some ancestor's own listener before reaching here — not a
- * real case today, but keeps this scoped to "originated somewhere inside this block").
- *
- * Bug fix (review): this used to be the stricter `e.target !== block`, which assumed no
- * descendant of `.tc-tg-block` is ever independently focusable. That assumption is false:
- * `renderTaskText.ts`'s markdown rendering produces real, focusable `<a href>` elements inside
- * `.tc-tg-block-title` whenever a task's text contains a link, so Tab could move focus onto that
- * link (still a descendant of `block`, per the DOM) while leaving `e.target` as the `<a>`, not
- * `block` — the old, stricter check silently broke arrow-key handling for the remainder of that
- * focus session. `block.contains(e.target)` still correctly counts "focus moved onto a link
- * inside this block" as inside, matching `attachSelectedState`'s own `focusin`/`focusout` fix
- * below for the identical underlying gap.
- *
- * Reuses `callbacks.onTimeChange` — the SAME callback the vertical pointer-drag commits
- * through — so this automatically inherits whatever mutation path that's wired to (in practice,
- * CenterPanel.ts's `handleTimeChange` -> `updateTaskTime` -> TaskApplicationApi) without needing
- * its own mutation call here.
- *
- * Task 49: ArrowLeft/ArrowRight extend the same handler onto the horizontal (day-crossing)
- * resize the mouse-driven edge handles below already perform — reusing `callbacks.onStartChange`/
- * `callbacks.onExtendToSpan` (the EXACT same callback references `attachHorizontalResize` commits
- * through) rather than adding a parallel mutation path, so this inherits the identical validated
- * command boundary one layer up.
- *
- * The mouse-driven edges resolve "which day" from the pointer's on-release position
- * (`elementFromPoint`) — there is no equivalent pointer position for a keypress, so the day is
- * instead computed by stepping one calendar day from the task's own current, already-committed
- * date field: ArrowRight steps forward by one day from whichever field is already driving the
- * block's own in-progress right edge (`due`, once a span exists), else falls back to the SAME
- * `scheduled ?? due` anchor priority TodayView.ts's `bucketTasksForDate` uses to place a non-span
- * task's interactive block in the first place (`scheduled` wins over `due` when both are set),
- * with `start` as a last resort. ArrowLeft mirrors this for the left edge: `start` once a span
- * exists, else that same `scheduled ?? due` anchor priority, with `due` as a last resort.
- *
- * Bug fix (review): this used to prefer `due` over `scheduled` in both fallback chains, diverging
- * from `bucketTasksForDate`'s own priority for a task with BOTH fields set to DIFFERENT dates (the
- * "deadline" pattern: the interactive body renders on the `scheduled` day, a separate
- * non-interactive deadline marker renders on the `due` day) — the block the user is actually
- * looking at and pressing arrow keys on is anchored on `scheduled`, so the keyboard resize must
- * compute its new date from `scheduled` too, not the unrelated `due` field.
- *
- * Preferring the task's OWN in-progress edge (`start` for the left key, `due` for the right key,
- * once either is actually part of an existing span) over the anchor-priority fallback means
- * repeated presses keep walking the same edge one more day in the same direction, matching how
- * repeatedly dragging the same mouse handle further does.
+ * Arrow keys emit relative domain intents. Tab and Shift+Tab cycle through the visual ordering
+ * of timed blocks in the current day, keeping focus on block roots even when the key originated
+ * from an embedded link. Ctrl/Meta/Alt combinations are left to the host/browser.
  */
-function attachKeyboardNudge(
+function attachKeyboardHandling(
   block: HTMLElement,
-  currentStartMinutes: number,
   callbacks: TimedBlockCallbacks,
   task: TaskSnapshot,
 ): void {
-  block.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (!block.contains(e.target as Node)) return;
-    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      e.preventDefault();
-      const delta = e.key === 'ArrowUp' ? -SNAP_MINUTES : SNAP_MINUTES;
-      const next = Math.min(MAX_START_MINUTES, Math.max(0, currentStartMinutes + delta));
-      callbacks.onTimeChange(task, next);
+  block.addEventListener('keydown', (event: KeyboardEvent) => {
+    if (!block.contains(event.target as Node)) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      focusAdjacentTimedBlock(block, event.shiftKey ? -1 : 1);
       return;
     }
-    // A task already spanning (both `start` and `due` set — bucketTasksForDate's own span
-    // check, matched here exactly) has its currently-focused block's anchor position fixed to
-    // `due` regardless of any `scheduled` value the task might also carry (bucketTasksForDate
-    // itself never even looks at `scheduled` once `start && due` both hold — see its own early
-    // `continue` for that branch). Only for a NON-span task does bucketTasksForDate's
-    // `scheduled ?? due` anchor priority apply, so that's the fallback used here too.
-    const isSpan = !!(task.planning.start && task.planning.due);
-    if (e.key === 'ArrowRight') {
-      e.preventDefault();
-      const base = isSpan
-        ? task.planning.due
-        : (task.planning.scheduled ?? task.planning.due ?? task.planning.start);
-      if (!base) return;
-      callbacks.onExtendToSpan(task, window.moment(base).add(1, 'day').format('YYYY-MM-DD'));
-      return;
+
+    let intent: TimedBlockKeyboardIntent | undefined;
+    if (event.key === 'ArrowUp') {
+      intent = event.shiftKey
+        ? { type: 'resize-duration', deltaMinutes: -5 }
+        : { type: 'move-time', deltaMinutes: -15 };
+    } else if (event.key === 'ArrowDown') {
+      intent = event.shiftKey
+        ? { type: 'resize-duration', deltaMinutes: 5 }
+        : { type: 'move-time', deltaMinutes: 15 };
+    } else if (event.key === 'ArrowLeft') {
+      intent = event.shiftKey
+        ? { type: 'extend-start', days: -1 }
+        : { type: 'shift-schedule', days: -1 };
+    } else if (event.key === 'ArrowRight') {
+      intent = event.shiftKey
+        ? { type: 'extend-due', days: 1 }
+        : { type: 'shift-schedule', days: 1 };
     }
-    if (e.key === 'ArrowLeft') {
-      e.preventDefault();
-      const base = isSpan
-        ? task.planning.start
-        : (task.planning.start ?? task.planning.scheduled ?? task.planning.due);
-      if (!base) return;
-      callbacks.onStartChange(task, window.moment(base).subtract(1, 'day').format('YYYY-MM-DD'));
-    }
+
+    if (!intent) return;
+    event.preventDefault();
+    callbacks.onKeyboardIntent(task, intent);
   });
 }
 
-/**
- * Task 49: `.is-selected` — a clear "this block is the active/selected one" treatment, applied
- * for the full duration the block (or something inside it) has native DOM focus (both
- * mouse-click and Tab-focus, unlike the narrower keyboard-only `:focus-visible` outline Task 39
- * originally added — see this file's CSS comment on `.tc-tg-block.is-selected` for why that got
- * superseded rather than kept alongside this).
- *
- * Bug fix (review): `focus`/`blur` (used here originally) do NOT bubble, and were attached on the
- * unstated assumption that no descendant of `.tc-tg-block` is ever independently focusable — false
- * as of `renderTaskText.ts`'s markdown rendering, which produces real, focusable `<a href>`
- * elements inside `.tc-tg-block-title` whenever a task's text contains a link. Tabbing from the
- * block onto its own embedded link fired `blur` on the block (removing `.is-selected`
- * prematurely, with no corresponding re-focus to restore it) even though focus never actually left
- * the block's own visual bounds. `focusin`/`focusout` DO bubble, so a focus event landing on a
- * descendant (the link) still reaches this listener and is correctly treated as "still within this
- * task" — matching the identical `block.contains(e.target)` fix applied to the keyboard-nudge
- * handler above for the same underlying gap.
- */
+function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
+  const scope =
+    block.closest<HTMLElement>('.tc-tg-day-column') ??
+    block.closest<HTMLElement>('.tc-tg-hour-column');
+  if (!scope) return;
+
+  const domBlocks = Array.from(scope.querySelectorAll<HTMLElement>('.tc-tg-block'));
+  const domIndex = new Map(domBlocks.map((candidate, index) => [candidate, index]));
+  const visualBlocks = [...domBlocks].sort((a, b) => {
+    const startDifference =
+      Number(a.dataset['tcStartMinutes']) - Number(b.dataset['tcStartMinutes']);
+    return startDifference || domIndex.get(a)! - domIndex.get(b)!;
+  });
+  const currentIndex = visualBlocks.indexOf(block);
+  if (currentIndex < 0 || visualBlocks.length === 0) return;
+
+  const targetIndex = (currentIndex + direction + visualBlocks.length) % visualBlocks.length;
+  visualBlocks[targetIndex]!.focus();
+}
+
 function attachSelectedState(block: HTMLElement): void {
   block.addEventListener('focusin', () => block.addClass('is-selected'));
   block.addEventListener('focusout', (e: FocusEvent) => {

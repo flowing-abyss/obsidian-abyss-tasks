@@ -17,6 +17,7 @@ function callbacks() {
     onDropTime: vi.fn(),
     onCreateAtTime: vi.fn(),
     onDayHeaderClick: vi.fn(),
+    onKeyboardIntent: vi.fn(),
     onTimeChange: vi.fn(),
     onDurationChange: vi.fn(),
     onStartChange: vi.fn(),
@@ -30,6 +31,22 @@ function callbacks() {
 }
 
 describe('WeekTimeGridView', () => {
+  it('threads relative keyboard intents from timed blocks', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const t = task({ planning: { due: '2026-07-08', time: '10:00' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
+
+    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+
+    expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
+      type: 'shift-schedule',
+      days: -1,
+    });
+  });
+
   it('renders 7 day columns for the week containing startPosition', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());
