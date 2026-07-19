@@ -71,7 +71,6 @@ type CreateTaskCommand = Extract<
 interface TimedBlockFocusLocator {
   readonly filePath: string;
   readonly line: number;
-  readonly revision: string;
   readonly sequence: number;
   readonly queueSequence?: number;
   readonly originElement?: HTMLElement;
@@ -566,7 +565,6 @@ export class CenterPanel {
       const provisionalFocus: TimedBlockFocusLocator = {
         filePath: task.source.filePath,
         line: task.source.line,
-        revision: task.ref.revision,
         sequence: focusSequence,
         originElement,
       };
@@ -936,8 +934,7 @@ export class CenterPanel {
   private retainTimedBlockFocus(block: HTMLElement): void {
     const filePath = block.dataset['tcTaskFile'];
     const lineText = block.dataset['tcTaskLine'];
-    const revision = block.dataset['tcTaskRevision'];
-    if (filePath === undefined || lineText === undefined || revision === undefined) return;
+    if (filePath === undefined || lineText === undefined) return;
     const line = Number(lineText);
     if (!Number.isInteger(line)) return;
 
@@ -946,15 +943,13 @@ export class CenterPanel {
       pending?.queueSequence !== undefined &&
       !this.committedKeyboardSequences.has(pending.queueSequence) &&
       pending.originElement !== undefined &&
-      block !== pending.originElement &&
-      block.dataset['tcTaskRevision'] === pending.revision;
+      block !== pending.originElement;
     if (isDifferentPreCommitOrigin) {
       this.keyboardQueue?.cancel();
       this.clearTimedBlockFocus(pending.queueSequence);
       this.pendingTimedBlockFocus = {
         filePath,
         line,
-        revision,
         sequence: ++this.nextTimedBlockFocusSequence,
         originElement: block,
       };
@@ -968,7 +963,6 @@ export class CenterPanel {
     this.pendingTimedBlockFocus = {
       filePath,
       line,
-      revision,
       sequence: ++this.nextTimedBlockFocusSequence,
       originElement: block,
     };
@@ -979,6 +973,7 @@ export class CenterPanel {
     if (!scheduled) return;
     const focusSequence = scheduled.sequence;
     const queueSequence = scheduled.queueSequence;
+    if (queueSequence !== undefined && !this.committedKeyboardSequences.has(queueSequence)) return;
 
     const scheduledCandidate = Array.from(
       container.querySelectorAll<HTMLElement>('.tc-tg-block'),
@@ -987,18 +982,7 @@ export class CenterPanel {
         block.dataset['tcTaskFile'] === scheduled.filePath &&
         block.dataset['tcTaskLine'] === String(scheduled.line),
     );
-    const isPreCommit =
-      queueSequence !== undefined && !this.committedKeyboardSequences.has(queueSequence);
-    if (isPreCommit && scheduledCandidate?.dataset['tcTaskRevision'] === scheduled.revision) {
-      return;
-    }
-    if (
-      queueSequence !== undefined &&
-      !isPreCommit &&
-      scheduledCandidate?.dataset['tcTaskRevision'] !== scheduled.revision
-    ) {
-      return;
-    }
+    if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
     const restorationId =
       queueSequence !== undefined &&
       scheduledCandidate?.isConnected === true &&
@@ -1024,25 +1008,17 @@ export class CenterPanel {
       const pending = this.pendingTimedBlockFocus;
       if (!pending || pending.sequence !== focusSequence || this.state.get('mode') !== 'calendar')
         return;
+      if (
+        pending.queueSequence !== undefined &&
+        !this.committedKeyboardSequences.has(pending.queueSequence)
+      ) {
+        return;
+      }
       const candidate = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
         (block) =>
           block.dataset['tcTaskFile'] === pending.filePath &&
           block.dataset['tcTaskLine'] === String(pending.line),
       );
-      if (
-        pending.queueSequence !== undefined &&
-        !this.committedKeyboardSequences.has(pending.queueSequence) &&
-        candidate?.dataset['tcTaskRevision'] === pending.revision
-      ) {
-        return;
-      }
-      if (
-        pending.queueSequence !== undefined &&
-        this.committedKeyboardSequences.has(pending.queueSequence) &&
-        candidate?.dataset['tcTaskRevision'] !== pending.revision
-      ) {
-        return;
-      }
       if (!candidate?.isConnected) return;
       candidate.focus();
       candidate.classList.add('is-selected');
@@ -1109,17 +1085,12 @@ export class CenterPanel {
       return;
     }
     this.committedKeyboardSequences.add(queueSequence);
-    if (
-      pending.filePath !== updated.source.filePath ||
-      pending.line !== updated.source.line ||
-      pending.revision !== updated.ref.revision
-    ) {
+    if (pending.filePath !== updated.source.filePath || pending.line !== updated.source.line) {
       this.restoredKeyboardSequences.delete(queueSequence);
       pending = {
         ...pending,
         filePath: updated.source.filePath,
         line: updated.source.line,
-        revision: updated.ref.revision,
         sequence: ++this.nextTimedBlockFocusSequence,
       };
       this.pendingTimedBlockFocus = pending;

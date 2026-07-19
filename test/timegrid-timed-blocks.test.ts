@@ -1008,7 +1008,6 @@ describe('renderTimedBlocksForDay', () => {
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       expect(block.dataset['tcTaskFile']).toBe('Folder/task.md');
       expect(block.dataset['tcTaskLine']).toBe('17');
-      expect(block.dataset['tcTaskRevision']).toBe(t.ref.revision);
       expect(block.dataset['tcStartMinutes']).toBe('570');
     });
 

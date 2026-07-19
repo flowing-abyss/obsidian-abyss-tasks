@@ -1566,7 +1566,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(blockB);
   });
 
-  it('does not steal focus after restoration happened before the command settled', async () => {
+  it('defers remount focus until the command commits and does not steal it after settlement', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
     const original = keyboardSnapshot(TODAY);
@@ -1580,10 +1580,13 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.setSnapshots([updated]);
     h.emit();
     await flushMicrotasks();
-    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+    const remounted = timedBlock(h.el);
+    expect(activeDocument.activeElement).not.toBe(remounted);
 
     pending.resolve(okTask(updated));
     await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(remounted);
+
     const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
     other.focus();
     h.emit();
@@ -1808,6 +1811,30 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(focused);
   });
 
+  it('restores to an index candidate newer than the committed result revision', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY, '09:00', 'newer.md', 'revision-1', 4);
+    const returned = keyboardSnapshot(TODAY, '09:15', 'newer.md', 'revision-2', 4);
+    const indexed = keyboardSnapshot(TODAY, '09:30', 'newer.md', 'revision-3', 4);
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const outgoing = timedBlock(h.el);
+    outgoing.focus();
+    press(outgoing, 'ArrowDown');
+    pending.resolve(okTask(returned));
+    await flushMicrotasks();
+
+    h.setSnapshots([indexed]);
+    h.emit();
+    await flushMicrotasks();
+
+    const focused = timedBlock(h.el);
+    expect(focused).not.toBe(outgoing);
+    expect(activeDocument.activeElement).toBe(focused);
+  });
+
   it('rebases the pending locator when a returned snapshot moves to a new line', async () => {
     const first = deferredResult();
     const second = deferredResult();
@@ -1935,47 +1962,53 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     );
   });
 
-  it('cancels a pre-commit alias when replacement focus precedes the original result', async () => {
-    const originalResult = deferredResult();
-    const replacementResult = deferredResult();
-    const execute = vi
-      .fn<TaskApplicationApi['execute']>()
-      .mockReturnValueOnce(originalResult.promise)
-      .mockReturnValueOnce(replacementResult.promise);
-    const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
-    const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
-    const replacement = keyboardSnapshot(TODAY, '14:00', 'shared.md', 'shared-revision', 4);
-    const h = keyboardPanelHarness([original], execute);
-    clickCalendarView(h.el, 'Day');
+  it.each([
+    ['same-revision', 'shared-revision'],
+    ['different-revision', 'replacement-index-revision'],
+  ] as const)(
+    'cancels a pre-commit alias when %s replacement focus precedes the original result',
+    async (_revisionKind, replacementRevision) => {
+      const originalResult = deferredResult();
+      const replacementResult = deferredResult();
+      const execute = vi
+        .fn<TaskApplicationApi['execute']>()
+        .mockReturnValueOnce(originalResult.promise)
+        .mockReturnValueOnce(replacementResult.promise);
+      const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
+      const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
+      const replacement = keyboardSnapshot(TODAY, '14:00', 'shared.md', replacementRevision, 4);
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
 
-    const originBlock = timedBlock(h.el);
-    originBlock.focus();
-    press(originBlock, 'ArrowDown');
-    h.setSnapshots([replacement, moved]);
-    h.emit();
-    await flushMicrotasks();
+      const originBlock = timedBlock(h.el);
+      originBlock.focus();
+      press(originBlock, 'ArrowDown');
+      h.setSnapshots([replacement, moved]);
+      h.emit();
+      await flushMicrotasks();
 
-    const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
-      (block) => block.dataset['tcTaskLine'] === '4',
-    )!;
-    expect(activeDocument.activeElement).not.toBe(replacementBlock);
-    replacementBlock.focus();
-    press(replacementBlock, 'ArrowDown');
-    originalResult.resolve(okTask(moved));
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+      const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
+        (block) => block.dataset['tcTaskLine'] === '4',
+      )!;
+      expect(activeDocument.activeElement).not.toBe(replacementBlock);
+      replacementBlock.focus();
+      press(replacementBlock, 'ArrowDown');
+      originalResult.resolve(okTask(moved));
+      await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
 
-    expect(execute).toHaveBeenNthCalledWith(2, {
-      type: 'patch',
-      target: {
-        type: 'task',
-        ref: expect.objectContaining({ line: 4, revision: 'shared-revision' }),
-      },
-      patch: { time: { type: 'set', value: '14:15' } },
-    });
-    replacementResult.resolve(
-      okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
-    );
-  });
+      expect(execute).toHaveBeenNthCalledWith(2, {
+        type: 'patch',
+        target: {
+          type: 'task',
+          ref: expect.objectContaining({ line: 4, revision: replacementRevision }),
+        },
+        patch: { time: { type: 'set', value: '14:15' } },
+      });
+      replacementResult.resolve(
+        okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
+      );
+    },
+  );
 
   it.each(['throw', 'reject'] as const)(
     'clears focus ownership after execute %s and does not refocus on a later emit',
