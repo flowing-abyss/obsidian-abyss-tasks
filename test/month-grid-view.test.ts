@@ -901,6 +901,41 @@ describe('MonthGridView', () => {
       );
       expect(declarations).toMatch(/cursor\s*:\s*default/u);
     });
+
+    it("uses the ghost's 18% tag fill when choosing a readable title-text variant", () => {
+      const originalBackground = document.body.style.getPropertyValue('--background-primary');
+      document.body.style.setProperty('--background-primary', '#444444');
+      try {
+        const container = freshContainer();
+        const view = new MonthGridView({
+          ...callbacks(),
+          tagGroups: [{ id: 'work', name: 'Work', mode: 'prefix', prefix: 'work', color: '#fff' }],
+        });
+        const t = task({
+          title: 'Trip',
+          tags: ['#work'],
+          planning: { start: '2026-07-14', due: '2026-07-16' },
+          source: { originalMarkdown: '- [ ] Trip #work', originalBlock: '- [ ] Trip #work' },
+        });
+        view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+        const ghost = container.querySelector(
+          '[data-mg-date="2026-07-15"] .tc-mg-span-continuation',
+        ) as HTMLElement;
+        const terminal = container.querySelector(
+          '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        ) as HTMLElement;
+
+        expect(ghost.style.getPropertyValue('--tc-tag-text-color')).toBe(
+          'var(--tc-tag-text-light)',
+        );
+        expect(terminal.style.getPropertyValue('--tc-tag-text-color')).toBe(
+          'var(--tc-tag-text-dark)',
+        );
+      } finally {
+        document.body.style.setProperty('--background-primary', originalBackground);
+      }
+    });
   });
 
   describe('Task 38 follow-up: is-done/is-cancelled strikethrough parity with timed blocks', () => {

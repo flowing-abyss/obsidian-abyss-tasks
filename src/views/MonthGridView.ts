@@ -208,7 +208,7 @@ export class MonthGridView extends BaseView {
     const bar = cell.createDiv({
       cls: `tc-mg-span-segment${terminal ? '' : ' tc-mg-span-continuation'}`,
     });
-    this.applyTagFill(bar, task, tagGroups);
+    this.applyTagFill(bar, task, tagGroups, terminal ? 40 : 18);
     if (terminal) this.renderMarker(bar, task);
     if (timed) bar.createSpan({ cls: 'tc-mg-item-time', text: `${task.planning.time} ` });
     this.renderTitle(bar, task);
@@ -286,14 +286,19 @@ export class MonthGridView extends BaseView {
    * status marker already conveys priority via its own border, so a second priority
    * border on the compact item itself was redundant visual noise.
    */
-  private applyTagFill(el: HTMLElement, t: TaskSnapshot, tagGroups: TagGroup[]): void {
+  private applyTagFill(
+    el: HTMLElement,
+    t: TaskSnapshot,
+    tagGroups: TagGroup[],
+    tagPercent = 40,
+  ): void {
     const tagColor = tagColorFor(t.tags, tagGroups);
     if (tagColor) {
       el.setCssProps({ '--tc-tag-color': tagColor });
       // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
       // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
       // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-      const textColorVar = tagFillTextColorVar(el, tagColor);
+      const textColorVar = tagFillTextColorVar(el, tagColor, tagPercent);
       if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
     }
   }
