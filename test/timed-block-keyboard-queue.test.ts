@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
 import { TimedBlockKeyboardQueue } from '../src/ui/timedBlockKeyboardQueue';
 import type { TimedBlockKeyboardIntent } from '../src/views/timegrid/renderTimedBlocks';
-import { queryApiForTasks, task } from './helpers';
+import {
+  configuredTaskApplication,
+  createAppWithFiles,
+  flushMicrotasks,
+  queryApiForTasks,
+  seedTaskCache,
+  task,
+} from './helpers';
 
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
@@ -19,7 +27,7 @@ function taskAt(
     filePath?: string;
     line?: number;
     duration?: number;
-    due?: string;
+    due?: string | null;
     scheduled?: string;
     start?: string;
   } = {},
@@ -30,7 +38,7 @@ function taskAt(
     ref: { filePath, line, revision },
     source: { filePath, line },
     planning: {
-      due: overrides.due ?? '2026-07-20',
+      due: overrides.due === null ? undefined : (overrides.due ?? '2026-07-20'),
       scheduled: overrides.scheduled,
       start: overrides.start,
       time,
@@ -211,6 +219,199 @@ describe('TimedBlockKeyboardQueue', () => {
       ok(taskAt('09:00', 'revision-6', { start: '2026-07-20', due: '2026-07-23' })),
     );
   });
+
+  it.each([
+    ['scheduled-only', null, '2026-07-10'],
+    ['scheduled with an unrelated deadline', '2026-08-30', '2026-07-10'],
+  ] as const)(
+    'extends a %s task right from its rendered scheduled anchor, then from returned due',
+    async (_label, originalDue, scheduled) => {
+      const first = deferred<TaskCommandResult>();
+      const second = deferred<TaskCommandResult>();
+      const execute = vi
+        .fn<TaskApplicationApi['execute']>()
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise);
+      const { queue } = harness(execute);
+      const original = taskAt('09:00', 'revision-1', { due: originalDue, scheduled });
+
+      queue.enqueue(original, { type: 'extend-due', days: 1 });
+      queue.enqueue(original, { type: 'extend-due', days: 1 });
+      expect(execute).toHaveBeenNthCalledWith(1, {
+        type: 'extend-span',
+        ref: expect.objectContaining({ revision: 'revision-1' }),
+        due: '2026-07-11',
+      });
+
+      first.resolve(
+        ok(
+          taskAt('09:00', 'revision-2', {
+            scheduled,
+            start: scheduled,
+            due: '2026-07-11',
+          }),
+        ),
+      );
+      await expectSecondCall(execute);
+      expect(execute).toHaveBeenNthCalledWith(2, {
+        type: 'extend-span',
+        ref: expect.objectContaining({ revision: 'revision-2' }),
+        due: '2026-07-12',
+      });
+      second.resolve(
+        ok(
+          taskAt('09:00', 'revision-3', {
+            scheduled,
+            start: scheduled,
+            due: '2026-07-12',
+          }),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    ['scheduled-only', '- [ ] task ⏳ 2026-07-10 ⏰ 09:00\n'],
+    ['scheduled with an unrelated deadline', '- [ ] task ⏳ 2026-07-10 📅 2026-08-30 ⏰ 09:00\n'],
+  ] as const)(
+    'repeats a %s right extension through parsed repository/index outcomes',
+    async (_label, source) => {
+      const app = await createAppWithFiles({ 'qa.md': source });
+      seedTaskCache(app, 'qa.md', [{ task: ' ', parent: -1, line: 0 }]);
+      const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await application.index.initialize();
+      const hooks = {
+        onCommitted: vi.fn(),
+        onSettled: vi.fn(),
+        present: vi.fn(),
+      };
+      const queue = new TimedBlockKeyboardQueue(application.tasks, hooks);
+      const original = application.index.list({ filePath: 'qa.md' })[0]!;
+
+      queue.enqueue(original, { type: 'extend-due', days: 1 });
+      queue.enqueue(original, { type: 'extend-due', days: 1 });
+      await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+      await flushMicrotasks();
+
+      const final = hooks.onCommitted.mock.calls[1]?.[0] as TaskSnapshot | undefined;
+      expect(final?.planning).toMatchObject({
+        start: '2026-07-10',
+        scheduled: '2026-07-10',
+        due: '2026-07-12',
+      });
+      expect(application.index.list({ filePath: 'qa.md' })[0]?.planning).toMatchObject({
+        start: '2026-07-10',
+        scheduled: '2026-07-10',
+        due: '2026-07-12',
+      });
+      const file = app.vault.getMarkdownFiles()[0]!;
+      const content = await app.vault.cachedRead(file);
+      expect(content).toContain('🛫 2026-07-10');
+      expect(content).toContain('⏳ 2026-07-10');
+      expect(content).toContain('📅 2026-07-12');
+      expect(content).not.toContain('2026-08-30');
+      application.index.destroy();
+    },
+  );
+
+  it.each([
+    ['scheduled-only', null, '2026-07-10'],
+    ['scheduled with an unrelated deadline', '2026-08-30', '2026-07-10'],
+  ] as const)(
+    'extends a %s task left by atomically creating a span around its rendered anchor',
+    (_label, originalDue, scheduled) => {
+      const execute = vi
+        .fn<TaskApplicationApi['execute']>()
+        .mockImplementation(() => new Promise(() => {}));
+      const { queue } = harness(execute);
+
+      queue.enqueue(taskAt('09:00', 'revision-1', { due: originalDue, scheduled }), {
+        type: 'extend-start',
+        days: -1,
+      });
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: expect.objectContaining({ revision: 'revision-1' }) },
+        patch: {
+          start: { type: 'set', value: '2026-07-09' },
+          due: { type: 'set', value: '2026-07-10' },
+        },
+      });
+    },
+  );
+
+  it('rebases the active task identity when a returned snapshot moves to another source line', async () => {
+    const first = deferred<TaskCommandResult>();
+    const second = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { queue, hooks } = harness(execute);
+    const original = taskAt('09:00', 'revision-1', { line: 4 });
+
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    const moved = taskAt('09:15', 'revision-2', { line: 5 });
+    first.resolve(ok(moved));
+    await expectSecondCall(execute);
+
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: {
+          type: 'task',
+          ref: expect.objectContaining({ line: 5, revision: 'revision-2' }),
+        },
+      }),
+    );
+    const final = taskAt('09:30', 'revision-3', { line: 5 });
+    second.resolve(ok(final));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+    expect(hooks.onCommitted.mock.calls.map((call) => call[2])).toEqual([1, 1]);
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:5', 1);
+  });
+
+  it.each([
+    ['lower start', '0000-01-01', { type: 'extend-start', days: -1 }],
+    ['upper due', '9999-12-31', { type: 'extend-due', days: 1 }],
+  ] as const)('settles a %s boundary intent without executing', async (_label, due, intent) => {
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { queue, hooks } = harness(execute);
+
+    const sequence = queue.enqueue(taskAt('09:00', 'revision-1', { due }), intent);
+
+    expect(sequence).toBeUndefined();
+    expect(execute).not.toHaveBeenCalled();
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1);
+  });
+
+  it.each(['throw', 'reject'] as const)(
+    'presents repository io-error and cancels queued work after execute %s',
+    async (failureMode) => {
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(() => {
+        if (failureMode === 'throw') throw new Error('boom');
+        return Promise.reject(new Error('boom'));
+      });
+      const { queue, hooks } = harness(execute);
+      const original = taskAt('09:00');
+
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      if (failureMode === 'reject') {
+        queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      }
+      await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(hooks.present).toHaveBeenCalledWith({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unknown',
+      });
+      expect(hooks.onCommitted).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
     ['time lower', taskAt('00:00'), { type: 'move-time', deltaMinutes: -15 }, 'time', '00:00'],

@@ -73,15 +73,31 @@ function commandFor(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): TaskC
     case 'shift-schedule':
       return { type: 'shift-schedule', ref: task.ref, days: intent.days };
     case 'extend-start': {
-      const base = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
-      if (!base) return undefined;
-      const date = shiftLocalDate(base, intent.days);
-      return date
-        ? { type: 'set-span-boundary', ref: task.ref, boundary: 'start', date }
+      if (task.planning.start && task.planning.due) {
+        const date = shiftLocalDate(task.planning.start, intent.days);
+        return date
+          ? { type: 'set-span-boundary', ref: task.ref, boundary: 'start', date }
+          : undefined;
+      }
+      const anchor = task.planning.scheduled ?? task.planning.due;
+      if (!anchor) return undefined;
+      const start = shiftLocalDate(anchor, intent.days);
+      return start
+        ? {
+            type: 'patch',
+            target: { type: 'task', ref: task.ref },
+            patch: {
+              start: { type: 'set', value: start },
+              due: { type: 'set', value: anchor },
+            },
+          }
         : undefined;
     }
     case 'extend-due': {
-      const base = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+      const base =
+        task.planning.start && task.planning.due
+          ? task.planning.due
+          : (task.planning.scheduled ?? task.planning.due);
       if (!base) return undefined;
       const due = shiftLocalDate(base, intent.days);
       return due ? { type: 'extend-span', ref: task.ref, due } : undefined;
@@ -102,7 +118,7 @@ export class TimedBlockKeyboardQueue {
     private hooks: TimedBlockKeyboardQueueHooks,
   ) {}
 
-  enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number {
+  enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number | undefined {
     const taskKey = sourceKey(task);
     if (this.activeSequence === undefined || taskKey !== this.activeTaskKey) {
       this.activeSequence = ++this.nextSequence;
@@ -113,7 +129,7 @@ export class TimedBlockKeyboardQueue {
     const sequence = this.activeSequence;
     this.pending.push({ intent, sequence });
     this.processNext();
-    return sequence;
+    return this.activeSequence === sequence ? sequence : undefined;
   }
 
   cancel(): void {
@@ -155,12 +171,18 @@ export class TimedBlockKeyboardQueue {
       }
 
       this.activeSnapshot = result.outcome.task;
+      this.activeTaskKey = sourceKey(result.outcome.task);
       this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence);
       if (!this.pending.some((entry) => entry.sequence === queued.sequence)) {
         this.finishSequence(queued.sequence);
       }
     } catch {
       if (queued.sequence !== this.activeSequence) return;
+      this.hooks.present({
+        type: 'io-error',
+        cause: 'repository-error',
+        contentState: 'unknown',
+      });
       this.pending = this.pending.filter((entry) => entry.sequence !== queued.sequence);
       this.finishSequence(queued.sequence);
     } finally {

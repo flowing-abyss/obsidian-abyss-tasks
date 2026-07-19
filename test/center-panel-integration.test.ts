@@ -1562,6 +1562,127 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(blockB);
   });
 
+  it('does not steal focus after restoration happened before the command settled', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowDown');
+    h.setSnapshots([updated]);
+    h.emit();
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+
+    pending.resolve(okTask(updated));
+    await flushMicrotasks();
+    const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    other.focus();
+    h.emit();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(other);
+  });
+
+  it.each([
+    ['0000-01-01', 'ArrowLeft'],
+    ['9999-12-31', 'ArrowRight'],
+  ] as const)(
+    'does not retain focus ownership for an unexecutable %s boundary extension',
+    async (date, key) => {
+      const execute = vi.fn<TaskApplicationApi['execute']>();
+      const snapshot = keyboardSnapshot(date);
+      const h = keyboardPanelHarness([snapshot], execute);
+      const calendar = h.panel as unknown as {
+        calViewType: 'today';
+        calDate: ReturnType<typeof moment>;
+      };
+      calendar.calViewType = 'today';
+      calendar.calDate = moment(date, 'YYYY-MM-DD');
+      h.panel.refresh();
+
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, key, true);
+      expect(execute).not.toHaveBeenCalled();
+      const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      other.focus();
+      h.emit();
+      await flushMicrotasks();
+
+      expect(activeDocument.activeElement).toBe(other);
+    },
+  );
+
+  it('rebases the pending locator when a returned snapshot moves to a new line', async () => {
+    const first = deferredResult();
+    const second = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
+    const moved = keyboardSnapshot(TODAY, '09:15', 'moved.md', 'revision-2', 5);
+    const final = keyboardSnapshot(TODAY, '09:30', 'moved.md', 'revision-3', 5);
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowDown');
+    press(block, 'ArrowDown');
+    h.setSnapshots([moved]);
+    h.emit();
+    first.resolve(okTask(moved));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: {
+          type: 'task',
+          ref: expect.objectContaining({ line: 5, revision: 'revision-2' }),
+        },
+      }),
+    );
+
+    h.setSnapshots([final]);
+    h.emit();
+    second.resolve(okTask(final));
+    await flushMicrotasks();
+
+    const focused = timedBlock(h.el);
+    expect(focused.dataset['tcTaskLine']).toBe('5');
+    expect(activeDocument.activeElement).toBe(focused);
+  });
+
+  it.each(['throw', 'reject'] as const)(
+    'clears focus ownership after execute %s and does not refocus on a later emit',
+    async (failureMode) => {
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(() => {
+        if (failureMode === 'throw') throw new Error('boom');
+        return Promise.reject(new Error('boom'));
+      });
+      const original = keyboardSnapshot(TODAY);
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
+
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, 'ArrowDown');
+      await flushMicrotasks();
+      const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      other.focus();
+      h.emit();
+      await flushMicrotasks();
+
+      expect(activeDocument.activeElement).toBe(other);
+    },
+  );
+
   it('a failed horizontal command neither navigates nor steals focus', async () => {
     const pending = deferredResult();
     const original = keyboardSnapshot(TODAY);
