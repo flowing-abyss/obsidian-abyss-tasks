@@ -80,7 +80,7 @@ export class WeekTimeGridView extends BaseView {
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
-      onKeyboardIntent: this.callbacks.onKeyboardIntent ?? (() => undefined),
+      onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,

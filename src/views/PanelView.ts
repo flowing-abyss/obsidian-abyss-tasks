@@ -222,7 +222,7 @@ export class PanelView extends ItemView {
 
     this.queryUnsub = this.queries.subscribe((event) => {
       this.left.refresh();
-      this.center.refresh();
+      if (this.state.get('mode') !== 'calendar') this.center.refresh();
       const stack = this.state.get('taskStack');
       if (stack.length === 0) return;
       const root = stack[0];

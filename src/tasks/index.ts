@@ -12,6 +12,7 @@ export type {
   TaskCommandResult,
   TaskPatch,
 } from './domain/commands';
+export { shiftLocalDate } from './domain/localDateMath';
 export type {
   CommentRef,
   LocalDate,

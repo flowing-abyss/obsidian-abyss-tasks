@@ -44,6 +44,7 @@ import { buildStatusSubmenu, showStatusMenuAt } from '../ui/statusMenu';
 import { presentTaskCommandResult, presentTaskCreationResult } from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
+import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
 import { WeekTimeGridView } from '../views/WeekTimeGridView';
@@ -58,6 +59,7 @@ import {
   minutesToTimeString,
   timeStringToMinutes,
 } from '../views/timegrid/layout';
+import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { visibleCalendarDates, type CalViewType } from './visibleCalendarDates';
 
@@ -65,6 +67,13 @@ type CreateTaskCommand = Extract<
   Parameters<TaskApplicationApi['execute']>[0],
   { readonly type: 'create' }
 >;
+
+interface TimedBlockFocusLocator {
+  readonly filePath: string;
+  readonly line: number;
+  readonly sequence: number;
+  readonly queueSequence?: number;
+}
 
 function projectNameFromPath(path: string): string {
   return (path.split('/').pop() ?? path).replace(/\.md$/, '');
@@ -108,6 +117,11 @@ export class CenterPanel {
   // gap; mountView() consumes (and clears) it as a fallback when its own viewContainer-local read
   // finds nothing (i.e. on a freshly (re)built viewContainer).
   private pendingCalScrollTop: number | undefined = undefined;
+  private keyboardQueue: TimedBlockKeyboardQueue | null = null;
+  private pendingTimedBlockFocus: TimedBlockFocusLocator | undefined;
+  private settledKeyboardSequences = new Set<number>();
+  private nextTimedBlockFocusSequence = 0;
+  private calendarRenderGeneration = 0;
   private taskModal: TaskModal | null = null;
   private selectedTaskKeys = new Set<string>();
   private lastClickedTaskKey: string | null = null;
@@ -135,6 +149,26 @@ export class CenterPanel {
     private tasks?: TaskApplicationApi,
   ) {
     this.onSaveSettings = onSaveSettings;
+    if (tasks) {
+      this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
+        onCommitted: (task, intent, sequence) => {
+          this.handleKeyboardCommit(task, intent, sequence);
+        },
+        onSettled: (_taskKey, sequence) => {
+          if (this.pendingTimedBlockFocus?.queueSequence === sequence) {
+            this.settledKeyboardSequences.add(sequence);
+          }
+        },
+        present: (result) => {
+          presentTaskCommandResult(result);
+          if (result.type !== 'ok' || result.outcome.type !== 'task') {
+            const sequence = this.pendingTimedBlockFocus?.queueSequence;
+            if (sequence !== undefined) this.settledKeyboardSequences.delete(sequence);
+            this.pendingTimedBlockFocus = undefined;
+          }
+        },
+      });
+    }
   }
 
   mount(container: HTMLElement): void {
@@ -175,7 +209,10 @@ export class CenterPanel {
         this.lastClickedTaskKey = null;
       }),
       this.state.on('centerListViewState', () => this.render()),
-      this.state.on('mode', () => this.render()),
+      this.state.on('mode', () => {
+        this.cancelKeyboardInteraction();
+        this.render();
+      }),
       this.state.on('centerFilter', () => this.render()),
       this.state.on('searchQuery', () => this.render()),
       this.state.on('taskStack', () => {
@@ -224,6 +261,14 @@ export class CenterPanel {
     };
     this.el.addEventListener('keydown', onKeyDown);
     this.offs.push(() => this.el.removeEventListener('keydown', onKeyDown));
+    const onFocusIn = (event: FocusEvent): void => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const block = target.closest<HTMLElement>('.tc-tg-block');
+      if (block) this.retainTimedBlockFocus(block);
+    };
+    this.el.addEventListener('focusin', onFocusIn);
+    this.offs.push(() => this.el.removeEventListener('focusin', onFocusIn));
   }
 
   refresh(): void {
@@ -231,6 +276,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.cancelKeyboardInteraction();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
@@ -316,6 +362,7 @@ export class CenterPanel {
       // below), and `this.el.empty()` on the next line destroys the current `.tc-tg-grid-row`
       // before mountView() ever gets a chance to read it — capture it now so mountView() (see
       // its `preservedScrollTop` fallback) can still restore it on the fresh instance.
+      this.captureActiveTimedBlockFocus();
       this.pendingCalScrollTop = this.el.querySelector<HTMLElement>('.tc-tg-grid-row')?.scrollTop;
       this.el.empty();
       this.el.addClass('tc-center--calendar');
@@ -433,6 +480,7 @@ export class CenterPanel {
         text: v === 'today' ? 'Day' : v.charAt(0).toUpperCase() + v.slice(1),
       });
       btn.addEventListener('click', () => {
+        this.cancelKeyboardInteraction();
         this.calViewType = v;
         if (v === 'week') this.calDate = window.moment().startOf('isoWeek');
         else if (v === 'today') this.calDate = window.moment();
@@ -481,6 +529,17 @@ export class CenterPanel {
     const handleExtendToSpan = (t: TaskSnapshot, newDue: string): void => {
       void this.extendTaskToSpan(t, newDue);
     };
+    const handleKeyboardIntent = (task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void => {
+      if (!this.keyboardQueue) return;
+      const queueSequence = this.keyboardQueue.enqueue(task, intent);
+      this.settledKeyboardSequences.delete(queueSequence);
+      this.pendingTimedBlockFocus = {
+        filePath: task.source.filePath,
+        line: task.source.line,
+        sequence: ++this.nextTimedBlockFocusSequence,
+        queueSequence,
+      };
+    };
     const handleCreateAtTime = (date: string, time: string): void => {
       const dayColumn = viewContainer.querySelector<HTMLElement>(
         `.tc-tg-day-column[data-tg-date="${date}"]`,
@@ -528,6 +587,8 @@ export class CenterPanel {
     };
 
     const mountView = (): void => {
+      this.captureActiveTimedBlockFocus();
+      const renderGeneration = ++this.calendarRenderGeneration;
       // Task 31: before tearing down the currently-mounted view, capture its scroll position so
       // it can be restored on the fresh instance below. A freshly-created `.tc-tg-grid-row`
       // naturally starts at scrollTop 0, which previously reset the user's scroll position on
@@ -583,6 +644,7 @@ export class CenterPanel {
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
+          onKeyboardIntent: handleKeyboardIntent,
           onToggle: (t) => {
             void this.toggleTask(t);
           },
@@ -604,6 +666,7 @@ export class CenterPanel {
           onCreateAtTime: handleCreateAtTime,
           onCreateAtDate: handleCreateAtDateAllDay,
           onDayHeaderClick: (date) => {
+            this.cancelKeyboardInteraction();
             this.calViewType = 'today';
             this.calDate = window.moment(date);
             this.render();
@@ -613,6 +676,7 @@ export class CenterPanel {
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
+          onKeyboardIntent: handleKeyboardIntent,
           onToggle: (t) => {
             void this.toggleTask(t);
           },
@@ -629,6 +693,7 @@ export class CenterPanel {
         this.calViewInstance = new MonthGridView({
           app: this.app,
           onDayClick: (date) => {
+            this.cancelKeyboardInteraction();
             this.calViewType = 'today';
             this.calDate = window.moment(date);
             this.render();
@@ -646,6 +711,7 @@ export class CenterPanel {
             void this.setPriority(t, priority);
           },
           onWeekClick: (wk, yr) => {
+            this.cancelKeyboardInteraction();
             this.calViewType = 'week';
             this.calDate = window
               .moment()
@@ -659,6 +725,7 @@ export class CenterPanel {
         });
       }
       this.calViewInstance.render(viewContainer, tasks, cfg, shouldScrollToNow, preservedScrollTop);
+      this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
     mountView();
@@ -689,6 +756,7 @@ export class CenterPanel {
         const btn = picker.createEl('button', { cls: 'tc-month-picker-btn', text: m });
         if (i === this.calDate.month()) btn.addClass('is-active');
         btn.addEventListener('click', () => {
+          this.cancelKeyboardInteraction();
           this.calDate = this.calDate.clone().month(i).date(1);
           updateTitle();
           mountView();
@@ -719,6 +787,7 @@ export class CenterPanel {
         const btn = picker.createEl('button', { cls: 'tc-year-picker-btn', text: String(y) });
         if (y === currentYear) btn.addClass('is-active');
         btn.addEventListener('click', () => {
+          this.cancelKeyboardInteraction();
           this.calDate = this.calDate.clone().year(y).date(1);
           updateTitle();
           mountView();
@@ -738,6 +807,7 @@ export class CenterPanel {
     });
 
     prevBtn.addEventListener('click', () => {
+      this.cancelKeyboardInteraction();
       if (this.calViewType === 'week')
         this.calDate = this.calDate.clone().subtract(7, 'days').startOf('isoWeek');
       else if (this.calViewType === 'today') this.calDate = this.calDate.clone().subtract(1, 'day');
@@ -747,6 +817,7 @@ export class CenterPanel {
     });
 
     nextBtn.addEventListener('click', () => {
+      this.cancelKeyboardInteraction();
       if (this.calViewType === 'week')
         this.calDate = this.calDate.clone().add(7, 'days').startOf('isoWeek');
       else if (this.calViewType === 'today') this.calDate = this.calDate.clone().add(1, 'day');
@@ -756,6 +827,7 @@ export class CenterPanel {
     });
 
     todayBtn.addEventListener('click', () => {
+      this.cancelKeyboardInteraction();
       if (this.calViewType === 'week') this.calDate = window.moment().startOf('isoWeek');
       else if (this.calViewType === 'today') this.calDate = window.moment();
       else this.calDate = window.moment().date(1);
@@ -781,6 +853,98 @@ export class CenterPanel {
     // `BaseView.patch()` (still the default no-op-over-render from `BaseView.ts`) as the
     // extension point each of the three new view classes would override.
     this.calUnsubscribe = this.queries.subscribe(() => mountView());
+  }
+
+  private cancelKeyboardInteraction(): void {
+    this.keyboardQueue?.cancel();
+    this.pendingTimedBlockFocus = undefined;
+    this.settledKeyboardSequences.clear();
+    this.calendarRenderGeneration += 1;
+  }
+
+  private captureActiveTimedBlockFocus(): void {
+    const active = activeDocument.activeElement;
+    if (!(active instanceof HTMLElement) || !this.el.contains(active)) return;
+    const block = active.closest<HTMLElement>('.tc-tg-block');
+    if (!block) return;
+    this.retainTimedBlockFocus(block);
+  }
+
+  private retainTimedBlockFocus(block: HTMLElement): void {
+    const filePath = block.dataset['tcTaskFile'];
+    const lineText = block.dataset['tcTaskLine'];
+    if (filePath === undefined || lineText === undefined) return;
+    const line = Number(lineText);
+    if (!Number.isInteger(line)) return;
+
+    const pending = this.pendingTimedBlockFocus;
+    if (pending?.filePath === filePath && pending.line === line) return;
+    this.pendingTimedBlockFocus = {
+      filePath,
+      line,
+      sequence: ++this.nextTimedBlockFocusSequence,
+    };
+  }
+
+  private deferTimedBlockFocus(container: HTMLElement, renderGeneration: number): void {
+    window.setTimeout(() => {
+      if (renderGeneration !== this.calendarRenderGeneration) return;
+      const pending = this.pendingTimedBlockFocus;
+      if (!pending || this.state.get('mode') !== 'calendar') return;
+      const candidate = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
+        (block) =>
+          block.dataset['tcTaskFile'] === pending.filePath &&
+          block.dataset['tcTaskLine'] === String(pending.line),
+      );
+      if (!candidate?.isConnected) return;
+      candidate.focus();
+      candidate.classList.add('is-selected');
+      if (
+        activeDocument.activeElement === candidate &&
+        this.pendingTimedBlockFocus?.sequence === pending.sequence &&
+        (pending.queueSequence === undefined ||
+          this.settledKeyboardSequences.has(pending.queueSequence))
+      ) {
+        if (pending.queueSequence !== undefined) {
+          this.settledKeyboardSequences.delete(pending.queueSequence);
+        }
+        this.pendingTimedBlockFocus = undefined;
+      }
+    }, 0);
+  }
+
+  private handleKeyboardCommit(
+    updated: TaskSnapshot,
+    intent: TimedBlockKeyboardIntent,
+    queueSequence: number,
+  ): void {
+    const pending = this.pendingTimedBlockFocus;
+    if (
+      !pending ||
+      pending.queueSequence !== queueSequence ||
+      pending.filePath !== updated.source.filePath ||
+      pending.line !== updated.source.line ||
+      this.state.get('mode') !== 'calendar'
+    ) {
+      return;
+    }
+    if (intent.type !== 'shift-schedule') return;
+
+    const anchor =
+      updated.planning.start && updated.planning.due
+        ? updated.planning.due
+        : (updated.planning.scheduled ?? updated.planning.due);
+    if (!anchor) return;
+
+    const firstDayOfWeek =
+      this.settings.desktop.firstDayOfWeek ?? DEFAULT_VIEW_CONFIG.firstDayOfWeek;
+    const shouldFollow =
+      this.calViewType === 'today' ||
+      (this.calViewType === 'week' &&
+        !visibleCalendarDates('week', this.calDate, firstDayOfWeek).includes(anchor));
+    if (!shouldFollow) return;
+    this.calDate = window.moment(anchor);
+    this.render();
   }
 
   private renderSearch(): void {

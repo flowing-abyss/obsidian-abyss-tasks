@@ -83,6 +83,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   durationMinutes: ['src/panels/CenterPanel.ts'],
   localDate: ['src/main.ts'],
   localTime: ['src/panels/CenterPanel.ts'],
+  shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {

@@ -6,7 +6,14 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { LocalDate, TaskApplicationApi, TaskQueryApi, TaskSnapshot } from '../src/tasks';
+import type {
+  LocalDate,
+  TaskApplicationApi,
+  TaskCommandResult,
+  TaskIndexEvent,
+  TaskQueryApi,
+  TaskSnapshot,
+} from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
@@ -1215,4 +1222,392 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     chip.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(el.querySelector('.tc-tg-allday-quick-add')).toBeNull();
   });
+});
+
+function deferredResult(): {
+  promise: Promise<TaskCommandResult>;
+  resolve(result: TaskCommandResult): void;
+} {
+  let resolve!: (result: TaskCommandResult) => void;
+  const promise = new Promise<TaskCommandResult>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+function keyboardSnapshot(
+  date: string,
+  time = '09:00',
+  filePath = 'Folder/[qa] "task".md',
+  revision = 'revision-1',
+  line = 0,
+): TaskSnapshot {
+  return task({
+    ref: { filePath, line, revision },
+    source: { filePath, line },
+    title: filePath,
+    planning: { due: date, time, duration: 60 },
+  });
+}
+
+function okTask(updated: TaskSnapshot): TaskCommandResult {
+  return { type: 'ok', changed: true, outcome: { type: 'task', task: updated } };
+}
+
+function keyboardPanelHarness(
+  initial: readonly TaskSnapshot[],
+  execute: TaskApplicationApi['execute'],
+): {
+  panel: CenterPanel;
+  state: AppState;
+  el: HTMLElement;
+  setSnapshots(next: readonly TaskSnapshot[]): void;
+  emit(): void;
+} {
+  let snapshots = initial;
+  const listeners = new Set<(event: TaskIndexEvent) => void>();
+  const queries = queryApiForSnapshots(() => snapshots);
+  queries.subscribe = (listener) => {
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  };
+  const tasks: TaskApplicationApi = { queries, execute };
+  const state = new AppState();
+  const panel = new CenterPanel(
+    state,
+    {} as App,
+    DEFAULT_SETTINGS,
+    queries,
+    new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    undefined,
+    null,
+    null,
+    tasks,
+  );
+  const el = freshContainer();
+  activeDocument.body.append(el);
+  panel.mount(el);
+  state.set('mode', 'calendar');
+  return {
+    panel,
+    state,
+    el,
+    setSnapshots: (next) => {
+      snapshots = next;
+    },
+    emit: () => {
+      for (const listener of [...listeners]) {
+        listener({ type: 'changed', files: snapshots.map((item) => item.source.filePath) });
+      }
+    },
+  };
+}
+
+function clickCalendarView(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
+  const button = Array.from(el.querySelectorAll<HTMLElement>('.tc-cal-view-btn')).find(
+    (candidate) => candidate.textContent === label,
+  );
+  if (!button) throw new Error(`missing ${label} calendar view button`);
+  button.click();
+}
+
+function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {
+  const blocks = Array.from(el.querySelectorAll<HTMLElement>('.tc-tg-block'));
+  const found = filePath
+    ? blocks.find((block) => block.dataset['tcTaskFile'] === filePath)
+    : blocks[0];
+  if (!found) throw new Error(`missing timed block${filePath ? ` for ${filePath}` : ''}`);
+  return found;
+}
+
+function press(block: HTMLElement, key: string, shiftKey = false): void {
+  block.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
+}
+
+describe('CenterPanel calendar mode — serialized keyboard focus and follow', () => {
+  it('retains a special-path locator across two remounts and focuses only the newest connected block', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const outgoing = timedBlock(h.el);
+    outgoing.focus();
+    press(outgoing, 'ArrowDown');
+    expect(execute).toHaveBeenCalledOnce();
+
+    h.setSnapshots([]);
+    h.emit();
+    expect(outgoing.isConnected).toBe(false);
+    h.setSnapshots([updated]);
+    h.emit();
+    pending.resolve(okTask(updated));
+    await flushMicrotasks();
+
+    const connected = timedBlock(h.el);
+    expect(connected).not.toBe(outgoing);
+    expect(connected.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(connected);
+    expect(connected.classList.contains('is-selected')).toBe(true);
+  });
+
+  it('keeps vertical moves and duration changes on the same Day date', async () => {
+    let current = keyboardSnapshot(TODAY);
+    let h!: ReturnType<typeof keyboardPanelHarness>;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
+      const revision = `revision-${execute.mock.calls.length + 1}`;
+      const isTaskPatch = command.type === 'patch' && command.target.type === 'task';
+      const nextTime =
+        isTaskPatch && command.patch.time?.type === 'set'
+          ? command.patch.time.value
+          : current.planning.time;
+      const nextDuration =
+        isTaskPatch && 'duration' in command.patch && command.patch.duration?.type === 'set'
+          ? command.patch.duration.value
+          : current.planning.duration;
+      current = task({
+        ...current,
+        ref: { ...current.ref, revision },
+        planning: { ...current.planning, time: nextTime, duration: nextDuration },
+      });
+      h.setSnapshots([current]);
+      h.emit();
+      return okTask(current);
+    });
+    h = keyboardPanelHarness([current], execute);
+    clickCalendarView(h.el, 'Day');
+    const dateBefore = h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date');
+
+    let block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowDown');
+    await flushMicrotasks();
+    block = timedBlock(h.el);
+    press(block, 'ArrowDown', true);
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(dateBefore);
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+  });
+
+  it('follows a successful horizontal move in Day view and restores focus there', async () => {
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const original = keyboardSnapshot(TODAY);
+    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+    let h!: ReturnType<typeof keyboardPanelHarness>;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      h.setSnapshots([updated]);
+      h.emit();
+      return okTask(updated);
+    });
+    h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+  });
+
+  it('retains sequence ownership through an intermediate remount and follows two rapid Day moves', async () => {
+    const first = deferredResult();
+    const second = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const dayOne = keyboardSnapshot(TODAY);
+    const dayTwoDate = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const dayThreeDate = moment(TODAY).add(2, 'days').format('YYYY-MM-DD');
+    const dayTwo = keyboardSnapshot(dayTwoDate, '09:00', dayOne.source.filePath, 'revision-2');
+    const dayThree = keyboardSnapshot(dayThreeDate, '09:00', dayOne.source.filePath, 'revision-3');
+    const h = keyboardPanelHarness([dayOne], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    press(block, 'ArrowRight');
+    expect(execute).toHaveBeenCalledOnce();
+
+    h.setSnapshots([dayTwo]);
+    h.emit();
+    first.resolve(okTask(dayTwo));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    await flushMicrotasks();
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(dayTwoDate);
+
+    h.setSnapshots([dayThree]);
+    h.emit();
+    second.resolve(okTask(dayThree));
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+      dayThreeDate,
+    );
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+  });
+
+  it('keeps Week anchored for an in-range move and follows only after crossing its visible edge', async () => {
+    const weekStart = moment().startOf('isoWeek');
+    const inside = weekStart.clone().add(2, 'days').format('YYYY-MM-DD');
+    const nextInside = weekStart.clone().add(3, 'days').format('YYYY-MM-DD');
+    const edge = weekStart.clone().add(6, 'days').format('YYYY-MM-DD');
+    const outside = weekStart.clone().add(7, 'days').format('YYYY-MM-DD');
+    let current = keyboardSnapshot(inside);
+    let h!: ReturnType<typeof keyboardPanelHarness>;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      const nextDate = current.planning.due === inside ? nextInside : outside;
+      current = keyboardSnapshot(
+        nextDate,
+        '09:00',
+        current.source.filePath,
+        `revision-${execute.mock.calls.length + 1}`,
+      );
+      h.setSnapshots([current]);
+      h.emit();
+      return okTask(current);
+    });
+    h = keyboardPanelHarness([current], execute);
+    clickCalendarView(h.el, 'Week');
+    const originalDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+      (column) => column.dataset['tgDate'],
+    );
+
+    let block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    await flushMicrotasks();
+    expect(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+        (column) => column.dataset['tgDate'],
+      ),
+    ).toEqual(originalDates);
+
+    current = keyboardSnapshot(edge, '09:00', current.source.filePath, 'revision-edge');
+    h.setSnapshots([current]);
+    h.emit();
+    await flushMicrotasks();
+    block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    await flushMicrotasks();
+    const followedDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+      (column) => column.dataset['tgDate'],
+    );
+    expect(followedDates).toContain(outside);
+    expect(followedDates).not.toEqual(originalDates);
+  });
+
+  it('does not let task A late completion navigate or focus after task B owns the queue', async () => {
+    const first = deferredResult();
+    const second = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const taskA = keyboardSnapshot(TODAY, '09:00', 'a.md');
+    const taskB = keyboardSnapshot(TODAY, '10:00', 'b.md');
+    const h = keyboardPanelHarness([taskA, taskB], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const blockA = timedBlock(h.el, 'a.md');
+    blockA.focus();
+    press(blockA, 'ArrowRight');
+    const blockB = timedBlock(h.el, 'b.md');
+    blockB.focus();
+    press(blockB, 'ArrowDown');
+    first.resolve(
+      okTask(
+        keyboardSnapshot(moment(TODAY).add(1, 'day').format('YYYY-MM-DD'), '09:00', 'a.md', 'a-2'),
+      ),
+    );
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+
+    const updatedB = keyboardSnapshot(TODAY, '10:15', 'b.md', 'b-2');
+    h.setSnapshots([taskA, updatedB]);
+    h.emit();
+    second.resolve(okTask(updatedB));
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el, 'b.md'));
+  });
+
+  it('invalidates task A focus ownership as soon as a newer task B receives focus', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const taskA = keyboardSnapshot(TODAY, '09:00', 'a.md');
+    const taskB = keyboardSnapshot(TODAY, '10:00', 'b.md');
+    const h = keyboardPanelHarness([taskA, taskB], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const blockA = timedBlock(h.el, 'a.md');
+    blockA.focus();
+    press(blockA, 'ArrowRight');
+    const blockB = timedBlock(h.el, 'b.md');
+    blockB.focus();
+    pending.resolve(
+      okTask(
+        keyboardSnapshot(moment(TODAY).add(1, 'day').format('YYYY-MM-DD'), '09:00', 'a.md', 'a-2'),
+      ),
+    );
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(activeDocument.activeElement).toBe(blockB);
+  });
+
+  it('a failed horizontal command neither navigates nor steals focus', async () => {
+    const pending = deferredResult();
+    const original = keyboardSnapshot(TODAY);
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    other.focus();
+    pending.resolve({ type: 'conflict', current: original });
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(activeDocument.activeElement).toBe(other);
+  });
+
+  it.each(['view', 'mode', 'destroy'] as const)(
+    '%s cancellation suppresses every late calendar hook',
+    async (kind) => {
+      const pending = deferredResult();
+      const original = keyboardSnapshot(TODAY);
+      const updated = keyboardSnapshot(
+        moment(TODAY).add(1, 'day').format('YYYY-MM-DD'),
+        '09:00',
+        original.source.filePath,
+        'revision-2',
+      );
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, 'ArrowRight');
+
+      if (kind === 'view') clickCalendarView(h.el, 'Month');
+      else if (kind === 'mode') h.state.set('mode', 'tasks');
+      else h.panel.destroy();
+      pending.resolve(okTask(updated));
+      await flushMicrotasks();
+
+      expect(activeDocument.activeElement?.classList.contains('tc-tg-block')).toBe(false);
+      if (kind === 'view') expect(h.el.querySelector('.tc-mg-grid')).not.toBeNull();
+      if (kind === 'mode') expect(h.el.querySelector('.tc-center-header')).not.toBeNull();
+      if (kind === 'destroy') expect(h.el.children).toHaveLength(0);
+    },
+  );
 });

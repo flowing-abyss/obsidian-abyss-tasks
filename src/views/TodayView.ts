@@ -27,7 +27,7 @@ export interface TimeGridCallbacks {
   /** Header-cell click (Week's day headers): drills into the Day view for that date, same as
    * Month's onDayClick. Optional since TodayView itself has no need to re-drill into itself. */
   onDayHeaderClick?: (date: string) => void;
-  onKeyboardIntent?: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
+  onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
@@ -171,7 +171,7 @@ export class TodayView extends BaseView {
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
-      onKeyboardIntent: this.callbacks.onKeyboardIntent ?? (() => undefined),
+      onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,

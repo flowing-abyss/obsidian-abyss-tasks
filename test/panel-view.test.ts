@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskCommandResult, TaskIndexEvent, TaskQueryApi, TaskRef } from '../src/tasks';
 import { taskNodeLine } from '../src/ui/taskSelection';
+import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
 import {
   configuredTaskApplication,
@@ -102,6 +103,43 @@ describe('PanelView', () => {
         emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] }),
       ).not.toThrow();
     });
+
+    it('lets CenterPanel own the sole calendar rebuild while PanelView refreshes only LeftPanel', () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const panels = view as unknown as {
+        left: { refresh(): void };
+        center: { refresh(): void };
+      };
+      state.set('mode', 'calendar');
+      const leftRefresh = vi.spyOn(panels.left, 'refresh');
+      const centerRefresh = vi.spyOn(panels.center, 'refresh');
+      const calendarRender = vi.spyOn(MonthGridView.prototype, 'render');
+
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
+
+      expect(leftRefresh).toHaveBeenCalledOnce();
+      expect(centerRefresh).not.toHaveBeenCalled();
+      expect(calendarRender).toHaveBeenCalledOnce();
+    });
+
+    it.each(['tasks', 'search', 'projects'] as const)(
+      'keeps PanelView center.refresh ownership in %s mode',
+      (mode) => {
+        const state = (view as unknown as { state: AppState }).state;
+        const panels = view as unknown as {
+          left: { refresh(): void };
+          center: { refresh(): void };
+        };
+        state.set('mode', mode);
+        const leftRefresh = vi.spyOn(panels.left, 'refresh');
+        const centerRefresh = vi.spyOn(panels.center, 'refresh');
+
+        emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
+
+        expect(leftRefresh).toHaveBeenCalledOnce();
+        expect(centerRefresh).toHaveBeenCalledOnce();
+      },
+    );
 
     it('onClose empties contentEl', async () => {
       await view.onClose();
