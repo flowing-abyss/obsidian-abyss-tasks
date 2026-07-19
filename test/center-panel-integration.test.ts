@@ -1254,6 +1254,10 @@ function okTask(updated: TaskSnapshot): TaskCommandResult {
   return { type: 'ok', changed: true, outcome: { type: 'task', task: updated } };
 }
 
+function okTaskUnchanged(updated: TaskSnapshot): TaskCommandResult {
+  return { type: 'ok', changed: false, outcome: { type: 'task', task: updated } };
+}
+
 function keyboardPanelHarness(
   initial: readonly TaskSnapshot[],
   execute: TaskApplicationApi['execute'],
@@ -1588,6 +1592,27 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(other);
   });
 
+  it('clears focus ownership when a clamped command executes without changing the task', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY, '00:00');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowUp');
+    pending.resolve(okTaskUnchanged(original));
+    await flushMicrotasks();
+
+    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    nav.focus();
+    h.emit();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(nav);
+  });
+
   it.each([
     ['0000-01-01', 'ArrowLeft'],
     ['9999-12-31', 'ArrowRight'],
@@ -1615,6 +1640,101 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       await flushMicrotasks();
 
       expect(activeDocument.activeElement).toBe(other);
+    },
+  );
+
+  it.each([
+    ['0000-01-01', 'ArrowLeft'],
+    ['9999-12-31', 'ArrowRight'],
+  ] as const)(
+    'clears focus ownership when an in-flight command is followed by an unexecutable %s boundary intent',
+    async (date, key) => {
+      const pending = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const snapshot = keyboardSnapshot(date);
+      const h = keyboardPanelHarness([snapshot], execute);
+      const calendar = h.panel as unknown as {
+        calViewType: 'today';
+        calDate: ReturnType<typeof moment>;
+      };
+      calendar.calViewType = 'today';
+      calendar.calDate = moment(date, 'YYYY-MM-DD');
+      h.panel.refresh();
+
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, 'ArrowDown');
+      press(block, key, true);
+      expect(execute).toHaveBeenCalledOnce();
+      pending.resolve(okTaskUnchanged(snapshot));
+      await flushMicrotasks();
+      expect(execute).toHaveBeenCalledOnce();
+
+      const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      nav.focus();
+      h.emit();
+      await flushMicrotasks();
+
+      expect(activeDocument.activeElement).toBe(nav);
+    },
+  );
+
+  it('retains focus ownership when an earlier command changed and the final command is a no-op', async () => {
+    const first = deferredResult();
+    const second = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const original = keyboardSnapshot(TODAY, '00:15');
+    const changed = keyboardSnapshot(TODAY, '00:00', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowUp');
+    press(block, 'ArrowUp');
+    first.resolve(okTask(changed));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    second.resolve(okTaskUnchanged(changed));
+    await flushMicrotasks();
+
+    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    nav.focus();
+    h.setSnapshots([changed]);
+    h.emit();
+    await flushMicrotasks();
+
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+  });
+
+  it.each([
+    ['vertical', 'ArrowDown', TODAY, '09:15'],
+    ['horizontal', 'ArrowRight', moment(TODAY).add(1, 'day').format('YYYY-MM-DD'), '09:00'],
+  ] as const)(
+    'preserves a rebased queue locator when a %s result arrives before the index',
+    async (_direction, key, updatedDate, updatedTime) => {
+      const pending = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
+      const moved = keyboardSnapshot(updatedDate, updatedTime, 'moved.md', 'revision-2', 5);
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
+
+      const outgoing = timedBlock(h.el);
+      outgoing.focus();
+      press(outgoing, key);
+      pending.resolve(okTask(moved));
+      await flushMicrotasks();
+
+      h.setSnapshots([moved]);
+      h.emit();
+      await flushMicrotasks();
+
+      const focused = timedBlock(h.el);
+      expect(focused.dataset['tcTaskLine']).toBe('5');
+      expect(activeDocument.activeElement).toBe(focused);
     },
   );
 
@@ -1656,6 +1776,41 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
     const focused = timedBlock(h.el);
     expect(focused.dataset['tcTaskLine']).toBe('5');
+    expect(activeDocument.activeElement).toBe(focused);
+  });
+
+  it('invalidates an intermediate restored identity before the final moved outcome settles', async () => {
+    const first = deferredResult();
+    const second = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
+    const intermediate = keyboardSnapshot(TODAY, '09:15', 'moved.md', 'revision-2', 5);
+    const final = keyboardSnapshot(TODAY, '09:30', 'moved.md', 'revision-3', 6);
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const outgoing = timedBlock(h.el);
+    outgoing.focus();
+    press(outgoing, 'ArrowDown');
+    press(outgoing, 'ArrowDown');
+    first.resolve(okTask(intermediate));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    h.setSnapshots([intermediate]);
+    h.emit();
+    await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+
+    second.resolve(okTask(final));
+    await flushMicrotasks();
+    h.setSnapshots([final]);
+    h.emit();
+    await flushMicrotasks();
+
+    const focused = timedBlock(h.el);
+    expect(focused.dataset['tcTaskLine']).toBe('6');
     expect(activeDocument.activeElement).toBe(focused);
   });
 

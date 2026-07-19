@@ -11,8 +11,13 @@ import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBloc
 
 export interface TimedBlockKeyboardQueueHooks {
   onCommitted(task: TaskSnapshot, intent: TimedBlockKeyboardIntent, sequence: number): void;
-  onSettled(taskKey: string, sequence: number): void;
+  onSettled(taskKey: string, sequence: number, summary: TimedBlockKeyboardSequenceSummary): void;
   present(result: TaskCommandResult): void;
+}
+
+interface TimedBlockKeyboardSequenceSummary {
+  readonly executed: boolean;
+  readonly anyChanged: boolean;
 }
 
 interface QueuedIntent {
@@ -28,6 +33,10 @@ const DEFAULT_DURATION_MINUTES = 60;
 
 function sourceKey(task: TaskSnapshot): string {
   return `${task.source.filePath}:${task.source.line}`;
+}
+
+function sourceIdentity(task: TaskSnapshot): string {
+  return `${task.source.filePath}:${task.source.line}:${task.ref.revision}`;
 }
 
 function timeMinutes(value: string | undefined): number {
@@ -111,7 +120,10 @@ export class TimedBlockKeyboardQueue {
   private nextSequence = 0;
   private activeSequence: number | undefined;
   private activeTaskKey: string | undefined;
+  private activeTaskIdentities = new Set<string>();
   private activeSnapshot: TaskSnapshot | undefined;
+  private activeExecuted = false;
+  private activeAnyChanged = false;
 
   constructor(
     private api: TaskApplicationApi,
@@ -120,10 +132,14 @@ export class TimedBlockKeyboardQueue {
 
   enqueue(task: TaskSnapshot, intent: TimedBlockKeyboardIntent): number | undefined {
     const taskKey = sourceKey(task);
-    if (this.activeSequence === undefined || taskKey !== this.activeTaskKey) {
+    const taskIdentity = sourceIdentity(task);
+    if (this.activeSequence === undefined || !this.activeTaskIdentities.has(taskIdentity)) {
       this.activeSequence = ++this.nextSequence;
       this.activeTaskKey = taskKey;
+      this.activeTaskIdentities = new Set([taskIdentity]);
       this.activeSnapshot = task;
+      this.activeExecuted = false;
+      this.activeAnyChanged = false;
       this.pending = [];
     }
     const sequence = this.activeSequence;
@@ -136,7 +152,10 @@ export class TimedBlockKeyboardQueue {
     this.pending = [];
     this.activeSequence = undefined;
     this.activeTaskKey = undefined;
+    this.activeTaskIdentities.clear();
     this.activeSnapshot = undefined;
+    this.activeExecuted = false;
+    this.activeAnyChanged = false;
   }
 
   private processNext(): void {
@@ -155,6 +174,7 @@ export class TimedBlockKeyboardQueue {
     }
 
     this.processing = true;
+    this.activeExecuted = true;
     void this.run(command, queued);
   }
 
@@ -172,6 +192,8 @@ export class TimedBlockKeyboardQueue {
 
       this.activeSnapshot = result.outcome.task;
       this.activeTaskKey = sourceKey(result.outcome.task);
+      this.activeTaskIdentities.add(sourceIdentity(result.outcome.task));
+      this.activeAnyChanged ||= result.changed;
       this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence);
       if (!this.pending.some((entry) => entry.sequence === queued.sequence)) {
         this.finishSequence(queued.sequence);
@@ -194,9 +216,16 @@ export class TimedBlockKeyboardQueue {
   private finishSequence(sequence: number): void {
     if (sequence !== this.activeSequence || !this.activeTaskKey) return;
     const taskKey = this.activeTaskKey;
+    const summary: TimedBlockKeyboardSequenceSummary = {
+      executed: this.activeExecuted,
+      anyChanged: this.activeAnyChanged,
+    };
     this.activeSequence = undefined;
     this.activeTaskKey = undefined;
+    this.activeTaskIdentities.clear();
     this.activeSnapshot = undefined;
-    this.hooks.onSettled(taskKey, sequence);
+    this.activeExecuted = false;
+    this.activeAnyChanged = false;
+    this.hooks.onSettled(taskKey, sequence, summary);
   }
 }

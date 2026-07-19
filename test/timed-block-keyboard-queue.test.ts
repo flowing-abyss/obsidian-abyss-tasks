@@ -51,6 +51,10 @@ function ok(updated: TaskSnapshot): TaskCommandResult {
   return { type: 'ok', changed: true, outcome: { type: 'task', task: updated } };
 }
 
+function okUnchanged(updated: TaskSnapshot): TaskCommandResult {
+  return { type: 'ok', changed: false, outcome: { type: 'task', task: updated } };
+}
+
 function harness(execute = vi.fn<TaskApplicationApi['execute']>()) {
   const api: TaskApplicationApi = {
     queries: queryApiForTasks(() => []),
@@ -370,7 +374,84 @@ describe('TimedBlockKeyboardQueue', () => {
     second.resolve(ok(final));
     await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
     expect(hooks.onCommitted.mock.calls.map((call) => call[2])).toEqual([1, 1]);
-    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:5', 1);
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:5', 1, {
+      executed: true,
+      anyChanged: true,
+    });
+  });
+
+  it('keeps outgoing source aliases in the same sequence and executes them against the latest returned ref', async () => {
+    const first = deferred<TaskCommandResult>();
+    const second = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { queue, hooks } = harness(execute);
+    const original = taskAt('09:00', 'revision-1', { line: 4 });
+    const moved = taskAt('09:15', 'revision-2', { line: 5 });
+    const final = taskAt('09:30', 'revision-3', { line: 6 });
+    hooks.onCommitted.mockImplementationOnce(() => {
+      expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 })).toBe(1);
+    });
+
+    expect(queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 })).toBe(1);
+    first.resolve(ok(moved));
+    await expectSecondCall(execute);
+
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: {
+          type: 'task',
+          ref: expect.objectContaining({ line: 5, revision: 'revision-2' }),
+        },
+      }),
+    );
+    second.resolve(ok(final));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+    expect(hooks.onCommitted.mock.calls.map((call) => call[2])).toEqual([1, 1]);
+    expect(hooks.onSettled).toHaveBeenCalledWith(
+      'qa.md:6',
+      1,
+      expect.objectContaining({ executed: true, anyChanged: true }),
+    );
+  });
+
+  it('starts a new sequence for an unknown revision that now occupies an outgoing source line', async () => {
+    const first = deferred<TaskCommandResult>();
+    const second = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { queue, hooks } = harness(execute);
+    const original = taskAt('09:00', 'revision-1', { line: 4 });
+    const moved = taskAt('09:15', 'revision-2', { line: 5 });
+    const replacement = taskAt('14:00', 'replacement-revision', { line: 4 });
+    let replacementSequence: number | undefined;
+    hooks.onCommitted.mockImplementationOnce(() => {
+      replacementSequence = queue.enqueue(replacement, { type: 'move-time', deltaMinutes: 15 });
+    });
+
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+    first.resolve(ok(moved));
+    await expectSecondCall(execute);
+
+    expect(replacementSequence).toBe(2);
+    expect(execute).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        target: {
+          type: 'task',
+          ref: expect.objectContaining({ line: 4, revision: 'replacement-revision' }),
+        },
+      }),
+    );
+    second.resolve(ok(taskAt('14:15', 'replacement-revision-2', { line: 4 })));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+    expect(hooks.onSettled.mock.calls[0]?.[1]).toBe(2);
   });
 
   it.each([
@@ -384,7 +465,50 @@ describe('TimedBlockKeyboardQueue', () => {
 
     expect(sequence).toBeUndefined();
     expect(execute).not.toHaveBeenCalled();
-    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1);
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
+      executed: false,
+      anyChanged: false,
+    });
+  });
+
+  it('settles an executed unchanged command without reporting a sequence change', async () => {
+    const result = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValueOnce(result.promise);
+    const { queue, hooks } = harness(execute);
+    const snapshot = taskAt('00:00');
+
+    queue.enqueue(snapshot, { type: 'move-time', deltaMinutes: -15 });
+    result.resolve(okUnchanged(snapshot));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
+      executed: true,
+      anyChanged: false,
+    });
+  });
+
+  it('retains anyChanged when an earlier command changed and a later command is unchanged', async () => {
+    const first = deferred<TaskCommandResult>();
+    const second = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { queue, hooks } = harness(execute);
+    const original = taskAt('00:15');
+    const clamped = taskAt('00:00', 'revision-2');
+
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    first.resolve(ok(clamped));
+    await expectSecondCall(execute);
+    second.resolve(okUnchanged(clamped));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
+      executed: true,
+      anyChanged: true,
+    });
   });
 
   it.each(['throw', 'reject'] as const)(
@@ -456,7 +580,10 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.present).toHaveBeenCalledWith(failure);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(hooks.onCommitted).not.toHaveBeenCalled();
-    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1);
+    expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
+      executed: true,
+      anyChanged: false,
+    });
   });
 
   it('gives a newly focused task ownership while a stale task remains in flight', async () => {
@@ -492,7 +619,10 @@ describe('TimedBlockKeyboardQueue', () => {
       { type: 'move-time', deltaMinutes: 15 },
       2,
     );
-    expect(hooks.onSettled).toHaveBeenCalledWith('b.md:0', 2);
+    expect(hooks.onSettled).toHaveBeenCalledWith('b.md:0', 2, {
+      executed: true,
+      anyChanged: true,
+    });
   });
 
   it('cancel suppresses every late hook from an in-flight command', async () => {
