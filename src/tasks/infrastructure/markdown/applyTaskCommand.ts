@@ -86,13 +86,26 @@ type SchedulingEditPlan = {
   readonly requestedFields: readonly SchedulingDateField[];
 };
 
+function parsedLocalDate(value: string) {
+  try {
+    return localDate(value);
+  } catch {
+    return undefined;
+  }
+}
+
 function shiftScheduleEditPlan(
   parsed: ParsedTaskLine,
   days: -1 | 1,
 ): SchedulingEditPlan | LineEditResult {
   if (parsed.planning.start && parsed.planning.due) {
-    const start = shiftLocalDate(localDate(parsed.planning.start), days);
-    const due = shiftLocalDate(localDate(parsed.planning.due), days);
+    const startDate = parsedLocalDate(parsed.planning.start);
+    const dueDate = parsedLocalDate(parsed.planning.due);
+    if (!startDate || !dueDate) {
+      return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
+    }
+    const start = shiftLocalDate(startDate, days);
+    const due = shiftLocalDate(dueDate, days);
     if (!start || !due) {
       return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
     }
@@ -109,7 +122,11 @@ function shiftScheduleEditPlan(
   if (!value) {
     return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'schedule' }] };
   }
-  const shifted = shiftLocalDate(localDate(value), days);
+  const date = parsedLocalDate(value);
+  if (!date) {
+    return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
+  }
+  const shifted = shiftLocalDate(date, days);
   if (!shifted) {
     return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
   }

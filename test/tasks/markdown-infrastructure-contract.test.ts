@@ -132,6 +132,19 @@ describe('markdown infrastructure contracts', () => {
   });
 
   it.each([
+    '- [ ] malformed due 📅 2026-02-30',
+    '- [ ] malformed span 🛫 2026-02-30 📅 2026-03-01',
+  ])(
+    'returns invalid rather than throwing for a regex-recognized malformed schedule date',
+    (source) => {
+      expect(applyTaskCommand(codec, source, { type: 'shift-schedule', ref, days: 1 })).toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-date', field: 'schedule' }],
+      });
+    },
+  );
+
+  it.each([
     {
       name: 'multiline body',
       markdownBody: 'first\nsecond',

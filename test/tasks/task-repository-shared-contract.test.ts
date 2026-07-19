@@ -1158,6 +1158,34 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
     });
 
     it.each([
+      {
+        source: '- [ ] malformed due 📅 2026-02-30\n',
+        days: 1 as const,
+      },
+      {
+        source: '- [ ] malformed span 🛫 2026-02-30 📅 2026-03-01\n',
+        days: 1 as const,
+      },
+      {
+        source: '- [ ] lower span 🛫 0000-01-01 📅 0000-01-02\n',
+        days: -1 as const,
+      },
+      {
+        source: '- [ ] upper span 🛫 9999-12-30 📅 9999-12-31\n',
+        days: 1 as const,
+      },
+    ])('rejects an invalid span shift without changing bytes', async ({ source, days }) => {
+      const h = await makeHarness(adapter, source);
+      await expect(
+        h.repository.edit({ type: 'shift-schedule', ref: rootRef(h, source), days }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-date', field: 'schedule' }],
+      });
+      expect(await h.read()).toBe(source);
+    });
+
+    it.each([
       ['start', '2026-07-09', '🛫 2026-07-09 📅 2026-07-20'],
       ['due', '2026-07-21', '🛫 2026-07-10 📅 2026-07-21'],
     ] as const)('sets the %s span boundary', async (boundary, date, expected) => {
