@@ -98,6 +98,7 @@ export class RightPanel {
     private settings?: CalendarSettings,
     onSuccessfulMutation?: (ref?: TaskRef) => void,
     private tasks?: TaskApplicationApi,
+    private onRenderHeaderActions?: (actions: HTMLElement) => void,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -323,6 +324,7 @@ export class RightPanel {
       e.stopPropagation();
       this.renderContextMenu(currentTask, menuBtn);
     });
+    this.onRenderHeaderActions?.(headerActions);
 
     // Metadata chips — available for both TaskSnapshot and SubtaskSnapshot
     {

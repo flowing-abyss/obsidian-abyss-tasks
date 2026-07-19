@@ -68,8 +68,18 @@ describe('renderStatusMarker', () => {
     expect(el.hasAttribute('aria-checked')).toBe(false);
     expect(el.hasAttribute('aria-label')).toBe(false);
     expect(el.hasAttribute('tabindex')).toBe(false);
+    expect(el.classList.contains('tc-status-marker--inert')).toBe(true);
     expect(left).not.toHaveBeenCalled();
     expect(context).not.toHaveBeenCalled();
+  });
+
+  it('styles inert preview markers with the default cursor', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const rule = /\.tc-status-marker--inert\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+
+    expect(rule).toMatch(/cursor:\s*default/u);
   });
 
   it('renders a chip with the type + priority data attrs and an icon (no color)', () => {

@@ -131,6 +131,35 @@ async function makePanel(
 }
 
 describe('RightPanel render lifecycle', () => {
+  it('calls the header-actions hook with each newly rendered actions container', async () => {
+    const app = await createAppWithFiles({});
+    const state = new AppState();
+    const renderHeaderActions = vi.fn<(actions: HTMLElement) => void>();
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      undefined,
+      renderHeaderActions,
+    );
+    const el = freshContainer();
+    panel.mount(el);
+    expect(renderHeaderActions).not.toHaveBeenCalled();
+
+    state.set('taskStack', [task({ title: 'First' })]);
+    const firstActions = renderHeaderActions.mock.calls[0]?.[0];
+    expect(firstActions?.classList.contains('tc-right-header-actions')).toBe(true);
+    expect(firstActions?.parentElement?.classList.contains('tc-right-header')).toBe(true);
+
+    state.set('taskStack', [task({ title: 'Second' })]);
+    const secondActions = renderHeaderActions.mock.calls[1]?.[0];
+    expect(renderHeaderActions).toHaveBeenCalledTimes(2);
+    expect(secondActions).not.toBe(firstActions);
+    expect(secondActions?.parentElement).toBe(el.querySelector('.tc-right-header'));
+  });
+
   it('mount subscribes to taskStack → re-renders when stack changes', async () => {
     const { state, el } = await makePanel();
     expect(el.querySelector('.tc-right-title-view')).toBeNull();

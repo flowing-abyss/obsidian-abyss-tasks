@@ -69,22 +69,14 @@ export class TaskModal {
       this.settings,
       (root) => this.acknowledgeOwnWrite(root),
       this.tasks,
+      (actions) => this.renderCloseButton(actions),
     );
     this.innerPanel.mount(panelEl);
 
-    // Insert close button into the panel's header actions row (flex row, not absolutely positioned)
-    const headerActions = panelEl.querySelector<HTMLElement>('.tc-right-header-actions');
-    const closeBtn = activeDocument.createElement('button');
-    closeBtn.className = 'tc-right-action-btn tc-modal-close-btn';
-    closeBtn.setAttribute('aria-label', 'Close');
-    closeBtn.setAttribute('title', 'Close');
-    closeBtn.textContent = '✕';
-    closeBtn.addEventListener('click', () => this.close());
-    if (headerActions) {
-      headerActions.appendChild(closeBtn);
-    } else {
-      panelEl.appendChild(closeBtn);
-    }
+    // A mocked/legacy panel may not invoke the render hook. Preserve the direct fallback.
+    this.renderCloseButton(
+      panelEl.querySelector<HTMLElement>('.tc-right-header-actions') ?? panelEl,
+    );
 
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) this.close();
@@ -94,6 +86,21 @@ export class TaskModal {
       if (e.key === 'Escape') this.close();
     };
     this.ownerDoc.addEventListener('keydown', this.keyHandler);
+  }
+
+  private renderCloseButton(parent: HTMLElement): void {
+    const existing = this.modalEl?.querySelector<HTMLElement>('.tc-modal-close-btn');
+    if (existing) {
+      if (existing.parentElement !== parent) parent.appendChild(existing);
+      return;
+    }
+    const closeBtn = (this.ownerDoc ?? activeDocument).createElement('button');
+    closeBtn.className = 'tc-right-action-btn tc-modal-close-btn';
+    closeBtn.setAttribute('aria-label', 'Close');
+    closeBtn.setAttribute('title', 'Close');
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', () => this.close());
+    parent.appendChild(closeBtn);
   }
 
   close(): void {

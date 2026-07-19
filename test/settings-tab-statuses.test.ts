@@ -156,6 +156,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       marker!.dispatchEvent(click);
       expect(marker!.hasAttribute('role')).toBe(false);
       expect(marker!.hasAttribute('tabindex')).toBe(false);
+      expect(marker!.classList.contains('tc-status-marker--inert')).toBe(true);
       expect(click.defaultPrevented).toBe(false);
     }
   });

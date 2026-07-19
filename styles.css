@@ -2631,6 +2631,9 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   line-height: 1;
   text-align: center;
 }
+.tc-status-marker--inert {
+  cursor: default;
+}
 /* Shape by status-group (type): in-progress is the only circular group. */
 .tc-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
