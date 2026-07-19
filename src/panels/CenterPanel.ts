@@ -157,7 +157,10 @@ export class CenterPanel {
         },
         onSettled: (_taskKey, sequence, summary) => {
           if (this.pendingTimedBlockFocus?.queueSequence === sequence) {
-            if (!summary.anyChanged || this.restoredKeyboardSequences.has(sequence)) {
+            if (
+              (!summary.anyChanged && !summary.sourceChanged) ||
+              this.restoredKeyboardSequences.has(sequence)
+            ) {
               this.clearTimedBlockFocus(sequence);
             } else {
               this.settledKeyboardSequences.add(sequence);
@@ -902,6 +905,7 @@ export class CenterPanel {
     const pending = this.pendingTimedBlockFocus;
     if (pending?.filePath === filePath && pending.line === line) return;
     if (pending?.queueSequence !== undefined) {
+      this.keyboardQueue?.cancel();
       this.settledKeyboardSequences.delete(pending.queueSequence);
       this.restoredKeyboardSequences.delete(pending.queueSequence);
     }

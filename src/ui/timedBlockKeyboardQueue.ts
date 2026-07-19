@@ -18,6 +18,7 @@ export interface TimedBlockKeyboardQueueHooks {
 interface TimedBlockKeyboardSequenceSummary {
   readonly executed: boolean;
   readonly anyChanged: boolean;
+  readonly sourceChanged: boolean;
 }
 
 interface QueuedIntent {
@@ -124,6 +125,7 @@ export class TimedBlockKeyboardQueue {
   private activeSnapshot: TaskSnapshot | undefined;
   private activeExecuted = false;
   private activeAnyChanged = false;
+  private activeSourceChanged = false;
 
   constructor(
     private api: TaskApplicationApi,
@@ -140,6 +142,7 @@ export class TimedBlockKeyboardQueue {
       this.activeSnapshot = task;
       this.activeExecuted = false;
       this.activeAnyChanged = false;
+      this.activeSourceChanged = false;
       this.pending = [];
     }
     const sequence = this.activeSequence;
@@ -156,6 +159,7 @@ export class TimedBlockKeyboardQueue {
     this.activeSnapshot = undefined;
     this.activeExecuted = false;
     this.activeAnyChanged = false;
+    this.activeSourceChanged = false;
   }
 
   private processNext(): void {
@@ -191,7 +195,9 @@ export class TimedBlockKeyboardQueue {
       }
 
       this.activeSnapshot = result.outcome.task;
-      this.activeTaskKey = sourceKey(result.outcome.task);
+      const nextTaskKey = sourceKey(result.outcome.task);
+      this.activeSourceChanged ||= nextTaskKey !== this.activeTaskKey;
+      this.activeTaskKey = nextTaskKey;
       this.activeTaskIdentities.add(sourceIdentity(result.outcome.task));
       this.activeAnyChanged ||= result.changed;
       this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence);
@@ -219,6 +225,7 @@ export class TimedBlockKeyboardQueue {
     const summary: TimedBlockKeyboardSequenceSummary = {
       executed: this.activeExecuted,
       anyChanged: this.activeAnyChanged,
+      sourceChanged: this.activeSourceChanged,
     };
     this.activeSequence = undefined;
     this.activeTaskKey = undefined;
@@ -226,6 +233,7 @@ export class TimedBlockKeyboardQueue {
     this.activeSnapshot = undefined;
     this.activeExecuted = false;
     this.activeAnyChanged = false;
+    this.activeSourceChanged = false;
     this.hooks.onSettled(taskKey, sequence, summary);
   }
 }

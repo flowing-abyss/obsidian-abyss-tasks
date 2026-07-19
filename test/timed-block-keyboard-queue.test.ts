@@ -377,6 +377,7 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:5', 1, {
       executed: true,
       anyChanged: true,
+      sourceChanged: true,
     });
   });
 
@@ -468,6 +469,7 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
       executed: false,
       anyChanged: false,
+      sourceChanged: false,
     });
   });
 
@@ -484,8 +486,37 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
       executed: true,
       anyChanged: false,
+      sourceChanged: false,
     });
   });
+
+  it.each([
+    ['line', { line: 4 }, { line: 5 }],
+    ['path', { filePath: 'before.md' }, { filePath: 'after.md' }],
+  ] as const)(
+    'reports a changed:false %s move as a source change',
+    async (_label, originalOverrides, movedOverrides) => {
+      const result = deferred<TaskCommandResult>();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValueOnce(result.promise);
+      const { queue, hooks } = harness(execute);
+      const original = taskAt('09:00', 'revision-1', originalOverrides);
+      const moved = taskAt('09:00', 'revision-2', movedOverrides);
+
+      queue.enqueue(original, { type: 'move-time', deltaMinutes: 15 });
+      result.resolve(okUnchanged(moved));
+      await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+      expect(hooks.onSettled).toHaveBeenCalledWith(
+        `${moved.source.filePath}:${moved.source.line}`,
+        1,
+        {
+          executed: true,
+          anyChanged: false,
+          sourceChanged: true,
+        },
+      );
+    },
+  );
 
   it('retains anyChanged when an earlier command changed and a later command is unchanged', async () => {
     const first = deferred<TaskCommandResult>();
@@ -508,6 +539,7 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
       executed: true,
       anyChanged: true,
+      sourceChanged: false,
     });
   });
 
@@ -583,6 +615,7 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('qa.md:0', 1, {
       executed: true,
       anyChanged: false,
+      sourceChanged: false,
     });
   });
 
@@ -622,6 +655,7 @@ describe('TimedBlockKeyboardQueue', () => {
     expect(hooks.onSettled).toHaveBeenCalledWith('b.md:0', 2, {
       executed: true,
       anyChanged: true,
+      sourceChanged: false,
     });
   });
 

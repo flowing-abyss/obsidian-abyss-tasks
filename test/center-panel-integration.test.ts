@@ -1738,6 +1738,45 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     },
   );
 
+  it.each(['before', 'after'] as const)(
+    'retains a changed:false moved-source locator when the index arrives %s the result',
+    async (indexOrder) => {
+      const pending = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const original = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-1', 4);
+      const moved = keyboardSnapshot(TODAY, '09:00', 'moved.md', 'revision-2', 5);
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Day');
+
+      const outgoing = timedBlock(h.el);
+      outgoing.focus();
+      press(outgoing, 'ArrowDown');
+      if (indexOrder === 'before') {
+        h.setSnapshots([moved]);
+        h.emit();
+        await flushMicrotasks();
+      }
+
+      pending.resolve(okTaskUnchanged(moved));
+      await flushMicrotasks();
+      if (indexOrder === 'after') {
+        h.setSnapshots([moved]);
+        h.emit();
+        await flushMicrotasks();
+      }
+
+      const focused = timedBlock(h.el);
+      expect(focused.dataset['tcTaskLine']).toBe('5');
+      expect(activeDocument.activeElement).toBe(focused);
+
+      const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      nav.focus();
+      h.emit();
+      await flushMicrotasks();
+      expect(activeDocument.activeElement).toBe(nav);
+    },
+  );
+
   it('rebases the pending locator when a returned snapshot moves to a new line', async () => {
     const first = deferredResult();
     const second = deferredResult();
@@ -1812,6 +1851,57 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const focused = timedBlock(h.el);
     expect(focused.dataset['tcTaskLine']).toBe('6');
     expect(activeDocument.activeElement).toBe(focused);
+  });
+
+  it('cancels an aliased sequence when explicit focus moves to a distinct timed block', async () => {
+    const first = deferredResult();
+    const staleSecond = deferredResult();
+    const replacementResult = deferredResult();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(staleSecond.promise)
+      .mockReturnValueOnce(replacementResult.promise);
+    const original = keyboardSnapshot(TODAY, '09:00', 'shared.md', 'shared-revision', 4);
+    const moved = keyboardSnapshot(TODAY, '09:15', 'shared.md', 'moved-revision', 5);
+    const staleFinal = keyboardSnapshot(TODAY, '09:30', 'shared.md', 'stale-revision', 5);
+    const replacement = keyboardSnapshot(TODAY, '14:00', 'shared.md', 'shared-revision', 4);
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const outgoing = timedBlock(h.el);
+    outgoing.focus();
+    press(outgoing, 'ArrowDown');
+    press(outgoing, 'ArrowDown');
+    first.resolve(okTask(moved));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+
+    h.setSnapshots([replacement, moved]);
+    h.emit();
+    await flushMicrotasks();
+    const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
+      (block) => block.dataset['tcTaskLine'] === '4',
+    )!;
+    replacementBlock.focus();
+    press(replacementBlock, 'ArrowDown');
+
+    staleSecond.resolve(okTask(staleFinal));
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(3));
+    expect(execute).toHaveBeenNthCalledWith(3, {
+      type: 'patch',
+      target: {
+        type: 'task',
+        ref: expect.objectContaining({
+          line: 4,
+          revision: 'shared-revision',
+        }),
+      },
+      patch: { time: { type: 'set', value: '14:15' } },
+    });
+
+    replacementResult.resolve(
+      okTask(keyboardSnapshot(TODAY, '14:15', 'shared.md', 'replacement-revision', 4)),
+    );
   });
 
   it.each(['throw', 'reject'] as const)(
