@@ -158,6 +158,7 @@ export function renderTimedBlocksForDay(
     const block = hourColumnEl.createDiv({ cls: 'tc-tg-block' });
     block.setAttribute('data-tc-task-file', p.task.source.filePath);
     block.setAttribute('data-tc-task-line', String(p.task.source.line));
+    block.setAttribute('data-tc-task-revision', p.task.ref.revision);
     block.setAttribute('data-tc-start-minutes', String(p.startMinutes));
     // Keep each block as the stable focus root used by relative arrow intents and same-day
     // Tab/Shift+Tab navigation, including when a key event starts from a nested link.

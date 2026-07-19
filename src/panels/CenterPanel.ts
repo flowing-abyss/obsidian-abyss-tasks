@@ -71,8 +71,16 @@ type CreateTaskCommand = Extract<
 interface TimedBlockFocusLocator {
   readonly filePath: string;
   readonly line: number;
+  readonly revision: string;
   readonly sequence: number;
   readonly queueSequence?: number;
+  readonly originElement?: HTMLElement;
+}
+
+interface PendingTimedBlockRestoration {
+  readonly queueSequence: number;
+  readonly focusSequence: number;
+  readonly renderGeneration: number;
 }
 
 function projectNameFromPath(path: string): string {
@@ -121,6 +129,9 @@ export class CenterPanel {
   private pendingTimedBlockFocus: TimedBlockFocusLocator | undefined;
   private settledKeyboardSequences = new Set<number>();
   private restoredKeyboardSequences = new Set<number>();
+  private committedKeyboardSequences = new Set<number>();
+  private pendingTimedBlockRestorations = new Map<number, PendingTimedBlockRestoration>();
+  private nextTimedBlockRestoration = 0;
   private nextTimedBlockFocusSequence = 0;
   private calendarRenderGeneration = 0;
   private taskModal: TaskModal | null = null;
@@ -158,7 +169,15 @@ export class CenterPanel {
         onSettled: (_taskKey, sequence, summary) => {
           if (this.pendingTimedBlockFocus?.queueSequence === sequence) {
             if (
-              (!summary.anyChanged && !summary.sourceChanged) ||
+              (summary.anyChanged || summary.sourceChanged) &&
+              !this.committedKeyboardSequences.has(sequence)
+            ) {
+              this.committedKeyboardSequences.add(sequence);
+              this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
+            }
+            const pendingRestoration = this.hasPendingTimedBlockRestoration(sequence);
+            if (
+              (!summary.anyChanged && !summary.sourceChanged && !pendingRestoration) ||
               this.restoredKeyboardSequences.has(sequence)
             ) {
               this.clearTimedBlockFocus(sequence);
@@ -537,11 +556,19 @@ export class CenterPanel {
     };
     const handleKeyboardIntent = (task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void => {
       if (!this.keyboardQueue) return;
+      const active = activeDocument.activeElement;
+      const originElement =
+        active instanceof HTMLElement
+          ? (active.closest<HTMLElement>('.tc-tg-block') ?? undefined)
+          : undefined;
+      const previousQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       const focusSequence = ++this.nextTimedBlockFocusSequence;
       const provisionalFocus: TimedBlockFocusLocator = {
         filePath: task.source.filePath,
         line: task.source.line,
+        revision: task.ref.revision,
         sequence: focusSequence,
+        originElement,
       };
       this.pendingTimedBlockFocus = provisionalFocus;
       const queueSequence = this.keyboardQueue.enqueue(task, intent);
@@ -549,11 +576,20 @@ export class CenterPanel {
         if (this.pendingTimedBlockFocus?.sequence === focusSequence) {
           this.clearTimedBlockFocus();
         }
+        if (previousQueueSequence !== undefined) {
+          this.clearKeyboardSequenceState(previousQueueSequence);
+        }
         return;
       }
       if (this.pendingTimedBlockFocus?.sequence !== focusSequence) return;
+      if (previousQueueSequence !== undefined && previousQueueSequence !== queueSequence) {
+        this.clearKeyboardSequenceState(previousQueueSequence);
+      }
       this.settledKeyboardSequences.delete(queueSequence);
       this.restoredKeyboardSequences.delete(queueSequence);
+      if (previousQueueSequence !== queueSequence) {
+        this.committedKeyboardSequences.delete(queueSequence);
+      }
       this.pendingTimedBlockFocus = {
         ...provisionalFocus,
         queueSequence,
@@ -883,6 +919,8 @@ export class CenterPanel {
     this.pendingTimedBlockFocus = undefined;
     this.settledKeyboardSequences.clear();
     this.restoredKeyboardSequences.clear();
+    this.committedKeyboardSequences.clear();
+    this.pendingTimedBlockRestorations.clear();
     this.calendarRenderGeneration += 1;
   }
 
@@ -898,27 +936,90 @@ export class CenterPanel {
   private retainTimedBlockFocus(block: HTMLElement): void {
     const filePath = block.dataset['tcTaskFile'];
     const lineText = block.dataset['tcTaskLine'];
-    if (filePath === undefined || lineText === undefined) return;
+    const revision = block.dataset['tcTaskRevision'];
+    if (filePath === undefined || lineText === undefined || revision === undefined) return;
     const line = Number(lineText);
     if (!Number.isInteger(line)) return;
 
     const pending = this.pendingTimedBlockFocus;
+    const isDifferentPreCommitOrigin =
+      pending?.queueSequence !== undefined &&
+      !this.committedKeyboardSequences.has(pending.queueSequence) &&
+      pending.originElement !== undefined &&
+      block !== pending.originElement &&
+      block.dataset['tcTaskRevision'] === pending.revision;
+    if (isDifferentPreCommitOrigin) {
+      this.keyboardQueue?.cancel();
+      this.clearTimedBlockFocus(pending.queueSequence);
+      this.pendingTimedBlockFocus = {
+        filePath,
+        line,
+        revision,
+        sequence: ++this.nextTimedBlockFocusSequence,
+        originElement: block,
+      };
+      return;
+    }
     if (pending?.filePath === filePath && pending.line === line) return;
     if (pending?.queueSequence !== undefined) {
       this.keyboardQueue?.cancel();
-      this.settledKeyboardSequences.delete(pending.queueSequence);
-      this.restoredKeyboardSequences.delete(pending.queueSequence);
+      this.clearKeyboardSequenceState(pending.queueSequence);
     }
     this.pendingTimedBlockFocus = {
       filePath,
       line,
+      revision,
       sequence: ++this.nextTimedBlockFocusSequence,
+      originElement: block,
     };
   }
 
   private deferTimedBlockFocus(container: HTMLElement, renderGeneration: number): void {
-    const focusSequence = this.nextTimedBlockFocusSequence;
+    const scheduled = this.pendingTimedBlockFocus;
+    if (!scheduled) return;
+    const focusSequence = scheduled.sequence;
+    const queueSequence = scheduled.queueSequence;
+
+    const scheduledCandidate = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-tg-block'),
+    ).find(
+      (block) =>
+        block.dataset['tcTaskFile'] === scheduled.filePath &&
+        block.dataset['tcTaskLine'] === String(scheduled.line),
+    );
+    const isPreCommit =
+      queueSequence !== undefined && !this.committedKeyboardSequences.has(queueSequence);
+    if (isPreCommit && scheduledCandidate?.dataset['tcTaskRevision'] === scheduled.revision) {
+      return;
+    }
+    if (
+      queueSequence !== undefined &&
+      !isPreCommit &&
+      scheduledCandidate?.dataset['tcTaskRevision'] !== scheduled.revision
+    ) {
+      return;
+    }
+    const restorationId =
+      queueSequence !== undefined &&
+      scheduledCandidate?.isConnected === true &&
+      scheduledCandidate !== scheduled.originElement
+        ? ++this.nextTimedBlockRestoration
+        : undefined;
+    if (restorationId !== undefined) {
+      this.pendingTimedBlockRestorations.set(restorationId, {
+        queueSequence,
+        focusSequence,
+        renderGeneration,
+      });
+    }
+
     window.setTimeout(() => {
+      if (
+        restorationId !== undefined &&
+        !this.pendingTimedBlockRestorations.delete(restorationId)
+      ) {
+        return;
+      }
       if (renderGeneration !== this.calendarRenderGeneration) return;
       const pending = this.pendingTimedBlockFocus;
       if (!pending || pending.sequence !== focusSequence || this.state.get('mode') !== 'calendar')
@@ -928,6 +1029,20 @@ export class CenterPanel {
           block.dataset['tcTaskFile'] === pending.filePath &&
           block.dataset['tcTaskLine'] === String(pending.line),
       );
+      if (
+        pending.queueSequence !== undefined &&
+        !this.committedKeyboardSequences.has(pending.queueSequence) &&
+        candidate?.dataset['tcTaskRevision'] === pending.revision
+      ) {
+        return;
+      }
+      if (
+        pending.queueSequence !== undefined &&
+        this.committedKeyboardSequences.has(pending.queueSequence) &&
+        candidate?.dataset['tcTaskRevision'] !== pending.revision
+      ) {
+        return;
+      }
       if (!candidate?.isConnected) return;
       candidate.focus();
       candidate.classList.add('is-selected');
@@ -953,10 +1068,31 @@ export class CenterPanel {
     if (queueSequence !== undefined && pending?.queueSequence !== queueSequence) return;
     const ownedSequence = pending?.queueSequence ?? queueSequence;
     if (ownedSequence !== undefined) {
-      this.settledKeyboardSequences.delete(ownedSequence);
-      this.restoredKeyboardSequences.delete(ownedSequence);
+      this.clearKeyboardSequenceState(ownedSequence);
     }
     this.pendingTimedBlockFocus = undefined;
+  }
+
+  private hasPendingTimedBlockRestoration(queueSequence: number): boolean {
+    const pending = this.pendingTimedBlockFocus;
+    if (!pending || pending.queueSequence !== queueSequence) return false;
+    return Array.from(this.pendingTimedBlockRestorations.values()).some(
+      (restoration) =>
+        restoration.queueSequence === queueSequence &&
+        restoration.focusSequence === pending.sequence &&
+        restoration.renderGeneration === this.calendarRenderGeneration,
+    );
+  }
+
+  private clearKeyboardSequenceState(queueSequence: number): void {
+    this.settledKeyboardSequences.delete(queueSequence);
+    this.restoredKeyboardSequences.delete(queueSequence);
+    this.committedKeyboardSequences.delete(queueSequence);
+    for (const [id, restoration] of this.pendingTimedBlockRestorations) {
+      if (restoration.queueSequence === queueSequence) {
+        this.pendingTimedBlockRestorations.delete(id);
+      }
+    }
   }
 
   private handleKeyboardCommit(
@@ -972,17 +1108,23 @@ export class CenterPanel {
     ) {
       return;
     }
-    if (pending.filePath !== updated.source.filePath || pending.line !== updated.source.line) {
+    this.committedKeyboardSequences.add(queueSequence);
+    if (
+      pending.filePath !== updated.source.filePath ||
+      pending.line !== updated.source.line ||
+      pending.revision !== updated.ref.revision
+    ) {
       this.restoredKeyboardSequences.delete(queueSequence);
       pending = {
         ...pending,
         filePath: updated.source.filePath,
         line: updated.source.line,
+        revision: updated.ref.revision,
         sequence: ++this.nextTimedBlockFocusSequence,
       };
       this.pendingTimedBlockFocus = pending;
-      this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
     }
+    this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
     if (intent.type !== 'shift-schedule') return;
 
     const anchor =
