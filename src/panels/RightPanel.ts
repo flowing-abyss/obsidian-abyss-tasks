@@ -294,6 +294,20 @@ export class RightPanel {
 
     // Header
     const header = this.el.createDiv({ cls: 'tc-right-header' });
+    renderStatusMarker(header, {
+      task,
+      registry: this.statusRegistry,
+      onLeftClick: () => void this.toggleTaskLike(task),
+      onContextMenu: (event) => {
+        event.stopPropagation();
+        showStatusMenuAt(event, {
+          task,
+          registry: this.statusRegistry,
+          onPickStatus: (symbol) => void this.setStatus(task, symbol),
+          onPickPriority: (priority) => void this.updatePriority(task, priority),
+        });
+      },
+    });
     this.renderTitleBlock(header, task);
 
     const headerActions = header.createDiv({ cls: 'tc-right-header-actions' });
@@ -1074,7 +1088,11 @@ export class RightPanel {
   }
 
   private async toggleSubTask(sub: SubtaskSnapshot): Promise<void> {
-    const target = this.planningTarget(sub);
+    await this.toggleTaskLike(sub);
+  }
+
+  private async toggleTaskLike(task: TaskLike): Promise<void> {
+    const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
     const result = await this.tasks.execute({ type: 'toggle-completion', target });
     this.applyPlanningResult(result, target);

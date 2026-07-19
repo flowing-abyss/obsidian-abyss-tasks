@@ -8,6 +8,7 @@ interface Opts {
   // (menus/previews) can pass a plain object literal instead of a cast.
   task: { statusSymbol: string; priority?: TaskPriority };
   registry: StatusRegistry;
+  interactive?: boolean;
   onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
@@ -30,7 +31,7 @@ function getLucideIcon(iconId: string): SVGElement | null {
 }
 
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
-  const { task, registry, onLeftClick, onContextMenu } = opts;
+  const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
   const def = registry.bySymbol(task.statusSymbol);
   const el = parent.createSpan({ cls: 'tc-status-marker' });
   el.setAttribute('data-status', def?.id ?? 'other');
@@ -49,14 +50,26 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
     if (raw) el.setText(raw);
   } // else: def with icon === '' → empty chip (plain to-do)
 
-  el.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onLeftClick();
-  });
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    onContextMenu(e);
-  });
+  if (interactive) {
+    el.setAttribute('role', 'checkbox');
+    el.setAttribute('aria-checked', def?.type === 'done' ? 'true' : 'false');
+    el.setAttribute('aria-label', `Task status: ${def?.name ?? task.statusSymbol}`);
+    el.setAttribute('tabindex', '0');
+    el.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onLeftClick();
+    });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      onContextMenu(e);
+    });
+    el.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      onLeftClick();
+    });
+  }
   return el;
 }

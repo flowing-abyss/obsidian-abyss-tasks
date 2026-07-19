@@ -19,6 +19,7 @@ import {
   createAppWithFiles,
   flushMicrotasks,
   freshContainer,
+  queryApiForTasks,
   subtask,
   task,
   taskComment,
@@ -95,6 +96,7 @@ async function makePanel(
   files: Record<string, string> = {},
   tasks?: TaskApplicationApi,
   statusRegistry: StatusRegistry = testStatusRegistry(),
+  onSuccessfulMutation?: (ref?: TaskRef) => void,
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement }> {
   const app = await createAppWithFiles(files);
   const state = new AppState();
@@ -120,7 +122,7 @@ async function makePanel(
     app,
     statusRegistry,
     DEFAULT_SETTINGS,
-    undefined,
+    onSuccessfulMutation,
     tasks ?? defaultTasks,
   );
   const el = freshContainer();
@@ -153,6 +155,134 @@ describe('RightPanel render lifecycle', () => {
 });
 
 describe('RightPanel.renderTask', () => {
+  it.each(['root', 'subtask'] as const)(
+    'renders one shared %s header status control and rebases its successful commands',
+    async (selection) => {
+      const registry = testStatusRegistry();
+      registry.replace([
+        ...registry.all(),
+        {
+          id: 'status-waiting',
+          symbol: 'w',
+          name: 'Waiting',
+          type: 'in-progress',
+          icon: 'pause',
+          core: false,
+        },
+      ]);
+      const rootRef: TaskRef = { filePath: 'f.md', line: 0, revision: 'old' };
+      const childRef = {
+        parent: { type: 'task' as const, ref: rootRef },
+        relativeLine: 1,
+        originalBlock: '  - [w] Child',
+      };
+      const child = subtask({
+        title: 'Child',
+        status: 'in-progress',
+        statusSymbol: 'w',
+        priority: 'F',
+        ref: childRef,
+      });
+      const root = task({
+        title: 'Root',
+        status: 'in-progress',
+        statusSymbol: 'w',
+        priority: 'F',
+        ref: rootRef,
+        subtasks: [child],
+      });
+      const freshRootRef: TaskRef = { ...rootRef, revision: 'fresh' };
+      const freshChild = subtask({
+        ...child,
+        ref: { ...childRef, parent: { type: 'task', ref: freshRootRef } },
+      });
+      const freshRoot = task({
+        ...root,
+        ref: freshRootRef,
+        subtasks: [freshChild],
+      });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: freshRoot },
+      });
+      const tasks: TaskApplicationApi = {
+        queries: queryApiForTasks(() => []),
+        execute,
+      };
+      const acknowledge = vi.fn<(ref?: TaskRef) => void>();
+      const { state, el } = await makePanel({}, tasks, registry, acknowledge);
+      state.set('taskStack', selection === 'root' ? [root] : [root, child]);
+
+      const header = el.querySelector<HTMLElement>('.tc-right-header')!;
+      const marker = header.querySelector<HTMLElement>(':scope > .tc-status-marker')!;
+      const title = header.querySelector<HTMLElement>(':scope > .tc-right-title')!;
+      expect(header.querySelectorAll(':scope > .tc-status-marker')).toHaveLength(1);
+      expect(marker).not.toBeNull();
+      expect(marker.nextElementSibling).toBe(title);
+      expect(marker.getAttribute('data-status')).toBe('status-waiting');
+      expect(marker.getAttribute('data-priority')).toBe('F');
+
+      click(marker);
+      await flushMicrotasks();
+
+      const expectedInitialTarget =
+        selection === 'root'
+          ? { type: 'task' as const, ref: rootRef }
+          : { type: 'subtask' as const, ref: childRef };
+      expect(execute).toHaveBeenNthCalledWith(1, {
+        type: 'toggle-completion',
+        target: expectedInitialTarget,
+      });
+      expect(state.get('taskStack')).toEqual(
+        selection === 'root' ? [freshRoot] : [freshRoot, freshChild],
+      );
+
+      const currentMarker = el.querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')!;
+      currentMarker.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      const popover = activeDocument.body.querySelector<HTMLElement>('.tc-status-popover')!;
+      expect(popover.querySelectorAll('.tc-status-popover-row')).toHaveLength(
+        registry.all().length,
+      );
+      expect(popover.querySelectorAll('.tc-status-popover-flag')).toHaveLength(6);
+      const waiting = Array.from(
+        popover.querySelectorAll<HTMLElement>('.tc-status-popover-row'),
+      ).find((row) => row.textContent?.includes('Waiting'))!;
+      click(waiting);
+      await flushMicrotasks();
+
+      const expectedFreshTarget =
+        selection === 'root'
+          ? { type: 'task' as const, ref: freshRootRef }
+          : { type: 'subtask' as const, ref: freshChild.ref };
+      expect(execute).toHaveBeenNthCalledWith(2, {
+        type: 'set-status',
+        target: expectedFreshTarget,
+        symbol: 'w',
+      });
+
+      el.querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      click(
+        activeDocument.body.querySelector<HTMLElement>(
+          ".tc-status-popover-flag[data-tc-priority='A']",
+        )!,
+      );
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenNthCalledWith(3, {
+        type: 'patch',
+        target: expectedFreshTarget,
+        patch: { priority: { type: 'set', value: 'A' } },
+      });
+      expect(acknowledge).toHaveBeenCalledTimes(3);
+      expect(acknowledge).toHaveBeenLastCalledWith(freshRootRef);
+    },
+  );
+
   it('breadcrumb renders only when stack.length > 1', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Parent' }), task({ title: 'Child' })]);
@@ -361,7 +491,7 @@ describe('RightPanel.renderSubTask', () => {
     state.set('taskStack', [
       task({ title: 'parent', subtasks: [sub], source: { filePath: 'f.md', line: 0 } }),
     ]);
-    const marker = el.querySelector<HTMLElement>('.tc-status-marker')!;
+    const marker = el.querySelector<HTMLElement>('.tc-subtask-row .tc-status-marker')!;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await flushMicrotasks(20);
     const content = await readMd(app, 'f.md');

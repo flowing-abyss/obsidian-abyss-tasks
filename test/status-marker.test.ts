@@ -7,6 +7,71 @@ import { renderStatusMarker } from '../src/ui/StatusMarker';
 const reg = new StatusRegistry(buildDefaultTaskStatuses());
 
 describe('renderStatusMarker', () => {
+  it('exposes checkbox semantics and completion state from the status definition', () => {
+    for (const [symbol, checked, name] of [
+      ['x', 'true', 'Done'],
+      [' ', 'false', 'To-do'],
+      ['/', 'false', 'In progress'],
+      ['-', 'false', 'Cancelled'],
+    ] as const) {
+      const parent = document.createElement('div');
+      const el = renderStatusMarker(parent, {
+        task: { statusSymbol: symbol, priority: 'D' },
+        registry: reg,
+        onLeftClick: () => {},
+        onContextMenu: () => {},
+      });
+
+      expect(el.getAttribute('role')).toBe('checkbox');
+      expect(el.getAttribute('aria-checked')).toBe(checked);
+      expect(el.getAttribute('aria-label')).toBe(`Task status: ${name}`);
+      expect(el.getAttribute('tabindex')).toBe('0');
+    }
+  });
+
+  it.each(['Enter', ' '])('activates with %j and prevents the default keyboard action', (key) => {
+    const parent = document.createElement('div');
+    const left = vi.fn();
+    const el = renderStatusMarker(parent, {
+      task: { statusSymbol: ' ', priority: 'D' },
+      registry: reg,
+      onLeftClick: left,
+      onContextMenu: () => {},
+    });
+    const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+
+    el.dispatchEvent(event);
+
+    expect(left).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('renders an inert visual marker when interactive is false', () => {
+    const parent = document.createElement('div');
+    const left = vi.fn();
+    const context = vi.fn();
+    const el = renderStatusMarker(parent, {
+      task: { statusSymbol: '/', priority: 'A' },
+      registry: reg,
+      interactive: false,
+      onLeftClick: left,
+      onContextMenu: context,
+    });
+
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+
+    expect(el.getAttribute('data-status-type')).toBe('in-progress');
+    expect(el.getAttribute('data-priority')).toBe('A');
+    expect(el.hasAttribute('role')).toBe(false);
+    expect(el.hasAttribute('aria-checked')).toBe(false);
+    expect(el.hasAttribute('aria-label')).toBe(false);
+    expect(el.hasAttribute('tabindex')).toBe(false);
+    expect(left).not.toHaveBeenCalled();
+    expect(context).not.toHaveBeenCalled();
+  });
+
   it('renders a chip with the type + priority data attrs and an icon (no color)', () => {
     const parent = document.createElement('div');
     const el = renderStatusMarker(parent, {
@@ -30,6 +95,48 @@ describe('renderStatusMarker', () => {
       onContextMenu: () => {},
     });
     expect(el.getAttribute('data-status-type')).toBe('in-progress');
+  });
+
+  it('keeps default and custom in-progress markers circular after both menu sizing rules', async () => {
+    const registry = new StatusRegistry([
+      ...reg.all(),
+      {
+        id: 'status-waiting',
+        symbol: 'w',
+        name: 'Waiting',
+        type: 'in-progress',
+        icon: '',
+        core: false,
+      },
+    ]);
+    for (const symbol of ['/', 'w']) {
+      const el = renderStatusMarker(document.createElement('div'), {
+        task: { statusSymbol: symbol, priority: 'D' },
+        registry,
+        onLeftClick: () => {},
+        onContextMenu: () => {},
+      });
+      expect(el.getAttribute('data-status-type')).toBe('in-progress');
+    }
+
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+    const popoverSizing = css.indexOf('.tc-status-popover-row .tc-status-marker {');
+    const nativeSizing = css.indexOf('.menu-item-icon .tc-status-marker {');
+    const circularOverride = css.indexOf(
+      ".tc-status-popover-row .tc-status-marker[data-status-type='in-progress']",
+    );
+    const nativeCircularOverride = css.indexOf(
+      ".menu-item-icon .tc-status-marker[data-status-type='in-progress']",
+    );
+    expect(circularOverride).toBeGreaterThan(popoverSizing);
+    expect(circularOverride).toBeGreaterThan(nativeSizing);
+    expect(nativeCircularOverride).toBeGreaterThan(nativeSizing);
+    expect(nativeCircularOverride).toBeLessThan(css.indexOf('{', circularOverride));
+    expect(css.slice(circularOverride, css.indexOf('}', circularOverride))).toContain(
+      'border-radius: 50%',
+    );
   });
 
   it('renders an empty chip for to-do (no icon)', () => {

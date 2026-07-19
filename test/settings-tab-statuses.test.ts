@@ -142,6 +142,24 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expect(body.querySelectorAll('.tc-settings-card-badge')).toHaveLength(4);
   });
 
+  it('keeps both header and editable-card marker previews inert', () => {
+    const { tab } = makeTab();
+    const body = openStatusesSection(tab);
+    const markers = [
+      body.querySelector<HTMLElement>('.tc-status-header-preview .tc-status-marker'),
+      body.querySelector<HTMLElement>('.tc-status-preview .tc-status-marker'),
+    ];
+
+    for (const marker of markers) {
+      expect(marker).not.toBeNull();
+      const click = new MouseEvent('click', { bubbles: true, cancelable: true });
+      marker!.dispatchEvent(click);
+      expect(marker!.hasAttribute('role')).toBe(false);
+      expect(marker!.hasAttribute('tabindex')).toBe(false);
+      expect(click.defaultPrevented).toBe(false);
+    }
+  });
+
   it('core statuses have no delete button by default', () => {
     const { tab, captured } = makeTab();
     const body = openStatusesSection(tab);

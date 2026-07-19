@@ -953,6 +953,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     renderStatusMarker(previewEl, {
       task: { statusSymbol: def.symbol, priority: 'D' },
       registry,
+      interactive: false,
       onLeftClick: () => {},
       onContextMenu: () => {},
     });
@@ -1106,6 +1107,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       renderStatusMarker(previewHost, {
         task: { statusSymbol: def.symbol, priority: 'D' },
         registry,
+        interactive: false,
         onLeftClick: () => {},
         onContextMenu: () => {},
       });

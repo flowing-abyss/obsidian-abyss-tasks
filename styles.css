@@ -3327,6 +3327,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .tc-right-header-actions {
   display: flex;
   gap: 4px;
+  flex-shrink: 0;
 }
 .tc-right-action-btn {
   width: 28px;
@@ -3713,6 +3714,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-width: 1.5px;
   border-radius: 4px;
   cursor: default;
+}
+.tc-status-popover-row .tc-status-marker[data-status-type='in-progress'],
+.menu-item-icon .tc-status-marker[data-status-type='in-progress'] {
+  border-radius: 50%;
 }
 .tc-status-popover-row .tc-status-marker svg {
   width: 11px;

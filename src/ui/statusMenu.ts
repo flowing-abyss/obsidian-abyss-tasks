@@ -48,6 +48,7 @@ export function buildStatusSubmenu(
             renderStatusMarker(iconEl, {
               task: { statusSymbol: def.symbol, priority: 'D' },
               registry,
+              interactive: false,
               onLeftClick: () => {},
               onContextMenu: () => {},
             });
@@ -131,6 +132,7 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): void {
         // irrelevant here so it's pinned to 'D' to avoid drawing a border.
         task: { statusSymbol: def.symbol, priority: 'D' },
         registry,
+        interactive: false,
         onLeftClick: () => {},
         onContextMenu: () => {},
       });
