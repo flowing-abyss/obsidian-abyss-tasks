@@ -31,9 +31,9 @@ export interface AllDayCallbacks {
 /**
  * Test-only seam: real edge-resize resolves the date under the pointer via
  * `activeDocument.elementFromPoint` (unreliable in jsdom, which always returns `null`).
- * Each `renderAllDayCell` call stamps `data-tg-date` on `cellEl` and, for any edge
- * handle it renders, registers that handle's resolved callback here so tests can
- * trigger the resize deterministically without real screen coordinates.
+ * Each `renderAllDayCell` call stamps `data-tg-date` on `cellEl`. The currently armed
+ * edge handle registers its resolved callback only while its pointer gesture is active,
+ * so tests can trigger that resize deterministically without real screen coordinates.
  */
 // Mirrors renderTimedBlocks.ts's identical helpers (see that file's comment above
 // MAX_DURATION_MINUTES for the full "abandoned gesture" rationale): attachEdgeResize's own
@@ -64,36 +64,39 @@ function tryReleasePointer(el: HTMLElement, pointerId: number): void {
 }
 
 function endDragTestHook(cellEl: HTMLElement, targetDate: string): void {
-  const pending = (cellEl as unknown as { __tgPendingEdgeResizes?: Array<(d: string) => void> })
-    .__tgPendingEdgeResizes;
-  pending?.forEach((cb) => cb(targetDate));
+  (cellEl as unknown as { __tgPendingEdgeResize?: (d: string) => void }).__tgPendingEdgeResize?.(
+    targetDate,
+  );
 }
 
-function renderDraggableBody(
+function renderAllDayBody(
   cellEl: HTMLElement,
   cls: string,
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
   tagGroups: TagGroup[],
+  interactive: boolean,
 ): HTMLElement {
   const el = cellEl.createDiv({ cls: `tc-tg-body ${cls}` });
   // Status marker first: lets a user mark the item done without opening the modal. Its own
   // contextmenu handler stops propagation and opens the status/priority popover instead —
   // distinct from right-clicking this element's body below (opens the task modal).
-  renderStatusMarker(el, {
-    task,
-    registry: callbacks.statusRegistry,
-    onLeftClick: () => callbacks.onToggle(task),
-    onContextMenu: (ev) => {
-      ev.stopPropagation();
-      showStatusMenuAt(ev, {
-        task,
-        registry: callbacks.statusRegistry,
-        onPickStatus: (c) => callbacks.onSetStatus(task, c),
-        onPickPriority: (p) => callbacks.onSetPriority(task, p),
-      });
-    },
-  });
+  if (interactive) {
+    renderStatusMarker(el, {
+      task,
+      registry: callbacks.statusRegistry,
+      onLeftClick: () => callbacks.onToggle(task),
+      onContextMenu: (ev) => {
+        ev.stopPropagation();
+        showStatusMenuAt(ev, {
+          task,
+          registry: callbacks.statusRegistry,
+          onPickStatus: (c) => callbacks.onSetStatus(task, c),
+          onPickPriority: (p) => callbacks.onSetPriority(task, p),
+        });
+      },
+    });
+  }
   // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
   // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.tc-tg-block-head`.
@@ -131,13 +134,15 @@ function renderDraggableBody(
     const textColorVar = tagFillTextColorVar(el, tagColor);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
-  el.setAttribute('draggable', 'true');
-  el.addEventListener('dragstart', (e) => {
-    e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-    el.addClass('is-dragging');
-  });
-  el.addEventListener('dragend', () => el.removeClass('is-dragging'));
+  if (interactive) {
+    el.setAttribute('draggable', 'true');
+    el.addEventListener('dragstart', (e) => {
+      e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      el.addClass('is-dragging');
+    });
+    el.addEventListener('dragend', () => el.removeClass('is-dragging'));
+  }
   el.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -146,13 +151,32 @@ function renderDraggableBody(
   return el;
 }
 
+function renderDraggableBody(
+  cellEl: HTMLElement,
+  cls: string,
+  task: TaskSnapshot,
+  callbacks: AllDayCallbacks,
+  tagGroups: TagGroup[],
+): HTMLElement {
+  return renderAllDayBody(cellEl, cls, task, callbacks, tagGroups, true);
+}
+
+function renderSpanContinuation(
+  cellEl: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: AllDayCallbacks,
+  tagGroups: TagGroup[],
+): HTMLElement {
+  return renderAllDayBody(cellEl, 'tc-tg-span-continuation', task, callbacks, tagGroups, false);
+}
+
 /**
  * Attach pointer-based edge-resize to a handle (a span's start/due edge, or a plain
  * task's new right edge). In real usage the pointerup handler resolves the date under
  * the pointer via `activeDocument.elementFromPoint`, finding the nearest ancestor with
  * `data-tg-date` (stamped by whichever `renderAllDayCell` call rendered that day
- * column). Also registers a direct-invocation callback on `cellEl` for the jsdom test
- * seam (see `endDragTestHook`).
+ * column). While its pointer gesture is active, it also registers a direct-invocation
+ * callback on `cellEl` for the jsdom test seam (see `endDragTestHook`).
  *
  * `onResolve` is called with the resolved date once the drag ends over a valid day
  * cell; callers pass whichever mutation the handle should trigger (`onStartChange`,
@@ -183,6 +207,9 @@ function attachEdgeResize(
 
   const resolve = (date: string): void => {
     onResolve(task, date);
+  };
+  const withHook = cellEl as HTMLElement & {
+    __tgPendingEdgeResize?: (d: string) => void;
   };
 
   // Task 39: live feedback for this edge-resize's day-crossing, mirroring
@@ -224,6 +251,7 @@ function attachEdgeResize(
     window.removeEventListener('pointercancel', onPointerCancel);
     if (capturedPointerId !== null) tryReleasePointer(handle, capturedPointerId);
     capturedPointerId = null;
+    if (withHook.__tgPendingEdgeResize === resolve) delete withHook.__tgPendingEdgeResize;
   };
 
   const onPointerUp = (upEvent: PointerEvent): void => {
@@ -248,17 +276,12 @@ function attachEdgeResize(
     body?.setAttribute('draggable', 'false');
     body?.addClass('is-edge-resizing');
     capturedPointerId = e.pointerId;
+    withHook.__tgPendingEdgeResize = resolve;
     tryCapturePointer(handle, capturedPointerId);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
   });
-
-  const withHook = cellEl as HTMLElement & {
-    __tgPendingEdgeResizes?: Array<(d: string) => void>;
-  };
-  withHook.__tgPendingEdgeResizes = withHook.__tgPendingEdgeResizes ?? [];
-  withHook.__tgPendingEdgeResizes.push(resolve);
 }
 
 export function renderAllDayCell(
@@ -276,17 +299,15 @@ export function renderAllDayCell(
   ) => endDragTestHook(cellEl, targetDate);
 
   for (const t of spans) {
+    if (String(t.planning.due) !== date) {
+      renderSpanContinuation(cellEl, t, callbacks, tagGroups);
+      continue;
+    }
     const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups);
-    // Edge handles: only rendered on the day matching start/due respectively, so
-    // dragging one doesn't accidentally exist mid-span.
-    if (String(t.planning.start) === date) {
-      const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-      attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange);
-    }
-    if (String(t.planning.due) === date) {
-      const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-      attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange);
-    }
+    const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+    attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange);
+    const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+    attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange);
   }
   for (const t of plain) {
     const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups);

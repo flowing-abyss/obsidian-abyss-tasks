@@ -1620,6 +1620,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent);
 }
 
+.tc-tg-span-continuation {
+  opacity: 0.55;
+  border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
+}
+
 .tc-tg-plain {
   border: 1px solid var(--background-modifier-border);
 }

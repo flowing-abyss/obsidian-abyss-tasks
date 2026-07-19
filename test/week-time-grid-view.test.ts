@@ -73,12 +73,13 @@ describe('WeekTimeGridView', () => {
     expect(container.querySelectorAll('.tc-tg-block')).toHaveLength(1);
   });
 
-  it('a span crossing multiple days in the week renders a body in each covered day cell', () => {
+  it('a span crossing multiple days in the week renders continuations before one due-date terminal', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());
     const t = task({ planning: { start: '2026-07-07', due: '2026-07-09' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
-    expect(container.querySelectorAll('.tc-tg-span')).toHaveLength(3);
+    expect(container.querySelectorAll('.tc-tg-span')).toHaveLength(1);
+    expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(2);
   });
 
   it('destroy() does not throw', () => {

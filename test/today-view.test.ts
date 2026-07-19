@@ -266,6 +266,15 @@ describe('TodayView', () => {
     expect(container.querySelector('.tc-tg-deadline-marker')).toBeNull();
   });
 
+  it('renders an untimed multi-day span as a continuation before its due date', () => {
+    const container = freshContainer();
+    const view = new TodayView(callbacks());
+    const t = task({ planning: { start: '2026-07-01', due: '2026-07-05' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07-04' }));
+    expect(container.querySelector('.tc-tg-span-continuation')).not.toBeNull();
+    expect(container.querySelector('.tc-tg-span')).toBeNull();
+  });
+
   describe('timed multi-day spans (Task 29)', () => {
     it('a start+due task with a time set lands in timedSpans, not the untimed spans bucket', () => {
       const t = task({ planning: { start: '2026-07-01', due: '2026-07-03', time: '09:00' } });

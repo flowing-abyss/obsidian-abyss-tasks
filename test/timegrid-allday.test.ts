@@ -91,31 +91,71 @@ describe('renderAllDayCell', () => {
     expect(chip.textContent).toContain('Plain');
   });
 
-  it('renders a span as a filled bar, draggable', () => {
+  it('renders a multi-day span as an interactive terminal only on its due date', () => {
     const container = freshContainer();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
-    renderAllDayCell(container, '2026-07-10', [t], [], [], callbacks());
+    renderAllDayCell(container, '2026-07-12', [t], [], [], callbacks());
     const bar = container.querySelector('.tc-tg-span') as HTMLElement;
     expect(bar.getAttribute('draggable')).toBe('true');
   });
 
-  it('renders edge handles only on the day matching start/due, not on mid-span days', () => {
+  it('renders non-terminal span dates as non-interactive continuations and the due date as one terminal with both edges', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
 
     const startContainer = freshContainer();
     renderAllDayCell(startContainer, '2026-07-08', [t], [], [], callbacks());
-    expect(startContainer.querySelector('.tc-tg-span-edge--left')).not.toBeNull();
-    expect(startContainer.querySelector('.tc-tg-span-edge--right')).toBeNull();
+    expect(startContainer.querySelectorAll('.tc-status-marker')).toHaveLength(0);
+    const start = startContainer.querySelector('.tc-tg-span-continuation') as HTMLElement;
+    expect(start).not.toBeNull();
+    expect(start.hasAttribute('draggable')).toBe(false);
+    expect(start.hasAttribute('tabindex')).toBe(false);
+    expect(start.querySelectorAll('.tc-tg-span-edge')).toHaveLength(0);
 
     const midContainer = freshContainer();
     renderAllDayCell(midContainer, '2026-07-10', [t], [], [], callbacks());
-    expect(midContainer.querySelector('.tc-tg-span-edge--left')).toBeNull();
-    expect(midContainer.querySelector('.tc-tg-span-edge--right')).toBeNull();
+    const middle = midContainer.querySelector('.tc-tg-span-continuation') as HTMLElement;
+    expect(middle).not.toBeNull();
+    expect(middle.querySelectorAll('.tc-tg-span-edge')).toHaveLength(0);
 
     const dueContainer = freshContainer();
     renderAllDayCell(dueContainer, '2026-07-12', [t], [], [], callbacks());
-    expect(dueContainer.querySelector('.tc-tg-span-edge--left')).toBeNull();
-    expect(dueContainer.querySelector('.tc-tg-span-edge--right')).not.toBeNull();
+    expect(dueContainer.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    expect(dueContainer.querySelectorAll('.tc-tg-span-edge')).toHaveLength(2);
+    expect((dueContainer.querySelector('.tc-tg-span') as HTMLElement).draggable).toBe(true);
+  });
+
+  it('keeps a span continuation tag-filled, click-guarded, and contextmenu-openable without making it draggable', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const onCreateAtDate = vi.fn();
+    const t = task({
+      title: 'Trip',
+      tags: ['#work'],
+      planning: { start: '2026-07-08', due: '2026-07-12' },
+      source: { originalMarkdown: '- [ ] Trip #work', originalBlock: '- [ ] Trip #work' },
+    });
+    renderAllDayCell(container, '2026-07-10', [t], [], [], { ...cbs, onCreateAtDate }, [
+      { id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' },
+    ]);
+    const ghost = container.querySelector('.tc-tg-span-continuation') as HTMLElement;
+    expect(ghost.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    expect(ghost.querySelector('.tc-tg-body-title')).not.toBeNull();
+    expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+    ghost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(onCreateAtDate).not.toHaveBeenCalled();
+    ghost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
+  });
+
+  it('styles span continuations as translucent dashed tag-aware ghosts', () => {
+    const declarations = declarationsFor('.tc-tg-span-continuation');
+    expect(declarations).toMatch(/opacity\s*:\s*0\.55/u);
+    expect(declarations).toMatch(
+      /border\s*:\s*1px dashed var\(--tc-tag-color,\s*var\(--background-modifier-border\)\)/u,
+    );
+    expect(declarations).toMatch(
+      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
+    );
   });
 
   it('renders a deadline marker as non-draggable, structurally distinct from a plain chip', () => {
@@ -151,23 +191,23 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('a plain click on a span body does NOT fire onTaskClick (reserved for drag)', () => {
+  it('a plain click on a span continuation does NOT fire onTaskClick (reserved for drag)', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-    (container.querySelector('.tc-tg-span') as HTMLElement).dispatchEvent(
+    (container.querySelector('.tc-tg-span-continuation') as HTMLElement).dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     );
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
-  it('a right-click (contextmenu) on a span body fires onTaskClick', () => {
+  it('a right-click (contextmenu) on a span continuation fires onTaskClick', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-    (container.querySelector('.tc-tg-span') as HTMLElement).dispatchEvent(
+    (container.querySelector('.tc-tg-span-continuation') as HTMLElement).dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
@@ -213,7 +253,7 @@ describe('renderAllDayCell', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
-    renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
+    renderAllDayCell(container, '2026-07-12', [t], [], [], cbs);
     const bar = container.querySelector('.tc-tg-span') as HTMLElement;
     const marker = bar.querySelector('.tc-status-marker');
     expect(marker).not.toBeNull();
@@ -252,7 +292,7 @@ describe('renderAllDayCell', () => {
   it('renders the status marker and title as flex-row siblings in one line on a span body (Task 21)', () => {
     const container = freshContainer();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
-    renderAllDayCell(container, '2026-07-10', [t], [], [], callbacks());
+    renderAllDayCell(container, '2026-07-12', [t], [], [], callbacks());
     const bar = container.querySelector('.tc-tg-span') as HTMLElement;
     const marker = bar.querySelector('.tc-status-marker');
     const title = bar.querySelector('.tc-tg-body-title');
@@ -378,7 +418,7 @@ describe('renderAllDayCell', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
-    renderAllDayCell(container, '2026-07-08', [t], [], [], cbs);
+    renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
     const leftHandle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
     leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
     (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
@@ -386,6 +426,35 @@ describe('renderAllDayCell', () => {
     );
     expect(cbs.onStartChange).toHaveBeenCalledWith(t, '2026-07-07');
     expect(cbs.onDueChange).not.toHaveBeenCalled();
+  });
+
+  it('the all-day resize seam resolves only the terminal edge armed by pointerdown and clears on pointercancel', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
+    renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
+    const endDrag = (container as unknown as { __tgTestEndDrag: (date: string) => void })
+      .__tgTestEndDrag;
+    const leftHandle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+    const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+
+    endDrag('2026-07-07');
+    expect(cbs.onStartChange).not.toHaveBeenCalled();
+    expect(cbs.onDueChange).not.toHaveBeenCalled();
+
+    leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+    endDrag('2026-07-07');
+    expect(cbs.onStartChange).toHaveBeenCalledWith(t, '2026-07-07');
+    expect(cbs.onDueChange).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
+    endDrag('2026-07-06');
+    expect(cbs.onStartChange).toHaveBeenCalledTimes(1);
+
+    rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2 }));
+    endDrag('2026-07-11');
+    expect(cbs.onDueChange).toHaveBeenCalledWith(t, '2026-07-11');
+    expect(cbs.onStartChange).toHaveBeenCalledTimes(1);
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 2 }));
   });
 
   describe('Task 39: live day-target highlight while dragging an edge-resize handle', () => {
@@ -504,7 +573,7 @@ describe('renderAllDayCell', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
-    renderAllDayCell(container, '2026-07-08', [t], [], [], cbs);
+    renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
     const leftHandle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
     // Simulate a real browser resolving an element under a stationary cursor (jsdom's
     // elementFromPoint always returns null, unlike a real browser where a right-click on
@@ -575,7 +644,7 @@ describe('renderAllDayCell', () => {
         planning: { start: '2026-07-08', due: '2026-07-12' },
         source: { originalMarkdown: '- [ ] Trip #work', originalBlock: '- [ ] Trip #work' },
       });
-      renderAllDayCell(container, '2026-07-10', [t], [], [], callbacks(), [
+      renderAllDayCell(container, '2026-07-12', [t], [], [], callbacks(), [
         { id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' },
       ]);
       const bar = container.querySelector('.tc-tg-span') as HTMLElement;
@@ -663,12 +732,12 @@ describe('renderAllDayCell', () => {
     expect(onCreateAtDate).not.toHaveBeenCalled();
   });
 
-  it('clicking an existing span body does not also fire onCreateAtDate', () => {
+  it('clicking an existing span continuation does not also fire onCreateAtDate', () => {
     const container = freshContainer();
     const onCreateAtDate = vi.fn();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-12' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], { ...callbacks(), onCreateAtDate });
-    (container.querySelector('.tc-tg-span') as HTMLElement).dispatchEvent(
+    (container.querySelector('.tc-tg-span-continuation') as HTMLElement).dispatchEvent(
       new MouseEvent('click', { bubbles: true }),
     );
     expect(onCreateAtDate).not.toHaveBeenCalled();
