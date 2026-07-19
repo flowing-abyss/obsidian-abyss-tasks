@@ -2094,6 +2094,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   flex-shrink: 0;
 }
 
+.tc-mg-span-continuation {
+  opacity: 0.55;
+  cursor: default;
+  border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
+}
+
 /* .tc-mg-plain / .tc-mg-block-dot / .tc-mg-span-segment tag-colored fill is set by the
    shared fill rule above (grouped with the tc-tg-* equivalents); no priority border. */
 

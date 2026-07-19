@@ -327,14 +327,14 @@ describe('MonthGridView', () => {
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
-  it('renders a status marker as the first child of a compact span-segment; clicking it fires onToggle, not onTaskClick', () => {
+  it('renders a status marker as the first child of a terminal compact span-segment; clicking it fires onToggle, not onTaskClick', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
     ) as HTMLElement;
     const marker = bar.querySelector('.tc-status-marker');
     expect(marker).not.toBeNull();
@@ -394,14 +394,14 @@ describe('MonthGridView', () => {
     expect(time?.nextElementSibling).toBe(title);
   });
 
-  it('renders the status marker and title as flex-row siblings in one line on a compact span-segment (Task 21)', () => {
+  it('renders the status marker and title as flex-row siblings in one line on a terminal compact span-segment (Task 21)', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
     ) as HTMLElement;
     const marker = bar.querySelector('.tc-status-marker');
     const title = bar.querySelector('.tc-mg-item-title');
@@ -576,7 +576,9 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 9 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const item = container.querySelector('.tc-mg-span-segment') as HTMLElement;
+    const item = container.querySelector(
+      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+    ) as HTMLElement;
     expect(item.getAttribute('draggable')).toBe('true');
     const dt = new DataTransferStub();
     const ev = new MouseEvent('dragstart', { bubbles: true });
@@ -754,7 +756,7 @@ describe('MonthGridView', () => {
       expect(anchorBar.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
     });
 
-    it('does not show a time prefix on non-anchor days of the same timed span', () => {
+    it('shows the time prefix on continuation days of the same timed span', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
       const t = task({
@@ -765,7 +767,7 @@ describe('MonthGridView', () => {
       const midBar = container.querySelector(
         '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
       ) as HTMLElement;
-      expect(midBar.querySelector('.tc-mg-item-time')).toBeNull();
+      expect(midBar.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
     });
 
     it('an untimed start+due span still renders with no time prefix (unchanged existing behavior)', () => {
@@ -807,6 +809,97 @@ describe('MonthGridView', () => {
         '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
       ) as HTMLElement;
       expect(bar.getAttribute('draggable')).toBe('true');
+    });
+  });
+
+  describe('span continuations (Task 3)', () => {
+    it('renders an untimed span with one interactive due terminal and non-interactive tagged ghosts before it', () => {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new MonthGridView({
+        ...cbs,
+        tagGroups: [{ id: 'work', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' }],
+      });
+      const t = task({
+        title: 'Trip',
+        status: 'done',
+        statusSymbol: 'x',
+        tags: ['#work'],
+        planning: { start: '2026-07-14', due: '2026-07-16' },
+        source: { originalMarkdown: '- [x] Trip #work', originalBlock: '- [x] Trip #work' },
+      });
+      view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map(
+        (date) =>
+          container.querySelector(`[data-mg-date="${date}"] .tc-mg-span-segment`) as HTMLElement,
+      );
+      const [startGhost, middleGhost, terminal] = segments;
+
+      expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
+      expect(terminal.getAttribute('draggable')).toBe('true');
+      expect(terminal.classList.contains('tc-mg-span-continuation')).toBe(false);
+      for (const ghost of [startGhost, middleGhost]) {
+        expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
+        expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+        expect(ghost.hasAttribute('draggable')).toBe(false);
+        expect(ghost.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+        expect(ghost.querySelector('.tc-mg-item-title')?.classList.contains('is-done')).toBe(true);
+      }
+
+      middleGhost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(cbs.onDayClick).not.toHaveBeenCalled();
+      expect(cbs.onCreateAtDate).not.toHaveBeenCalled();
+      middleGhost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(cbs.onTaskClick).toHaveBeenCalledTimes(1);
+      expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
+    });
+
+    it('renders a timed span with one interactive due terminal and time-prefixed ghosts before it', () => {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new MonthGridView(cbs);
+      const t = task({
+        title: 'Conference',
+        planning: { start: '2026-07-14', due: '2026-07-16', time: '09:00' },
+      });
+      view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map(
+        (date) =>
+          container.querySelector(`[data-mg-date="${date}"] .tc-mg-span-segment`) as HTMLElement,
+      );
+      const [startGhost, middleGhost, terminal] = segments;
+
+      expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
+      expect(terminal.getAttribute('draggable')).toBe('true');
+      for (const segment of segments) {
+        expect(segment.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+      }
+      for (const ghost of [startGhost, middleGhost]) {
+        expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
+        expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+        expect(ghost.hasAttribute('draggable')).toBe(false);
+      }
+
+      middleGhost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(cbs.onDayClick).not.toHaveBeenCalled();
+      expect(cbs.onCreateAtDate).not.toHaveBeenCalled();
+      middleGhost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(cbs.onTaskClick).toHaveBeenCalledTimes(1);
+      expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
+    });
+
+    it('styles span continuations as translucent dashed tag-aware ghosts', () => {
+      const declarations = declarationsFor('.tc-mg-span-continuation');
+      expect(declarations).toMatch(/opacity\s*:\s*0\.55/u);
+      expect(declarations).toMatch(
+        /border\s*:\s*1px dashed var\(--tc-tag-color,\s*var\(--background-modifier-border\)\)/u,
+      );
+      expect(declarations).toMatch(
+        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
+      );
+      expect(declarations).toMatch(/cursor\s*:\s*default/u);
     });
   });
 

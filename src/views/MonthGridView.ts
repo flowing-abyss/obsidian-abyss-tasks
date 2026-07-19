@@ -164,36 +164,10 @@ export class MonthGridView extends BaseView {
       this.makeDraggable(dot, t);
     }
     for (const t of spans) {
-      const bar = cell.createDiv({ cls: 'tc-mg-span-segment' });
-      this.applyTagFill(bar, t, tagGroups);
-      this.renderMarker(bar, t);
-      this.renderTitle(bar, t);
-      bar.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.callbacks.onTaskClick(t);
-      });
-      this.makeDraggable(bar, t);
+      this.renderSpanSegment(cell, t, date, false, tagGroups);
     }
-    // Task 29: same .tc-mg-span-segment treatment as an untimed span, but the anchor (due) day's
-    // segment is additionally prefixed with the time — the "smart algorithm" cue the task's due
-    // day matches, per this project's due-centric anchor-priority rule) so a timed multi-day span
-    // reads as visually distinguishable from an untimed one at a glance, mirroring the `timed`
-    // bucket's own time-prefix convention above.
     for (const t of timedSpans) {
-      const bar = cell.createDiv({ cls: 'tc-mg-span-segment' });
-      this.applyTagFill(bar, t, tagGroups);
-      this.renderMarker(bar, t);
-      if (String(t.planning.due) === date) {
-        bar.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
-      }
-      this.renderTitle(bar, t);
-      bar.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.callbacks.onTaskClick(t);
-      });
-      this.makeDraggable(bar, t);
+      this.renderSpanSegment(cell, t, date, true, tagGroups);
     }
     for (const t of plain) {
       const row = cell.createDiv({ cls: 'tc-mg-plain' });
@@ -221,6 +195,29 @@ export class MonthGridView extends BaseView {
         this.callbacks.onTaskClick(t);
       });
     }
+  }
+
+  private renderSpanSegment(
+    cell: HTMLElement,
+    task: TaskSnapshot,
+    date: string,
+    timed: boolean,
+    tagGroups: TagGroup[],
+  ): void {
+    const terminal = String(task.planning.due) === date;
+    const bar = cell.createDiv({
+      cls: `tc-mg-span-segment${terminal ? '' : ' tc-mg-span-continuation'}`,
+    });
+    this.applyTagFill(bar, task, tagGroups);
+    if (terminal) this.renderMarker(bar, task);
+    if (timed) bar.createSpan({ cls: 'tc-mg-item-time', text: `${task.planning.time} ` });
+    this.renderTitle(bar, task);
+    bar.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.callbacks.onTaskClick(task);
+    });
+    if (terminal) this.makeDraggable(bar, task);
   }
 
   /**
