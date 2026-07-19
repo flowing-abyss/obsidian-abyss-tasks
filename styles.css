@@ -1622,6 +1622,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-tg-span-continuation {
   opacity: 0.55;
+  cursor: default;
   border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
   background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
 }

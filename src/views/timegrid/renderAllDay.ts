@@ -28,6 +28,11 @@ export interface AllDayCallbacks {
   onCreateAtDate?: (date: string) => void;
 }
 
+type AllDayResizeCell = HTMLElement & {
+  __tgPendingEdgeResize?: (d: string) => void;
+  __tgActiveEdgeResize?: { end: () => void };
+};
+
 /**
  * Test-only seam: real edge-resize resolves the date under the pointer via
  * `activeDocument.elementFromPoint` (unreliable in jsdom, which always returns `null`).
@@ -64,9 +69,7 @@ function tryReleasePointer(el: HTMLElement, pointerId: number): void {
 }
 
 function endDragTestHook(cellEl: HTMLElement, targetDate: string): void {
-  (cellEl as unknown as { __tgPendingEdgeResize?: (d: string) => void }).__tgPendingEdgeResize?.(
-    targetDate,
-  );
+  (cellEl as AllDayResizeCell).__tgPendingEdgeResize?.(targetDate);
 }
 
 function renderAllDayBody(
@@ -131,7 +134,10 @@ function renderAllDayBody(
     // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
     // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
     // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-    const textColorVar = tagFillTextColorVar(el, tagColor);
+    // Continuations use their own 18% translucent CSS fill; interactive terminal/plain bodies
+    // retain the shared 40% fill, so each variant is chosen against the fill it actually has.
+    const tagFillPercent = interactive ? 40 : 18;
+    const textColorVar = tagFillTextColorVar(el, tagColor, tagFillPercent);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
   if (interactive) {
@@ -208,9 +214,7 @@ function attachEdgeResize(
   const resolve = (date: string): void => {
     onResolve(task, date);
   };
-  const withHook = cellEl as HTMLElement & {
-    __tgPendingEdgeResize?: (d: string) => void;
-  };
+  const withHook = cellEl as AllDayResizeCell;
 
   // Task 39: live feedback for this edge-resize's day-crossing, mirroring
   // renderTimedBlocks.ts's attachHorizontalResize (Task 34/29's timed-span equivalent of this
@@ -227,6 +231,7 @@ function attachEdgeResize(
   };
 
   const onPointerMove = (e: PointerEvent): void => {
+    if (e.pointerId !== capturedPointerId) return;
     e.preventDefault();
     const target = activeDocument.elementFromPoint(e.clientX, e.clientY);
     const dayEl = target?.closest('[data-tg-date]') ?? null;
@@ -252,9 +257,11 @@ function attachEdgeResize(
     if (capturedPointerId !== null) tryReleasePointer(handle, capturedPointerId);
     capturedPointerId = null;
     if (withHook.__tgPendingEdgeResize === resolve) delete withHook.__tgPendingEdgeResize;
+    if (withHook.__tgActiveEdgeResize?.end === endResize) delete withHook.__tgActiveEdgeResize;
   };
 
   const onPointerUp = (upEvent: PointerEvent): void => {
+    if (upEvent.pointerId !== capturedPointerId) return;
     const target = activeDocument.elementFromPoint(upEvent.clientX, upEvent.clientY);
     const dayEl = target?.closest('[data-tg-date]');
     const date = dayEl?.getAttribute('data-tg-date');
@@ -266,16 +273,19 @@ function attachEdgeResize(
   // native drag were ever armed despite the draggable="false" flip above, the pointer session
   // would end in `pointercancel` rather than `pointerup`, and without this the window
   // pointermove/pointerup/pointercancel listeners would leak instead of being torn down.
-  const onPointerCancel = (): void => {
+  const onPointerCancel = (cancelEvent: PointerEvent): void => {
+    if (cancelEvent.pointerId !== capturedPointerId) return;
     endResize();
   };
 
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0) return;
     e.stopPropagation();
+    withHook.__tgActiveEdgeResize?.end();
     body?.setAttribute('draggable', 'false');
     body?.addClass('is-edge-resizing');
     capturedPointerId = e.pointerId;
+    withHook.__tgActiveEdgeResize = { end: endResize };
     withHook.__tgPendingEdgeResize = resolve;
     tryCapturePointer(handle, capturedPointerId);
     window.addEventListener('pointermove', onPointerMove);

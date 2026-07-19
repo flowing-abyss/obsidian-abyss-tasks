@@ -147,6 +147,40 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
+  it("uses the continuation's 18% tag fill when choosing a readable title-text variant", () => {
+    const originalBackground = document.body.style.getPropertyValue('--background-primary');
+    document.body.style.setProperty('--background-primary', '#444444');
+    try {
+      const t = task({
+        title: 'Trip',
+        tags: ['#work'],
+        planning: { start: '2026-07-08', due: '2026-07-12' },
+        source: { originalMarkdown: '- [ ] Trip #work', originalBlock: '- [ ] Trip #work' },
+      });
+      const tagGroups = [
+        { id: '1', name: 'Work', mode: 'prefix' as const, prefix: 'work', color: '#fff' },
+      ];
+      const continuationCell = freshContainer();
+      const terminalCell = freshContainer();
+
+      renderAllDayCell(continuationCell, '2026-07-10', [t], [], [], callbacks(), tagGroups);
+      renderAllDayCell(terminalCell, '2026-07-12', [t], [], [], callbacks(), tagGroups);
+
+      expect(
+        (
+          continuationCell.querySelector('.tc-tg-span-continuation') as HTMLElement
+        ).style.getPropertyValue('--tc-tag-text-color'),
+      ).toBe('var(--tc-tag-text-light)');
+      expect(
+        (terminalCell.querySelector('.tc-tg-span') as HTMLElement).style.getPropertyValue(
+          '--tc-tag-text-color',
+        ),
+      ).toBe('var(--tc-tag-text-dark)');
+    } finally {
+      document.body.style.setProperty('--background-primary', originalBackground);
+    }
+  });
+
   it('styles span continuations as translucent dashed tag-aware ghosts', () => {
     const declarations = declarationsFor('.tc-tg-span-continuation');
     expect(declarations).toMatch(/opacity\s*:\s*0\.55/u);
@@ -156,6 +190,7 @@ describe('renderAllDayCell', () => {
     expect(declarations).toMatch(
       /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
     );
+    expect(declarations).toMatch(/cursor\s*:\s*default/u);
   });
 
   it('renders a deadline marker as non-draggable, structurally distinct from a plain chip', () => {
@@ -356,24 +391,26 @@ describe('renderAllDayCell', () => {
     expect(cbs.onDrop).toHaveBeenCalledWith('f.md:::0', '2026-07-10');
   });
 
-  it("pointer-dragging a span's right edge fires onDueChange on pointerup", () => {
+  it("pointer-dragging a span's right edge fires onDueChange through its real pointerup path", () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
     // Right (due) edge handle only renders on the due-date cell, per the rule that
     // edge handles appear only on the day matching start/due respectively.
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
+    const bar = container.querySelector('.tc-tg-span') as HTMLElement;
     const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
-    rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
-    // jsdom's document.elementFromPoint always returns null, so real coordinate-based
-    // resolution can't be exercised here. This test drives the deterministic seam
-    // (__tgTestEndDrag) that renderAllDayCell exposes on the cell for this purpose;
-    // real usage resolves the target date via document.elementFromPoint in the
-    // pointerup handler itself.
-    (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
-      '2026-07-11',
-    );
-    expect(cbs.onDueChange).toHaveBeenCalledWith(t, '2026-07-11');
+    const originalElementFromPoint = activeDocument.elementFromPoint;
+    activeDocument.elementFromPoint = () => container;
+    try {
+      rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    } finally {
+      activeDocument.elementFromPoint = originalElementFromPoint;
+    }
+    expect(cbs.onDueChange).toHaveBeenCalledWith(t, '2026-07-10');
+    expect(bar.getAttribute('draggable')).toBe('true');
+    expect(bar.hasClass('is-edge-resizing')).toBe(false);
   });
 
   it('renders a plain chip title via renderTaskText (markdown-link-aware), not raw textContent, for a task with a [[wikilink]]', () => {
@@ -414,18 +451,54 @@ describe('renderAllDayCell', () => {
     expect(chip.textContent).toContain('Plain');
   });
 
-  it("pointer-dragging a span's left edge fires onStartChange on pointerup", () => {
+  it("pointer-dragging a span's left edge fires onStartChange through its real pointerup path", () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
     renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
+    const bar = container.querySelector('.tc-tg-span') as HTMLElement;
     const leftHandle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
-    leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
-    (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
-      '2026-07-07',
-    );
-    expect(cbs.onStartChange).toHaveBeenCalledWith(t, '2026-07-07');
+    const originalElementFromPoint = activeDocument.elementFromPoint;
+    activeDocument.elementFromPoint = () => container;
+    try {
+      leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+    } finally {
+      activeDocument.elementFromPoint = originalElementFromPoint;
+    }
+    expect(cbs.onStartChange).toHaveBeenCalledWith(t, '2026-07-10');
     expect(cbs.onDueChange).not.toHaveBeenCalled();
+    expect(bar.getAttribute('draggable')).toBe('true');
+    expect(bar.hasClass('is-edge-resizing')).toBe(false);
+  });
+
+  it('cancels the previously armed terminal edge before a second pointer can resolve it', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
+    renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
+    const bar = container.querySelector('.tc-tg-span') as HTMLElement;
+    const leftHandle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+    const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+    const originalElementFromPoint = activeDocument.elementFromPoint;
+    activeDocument.elementFromPoint = () => container;
+    try {
+      leftHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+      rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2 }));
+
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+      expect(cbs.onStartChange).not.toHaveBeenCalled();
+      expect(cbs.onDueChange).not.toHaveBeenCalled();
+      expect(bar.getAttribute('draggable')).toBe('false');
+
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+      expect(cbs.onStartChange).not.toHaveBeenCalled();
+      expect(cbs.onDueChange).toHaveBeenCalledWith(t, '2026-07-10');
+      expect(bar.getAttribute('draggable')).toBe('true');
+      expect(bar.hasClass('is-edge-resizing')).toBe(false);
+    } finally {
+      activeDocument.elementFromPoint = originalElementFromPoint;
+    }
   });
 
   it('the all-day resize seam resolves only the terminal edge armed by pointerdown and clears on pointercancel', () => {
@@ -529,6 +602,7 @@ describe('renderAllDayCell', () => {
     );
     expect(cbs.onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-12');
     expect(cbs.onDueChange).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
   });
 
   it('sets draggable="false" on edge handles so a drag started on one never races the ancestor\'s native cross-day dragstart', () => {
@@ -830,6 +904,7 @@ describe('renderAllDayCell', () => {
       );
       expect(cbs.onExtendToSpan).toHaveBeenCalledTimes(1);
       expect(cbs.onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-12');
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 2 }));
     });
 
     it("resizing one item does not mutate any sibling element's layout-affecting attributes/inline styles (purely a class/attribute toggle on the dragged item itself)", () => {
