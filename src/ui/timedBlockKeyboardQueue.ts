@@ -10,7 +10,12 @@ import {
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 
 export interface TimedBlockKeyboardQueueHooks {
-  onCommitted(task: TaskSnapshot, intent: TimedBlockKeyboardIntent, sequence: number): void;
+  onCommitted(
+    task: TaskSnapshot,
+    intent: TimedBlockKeyboardIntent,
+    sequence: number,
+    changed: boolean,
+  ): void;
   onSettled(taskKey: string, sequence: number, summary: TimedBlockKeyboardSequenceSummary): void;
   present(result: TaskCommandResult): void;
 }
@@ -200,7 +205,7 @@ export class TimedBlockKeyboardQueue {
       this.activeTaskKey = nextTaskKey;
       this.activeTaskIdentities.add(sourceIdentity(result.outcome.task));
       this.activeAnyChanged ||= result.changed;
-      this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence);
+      this.hooks.onCommitted(result.outcome.task, queued.intent, queued.sequence, result.changed);
       if (!this.pending.some((entry) => entry.sequence === queued.sequence)) {
         this.finishSequence(queued.sequence);
       }

@@ -162,8 +162,8 @@ export class CenterPanel {
     this.onSaveSettings = onSaveSettings;
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
-        onCommitted: (task, intent, sequence) => {
-          this.handleKeyboardCommit(task, intent, sequence);
+        onCommitted: (task, intent, sequence, changed) => {
+          this.handleKeyboardCommit(task, intent, sequence, changed);
         },
         onSettled: (_taskKey, sequence, summary) => {
           if (this.pendingTimedBlockFocus?.queueSequence === sequence) {
@@ -584,8 +584,8 @@ export class CenterPanel {
         this.clearKeyboardSequenceState(previousQueueSequence);
       }
       this.settledKeyboardSequences.delete(queueSequence);
-      this.restoredKeyboardSequences.delete(queueSequence);
       if (previousQueueSequence !== queueSequence) {
+        this.restoredKeyboardSequences.delete(queueSequence);
         this.committedKeyboardSequences.delete(queueSequence);
       }
       this.pendingTimedBlockFocus = {
@@ -1075,6 +1075,7 @@ export class CenterPanel {
     updated: TaskSnapshot,
     intent: TimedBlockKeyboardIntent,
     queueSequence: number,
+    changed: boolean,
   ): void {
     let pending = this.pendingTimedBlockFocus;
     if (
@@ -1085,8 +1086,12 @@ export class CenterPanel {
       return;
     }
     this.committedKeyboardSequences.add(queueSequence);
-    if (pending.filePath !== updated.source.filePath || pending.line !== updated.source.line) {
+    const sourceChanged =
+      pending.filePath !== updated.source.filePath || pending.line !== updated.source.line;
+    if (changed || sourceChanged) {
       this.restoredKeyboardSequences.delete(queueSequence);
+    }
+    if (sourceChanged) {
       pending = {
         ...pending,
         filePath: updated.source.filePath,
@@ -1095,7 +1100,9 @@ export class CenterPanel {
       };
       this.pendingTimedBlockFocus = pending;
     }
-    this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
+    if (changed || sourceChanged || !this.restoredKeyboardSequences.has(queueSequence)) {
+      this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
+    }
     if (intent.type !== 'shift-schedule') return;
 
     const anchor =

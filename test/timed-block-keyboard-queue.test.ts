@@ -73,6 +73,27 @@ async function expectSecondCall(execute: ReturnType<typeof vi.fn>): Promise<void
 }
 
 describe('TimedBlockKeyboardQueue', () => {
+  it('reports each committed result changed state to the focus owner', async () => {
+    const first = deferred<TaskCommandResult>();
+    const second = deferred<TaskCommandResult>();
+    const execute = vi
+      .fn<TaskApplicationApi['execute']>()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { queue, hooks } = harness(execute);
+    const original = taskAt('00:15', 'revision-1');
+    const boundary = taskAt('00:00', 'revision-2');
+
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    queue.enqueue(original, { type: 'move-time', deltaMinutes: -15 });
+    first.resolve(ok(boundary));
+    await expectSecondCall(execute);
+    second.resolve(okUnchanged(boundary));
+    await vi.waitFor(() => expect(hooks.onSettled).toHaveBeenCalledOnce());
+
+    expect(hooks.onCommitted.mock.calls.map((call) => call[3])).toEqual([true, false]);
+  });
+
   it('serializes rapid time moves and rebases cumulative values on the returned snapshot/ref', async () => {
     const first = deferred<TaskCommandResult>();
     const second = deferred<TaskCommandResult>();
@@ -651,6 +672,7 @@ describe('TimedBlockKeyboardQueue', () => {
       updatedB,
       { type: 'move-time', deltaMinutes: 15 },
       2,
+      true,
     );
     expect(hooks.onSettled).toHaveBeenCalledWith('b.md:0', 2, {
       executed: true,
