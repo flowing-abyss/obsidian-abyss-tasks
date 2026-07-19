@@ -472,6 +472,56 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).toHaveBeenCalledWith(command);
   });
 
+  it('delegates one atomic span shift and returns its updated snapshot', async () => {
+    const updated = {
+      ...snapshot(),
+      ref: { ...ref, revision: 'shifted' },
+      planning: { start: localDate('2026-07-19'), due: localDate('2026-07-21') },
+    };
+    const committed: TaskRepositoryResult = {
+      type: 'committed',
+      outcome: { type: 'task', task: updated },
+      changed: true,
+    };
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
+    const command = { type: 'shift-schedule' as const, ref, days: 1 as const };
+
+    await expect(service({ edit }).execute(command)).resolves.toEqual({
+      type: 'ok',
+      outcome: committed.outcome,
+      changed: true,
+    });
+    expect(edit).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledWith(command);
+  });
+
+  it.each<TaskRepositoryResult>([
+    { type: 'conflict', current: snapshot() },
+    { type: 'not-found', target: { type: 'task', ref } },
+    { type: 'ambiguous', candidates: [{ root: snapshot(), target: { type: 'task', ref } }] },
+    { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] },
+  ])('preserves the $type result of a schedule shift', async (result) => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(result);
+
+    await expect(
+      service({ edit }).execute({ type: 'shift-schedule', ref, days: 1 }),
+    ).resolves.toEqual(result);
+    expect(edit).toHaveBeenCalledOnce();
+  });
+
+  it('maps a schedule-shift repository rejection to a structured io error', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockRejectedValue(new Error('disk unavailable'));
+
+    await expect(
+      service({ edit }).execute({ type: 'shift-schedule', ref, days: 1 }),
+    ).resolves.toEqual({
+      type: 'io-error',
+      cause: 'repository-error',
+      contentState: 'unknown',
+    });
+    expect(edit).toHaveBeenCalledOnce();
+  });
+
   it('normalizes uppercase X and stamps a genuine transition with the injected local day', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { shiftLocalDate } from '../../src/tasks/domain/localDateMath';
 import { sameTaskNodeRef, type TaskNodeRef } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 
@@ -20,6 +21,15 @@ describe('task domain values', () => {
     expect(durationMinutes(90)).toBe(90);
     expect(() => localTime('24:00')).toThrow('invalid-time');
     expect(() => durationMinutes(1.5)).toThrow('invalid-duration');
+  });
+
+  it('shifts local dates across ordinary, month, year, and leap-day boundaries', () => {
+    expect(shiftLocalDate(localDate('2026-07-20'), 1)).toBe('2026-07-21');
+    expect(shiftLocalDate(localDate('2026-01-01'), -1)).toBe('2025-12-31');
+    expect(shiftLocalDate(localDate('2028-02-28'), 1)).toBe('2028-02-29');
+    expect(shiftLocalDate(localDate('2028-03-01'), -1)).toBe('2028-02-29');
+    expect(shiftLocalDate(localDate('0000-01-01'), -1)).toBeUndefined();
+    expect(shiftLocalDate(localDate('9999-12-31'), 1)).toBeUndefined();
   });
 });
 

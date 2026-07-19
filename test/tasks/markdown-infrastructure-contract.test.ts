@@ -81,6 +81,58 @@ describe('markdown infrastructure contracts', () => {
 
   it.each([
     {
+      source: '- [ ] due 📅 2026-07-20',
+      days: 1 as const,
+      expected: '- [ ] due 📅 2026-07-21',
+    },
+    {
+      source: '- [ ] planned ⏳ 2026-07-10 📅 2026-07-20',
+      days: 1 as const,
+      expected: '- [ ] planned ⏳ 2026-07-11 📅 2026-07-20',
+    },
+    {
+      source: '- [ ] span ⏰ 09:00 ⏱️ 1h30m 🛫 2026-07-18 ⏳ 2026-07-01 📅 2026-07-20',
+      days: 1 as const,
+      expected: '- [ ] span ⏰ 09:00 ⏱️ 1h30m 🛫 2026-07-19 ⏳ 2026-07-01 📅 2026-07-21',
+    },
+  ])('shifts the $source schedule atomically', ({ source, days, expected }) => {
+    expect(applyTaskCommand(codec, source, { type: 'shift-schedule', ref, days })).toEqual({
+      type: 'changed',
+      content: expected,
+    });
+  });
+
+  it('rejects a missing anchor and shifts beyond the local-date bounds without producing a line', () => {
+    expect(
+      applyTaskCommand(codec, '- [ ] unscheduled', { type: 'shift-schedule', ref, days: 1 }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'schedule' }],
+    });
+    expect(
+      applyTaskCommand(codec, '- [ ] earliest 📅 0000-01-01', {
+        type: 'shift-schedule',
+        ref,
+        days: -1,
+      }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-date', field: 'schedule' }],
+    });
+    expect(
+      applyTaskCommand(codec, '- [ ] latest 📅 9999-12-31', {
+        type: 'shift-schedule',
+        ref,
+        days: 1,
+      }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-date', field: 'schedule' }],
+    });
+  });
+
+  it.each([
+    {
       name: 'multiline body',
       markdownBody: 'first\nsecond',
       issues: [{ code: 'invalid-title', field: 'title' }],

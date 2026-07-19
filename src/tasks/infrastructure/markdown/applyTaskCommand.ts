@@ -1,5 +1,7 @@
 import type { TaskEditCommand } from '../../application/TaskRepository';
 import type { FieldUpdate, TaskPatch } from '../../domain/commands';
+import { shiftLocalDate } from '../../domain/localDateMath';
+import { localDate } from '../../domain/validation';
 import {
   TaskMarkdownCodec,
   type LineEdit,
@@ -79,6 +81,44 @@ function semanticSchedulingFields(
     : [anchor];
 }
 
+type SchedulingEditPlan = {
+  readonly edits: readonly LineEdit[];
+  readonly requestedFields: readonly SchedulingDateField[];
+};
+
+function shiftScheduleEditPlan(
+  parsed: ParsedTaskLine,
+  days: -1 | 1,
+): SchedulingEditPlan | LineEditResult {
+  if (parsed.planning.start && parsed.planning.due) {
+    const start = shiftLocalDate(localDate(parsed.planning.start), days);
+    const due = shiftLocalDate(localDate(parsed.planning.due), days);
+    if (!start || !due) {
+      return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
+    }
+    return {
+      requestedFields: ['start', 'due'],
+      edits: [
+        fieldEdit('start', { type: 'set', value: start }),
+        fieldEdit('due', { type: 'set', value: due }),
+      ],
+    };
+  }
+  const field = parsed.planning.scheduled ? 'scheduled' : 'due';
+  const value = parsed.planning[field];
+  if (!value) {
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'schedule' }] };
+  }
+  const shifted = shiftLocalDate(localDate(value), days);
+  if (!shifted) {
+    return { type: 'invalid', issues: [{ code: 'invalid-date', field: 'schedule' }] };
+  }
+  return {
+    requestedFields: [field],
+    edits: [fieldEdit(field, { type: 'set', value: shifted })],
+  };
+}
+
 /** Applies one planning command to a task line without exposing transient intermediate states. */
 export function applyTaskCommand(
   codec: TaskMarkdownCodec,
@@ -131,6 +171,13 @@ export function applyTaskCommand(
       const field = anchorDateField(parsed);
       requestedFields = semanticSchedulingFields(parsed, field);
       edits = [{ type: 'set-date', field, value: command.date }];
+      break;
+    }
+    case 'shift-schedule': {
+      const plan = shiftScheduleEditPlan(parsed, command.days);
+      if ('type' in plan) return plan;
+      requestedFields = plan.requestedFields;
+      edits = plan.edits;
       break;
     }
     case 'set-time-slot': {

@@ -75,6 +75,7 @@ export type TaskCommand =
   | { readonly type: 'set-status'; readonly target: TaskStatusTarget; readonly symbol: string }
   | { readonly type: 'toggle-completion'; readonly target: TaskStatusTarget }
   | { readonly type: 'reschedule'; readonly ref: TaskRef; readonly date: LocalDate }
+  | { readonly type: 'shift-schedule'; readonly ref: TaskRef; readonly days: -1 | 1 }
   | {
       readonly type: 'set-time-slot';
       readonly ref: TaskRef;

@@ -1083,6 +1083,80 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await h.read()).toBe('- [ ] task 📅 2026-07-12 custom\n');
     });
 
+    it('shifts schedule fields atomically while retaining all unrelated source bytes', async () => {
+      const source =
+        '>\t- [ ] priority 🔺 #keep unknown 🆔 retained ⛔ blocked ⏰ 09:00 ⏱️ 1h30m 🛫 2026-07-18 ⏳ 2026-07-01 📅 2026-07-20 ^block\r\n' +
+        '> - [ ] unrelated\r\n';
+      const h = await makeHarness(adapter, source);
+      const result = await h.repository.edit({
+        type: 'shift-schedule',
+        ref: rootRef(h, source),
+        days: 1,
+      });
+
+      expect(result).toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: {
+          type: 'task',
+          task: {
+            planning: {
+              start: '2026-07-19',
+              scheduled: '2026-07-01',
+              due: '2026-07-21',
+            },
+          },
+        },
+      });
+      expect(await h.read()).toBe(
+        '>\t- [ ] priority 🔺 #keep unknown 🆔 retained ⛔ blocked ⏰ 09:00 ⏱️ 1h30m 🛫 2026-07-19 ⏳ 2026-07-01 📅 2026-07-21 ^block\r\n' +
+          '> - [ ] unrelated\r\n',
+      );
+    });
+
+    it.each([
+      {
+        source: '- [ ] due 📅 2026-07-20\n',
+        days: 1 as const,
+        expected: '- [ ] due 📅 2026-07-21\n',
+      },
+      {
+        source: '- [ ] planned ⏳ 2026-07-10 📅 2026-07-20\n',
+        days: 1 as const,
+        expected: '- [ ] planned ⏳ 2026-07-11 📅 2026-07-20\n',
+      },
+    ])('shifts the expected $source anchor', async ({ source, days, expected }) => {
+      const h = await makeHarness(adapter, source);
+      await expect(
+        h.repository.edit({ type: 'shift-schedule', ref: rootRef(h, source), days }),
+      ).resolves.toMatchObject({ type: 'committed', changed: true });
+      expect(await h.read()).toBe(expected);
+    });
+
+    it.each([
+      {
+        source: '- [ ] unscheduled\n',
+        days: 1 as const,
+        expected: { code: 'invalid-target', field: 'schedule' },
+      },
+      {
+        source: '- [ ] earliest 📅 0000-01-01\n',
+        days: -1 as const,
+        expected: { code: 'invalid-date', field: 'schedule' },
+      },
+      {
+        source: '- [ ] latest 📅 9999-12-31\n',
+        days: 1 as const,
+        expected: { code: 'invalid-date', field: 'schedule' },
+      },
+    ])('returns $expected.code without changing bytes', async ({ source, days, expected }) => {
+      const h = await makeHarness(adapter, source);
+      await expect(
+        h.repository.edit({ type: 'shift-schedule', ref: rootRef(h, source), days }),
+      ).resolves.toEqual({ type: 'invalid', issues: [expected] });
+      expect(await h.read()).toBe(source);
+    });
+
     it.each([
       ['start', '2026-07-09', '🛫 2026-07-09 📅 2026-07-20'],
       ['due', '2026-07-21', '🛫 2026-07-10 📅 2026-07-21'],
