@@ -509,25 +509,6 @@ export class ObsidianTaskRepository implements TaskRepository {
 
     let result: TaskRepositoryResult | undefined;
     try {
-      if (command.type === 'move-time-slot' || command.type === 'move-to-all-day') {
-        const content = await this.app.vault.cachedRead(file);
-        const blocks = this.options.editor.rootBlocks(content);
-        const located = this.options.locator.locate(blocks, rootRef);
-        if (located.type === 'exact') {
-          const sourceLine = content.split(/\r?\n/u)[located.block.line];
-          if (sourceLine !== undefined) {
-            const preflight = applyTaskCommand(this.options.codec, sourceLine, command);
-            if (
-              preflight.type === 'invalid' &&
-              preflight.issues.some(
-                (issue) => issue.code === 'invalid-date' && issue.field === 'schedule',
-              )
-            ) {
-              return preflight;
-            }
-          }
-        }
-      }
       await this.processFile(file, (content) => {
         const blocks = this.options.editor.rootBlocks(content);
         const located = this.options.locator.locate(blocks, rootRef);

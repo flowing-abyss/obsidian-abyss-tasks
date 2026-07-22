@@ -159,19 +159,22 @@ describe('ObsidianTaskRepository planning contract', () => {
       command: { type: 'move-to-all-day' as const, days: 1 },
       source: '- [ ] latest 🛫 9999-12-29 📅 9999-12-31 ⏰ 09:30 ⏱️ 45m\n',
     },
-  ])('rejects an out-of-range $command.type before vault process', async ({ command, source }) => {
-    const h = await harness({ 'tasks.md': source });
-    const process = vi.spyOn(h.app.vault, 'process');
+  ])(
+    'atomically rejects an out-of-range $command.type without changing bytes',
+    async ({ command, source }) => {
+      const h = await harness({ 'tasks.md': source });
+      const process = vi.spyOn(h.app.vault, 'process');
 
-    await expect(
-      h.repository.edit({ ...command, ref: refFor(h, 'tasks.md', source) }),
-    ).resolves.toEqual({
-      type: 'invalid',
-      issues: [{ code: 'invalid-date', field: 'schedule' }],
-    });
-    expect(await read(h.app, 'tasks.md')).toBe(source);
-    expect(process.mock.calls).toHaveLength(0);
-  });
+      await expect(
+        h.repository.edit({ ...command, ref: refFor(h, 'tasks.md', source) }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-date', field: 'schedule' }],
+      });
+      expect(await read(h.app, 'tasks.md')).toBe(source);
+      expect(process).toHaveBeenCalledOnce();
+    },
+  );
 
   it('reschedules scheduled before due and adds due when neither exists', async () => {
     const source = '- [ ] both ⏳ 2026-07-10 📅 2026-07-20\n- [ ] plain\n';

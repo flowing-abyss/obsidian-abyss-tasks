@@ -42,6 +42,10 @@ function queries(): TaskQueryApi {
   };
 }
 
+function exactQueries(task: TaskSnapshot): TaskQueryApi {
+  return { ...queries(), resolve: () => ({ type: 'exact', task }) };
+}
+
 const statuses = new StatusCatalog([
   { id: 'todo', symbol: ' ', type: 'todo', defaultForType: true },
   { id: 'doing', symbol: '/', type: 'in-progress', defaultForType: true },
@@ -91,6 +95,60 @@ describe('TaskApplicationService planning commands', () => {
       issues: [{ code: 'invalid-target', field: 'days' }],
     });
     expect(edit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      command: {
+        type: 'move-time-slot' as const,
+        ref,
+        days: -1,
+        time: localTime('10:15'),
+      },
+      planning: { start: localDate('0000-01-01'), due: localDate('0000-01-03') },
+    },
+    {
+      command: { type: 'move-to-all-day' as const, ref, days: 1 },
+      planning: { start: localDate('9999-12-29'), due: localDate('9999-12-31') },
+    },
+  ])(
+    'rejects an out-of-range $command.type before repository access',
+    async ({ command, planning }) => {
+      const edit = vi.fn<TaskRepository['edit']>();
+      const current = { ...snapshot(), planning };
+
+      await expect(service({ edit }, exactQueries(current)).execute(command)).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-date', field: 'schedule' }],
+      });
+      expect(edit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each<Extract<TaskRepositoryResult, { readonly type: 'conflict' | 'not-found' | 'ambiguous' }>>(
+    [
+      { type: 'conflict', current: snapshot() },
+      { type: 'not-found', target: { type: 'task', ref } },
+      { type: 'ambiguous', candidates: [{ root: snapshot(), target: { type: 'task', ref } }] },
+    ],
+  )('leaves a non-exact move reference to repository $type resolution', async (result) => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(result);
+    const nonExactQueries: TaskQueryApi = {
+      ...queries(),
+      resolve: () => {
+        if (result.type === 'not-found') return { type: 'not-found', ref };
+        return result;
+      },
+    };
+
+    await expect(
+      service({ edit }, nonExactQueries).execute({
+        type: 'move-to-all-day',
+        ref,
+        days: 1,
+      }),
+    ).resolves.toEqual(result);
+    expect(edit).toHaveBeenCalledOnce();
   });
 
   it.each([

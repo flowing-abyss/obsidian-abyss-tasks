@@ -1,5 +1,6 @@
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { Clock, TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
+import { shiftLocalDate } from '../domain/localDateMath';
 import { StatusCatalog } from '../domain/StatusCatalog';
 import type {
   SubtaskRef,
@@ -91,6 +92,18 @@ function refKey(ref: TaskRef): string {
 
 const RECENT_OUTCOME_LIMIT = 64;
 type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
+type MoveScheduleCommand = Extract<
+  TaskCommand,
+  { readonly type: 'move-time-slot' | 'move-to-all-day' }
+>;
+
+function moveExceedsDateBounds(task: TaskSnapshot, command: MoveScheduleCommand): boolean {
+  const { start, due, scheduled } = task.planning;
+  const dates = start && due ? [start, due] : [scheduled ?? due];
+  return dates.some(
+    (date) => date !== undefined && shiftLocalDate(date, command.days) === undefined,
+  );
+}
 
 function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   if (
@@ -275,6 +288,10 @@ export class TaskApplicationService implements TaskApplicationApi {
       };
     }
 
+    if (command.type === 'move-time-slot' || command.type === 'move-to-all-day') {
+      return this.prepareMoveSchedule(command);
+    }
+
     if (command.type !== 'set-status' && command.type !== 'toggle-completion') {
       return { command };
     }
@@ -345,6 +362,24 @@ export class TaskApplicationService implements TaskApplicationApi {
         ...(entersStampedState && { stamp: this.clock.today() }),
       },
     };
+  }
+
+  private prepareMoveSchedule(
+    command: MoveScheduleCommand,
+  ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
+    const recent = this.recentOutcomes.get(refKey(command.ref));
+    const resolution = recent
+      ? { type: 'exact' as const, task: recent }
+      : this.queries.resolve(command.ref);
+    if (resolution.type === 'exact' && moveExceedsDateBounds(resolution.task, command)) {
+      return {
+        result: {
+          type: 'invalid',
+          issues: [{ code: 'invalid-date', field: 'schedule' }],
+        },
+      };
+    }
+    return { command };
   }
 
   private remember(task: TaskSnapshot): void {
