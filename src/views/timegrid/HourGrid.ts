@@ -73,9 +73,11 @@ export function renderHourGrid(
   // doesn't also warp the gutter's own `width: 3.5em` — see .tc-tg-allday-gutter-label's CSS
   // doc comment (styles.css) for the alignment bug this fixes.
   alldayGutter.createSpan({ cls: 'tc-tg-allday-gutter-label', text: 'No-time' });
-  const alldayCells: HTMLElement[] = dates.map(() =>
-    alldayRow.createDiv({ cls: 'tc-tg-allday-cell' }),
-  );
+  const alldayCells: HTMLElement[] = dates.map((date) => {
+    const cell = alldayRow.createDiv({ cls: 'tc-tg-allday-cell' });
+    cell.setAttribute('data-tg-date', date);
+    return cell;
+  });
 
   // Hour grid: a gutter with hour labels, plus one column per date
   const gridRow = root.createDiv({ cls: 'tc-tg-grid-row' });

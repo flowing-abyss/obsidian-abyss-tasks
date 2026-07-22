@@ -1312,14 +1312,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-left: 1px solid var(--background-modifier-border);
 }
 
-/* Task 39: live "you'd land here" highlight while a horizontal (day-crossing) edge-resize is
-   in progress (renderTimedBlocks.ts's attachHorizontalResize) — reuses the same class/style
-   .tc-tg-allday-cell.is-drag-over already uses for the native cross-day drag's dragover
-   highlight below, since both signal the identical thing on a different day-cell shape. */
-.tc-tg-day-column.is-drag-over {
-  background: var(--background-modifier-hover);
-}
-
 .tc-tg-hour-row {
   height: 48px;
   border-bottom: 1px solid var(--background-modifier-border-hover);
@@ -1688,10 +1680,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   left: 0;
 }
 
-/* Task 29: the non-anchor-day "continuation" segment of a multi-day timed span — deliberately
-   lighter/thinner than a full .tc-tg-block (lower opacity fill, dashed left border reading as
-   "this continues from elsewhere", no padding for a checkbox/subtitle row it doesn't have) so
-   it's clearly linked to the task without looking like a second interactive copy of it. */
+/* A pre-due timed continuation keeps the common .tc-tg-block root and full-opacity text. Its
+   dashed rail communicates continuity without making the segment look disabled; interaction,
+   focus, identity, and resize behavior remain identical to the terminal root. */
 .tc-tg-block-continuation {
   position: absolute;
   z-index: 1;
@@ -1703,7 +1694,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   padding: 2px 6px;
   font-size: 0.8em;
   overflow: hidden;
-  opacity: 0.75;
   background: color-mix(
     in srgb,
     var(--tc-tag-color, var(--interactive-accent)) 22%,
@@ -1716,10 +1706,44 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  /* Same derivation as `.tc-tg-block`'s min-height, minus the checkbox (this segment has none,
-     see this rule's own doc comment above): 2*2px padding plus one legible line of the title's
+  /* Same derivation as `.tc-tg-block`'s min-height, minus the marker (this segment has none):
+     2*2px padding plus one legible line of the title's
      own font-size (this rule's `font-size: 0.8em`) at a generous 1.4 line-height. */
   min-height: calc(1.4em + 4px);
+}
+
+.tc-tg-drag-preview {
+  position: absolute;
+  z-index: 8;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border-radius: 4px;
+  background: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--background-primary)
+  );
+}
+
+.tc-tg-boundary-preview {
+  position: absolute;
+  z-index: 8;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border-radius: 4px;
+  background: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--background-primary)
+  );
+}
+
+.tc-tg-drag-preview.is-all-day {
+  position: relative;
+  min-height: 1.6em;
+  width: 100%;
 }
 .tc-tg-block-continuation-title {
   /* Task 40 (Round 4): same --tc-tag-text-color fallback pattern as .tc-tg-block-title, applied

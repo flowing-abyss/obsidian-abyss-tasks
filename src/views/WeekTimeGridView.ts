@@ -7,17 +7,14 @@ import { bucketTasksForDate, NOW_LINE_REFRESH_MS, type TimeGridCallbacks } from 
 import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
 import { renderAllDayCell, type AllDayCallbacks } from './timegrid/renderAllDay';
-import {
-  renderTimedBlocksForDay,
-  renderTimedSpanContinuation,
-  toTimedBlockInputs,
-  type TimedBlockCallbacks,
-} from './timegrid/renderTimedBlocks';
+import { renderTimedBlocksForDay, type TimedBlockCallbacks } from './timegrid/renderTimedBlocks';
+import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 
 export class WeekTimeGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
   private md = new Component();
   private nowLineIntervalId: number | null = null;
+  private timedInteractions = createTimedInteractionOwner();
 
   constructor(private callbacks: TimeGridCallbacks) {
     super();
@@ -30,6 +27,7 @@ export class WeekTimeGridView extends BaseView {
     shouldScrollToNow = true,
     preservedScrollTop?: number,
   ): void {
+    this.timedInteractions.disposeActive();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -67,8 +65,13 @@ export class WeekTimeGridView extends BaseView {
       onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
+      onTimedMove: this.callbacks.onTimedMove,
+      onTimedDuration: this.callbacks.onTimedDuration,
+      onTimedBoundary: this.callbacks.onTimedBoundary,
+      interactionOwner: this.timedInteractions,
       onExtendToSpan: this.callbacks.onExtendToSpan,
       onStartChange: this.callbacks.onStartChange,
+      onDueChange: this.callbacks.onDueChange,
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
@@ -92,20 +95,12 @@ export class WeekTimeGridView extends BaseView {
     const tagGroups = this.callbacks.tagGroups ?? [];
     for (const day of handles.days) {
       const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, day.date);
-      // Task 29: full interactive block only on the span's `due` (anchor) day; every other
-      // day it covers gets the lighter, non-interactive continuation segment instead.
-      const anchoredTimedSpans = timedSpans.filter((t) => String(t.planning.due) === day.date);
-      const continuationTimedSpans = timedSpans.filter((t) => String(t.planning.due) !== day.date);
-      const anchorBlocks = [...timed, ...anchoredTimedSpans];
-      renderTimedBlocksForDay(day.hourColumnEl, anchorBlocks, timedCallbacks, tagGroups);
-      renderTimedSpanContinuation(
+      renderTimedBlocksForDay(
         day.hourColumnEl,
-        continuationTimedSpans,
-        this.callbacks.onTaskClick,
+        [...timed, ...timedSpans],
+        timedCallbacks,
         tagGroups,
-        // Task 37: lets a short continuation segment's min-height clamp against this same day's
-        // anchor block(s) too, not just other continuations sharing the column.
-        toTimedBlockInputs(anchorBlocks),
+        { date: day.date },
       );
       renderAllDayCell(
         day.allDayCellEl,
@@ -154,6 +149,7 @@ export class WeekTimeGridView extends BaseView {
   }
 
   destroy(): void {
+    this.timedInteractions.disposeActive();
     this.containerEl = null;
     this.md.unload();
     if (this.nowLineIntervalId !== null) {

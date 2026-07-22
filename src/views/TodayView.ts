@@ -3,16 +3,17 @@ import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
+import type { TimedDragTarget, TimedDurationTarget } from './timegrid/dragGeometry';
 import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
 import { renderAllDayCell, type AllDayCallbacks } from './timegrid/renderAllDay';
 import {
   renderTimedBlocksForDay,
-  renderTimedSpanContinuation,
-  toTimedBlockInputs,
   type TimedBlockCallbacks,
   type TimedBlockKeyboardIntent,
 } from './timegrid/renderTimedBlocks';
+import type { TimedBoundaryTarget } from './timegrid/timedInteractions';
+import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 
 export interface TimeGridCallbacks {
   app: App;
@@ -30,6 +31,9 @@ export interface TimeGridCallbacks {
   onKeyboardIntent: (task: TaskSnapshot, intent: TimedBlockKeyboardIntent) => void;
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
+  onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
+  onTimedDuration?: (task: TaskSnapshot, target: TimedDurationTarget) => void;
+  onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
   onDueChange: (task: TaskSnapshot, newDue: string) => void;
   onExtendToSpan: (task: TaskSnapshot, newDue: string) => void;
@@ -43,13 +47,10 @@ export interface TimeGridCallbacks {
 /**
  * Bucket tasks for a single date per the due-centric anchor rule (spec: due-centric contract).
  *
- * `timedSpans` (Task 29): a multi-day span (`start` && `due`) that additionally has a `time`
- * set is kept separate from the untimed `spans` bucket — it needs hour-grid treatment (a block
- * at its time-of-day row on every spanned day, per bucketing below) rather than the all-day
- * band's chip treatment `spans` gets. Consumers render it on its `due` day (the due-centric
- * anchor, matching `spans`' existing left/right-edge convention) as the full interactive block,
- * and on every other spanned day as a lighter continuation segment — see renderTimedBlocks.ts's
- * `renderTimedSpanContinuation` and MonthGridView's `timedSpans` handling.
+ * `timedSpans`: a multi-day span (`start` && `due`) that additionally has a `time` is kept
+ * separate from untimed `spans`. Consumers place every visible timed segment into the same
+ * hour-grid overlap pass. The due segment alone owns the marker/rich title; continuation roots
+ * keep the same move, duration, keyboard, focus, and identity contract.
  */
 export function bucketTasksForDate(
   tasks: TaskSnapshot[],
@@ -124,6 +125,7 @@ export class TodayView extends BaseView {
   private containerEl: HTMLElement | null = null;
   private md = new Component();
   private nowLineIntervalId: number | null = null;
+  private timedInteractions = createTimedInteractionOwner();
 
   constructor(private callbacks: TimeGridCallbacks) {
     super();
@@ -136,6 +138,7 @@ export class TodayView extends BaseView {
     shouldScrollToNow = true,
     preservedScrollTop?: number,
   ): void {
+    this.timedInteractions.disposeActive();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -160,13 +163,8 @@ export class TodayView extends BaseView {
     const day = handles.days[0]!;
 
     const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, date);
-    // Task 29: a timed multi-day span renders its full interactive block only on its `due`
-    // day (the due-centric anchor, matching `spans`' existing left/right-edge convention) —
-    // every other day it covers gets the lighter, non-interactive continuation segment instead,
-    // so the same task never shows two full interactive blocks at once.
-    const anchoredTimedSpans = timedSpans.filter((t) => String(t.planning.due) === date);
-    const continuationTimedSpans = timedSpans.filter((t) => String(t.planning.due) !== date);
-
+    // Terminal and continuation timed segments share one renderer/packing pass. Terminal status
+    // ownership is decided from `date`; interactivity is intentionally identical on every root.
     const timedCallbacks: TimedBlockCallbacks = {
       app: this.callbacks.app,
       component: this.md,
@@ -174,24 +172,25 @@ export class TodayView extends BaseView {
       onKeyboardIntent: this.callbacks.onKeyboardIntent,
       onTimeChange: this.callbacks.onTimeChange,
       onDurationChange: this.callbacks.onDurationChange,
+      onTimedMove: this.callbacks.onTimedMove,
+      onTimedDuration: this.callbacks.onTimedDuration,
+      onTimedBoundary: this.callbacks.onTimedBoundary,
+      interactionOwner: this.timedInteractions,
       onExtendToSpan: this.callbacks.onExtendToSpan,
       onStartChange: this.callbacks.onStartChange,
+      onDueChange: this.callbacks.onDueChange,
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       statusRegistry: this.callbacks.statusRegistry,
     };
     const tagGroups = this.callbacks.tagGroups ?? [];
-    const anchorBlocks = [...timed, ...anchoredTimedSpans];
-    renderTimedBlocksForDay(day.hourColumnEl, anchorBlocks, timedCallbacks, tagGroups);
-    renderTimedSpanContinuation(
+    renderTimedBlocksForDay(
       day.hourColumnEl,
-      continuationTimedSpans,
-      this.callbacks.onTaskClick,
+      [...timed, ...timedSpans],
+      timedCallbacks,
       tagGroups,
-      // Task 37: lets a short continuation segment's min-height clamp against this same day's
-      // anchor block(s) too, not just other continuations sharing the column.
-      toTimedBlockInputs(anchorBlocks),
+      { date },
     );
 
     const allDayCallbacks: AllDayCallbacks = {
@@ -245,6 +244,7 @@ export class TodayView extends BaseView {
   }
 
   destroy(): void {
+    this.timedInteractions.disposeActive();
     this.containerEl = null;
     this.md.unload();
     if (this.nowLineIntervalId !== null) {

@@ -30,6 +30,20 @@ function callbacks() {
   };
 }
 
+function gridRect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
 describe('TodayView', () => {
   it('threads relative keyboard intents from timed blocks', () => {
     const container = freshContainer();
@@ -147,6 +161,56 @@ describe('TodayView', () => {
   it('destroy() does not throw', () => {
     const view = new TodayView(callbacks());
     expect(() => view.destroy()).not.toThrow();
+  });
+
+  it('patch() and destroy() cancel an active timed session without committing or leaving a preview', () => {
+    const container = freshContainer();
+    const onTimedMove = vi.fn();
+    const cbs = { ...callbacks(), onTimedMove };
+    const view = new TodayView(cbs);
+    const config = resolvedConfig({ startPosition: '2026-07-10' });
+    const t = task({ planning: { due: '2026-07-10', time: '09:00', duration: 60 } });
+
+    const arm = (): HTMLElement => {
+      const day = container.querySelector('.tc-tg-day-column') as HTMLElement;
+      const hour = container.querySelector('.tc-tg-hour-column') as HTMLElement;
+      const allDay = container.querySelector('.tc-tg-allday-cell') as HTMLElement;
+      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      day.getBoundingClientRect = () => gridRect(0, 100, 100, 24 * 48);
+      hour.getBoundingClientRect = () => gridRect(0, 100, 100, 24 * 48);
+      allDay.getBoundingClientRect = () => gridRect(0, 10, 100, 30);
+      block.getBoundingClientRect = () => gridRect(0, 532, 100, 48);
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 25,
+          clientY: 544,
+          pointerId: 21,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 21 }),
+      );
+      expect(container.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+      return block;
+    };
+
+    view.render(container, [t], config);
+    arm();
+    view.patch(container, [t], config);
+    expect(container.querySelector('.tc-tg-drag-preview')).toBeNull();
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 21 }),
+    );
+    expect(onTimedMove).not.toHaveBeenCalled();
+
+    arm();
+    view.destroy();
+    expect(container.querySelector('.tc-tg-drag-preview')).toBeNull();
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 21 }),
+    );
+    expect(onTimedMove).not.toHaveBeenCalled();
   });
 
   it('periodically repositions the now-line while mounted on today, and clears the interval on destroy', () => {
@@ -446,7 +510,7 @@ describe('TodayView', () => {
       expect(container.querySelector('.tc-tg-block-continuation')).toBeNull();
     });
 
-    it('renders a continuation segment (not a full block) on a non-anchor day it spans', () => {
+    it('renders a continuation segment as the common interactive block root on a pre-due day', () => {
       const container = freshContainer();
       const view = new TodayView(callbacks());
       const t = task({
@@ -454,8 +518,12 @@ describe('TodayView', () => {
         planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07-07' }));
-      expect(container.querySelector('.tc-tg-block')).toBeNull();
-      expect(container.querySelector('.tc-tg-block-continuation')).not.toBeNull();
+      const ghost = container.querySelector('.tc-tg-block.tc-tg-block-continuation') as HTMLElement;
+      expect(ghost).not.toBeNull();
+      expect(ghost.tabIndex).toBe(0);
+      expect(ghost.getAttribute('draggable')).toBeNull();
+      expect(ghost.querySelector('.tc-tg-resize-handle')).not.toBeNull();
+      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
     });
   });
 });

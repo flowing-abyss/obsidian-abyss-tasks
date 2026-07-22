@@ -10,6 +10,7 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
+import type { TimedDragTarget, TimedDurationTarget } from './dragGeometry';
 import {
   capContinuationMinHeightsPx,
   capMinHeightsPx,
@@ -22,6 +23,12 @@ import {
   type TimedBlockInput,
 } from './layout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
+import {
+  attachTimedInteractions,
+  createTimedInteractionOwner,
+  type TimedBoundaryTarget,
+  type TimedInteractionOwner,
+} from './timedInteractions';
 
 export type TimedBlockKeyboardIntent =
   | { readonly type: 'move-time'; readonly deltaMinutes: -15 | 15 }
@@ -48,11 +55,26 @@ export interface TimedBlockCallbacks {
    * or not (a fresh 🛫 is appended, anchored on the task's own unmoved `due`), `due` is never
    * part of this mutation's `build()` closure, so it can't be touched by it either way. */
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
+  onDueChange?: (task: TaskSnapshot, newDue: string) => void;
+  onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
+  onTimedDuration?: (task: TaskSnapshot, target: TimedDurationTarget) => void;
+  onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
+  interactionOwner?: TimedInteractionOwner;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
   statusRegistry: StatusRegistry;
 }
+
+export interface TimedDayRenderOptions {
+  readonly date: string;
+  readonly terminal?: boolean;
+}
+
+type BoundaryHandleBinding = {
+  element: HTMLElement;
+  boundary: 'start' | 'due' | 'create-span';
+};
 
 const DEFAULT_DURATION_MINUTES = 60;
 const SNAP_MINUTES = 15;
@@ -145,6 +167,7 @@ export function renderTimedBlocksForDay(
   tasksWithTime: TaskSnapshot[],
   callbacks: TimedBlockCallbacks,
   tagGroups: TagGroup[] = [],
+  options?: TimedDayRenderOptions,
 ): void {
   const inputs: TimedBlockInput[] = toTimedBlockInputs(tasksWithTime);
   const positioned = packOverlaps(inputs);
@@ -156,10 +179,16 @@ export function renderTimedBlocksForDay(
 
   for (const p of positioned) {
     const widthPct = 100 / p.columns;
-    const block = hourColumnEl.createDiv({ cls: 'tc-tg-block' });
+    const terminal = options
+      ? (options.terminal ?? (!p.task.planning.due || p.task.planning.due === options.date))
+      : true;
+    const block = hourColumnEl.createDiv({
+      cls: `tc-tg-block${terminal ? '' : ' tc-tg-block-continuation'}`,
+    });
     block.setAttribute('data-tc-task-file', p.task.source.filePath);
     block.setAttribute('data-tc-task-line', String(p.task.source.line));
     block.setAttribute('data-tc-start-minutes', String(p.startMinutes));
+    if (options) block.setAttribute('data-tg-segment-date', options.date);
     // Keep each block as the stable focus root used by relative arrow intents and same-day
     // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
     block.setAttribute('tabindex', '0');
@@ -217,103 +246,187 @@ export function renderTimedBlocksForDay(
     // Status marker first: lets a user mark the block done without opening the modal.
     // Its own contextmenu handler stops propagation and opens the status/priority popover
     // instead — distinct from right-clicking the block body below (opens the task modal).
-    renderStatusMarker(head, {
-      task: p.task,
-      registry: callbacks.statusRegistry,
-      onLeftClick: () => callbacks.onToggle(p.task),
-      onContextMenu: (ev) => {
-        ev.stopPropagation();
-        showStatusMenuAt(ev, {
-          task: p.task,
-          registry: callbacks.statusRegistry,
-          onPickStatus: (c) => callbacks.onSetStatus(p.task, c),
-          onPickPriority: (pr) => callbacks.onSetPriority(p.task, pr),
-        });
-      },
-    });
+    if (terminal) {
+      renderStatusMarker(head, {
+        task: p.task,
+        registry: callbacks.statusRegistry,
+        onLeftClick: () => callbacks.onToggle(p.task),
+        onContextMenu: (ev) => {
+          ev.stopPropagation();
+          showStatusMenuAt(ev, {
+            task: p.task,
+            registry: callbacks.statusRegistry,
+            onPickStatus: (c) => callbacks.onSetStatus(p.task, c),
+            onPickPriority: (pr) => callbacks.onSetPriority(p.task, pr),
+          });
+        },
+      });
+    }
     // Task 38: a completed/cancelled task stays a full, visible block (checkbox showing its
     // checked state via the marker above), communicating completion purely through this
     // strikethrough title instead of disappearing.
-    const titleEl = head.createDiv({
-      cls: `tc-tg-block-title${statusTitleClass(p.task.status)}`,
-    });
-    renderTaskText(titleEl, p.task.markdownTitle, {
-      app: callbacks.app,
-      sourcePath: p.task.source.filePath,
-      component: callbacks.component,
-    });
-    // Task 34: left-edge horizontal resize, moving/adding `start` while `due`/`⏰`/`⏱️` stay
-    // untouched (see TimedBlockCallbacks.onStartChange's own comment). Rendered on the same
-    // anchor-day block as the right edge below — unlike renderAllDay.ts's all-day spans, where
-    // start and due each get their own handle on their own (usually different) day cell, a
-    // timed span's only ever-interactive block is its `due`-anchored one (see this function's
-    // own doc comment on the due-centric anchor rule), so both edges of a timed span necessarily
-    // coexist on the same element here.
-    const hEdgeLeft = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-    // Task 51: clamp the left edge so it can never be dragged past the block's own `due` day —
-    // `due` is always set here (this block is always the `due`-anchored one, per the
-    // due-centric anchor rule above), and `updateTaskStart`'s mutation never touches `due`
-    // itself, so `due` is a stable bound for the whole gesture.
-    attachHorizontalResize(
-      hEdgeLeft,
+    if (terminal) {
+      const titleEl = head.createDiv({
+        cls: `tc-tg-block-title${statusTitleClass(p.task.status)}`,
+      });
+      renderTaskText(titleEl, p.task.markdownTitle, {
+        app: callbacks.app,
+        sourcePath: p.task.source.filePath,
+        component: callbacks.component,
+      });
+    } else {
+      head.createDiv({
+        cls: `tc-tg-block-continuation-title${statusTitleClass(p.task.status)}`,
+        text: plainGhostTaskTitle(p.task),
+      });
+    }
+    attachTimedBlockControls(
+      block,
       hourColumnEl,
       p.task,
-      callbacks.onStartChange,
-      p.task.planning.due ? { date: p.task.planning.due, kind: 'max' } : undefined,
+      p.startMinutes,
+      p.durationMinutes,
+      terminal,
+      callbacks,
+      options,
     );
-    // Task 29: right-edge horizontal resize, extending the block into a multi-day timed span.
-    // Reuses `.tc-tg-span-edge`/`.tc-tg-span-edge--right` — the same classes/CSS renderAllDay.ts's
-    // span/plain right-edge handles already use — so it looks and behaves consistently with the
-    // existing all-day span-extension affordance (Round 2 Task 9) instead of inventing new visual
-    // language for the same gesture.
-    const hEdge = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    // Task 51 (mirror of the left edge's clamp above): the right edge can never be dragged
-    // before whichever anchor `extendTaskToSpan` would freeze as the new `start` — the task's
-    // own `start` if it's already a span, else the `scheduled ?? due` anchor `extendTaskToSpan`
-    // itself uses (see that method's own doc comment for why `scheduled` must win over `due`
-    // there). Matching that exact priority here keeps the clamp bound consistent with what the
-    // commit would actually freeze.
-    const rightEdgeAnchor =
-      p.task.planning.start ?? p.task.planning.scheduled ?? p.task.planning.due;
-    attachHorizontalResize(
-      hEdge,
-      hourColumnEl,
-      p.task,
-      callbacks.onExtendToSpan,
-      rightEdgeAnchor ? { date: rightEdgeAnchor, kind: 'min' } : undefined,
-    );
-
-    const handle = block.createDiv({ cls: 'tc-tg-resize-handle' });
-    // Task 26: native HTML5 DnD so a timed block can be dragged out of the hour-grid onto the
-    // all-day/"No-time" row (renderAllDay.ts's existing drop target), using the SAME
-    // filePath:::line payload convention as renderAllDay.ts's renderDraggableBody. The resize
-    // handle itself stays draggable="false" too, but per the HTML Drag and Drop spec that alone
-    // does NOT stop a gesture starting on it from arming the ancestor's native dragstart — the
-    // browser walks up to the nearest draggable="true" element regardless of the child's own
-    // draggable value (confirmed live and fixed the same way in renderAllDay.ts's
-    // attachEdgeResize). attachDrag below closes that gap for real by flipping `block`'s own
-    // draggable off for the duration of a resize gesture (armed on the handle's pointerdown,
-    // restored on pointerup/pointercancel) — see attachDrag's own comment for why this is scoped
-    // to resize mode only, not move mode.
-    block.setAttribute('draggable', 'true');
-    handle.setAttribute('draggable', 'false');
-    block.addEventListener('dragstart', (e) => {
-      e.dataTransfer?.setData('text/plain', `${p.task.source.filePath}:::${p.task.source.line}`);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-      block.addClass('is-dragging');
-    });
-    block.addEventListener('dragend', () => block.removeClass('is-dragging'));
-
-    block.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      if ((e.target as HTMLElement).closest('.tc-tg-resize-handle, .tc-tg-span-edge')) return;
-      callbacks.onTaskClick(p.task);
-    });
-
-    attachDrag(block, handle, p.startMinutes, p.durationMinutes, callbacks, p.task);
-    attachKeyboardHandling(block, callbacks, p.task);
-    attachSelectedState(block);
   }
+}
+
+function attachTimedBlockControls(
+  block: HTMLElement,
+  hourColumnEl: HTMLElement,
+  task: TaskSnapshot,
+  startMinutes: number,
+  durationMinutes: number,
+  terminal: boolean,
+  callbacks: TimedBlockCallbacks,
+  options?: TimedDayRenderOptions,
+): void {
+  const handle = block.createDiv({ cls: 'tc-tg-resize-handle' });
+  handle.setAttribute('draggable', 'false');
+  const boundaryHandles: BoundaryHandleBinding[] = [];
+
+  if (options) {
+    const isSpan = Boolean(task.planning.start && task.planning.due);
+    if (isSpan && String(task.planning.start) === options.date) {
+      boundaryHandles.push({
+        element: createBoundaryHandle(block, 'left', 'start'),
+        boundary: 'start',
+      });
+    }
+    if (isSpan && String(task.planning.due) === options.date) {
+      boundaryHandles.push({
+        element: createBoundaryHandle(block, 'right', 'due'),
+        boundary: 'due',
+      });
+    } else if (!isSpan && terminal) {
+      boundaryHandles.push({
+        element: createBoundaryHandle(block, 'right', 'create-span'),
+        boundary: 'create-span',
+      });
+    }
+  } else {
+    attachLegacyBoundaryHandles(block, hourColumnEl, task, callbacks);
+  }
+
+  block.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    if ((event.target as HTMLElement).closest('.tc-tg-resize-handle, .tc-tg-span-edge')) return;
+    callbacks.onTaskClick(task);
+  });
+
+  if (options) {
+    attachOwnedInteractions(
+      block,
+      handle,
+      boundaryHandles,
+      task,
+      startMinutes,
+      durationMinutes,
+      callbacks,
+      options,
+    );
+  } else {
+    attachDrag(block, handle, startMinutes, durationMinutes, callbacks, task);
+  }
+  attachKeyboardHandling(block, callbacks, task);
+  attachSelectedState(block);
+}
+
+function createBoundaryHandle(
+  block: HTMLElement,
+  side: 'left' | 'right',
+  boundary: 'start' | 'due' | 'create-span',
+): HTMLElement {
+  const edge = block.createDiv({ cls: `tc-tg-span-edge tc-tg-span-edge--${side}` });
+  edge.dataset['boundary'] = boundary;
+  edge.setAttribute('draggable', 'false');
+  return edge;
+}
+
+function attachLegacyBoundaryHandles(
+  block: HTMLElement,
+  hourColumnEl: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: TimedBlockCallbacks,
+): void {
+  const left = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+  attachHorizontalResize(
+    left,
+    hourColumnEl,
+    task,
+    callbacks.onStartChange,
+    task.planning.due ? { date: task.planning.due, kind: 'max' } : undefined,
+  );
+  const right = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+  const rightEdgeAnchor = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
+  attachHorizontalResize(
+    right,
+    hourColumnEl,
+    task,
+    callbacks.onExtendToSpan,
+    rightEdgeAnchor ? { date: rightEdgeAnchor, kind: 'min' } : undefined,
+  );
+}
+
+function attachOwnedInteractions(
+  block: HTMLElement,
+  handle: HTMLElement,
+  boundaryHandles: BoundaryHandleBinding[],
+  task: TaskSnapshot,
+  startMinutes: number,
+  durationMinutes: number,
+  callbacks: TimedBlockCallbacks,
+  options: TimedDayRenderOptions,
+): void {
+  const owner = callbacks.interactionOwner ?? createTimedInteractionOwner();
+  attachTimedInteractions({
+    source: block,
+    durationHandle: handle,
+    boundaryHandles,
+    task,
+    segmentDate: options.date,
+    startMinutes,
+    durationMinutes,
+    owner,
+    onMove: (movedTask, target) => {
+      if (callbacks.onTimedMove) callbacks.onTimedMove(movedTask, target);
+      else if (target.destination === 'time-grid') {
+        callbacks.onTimeChange(movedTask, target.startMinutes);
+      }
+    },
+    onDuration: (resizedTask, target) => {
+      if (callbacks.onTimedDuration) callbacks.onTimedDuration(resizedTask, target);
+      else callbacks.onDurationChange(resizedTask, target.durationMinutes);
+    },
+    onBoundary: (resizedTask, target: TimedBoundaryTarget) => {
+      if (callbacks.onTimedBoundary) callbacks.onTimedBoundary(resizedTask, target);
+      else if (target.boundary === 'start') callbacks.onStartChange(resizedTask, target.date);
+      else if (target.boundary === 'due') callbacks.onDueChange?.(resizedTask, target.date);
+      else callbacks.onExtendToSpan(resizedTask, target.date);
+    },
+  });
 }
 
 /**
@@ -518,7 +631,7 @@ function attachDrag(
     // all-day row) unconditionally — harmless no-op if this gesture was 'move' (where it was
     // never toggled off, see onPointerDown below), and the fix for 'resize' (see that same
     // comment for why resize needs this at all).
-    block.setAttribute('draggable', 'true');
+    block.removeAttribute('draggable');
     mode = null;
     // Task 39: mirrors is-dragging/is-edge-resizing's own cleanup-in-every-exit-path
     // discipline — removed here (the one place every exit path funnels through) rather than
@@ -773,7 +886,7 @@ function attachHorizontalResize(
   let capturedPointerId: number | null = null;
 
   const cleanup = (): void => {
-    block?.setAttribute('draggable', 'true');
+    block?.removeAttribute('draggable');
     clearHoveredDay();
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);

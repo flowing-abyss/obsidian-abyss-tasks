@@ -437,7 +437,7 @@ describe('WeekTimeGridView', () => {
   });
 
   describe('timed multi-day spans (Task 29)', () => {
-    it('renders the full interactive block only on the due (anchor) day, and a continuation segment on the other spanned days, for a start+due+time task', () => {
+    it('renders every timed span segment as an interactive block and keeps terminal ownership on due', () => {
       const container = freshContainer();
       const view = new WeekTimeGridView(callbacks());
       // Monday-Sunday week of 2026-07-06..12 (firstDayOfWeek: 1); the span covers Mon-Wed.
@@ -450,18 +450,35 @@ describe('WeekTimeGridView', () => {
       const dueColumn = container.querySelector<HTMLElement>(
         '.tc-tg-day-column[data-tg-date="2026-07-08"]',
       )!;
-      expect(dueColumn.querySelector('.tc-tg-block')).not.toBeNull();
+      const dueBlock = dueColumn.querySelector('.tc-tg-block') as HTMLElement;
+      expect(dueBlock).not.toBeNull();
       expect(dueColumn.querySelector('.tc-tg-block-continuation')).toBeNull();
+      expect(dueBlock.querySelector('.tc-status-marker')).not.toBeNull();
+      expect(dueBlock.querySelector('.tc-tg-block-title')).not.toBeNull();
+      expect(dueBlock.querySelector('[data-boundary="due"]')).not.toBeNull();
 
-      for (const date of ['2026-07-06', '2026-07-07']) {
+      for (const [date, boundary] of [
+        ['2026-07-06', 'start'],
+        ['2026-07-07', null],
+      ] as const) {
         const col = container.querySelector<HTMLElement>(
           `.tc-tg-day-column[data-tg-date="${date}"]`,
         )!;
-        expect(col.querySelector('.tc-tg-block')).toBeNull();
-        const seg = col.querySelector('.tc-tg-block-continuation');
+        const seg = col.querySelector('.tc-tg-block.tc-tg-block-continuation') as HTMLElement;
         expect(seg).not.toBeNull();
         expect(seg?.textContent).toContain('Conference');
+        expect(seg.tabIndex).toBe(0);
+        expect(seg.getAttribute('draggable')).toBeNull();
+        expect(seg.querySelector('.tc-tg-resize-handle')).not.toBeNull();
+        expect(seg.querySelector('.tc-status-marker')).toBeNull();
+        expect(seg.querySelector('.tc-tg-block-title')).toBeNull();
+        expect(seg.querySelector('.tc-tg-block-continuation-title')).not.toBeNull();
+        expect(seg.querySelector('.tc-tg-span-edge')?.getAttribute('data-boundary') ?? null).toBe(
+          boundary,
+        );
       }
+
+      expect(container.querySelectorAll('.tc-tg-block')).toHaveLength(3);
 
       // Not part of the span: no block, no continuation.
       const outside = container.querySelector<HTMLElement>(
@@ -469,6 +486,33 @@ describe('WeekTimeGridView', () => {
       )!;
       expect(outside.querySelector('.tc-tg-block')).toBeNull();
       expect(outside.querySelector('.tc-tg-block-continuation')).toBeNull();
+    });
+
+    it('packs a timed continuation together with an overlapping terminal block', () => {
+      const container = freshContainer();
+      const view = new WeekTimeGridView(callbacks());
+      const continuation = task({
+        title: 'Span',
+        planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 60 },
+        source: { line: 0 },
+      });
+      const terminal = task({
+        title: 'Local',
+        planning: { due: '2026-07-07', time: '09:15', duration: 60 },
+        source: { line: 1 },
+      });
+      view.render(
+        container,
+        [continuation, terminal],
+        resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }),
+      );
+      const day = container.querySelector<HTMLElement>(
+        '.tc-tg-day-column[data-tg-date="2026-07-07"]',
+      )!;
+      const blocks = Array.from(day.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      expect(blocks).toHaveLength(2);
+      expect(blocks.map((block) => block.style.width)).toEqual(['50%', '50%']);
+      expect(blocks.map((block) => block.style.left)).toEqual(['0%', '50%']);
     });
 
     it('an untimed start+due span still renders only in the all-day row (unaffected by the new timedSpans handling)', () => {

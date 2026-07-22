@@ -26,6 +26,7 @@ import {
   durationMinutes,
   localDate,
   localTime,
+  shiftLocalDate,
   type LocalDate,
   type TaskApplicationApi,
   type TaskCommandResult,
@@ -56,12 +57,14 @@ import {
   groupTasksByStatus,
   groupTasksByTag,
 } from '../views/taskGrouping';
+import type { TimedDragTarget, TimedDurationTarget } from '../views/timegrid/dragGeometry';
 import {
   minutesToPixels,
   minutesToTimeString,
   timeStringToMinutes,
 } from '../views/timegrid/layout';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
+import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { visibleCalendarDates, type CalViewType } from './visibleCalendarDates';
 
@@ -73,6 +76,7 @@ type CreateTaskCommand = Extract<
 interface TimedBlockFocusLocator {
   readonly filePath: string;
   readonly line: number;
+  readonly segmentDate?: string;
   readonly sequence: number;
   readonly queueSequence?: number;
   readonly originElement?: HTMLElement;
@@ -603,6 +607,15 @@ export class CenterPanel {
     const handleDurationChange = (t: TaskSnapshot, newDurationMinutes: number): void => {
       void this.updateTaskDuration(t, newDurationMinutes);
     };
+    const handleTimedMove = (t: TaskSnapshot, target: TimedDragTarget): void => {
+      void this.commitTimedMove(t, target);
+    };
+    const handleTimedDuration = (t: TaskSnapshot, target: TimedDurationTarget): void => {
+      void this.commitTimedDuration(t, target);
+    };
+    const handleTimedBoundary = (t: TaskSnapshot, target: TimedBoundaryTarget): void => {
+      void this.commitTimedBoundary(t, target);
+    };
     const handleStartChange = (t: TaskSnapshot, newStart: string): void => {
       void this.updateTaskStart(t, newStart);
     };
@@ -623,6 +636,7 @@ export class CenterPanel {
       const provisionalFocus: TimedBlockFocusLocator = {
         filePath: task.source.filePath,
         line: task.source.line,
+        segmentDate: originElement?.dataset['tgSegmentDate'],
         sequence: focusSequence,
         originElement,
       };
@@ -741,6 +755,9 @@ export class CenterPanel {
           onCreateAtDate: handleCreateAtDateAllDay,
           onTimeChange: handleTimeChange,
           onDurationChange: handleDurationChange,
+          onTimedMove: handleTimedMove,
+          onTimedDuration: handleTimedDuration,
+          onTimedBoundary: handleTimedBoundary,
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
@@ -773,6 +790,9 @@ export class CenterPanel {
           },
           onTimeChange: handleTimeChange,
           onDurationChange: handleDurationChange,
+          onTimedMove: handleTimedMove,
+          onTimedDuration: handleTimedDuration,
+          onTimedBoundary: handleTimedBoundary,
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
@@ -967,6 +987,7 @@ export class CenterPanel {
     if (filePath === undefined || lineText === undefined) return;
     const line = Number(lineText);
     if (!Number.isInteger(line)) return;
+    const segmentDate = block.dataset['tgSegmentDate'];
 
     const pending = this.pendingTimedBlockFocus;
     const isDifferentPreCommitOrigin =
@@ -980,12 +1001,18 @@ export class CenterPanel {
       this.pendingTimedBlockFocus = {
         filePath,
         line,
+        segmentDate,
         sequence: ++this.nextTimedBlockFocusSequence,
         originElement: block,
       };
       return;
     }
-    if (pending?.filePath === filePath && pending.line === line) return;
+    if (
+      pending?.filePath === filePath &&
+      pending.line === line &&
+      pending.segmentDate === segmentDate
+    )
+      return;
     if (pending?.queueSequence !== undefined) {
       this.keyboardQueue?.cancel();
       this.clearKeyboardSequenceState(pending.queueSequence);
@@ -993,6 +1020,7 @@ export class CenterPanel {
     this.pendingTimedBlockFocus = {
       filePath,
       line,
+      segmentDate,
       sequence: ++this.nextTimedBlockFocusSequence,
       originElement: block,
     };
@@ -1010,7 +1038,9 @@ export class CenterPanel {
     ).find(
       (block) =>
         block.dataset['tcTaskFile'] === scheduled.filePath &&
-        block.dataset['tcTaskLine'] === String(scheduled.line),
+        block.dataset['tcTaskLine'] === String(scheduled.line) &&
+        (scheduled.segmentDate === undefined ||
+          block.dataset['tgSegmentDate'] === scheduled.segmentDate),
     );
     if (queueSequence !== undefined && scheduledCandidate === scheduled.originElement) return;
     const restorationId =
@@ -1047,7 +1077,9 @@ export class CenterPanel {
       const candidate = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
         (block) =>
           block.dataset['tcTaskFile'] === pending.filePath &&
-          block.dataset['tcTaskLine'] === String(pending.line),
+          block.dataset['tcTaskLine'] === String(pending.line) &&
+          (pending.segmentDate === undefined ||
+            block.dataset['tgSegmentDate'] === pending.segmentDate),
       );
       if (
         !candidate?.isConnected ||
@@ -1124,19 +1156,34 @@ export class CenterPanel {
     this.committedKeyboardSequences.add(queueSequence);
     const sourceChanged =
       pending.filePath !== updated.source.filePath || pending.line !== updated.source.line;
-    if (changed || sourceChanged) {
+    let nextSegmentDate = pending.segmentDate;
+    if (changed && intent.type === 'shift-schedule' && pending.segmentDate !== undefined) {
+      try {
+        nextSegmentDate = shiftLocalDate(localDate(pending.segmentDate), intent.days);
+      } catch {
+        nextSegmentDate = pending.segmentDate;
+      }
+    }
+    const segmentChanged = nextSegmentDate !== pending.segmentDate;
+    if (changed || sourceChanged || segmentChanged) {
       this.restoredKeyboardSequences.delete(queueSequence);
     }
-    if (sourceChanged) {
+    if (sourceChanged || segmentChanged) {
       pending = {
         ...pending,
         filePath: updated.source.filePath,
         line: updated.source.line,
+        segmentDate: nextSegmentDate,
         sequence: ++this.nextTimedBlockFocusSequence,
       };
       this.pendingTimedBlockFocus = pending;
     }
-    if (changed || sourceChanged || !this.restoredKeyboardSequences.has(queueSequence)) {
+    if (
+      changed ||
+      sourceChanged ||
+      segmentChanged ||
+      !this.restoredKeyboardSequences.has(queueSequence)
+    ) {
       this.deferTimedBlockFocus(this.el, this.calendarRenderGeneration);
     }
     if (intent.type !== 'shift-schedule') return;
@@ -2609,6 +2656,63 @@ export class CenterPanel {
       );
     } catch {
       // A malformed drag payload is ignored without touching the task.
+    }
+  }
+
+  private async commitTimedMove(task: TaskSnapshot, target: TimedDragTarget): Promise<void> {
+    if (!this.tasks) return;
+    try {
+      const command: Parameters<TaskApplicationApi['execute']>[0] =
+        target.destination === 'all-day'
+          ? { type: 'move-to-all-day', ref: task.ref, days: target.dayDelta }
+          : {
+              type: 'move-time-slot',
+              ref: task.ref,
+              days: target.dayDelta,
+              time: localTime(minutesToTimeString(target.startMinutes)),
+            };
+      presentTaskCommandResult(await this.tasks.execute(command));
+    } catch {
+      // Geometry and command validation share the same target; malformed values remain no-ops.
+    }
+  }
+
+  private async commitTimedDuration(
+    task: TaskSnapshot,
+    target: TimedDurationTarget,
+  ): Promise<void> {
+    if (!this.tasks) return;
+    try {
+      presentTaskCommandResult(
+        await this.tasks.execute({
+          type: 'patch',
+          target: { type: 'task', ref: task.ref },
+          patch: { duration: { type: 'set', value: durationMinutes(target.durationMinutes) } },
+        }),
+      );
+    } catch {
+      // Keep the previous duration if a forged target fails validation.
+    }
+  }
+
+  private async commitTimedBoundary(
+    task: TaskSnapshot,
+    target: TimedBoundaryTarget,
+  ): Promise<void> {
+    if (!this.tasks) return;
+    try {
+      const command: Parameters<TaskApplicationApi['execute']>[0] =
+        target.boundary === 'create-span'
+          ? { type: 'extend-span', ref: task.ref, due: localDate(target.date) }
+          : {
+              type: 'set-span-boundary',
+              ref: task.ref,
+              boundary: target.boundary,
+              date: localDate(target.date),
+            };
+      presentTaskCommandResult(await this.tasks.execute(command));
+    } catch {
+      // Boundary geometry is validated again by the application command.
     }
   }
 

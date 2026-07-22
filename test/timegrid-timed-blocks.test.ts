@@ -10,6 +10,10 @@ import {
   toTimedBlockInputs,
 } from '../src/views/timegrid/renderTimedBlocks';
 import {
+  attachTimedInteractions,
+  createTimedInteractionOwner,
+} from '../src/views/timegrid/timedInteractions';
+import {
   dispatchDnD,
   freshContainer,
   task,
@@ -47,6 +51,336 @@ function callbacks() {
     statusRegistry: registry,
   };
 }
+
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return {
+    x: left,
+    y: top,
+    left,
+    top,
+    right: left + width,
+    bottom: top + height,
+    width,
+    height,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+function timedGestureGrid() {
+  const root = freshContainer().createDiv({ cls: 'tc-tg-root' });
+  const allDayRow = root.createDiv({ cls: 'tc-tg-allday-row' });
+  const gridRow = root.createDiv({ cls: 'tc-tg-grid-row' });
+  const owner = createTimedInteractionOwner();
+  const dates = ['2026-07-06', '2026-07-07', '2026-07-08'] as const;
+  type GestureColumn = {
+    date: string;
+    allDay: HTMLElement;
+    day: HTMLElement;
+    hour: HTMLElement;
+  };
+  const columns = dates.map((date, index) => {
+    const allDay = allDayRow.createDiv({ cls: 'tc-tg-allday-cell' });
+    allDay.dataset['tgDate'] = date;
+    allDay.getBoundingClientRect = () => rect(index * 100, 10, 100, 30);
+    const day = gridRow.createDiv({ cls: 'tc-tg-day-column' });
+    day.dataset['tgDate'] = date;
+    day.getBoundingClientRect = () => rect(index * 100, 100, 100, 24 * 48);
+    const hour = day.createDiv({ cls: 'tc-tg-hour-column' });
+    hour.getBoundingClientRect = () => rect(index * 100, 100, 100, 24 * 48);
+    return { date, allDay, day, hour };
+  }) as unknown as [GestureColumn, GestureColumn, GestureColumn];
+  return { root, owner, columns };
+}
+
+describe('Task 2 unified timed interaction contract', () => {
+  it('binds session listeners to source.ownerDocument.defaultView, not the global window', () => {
+    const iframe = activeDocument.createElement('iframe');
+    activeDocument.body.append(iframe);
+    const foreignDocument = iframe.contentDocument;
+    const foreignWindow = iframe.contentWindow;
+    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
+    const root = foreignDocument.createElement('div');
+    root.className = 'tc-tg-root';
+    const allDay = foreignDocument.createElement('div');
+    allDay.className = 'tc-tg-allday-cell';
+    allDay.dataset['tgDate'] = '2026-07-06';
+    allDay.getBoundingClientRect = () => rect(0, 10, 100, 30);
+    const day = foreignDocument.createElement('div');
+    day.className = 'tc-tg-day-column';
+    day.dataset['tgDate'] = '2026-07-06';
+    day.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
+    const hour = foreignDocument.createElement('div');
+    hour.className = 'tc-tg-hour-column';
+    hour.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
+    const source = foreignDocument.createElement('div');
+    source.className = 'tc-tg-block';
+    source.style.top = '432px';
+    source.style.height = '48px';
+    source.style.left = '0%';
+    source.style.width = '100%';
+    source.getBoundingClientRect = () => rect(0, 532, 100, 48);
+    const durationHandle = foreignDocument.createElement('div');
+    source.append(durationHandle);
+    hour.append(source);
+    day.append(hour);
+    root.append(allDay, day);
+    foreignDocument.body.append(root);
+    const onMove = vi.fn();
+    attachTimedInteractions({
+      source,
+      durationHandle,
+      boundaryHandles: [],
+      task: task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } }),
+      segmentDate: '2026-07-06',
+      startMinutes: 540,
+      durationMinutes: 60,
+      owner: createTimedInteractionOwner(),
+      onMove,
+      onDuration: vi.fn(),
+      onBoundary: vi.fn(),
+    });
+
+    source.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 9 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 9 }),
+    );
+    expect(foreignDocument.querySelector('.tc-tg-drag-preview')).toBeNull();
+    foreignWindow.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 9 }),
+    );
+    expect(foreignDocument.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+    foreignWindow.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 9 }),
+    );
+    expect(onMove).toHaveBeenCalledOnce();
+    iframe.remove();
+  });
+
+  it('styles exact previews as segment-sized dashed overlays and has no timed whole-day highlight', () => {
+    for (const selector of ['.tc-tg-drag-preview', '.tc-tg-boundary-preview']) {
+      const declarations = declarationsFor(selector);
+      expect(declarations).toMatch(/position\s*:\s*absolute/u);
+      expect(declarations).toMatch(/border\s*:[^;]*dashed/u);
+      expect(declarations).toMatch(/pointer-events\s*:\s*none/u);
+    }
+    expect(declarationsFor('.tc-tg-day-column.is-drag-over')).toBe('');
+    expect(declarationsFor('.tc-tg-block-continuation')).not.toMatch(/opacity\s*:/u);
+  });
+
+  it('keeps a cross-day source stationary and commits the same frozen target rendered by preview', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedMove = vi.fn();
+    const t = task({
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 60 },
+    });
+    renderTimedBlocksForDay(
+      columns[0].hour,
+      [t],
+      { ...callbacks(), onTimedMove, interactionOwner: owner },
+      [],
+      { date: '2026-07-06', terminal: false },
+    );
+    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    const originalTop = block.style.top;
+    const originalHeight = block.style.height;
+
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 1 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 1 }),
+    );
+
+    const preview = columns[1].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    expect(preview).not.toBeNull();
+    expect(preview.style.top).toBe('480px');
+    expect(preview.style.height).toBe('48px');
+    expect(block.style.top).toBe(originalTop);
+    expect(block.style.height).toBe(originalHeight);
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 1 }),
+    );
+    expect(onTimedMove).toHaveBeenCalledOnce();
+    const [, target] = onTimedMove.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(target).toEqual({
+      date: '2026-07-07',
+      startMinutes: 600,
+      dayDelta: 1,
+      destination: 'time-grid',
+    });
+    expect(Object.isFrozen(target)).toBe(true);
+    expect(preview.dataset['target']).toBe(JSON.stringify(target));
+    expect(preview.isConnected).toBe(false);
+  });
+
+  it('moves to all-day by the delta from the grabbed visible ghost date', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedMove = vi.fn();
+    const t = task({
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 60 },
+    });
+    renderTimedBlocksForDay(
+      columns[1].hour,
+      [t],
+      { ...callbacks(), onTimedMove, interactionOwner: owner },
+      [],
+      { date: '2026-07-07', terminal: false },
+    );
+    const ghost = columns[1].hour.querySelector('.tc-tg-block') as HTMLElement;
+    ghost.getBoundingClientRect = () => rect(100, 9 * 48 + 100, 100, 48);
+    ghost.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 125, clientY: 544, pointerId: 2 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 225, clientY: 25, pointerId: 2 }),
+    );
+    expect(columns[2].allDay.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 225, clientY: 25, pointerId: 2 }),
+    );
+    expect(onTimedMove).toHaveBeenCalledWith(
+      t,
+      expect.objectContaining({ destination: 'all-day', date: '2026-07-08', dayDelta: 1 }),
+    );
+  });
+
+  it('uses a separate exact preview for bottom duration resize without changing source height', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedDuration = vi.fn();
+    const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+    renderTimedBlocksForDay(
+      columns[0].hour,
+      [t],
+      { ...callbacks(), onTimedDuration, interactionOwner: owner },
+      [],
+      { date: '2026-07-06', terminal: true },
+    );
+    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const handle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    const originalHeight = block.style.height;
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 580, pointerId: 3 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 50, clientY: 628, pointerId: 3 }),
+    );
+    const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    expect(preview.style.height).toBe('96px');
+    expect(block.style.height).toBe(originalHeight);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 50, clientY: 628, pointerId: 3 }),
+    );
+    const [, target] = onTimedDuration.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(target).toEqual({ durationMinutes: 120, endMinutes: 660 });
+    expect(preview.dataset['target']).toBe(JSON.stringify(target));
+  });
+
+  it('renders a block-sized boundary preview and commits that same frozen boundary target', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedBoundary = vi.fn();
+    const t = task({
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 60 },
+    });
+    renderTimedBlocksForDay(
+      columns[2].hour,
+      [t],
+      { ...callbacks(), onTimedBoundary, interactionOwner: owner },
+      [],
+      { date: '2026-07-08', terminal: true },
+    );
+    const block = columns[2].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const handle = block.querySelector('[data-boundary="due"]') as HTMLElement;
+    block.getBoundingClientRect = () => rect(200, 9 * 48 + 100, 100, 48);
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 250, clientY: 544, pointerId: 8 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 8 }),
+    );
+    const preview = columns[1].hour.querySelector('.tc-tg-boundary-preview') as HTMLElement;
+    expect(preview.style.top).toBe('432px');
+    expect(preview.style.height).toBe('48px');
+    expect(columns.every((column) => !column.day.classList.contains('is-drag-over'))).toBe(true);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 150, clientY: 544, pointerId: 8 }),
+    );
+    const [, target] = onTimedBoundary.mock.calls[0] as [unknown, Record<string, unknown>];
+    expect(target).toEqual({ boundary: 'due', date: '2026-07-07', dayDelta: -1 });
+    expect(Object.isFrozen(target)).toBe(true);
+    expect(preview.dataset['target']).toBe(JSON.stringify(target));
+  });
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur'] as const)(
+    '%s disposes preview and transient state without committing',
+    (eventType) => {
+      const { owner, columns } = timedGestureGrid();
+      const onTimedMove = vi.fn();
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedMove, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal: true },
+      );
+      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 4 }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 4 }),
+      );
+      expect(
+        columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview'),
+      ).not.toBeNull();
+      if (eventType === 'blur') window.dispatchEvent(new Event('blur'));
+      else if (eventType === 'pointercancel') {
+        window.dispatchEvent(new PointerEvent(eventType, { pointerId: 4 }));
+      } else block.dispatchEvent(new PointerEvent(eventType, { bubbles: true, pointerId: 4 }));
+      expect(
+        columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview'),
+      ).toBeNull();
+      expect(block.classList.contains('is-picked-up')).toBe(false);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 4 }),
+      );
+      expect(onTimedMove).not.toHaveBeenCalled();
+    },
+  );
+
+  it('owner disposal is the patch/destroy cleanup boundary', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedMove = vi.fn();
+    const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+    renderTimedBlocksForDay(
+      columns[0].hour,
+      [t],
+      { ...callbacks(), onTimedMove, interactionOwner: owner },
+      [],
+      { date: '2026-07-06', terminal: true },
+    );
+    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 5 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 5 }),
+    );
+    owner.disposeActive();
+    expect(columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview')).toBeNull();
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 5 }),
+    );
+    expect(onTimedMove).not.toHaveBeenCalled();
+  });
+});
 
 describe('renderTimedBlocksForDay', () => {
   it('does not set data-priority on the block (calendar blocks no longer render a priority border)', () => {
@@ -709,13 +1043,13 @@ describe('renderTimedBlocksForDay', () => {
     expect(container.querySelector('.tc-task-tag')).toBeNull();
   });
 
-  describe('native HTML5 drag-out (Task 26: drop onto the all-day row)', () => {
-    it('the block is draggable="true", matching the all-day cross-day drag convention', () => {
+  describe('plugin-owned pointer interaction replaces native HTML5 drag-out', () => {
+    it('the block is not native draggable', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
 
     it('the resize handle stays draggable="false" (Round 2 Task 9 pattern: a non-draggable island inside a draggable ancestor)', () => {
@@ -726,22 +1060,22 @@ describe('renderTimedBlocksForDay', () => {
       expect(handle.getAttribute('draggable')).toBe('false');
     });
 
-    it('dragstart on the block carries the filePath:::line payload, the same convention as renderAllDay.ts', () => {
+    it('dragstart does not publish a native filePath:::line payload', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' }, source: { filePath: 'a.md', line: 3 } });
       renderTimedBlocksForDay(container, [t], callbacks());
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       const dt = dispatchDnD(block, 'dragstart');
-      expect(dt.getData('text/plain')).toBe('a.md:::3');
+      expect(dt.getData('text/plain')).toBe('');
     });
 
-    it('dragstart adds is-dragging, dragend removes it (mirrors renderAllDay.ts body)', () => {
+    it('native dragstart never adds is-dragging', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       dispatchDnD(block, 'dragstart');
-      expect(block.hasClass('is-dragging')).toBe(true);
+      expect(block.hasClass('is-dragging')).toBe(false);
       dispatchDnD(block, 'dragend');
       expect(block.hasClass('is-dragging')).toBe(false);
     });
@@ -842,13 +1176,13 @@ describe('renderTimedBlocksForDay', () => {
         handle.setPointerCapture = () => {};
         handle.releasePointerCapture = () => {};
 
-        expect(block.getAttribute('draggable')).toBe('true');
+        expect(block.getAttribute('draggable')).toBeNull();
         handle.dispatchEvent(
           new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
         );
         expect(block.getAttribute('draggable')).toBe('false');
         window.dispatchEvent(new PointerEvent('pointerup', { clientY: 148, pointerId: 1 }));
-        expect(block.getAttribute('draggable')).toBe('true');
+        expect(block.getAttribute('draggable')).toBeNull();
       });
 
       it("a pointercancel mid-resize (native drag hijacking the session) also restores the block's draggable to true", () => {
@@ -865,7 +1199,7 @@ describe('renderTimedBlocksForDay', () => {
         );
         expect(block.getAttribute('draggable')).toBe('false');
         window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
-        expect(block.getAttribute('draggable')).toBe('true');
+        expect(block.getAttribute('draggable')).toBeNull();
       });
 
       it('grabbing the block BODY (move mode, the legitimate drag-out-to-all-day gesture) does NOT flip draggable to false — only the resize handle does', () => {
@@ -879,9 +1213,9 @@ describe('renderTimedBlocksForDay', () => {
         block.dispatchEvent(
           new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
         );
-        expect(block.getAttribute('draggable')).toBe('true');
+        expect(block.getAttribute('draggable')).toBeNull();
         window.dispatchEvent(new PointerEvent('pointerup', { clientY: 100, pointerId: 1 }));
-        expect(block.getAttribute('draggable')).toBe('true');
+        expect(block.getAttribute('draggable')).toBeNull();
       });
     });
   });
@@ -1574,11 +1908,11 @@ describe('renderTimedBlocksForDay', () => {
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
 
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
       window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
 
     it('a pointercancel mid-drag on the right-edge handle also restores draggable to true', () => {
@@ -1591,7 +1925,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
   });
 
@@ -1744,7 +2078,7 @@ describe('renderTimedBlocksForDay', () => {
       const resizeHandle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
 
       // Mode 5: native whole-block HTML5 drag-out — still present and independently wired.
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
 
       // Modes 1 and 2 resolve via real pointerup + a stubbed elementFromPoint (rather than the
       // __tgTestEndDrag direct-invoke seam used by the earlier tests in this describe block):
@@ -1805,11 +2139,11 @@ describe('renderTimedBlocksForDay', () => {
       const block = container.querySelector('.tc-tg-block') as HTMLElement;
       const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
 
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
       window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
 
     it('a pointercancel mid-drag on the left-edge handle also restores draggable to true', () => {
@@ -1822,7 +2156,7 @@ describe('renderTimedBlocksForDay', () => {
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
   });
 
@@ -1921,7 +2255,7 @@ describe('renderTimedBlocksForDay', () => {
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 148, pointerId: 1 }));
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 148, pointerId: 1 }));
       expect(onDurationChange).toHaveBeenCalledWith(t, 120);
-      expect(block.getAttribute('draggable')).toBe('true');
+      expect(block.getAttribute('draggable')).toBeNull();
     });
 
     it('releasePointerCapture is called on pointerup cleanup (vertical resize) with the same pointerId that was captured', () => {

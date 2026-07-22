@@ -1402,7 +1402,138 @@ function press(block: HTMLElement, key: string, shiftKey = false): void {
   block.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
 }
 
+describe('CenterPanel calendar mode — timed pointer command bridge', () => {
+  it('routes exact move, all-day, duration, and actual boundary targets through TaskApplicationApi', async () => {
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: task() },
+    });
+    const t = task({
+      ref: { filePath: 'span.md', line: 4, revision: 'revision-1' },
+      source: { filePath: 'span.md', line: 4 },
+      planning: {
+        start: '2026-07-06',
+        due: '2026-07-08',
+        time: '09:00',
+        duration: 60,
+      },
+    });
+    const h = keyboardPanelHarness([t], execute);
+
+    await call<void>(h.panel, 'commitTimedMove', t, {
+      date: '2026-07-07',
+      startMinutes: 600,
+      dayDelta: 1,
+      destination: 'time-grid',
+    });
+    await call<void>(h.panel, 'commitTimedMove', t, {
+      date: '2026-07-07',
+      startMinutes: 540,
+      dayDelta: 1,
+      destination: 'all-day',
+    });
+    await call<void>(h.panel, 'commitTimedDuration', t, {
+      durationMinutes: 120,
+      endMinutes: 660,
+    });
+    await call<void>(h.panel, 'commitTimedBoundary', t, {
+      boundary: 'start',
+      date: '2026-07-05',
+      dayDelta: -1,
+    });
+
+    expect(execute).toHaveBeenNthCalledWith(1, {
+      type: 'move-time-slot',
+      ref: t.ref,
+      days: 1,
+      time: '10:00',
+    });
+    expect(execute).toHaveBeenNthCalledWith(2, {
+      type: 'move-to-all-day',
+      ref: t.ref,
+      days: 1,
+    });
+    expect(execute).toHaveBeenNthCalledWith(3, {
+      type: 'patch',
+      target: { type: 'task', ref: t.ref },
+      patch: { duration: { type: 'set', value: 120 } },
+    });
+    expect(execute).toHaveBeenNthCalledWith(4, {
+      type: 'set-span-boundary',
+      ref: t.ref,
+      boundary: 'start',
+      date: '2026-07-05',
+    });
+  });
+
+  it('keeps create-span as the explicit single-date exception', async () => {
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: task() },
+    });
+    const t = task({
+      ref: { filePath: 'single.md', line: 2, revision: 'revision-1' },
+      source: { filePath: 'single.md', line: 2 },
+      planning: { due: '2026-07-08', time: '09:00', duration: 60 },
+    });
+    const h = keyboardPanelHarness([t], execute);
+
+    await call<void>(h.panel, 'commitTimedBoundary', t, {
+      boundary: 'create-span',
+      date: '2026-07-10',
+      dayDelta: 2,
+    });
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'extend-span',
+      ref: t.ref,
+      due: '2026-07-10',
+    });
+  });
+});
+
 describe('CenterPanel calendar mode — serialized keyboard focus and follow', () => {
+  it('restores a queued keyboard interaction to the same pre-due ghost segment', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const weekStart = moment().startOf('isoWeek');
+    const start = weekStart.format('YYYY-MM-DD');
+    const grabbedDate = weekStart.clone().add(1, 'day').format('YYYY-MM-DD');
+    const due = weekStart.clone().add(2, 'day').format('YYYY-MM-DD');
+    const original = task({
+      ref: { filePath: 'span.md', line: 4, revision: 'revision-1' },
+      source: { filePath: 'span.md', line: 4 },
+      planning: { start, due, time: '09:00', duration: 60 },
+    });
+    const updated = task({
+      ...original,
+      ref: { filePath: 'span.md', line: 4, revision: 'revision-2' },
+      planning: { start, due, time: '09:15', duration: 60 },
+    });
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Week');
+
+    const outgoing = h.el.querySelector<HTMLElement>(
+      `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
+    );
+    if (!outgoing) throw new Error('missing pre-due ghost');
+    outgoing.focus();
+    press(outgoing, 'ArrowDown');
+    pending.resolve(okTask(updated));
+    await flushMicrotasks();
+    h.setSnapshots([updated]);
+    h.emit();
+    await flushMicrotasks();
+
+    const replacement = h.el.querySelector<HTMLElement>(
+      `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
+    );
+    expect(replacement).not.toBe(outgoing);
+    expect(activeDocument.activeElement).toBe(replacement);
+  });
+
   it('uses the mounted popout document for command origin and restoration through remount', async () => {
     const iframe = activeDocument.createElement('iframe');
     activeDocument.body.append(iframe);
