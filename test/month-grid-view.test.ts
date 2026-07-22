@@ -898,12 +898,12 @@ describe('MonthGridView', () => {
       expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
     });
 
-    it('keeps linked ghost titles non-interactive while the due terminal retains link rendering', () => {
+    it('renders a human-readable plain ghost title while the due terminal retains rich rendering', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
       const t = task({
-        title: 'Conference at Note',
-        markdownTitle: 'Conference at [[Note]]',
+        title: 'Conference at Note with bold text',
+        markdownTitle: 'Conference at [[Note]] with **bold text**',
         planning: { start: '2026-07-14', due: '2026-07-16' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
@@ -918,7 +918,11 @@ describe('MonthGridView', () => {
       );
       expect(ghost.querySelector('.tc-md')).toBeNull();
       expect(ghost.querySelector('a')).toBeNull();
-      expect(ghost.textContent).toContain('Conference at [[Note]]');
+      expect(ghost.querySelector('.tc-mg-item-title')?.textContent).toBe(
+        'Conference at Note with bold text',
+      );
+      expect(ghost.textContent).not.toContain('[[');
+      expect(ghost.textContent).not.toContain('**');
       expect(terminal.querySelector('.tc-md')).not.toBeNull();
     });
 

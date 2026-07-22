@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import type { TaskSnapshot } from '../src/tasks';
+import { describe, expect, it, vi } from 'vitest';
+import type { LocalDate, TaskSnapshot } from '../src/tasks';
 import { localDate } from '../src/tasks';
 import {
   calendarDatesForPlanning,
@@ -141,6 +141,29 @@ describe('TaskDateIndex', () => {
     );
     idx.updateFile('a.md', [indexed]);
     expect(idx.get(date)).toEqual([indexed]);
+  });
+
+  it('prunes disjoint ranges instead of scanning the vault-wide range set', () => {
+    const idx = createIndex();
+    const ranges = Array.from({ length: 1_023 }, (_, line) => {
+      const date = localDate(`${String(1000 + line).padStart(4, '0')}-01-01`);
+      return task({
+        title: `range-${line}`,
+        planning: { start: date, due: date },
+        source: { filePath: 'ranges.md', line },
+      });
+    });
+    idx.updateFile('ranges.md', ranges);
+
+    const collectSpy = vi.spyOn(
+      idx as unknown as {
+        collectRangeMatches(node: unknown, date: LocalDate, matches: unknown[]): void;
+      },
+      'collectRangeMatches',
+    );
+    expect(idx.get(localDate('1511-01-01'))).toEqual([ranges[511]]);
+    expect(collectSpy.mock.calls.length).toBeLessThanOrEqual(20);
+    collectSpy.mockRestore();
   });
 
   it('clear() empties the whole index', () => {

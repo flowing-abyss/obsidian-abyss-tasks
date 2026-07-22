@@ -115,7 +115,7 @@ function renderAllDayBody(
       component: callbacks.component,
     });
   } else {
-    titleEl.setText(task.markdownTitle);
+    titleEl.setText(task.title);
   }
   // Count badges (subtasks/comments/links) only — Task 44: tag chips were removed here too,
   // mirroring Task 35's identical removal for timed blocks (renderTimedBlocks.ts): the item's

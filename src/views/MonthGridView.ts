@@ -239,7 +239,7 @@ export class MonthGridView extends BaseView {
   private renderTitle(container: HTMLElement, t: TaskSnapshot, linkAware = true): void {
     const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
     if (!linkAware) {
-      titleEl.setText(t.markdownTitle);
+      titleEl.setText(t.title);
       return;
     }
     renderTaskText(titleEl, t.markdownTitle, {

@@ -812,6 +812,79 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(el.querySelector('.tc-cal-style-btn')).toBeNull();
   });
 
+  it.each([
+    ['month', '.tc-cal-nav-month', '.tc-month-picker', '.tc-month-picker-btn'],
+    ['year', '.tc-cal-nav-year', '.tc-year-picker', '.tc-year-picker-btn'],
+  ] as const)(
+    '%s picker removes its document dismiss listener after selection, toggle-close, and destroy',
+    async (_kind, anchorSelector, pickerSelector, optionSelector) => {
+      const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+      const removeSpy = vi.spyOn(activeDocument, 'removeEventListener');
+      const openHarness = async () => {
+        const harness = await makeCalendarPanel();
+        activeDocument.body.append(harness.el);
+        const anchor = harness.el.querySelector<HTMLElement>(anchorSelector)!;
+        anchor.click();
+        await flushMicrotasks();
+        const registration = [...addSpy.mock.calls].reverse().find(([type]) => type === 'click');
+        expect(registration).toBeDefined();
+        return { ...harness, anchor, registration };
+      };
+      const wasRemoved = (registration: (typeof addSpy.mock.calls)[number]): boolean =>
+        removeSpy.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'click' && listener === registration[1] && options === registration[2],
+        );
+
+      try {
+        const selected = await openHarness();
+        selected.el.querySelector<HTMLElement>(`${pickerSelector} ${optionSelector}`)!.click();
+        expect(wasRemoved(selected.registration!)).toBe(true);
+        selected.panel.destroy();
+        selected.el.remove();
+
+        const toggled = await openHarness();
+        toggled.anchor.click();
+        expect(toggled.el.querySelector(pickerSelector)).toBeNull();
+        expect(wasRemoved(toggled.registration!)).toBe(true);
+        toggled.panel.destroy();
+        toggled.el.remove();
+
+        const destroyed = await openHarness();
+        destroyed.panel.destroy();
+        expect(wasRemoved(destroyed.registration!)).toBe(true);
+        destroyed.el.remove();
+      } finally {
+        addSpy.mockRestore();
+        removeSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['month', '.tc-cal-nav-month', '.tc-month-picker-btn'],
+    ['year', '.tc-cal-nav-year', '.tc-year-picker-btn'],
+  ] as const)(
+    '%s picker selection before deferred registration does not install a stale document listener',
+    async (_kind, anchorSelector, optionSelector) => {
+      const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+      try {
+        const { panel, el } = await makeCalendarPanel();
+        activeDocument.body.append(el);
+        addSpy.mockClear();
+        el.querySelector<HTMLElement>(anchorSelector)!.click();
+        el.querySelector<HTMLElement>(optionSelector)!.click();
+        await flushMicrotasks();
+
+        expect(addSpy.mock.calls.some(([type]) => type === 'click')).toBe(false);
+        panel.destroy();
+        el.remove();
+      } finally {
+        addSpy.mockRestore();
+      }
+    },
+  );
+
   it('right-clicking a Month-view checkbox opens the status/priority popover instead of the task-edit modal, and picking a priority mutates the file through the task API', async () => {
     // The task must fall on a currently-visible day of the default (today's) month, so it's
     // anchored to TODAY rather than makeCalendarPanel's fixed June 2026 seed task.
@@ -1619,6 +1692,59 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
 
     expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
     expect(activeDocument.activeElement).toBe(toolbarControl);
+  });
+
+  it('abandons an in-flight sequence when focus moves to a connected control outside the center pane', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    const externalControl = activeDocument.createElement('button');
+    activeDocument.body.append(externalControl);
+    try {
+      externalControl.focus();
+      h.setSnapshots([updated]);
+      h.emit();
+      pending.resolve(okTask(updated));
+      await flushMicrotasks();
+
+      expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+      expect(activeDocument.activeElement).toBe(externalControl);
+    } finally {
+      externalControl.remove();
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it('removes its document focus ownership listener on destroy', () => {
+    const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+    const removeSpy = vi.spyOn(activeDocument, 'removeEventListener');
+    try {
+      const h = keyboardPanelHarness([keyboardSnapshot(TODAY)], vi.fn());
+      const registration = addSpy.mock.calls.find(([type]) => type === 'focusin');
+      expect(registration).toBeDefined();
+
+      h.panel.destroy();
+
+      expect(
+        removeSpy.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'focusin' && listener === registration?.[1] && options === registration?.[2],
+        ),
+      ).toBe(true);
+      h.el.remove();
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
   });
 
   it('clears focus ownership when a clamped command executes without changing the task', async () => {

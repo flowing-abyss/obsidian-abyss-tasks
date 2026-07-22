@@ -111,6 +111,7 @@ export class CenterPanel {
   private calDate = window.moment().date(1);
   private calViewInstance: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe: (() => void) | null = null;
+  private calendarPickerCleanup: (() => void) | null = null;
   // Task 27: mountView() destroys and recreates a fresh view instance on every render — including
   // reactive re-renders driven by task-index updates (any task edit anywhere) — so the view
   // instance itself can't remember "did I already scroll-to-now for this view/date". This key
@@ -288,15 +289,21 @@ export class CenterPanel {
     const onFocusIn = (event: FocusEvent): void => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
+      const ownerDocument = this.el.ownerDocument;
+      // Removing the active block during a calendar remount temporarily leaves the document
+      // body focused. That is renderer lifecycle, not an explicit user focus transfer, so it
+      // must not revoke the restoration that will target the replacement block after commit.
+      if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
       const block = target.closest<HTMLElement>('.tc-tg-block');
-      if (block) {
+      if (block && this.el.contains(block)) {
         this.retainTimedBlockFocus(block);
       } else if (this.pendingTimedBlockFocus) {
         this.cancelKeyboardInteraction();
       }
     };
-    this.el.addEventListener('focusin', onFocusIn);
-    this.offs.push(() => this.el.removeEventListener('focusin', onFocusIn));
+    const ownerDocument = this.el.ownerDocument;
+    ownerDocument.addEventListener('focusin', onFocusIn);
+    this.offs.push(() => ownerDocument.removeEventListener('focusin', onFocusIn));
   }
 
   refresh(): void {
@@ -369,10 +376,43 @@ export class CenterPanel {
   }
 
   private destroyCalendarView(): void {
+    this.clearCalendarPicker();
     this.calUnsubscribe?.();
     this.calUnsubscribe = null;
     this.calViewInstance?.destroy();
     this.calViewInstance = null;
+  }
+
+  private clearCalendarPicker(): void {
+    this.calendarPickerCleanup?.();
+  }
+
+  private armCalendarPicker(picker: HTMLElement, anchor: HTMLElement): void {
+    const ownerDocument = this.el.ownerDocument;
+    let registrationTimer: number | undefined;
+    let listening = false;
+    const dismiss = (event: MouseEvent): void => {
+      if (!picker.contains(event.target as Node) && event.target !== anchor) cleanup();
+    };
+    const cleanup = (): void => {
+      if (registrationTimer !== undefined) {
+        window.clearTimeout(registrationTimer);
+        registrationTimer = undefined;
+      }
+      if (listening) {
+        ownerDocument.removeEventListener('click', dismiss, true);
+        listening = false;
+      }
+      picker.remove();
+      if (this.calendarPickerCleanup === cleanup) this.calendarPickerCleanup = null;
+    };
+    this.calendarPickerCleanup = cleanup;
+    registrationTimer = window.setTimeout(() => {
+      registrationTimer = undefined;
+      if (this.calendarPickerCleanup !== cleanup || !picker.isConnected) return;
+      ownerDocument.addEventListener('click', dismiss, true);
+      listening = true;
+    }, 0);
   }
 
   private render(): void {
@@ -675,8 +715,9 @@ export class CenterPanel {
         customFilePath: this.settings.customFilePath,
         startPosition: startPositionFor(this.calViewType, firstDayOfWeek),
       };
-      // Scope the render to only the tasks anchored on a visible date, via the
-      // O(1)-per-date index lookups, instead of scanning every task in the vault.
+      // Scope the render to tasks visible on these dates via indexed point queries: direct
+      // anchors are O(1), while span overlaps are O(log R + k) in the interval index. This
+      // avoids scanning every task in the vault.
       const visibleDates = visibleCalendarDates(this.calViewType, this.calDate, cfg.firstDayOfWeek);
       const tasks = [
         ...this.queries.forCalendarDates(visibleDates as unknown as readonly LocalDate[]),
@@ -795,9 +836,10 @@ export class CenterPanel {
     monthBtn.addEventListener('click', () => {
       const existing = this.el.querySelector('.tc-month-picker');
       if (existing) {
-        existing.remove();
+        this.clearCalendarPicker();
         return;
       }
+      this.clearCalendarPicker();
       const picker = this.el.createDiv({ cls: 'tc-month-picker tc-popover' });
       const MONTH_NAMES = [
         'Jan',
@@ -818,30 +860,23 @@ export class CenterPanel {
         if (i === this.calDate.month()) btn.addClass('is-active');
         btn.addEventListener('click', () => {
           this.cancelKeyboardInteraction();
+          this.clearCalendarPicker();
           this.calDate = this.calDate.clone().month(i).date(1);
           updateTitle();
           mountView();
-          picker.remove();
         });
       });
       monthBtn.after(picker);
-      window.setTimeout(() => {
-        const dismiss = (e: MouseEvent): void => {
-          if (!picker.contains(e.target as Node) && e.target !== monthBtn) {
-            picker.remove();
-            activeDocument.removeEventListener('click', dismiss, true);
-          }
-        };
-        activeDocument.addEventListener('click', dismiss, true);
-      }, 0);
+      this.armCalendarPicker(picker, monthBtn);
     });
 
     yearBtn.addEventListener('click', () => {
       const existing = this.el.querySelector('.tc-year-picker');
       if (existing) {
-        existing.remove();
+        this.clearCalendarPicker();
         return;
       }
+      this.clearCalendarPicker();
       const picker = this.el.createDiv({ cls: 'tc-year-picker tc-popover' });
       const currentYear = this.calDate.year();
       for (let y = currentYear - 5; y <= currentYear + 5; y++) {
@@ -849,22 +884,14 @@ export class CenterPanel {
         if (y === currentYear) btn.addClass('is-active');
         btn.addEventListener('click', () => {
           this.cancelKeyboardInteraction();
+          this.clearCalendarPicker();
           this.calDate = this.calDate.clone().year(y).date(1);
           updateTitle();
           mountView();
-          picker.remove();
         });
       }
       yearBtn.after(picker);
-      window.setTimeout(() => {
-        const dismiss = (e: MouseEvent): void => {
-          if (!picker.contains(e.target as Node) && e.target !== yearBtn) {
-            picker.remove();
-            activeDocument.removeEventListener('click', dismiss, true);
-          }
-        };
-        activeDocument.addEventListener('click', dismiss, true);
-      }, 0);
+      this.armCalendarPicker(picker, yearBtn);
     });
 
     prevBtn.addEventListener('click', () => {
@@ -901,9 +928,10 @@ export class CenterPanel {
     // coalesced notify, rather than diffing which specific cells/blocks changed and patching
     // only those. Two of the three perf levers from the spec ARE implemented in full: (1)
     // `tasks` above is scoped to the visible date range via TaskQueryApi.forCalendarDates,
-    // which is a union of O(1) date-index lookups — mountView() no longer scans
-    // every task in the vault on every render, only the ones anchored on a currently-visible
-    // date; (2) notify() is coalesced (Task 5), so a burst of file edits triggers exactly one
+    // which unions O(1) direct-date buckets with O(log R + k) span-overlap queries — mountView()
+    // no longer scans every task in the vault on every render, only the ones visible on a
+    // currently-rendered date; (2) notify() is coalesced (Task 5), so a burst of file edits
+    // triggers exactly one
     // rebuild instead of one per file. A true incremental DOM patch (diffing old vs. new task
     // sets per cell and touching only changed nodes) is a real further optimization but adds
     // significant complexity (diffing keyed by filePath+line across all three view shapes) for

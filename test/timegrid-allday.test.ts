@@ -147,10 +147,10 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
-  it('keeps linked continuation titles non-interactive while the due terminal retains link rendering', () => {
+  it('renders a human-readable plain continuation title while the due terminal retains rich rendering', () => {
     const t = task({
-      title: 'Trip to Note',
-      markdownTitle: 'Trip to [[Note]]',
+      title: 'Trip to Note with bold text',
+      markdownTitle: 'Trip to [[Note]] with **bold text**',
       planning: { start: '2026-07-08', due: '2026-07-12' },
     });
     const continuationCell = freshContainer();
@@ -163,7 +163,11 @@ describe('renderAllDayCell', () => {
     const terminal = terminalCell.querySelector('.tc-tg-span');
     expect(continuation?.querySelector('.tc-md')).toBeNull();
     expect(continuation?.querySelector('a')).toBeNull();
-    expect(continuation?.textContent).toContain('Trip to [[Note]]');
+    expect(continuation?.querySelector('.tc-tg-body-title')?.textContent).toBe(
+      'Trip to Note with bold text',
+    );
+    expect(continuation?.textContent).not.toContain('[[');
+    expect(continuation?.textContent).not.toContain('**');
     expect(terminal?.querySelector('.tc-md')).not.toBeNull();
   });
 
