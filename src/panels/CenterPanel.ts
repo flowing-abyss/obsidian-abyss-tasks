@@ -6,6 +6,7 @@ import {
   normalizeStatusGroups,
   statusGroupsEqual,
 } from '../app/listViewState';
+import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -311,6 +312,12 @@ export class CenterPanel {
     const ownerDocument = this.el.ownerDocument;
     ownerDocument.addEventListener('focusin', onFocusIn);
     this.offs.push(() => ownerDocument.removeEventListener('focusin', onFocusIn));
+    const ownerWindow = ownerDocument.defaultView;
+    const onOwnerWindowBlur = (): void => {
+      if (this.pendingTimedBlockFocus) this.cancelKeyboardInteraction();
+    };
+    ownerWindow?.addEventListener('blur', onOwnerWindowBlur);
+    this.offs.push(() => ownerWindow?.removeEventListener('blur', onOwnerWindowBlur));
   }
 
   refresh(): void {
@@ -606,11 +613,10 @@ export class CenterPanel {
     };
     const handleKeyboardIntent = (task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void => {
       if (!this.keyboardQueue) return;
-      const active = activeDocument.activeElement;
-      const originElement =
-        active instanceof HTMLElement
-          ? (active.closest<HTMLElement>('.tc-tg-block') ?? undefined)
-          : undefined;
+      const active = this.el.ownerDocument.activeElement;
+      const originElement = isRealmHTMLElement(active)
+        ? (active.closest<HTMLElement>('.tc-tg-block') ?? undefined)
+        : undefined;
       const previousQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       const focusSequence = ++this.nextTimedBlockFocusSequence;
       const provisionalFocus: TimedBlockFocusLocator = {
@@ -670,21 +676,7 @@ export class CenterPanel {
 
     const startPositionFor = (viewType: CalViewType, firstDayOfWeek: number): string => {
       if (viewType === 'week') {
-        // Task 42b: moment's non-ISO 'ww' token always numbers weeks Sunday-first, so
-        // `calDate.format('YYYY-ww')` round-trips to a label whose reconstructed anchor is
-        // always literally a Sunday — regardless of which day of that week `calDate` actually
-        // is (WeekTimeGridView.render, downstream, then shifts that Sunday anchor forward by
-        // `firstDayOfWeek` days to land on the user's configured week-start). That forward
-        // shift is only correct when `calDate` itself falls *after* the anchor within the same
-        // Sunday-first week (true for Mon-Sat calDate) — for a calDate that IS itself a Sunday,
-        // the anchor reconstructs to that exact same Sunday, and shifting forward by
-        // `firstDayOfWeek` (e.g. 1 for Monday-first) walks a full extra week ahead, entirely
-        // excluding `calDate` from the rendered range. Shifting calDate itself back by
-        // `firstDayOfWeek` days *before* formatting compensates: it lands the round-trip's
-        // reconstructed Sunday-anchor `firstDayOfWeek` days earlier too, so the downstream
-        // forward-shift-by-firstDayOfWeek lands back on the correct 7-day window for every
-        // weekday of calDate, Sunday included.
-        return this.calDate.clone().subtract(firstDayOfWeek, 'days').format('YYYY-ww');
+        return firstVisibleWeekDate(this.calDate, firstDayOfWeek);
       }
       if (viewType === 'today') return this.calDate.format('YYYY-MM-DD');
       return this.calDate.format('YYYY-MM');
@@ -733,9 +725,7 @@ export class CenterPanel {
       // Only scroll-to-now when this (viewType, date) pair is new since the last time we
       // scrolled — a reactive re-render of the same view/date (e.g. a store update from a task
       // edit) must not jump the scroll position back to center. See `lastScrolledCalKey` above.
-      // Uses calDate directly (not cfg.startPosition/YYYY-ww) since Week's YYYY-ww format
-      // collides across some year boundaries (e.g. 2015-01 matches both the week starting
-      // 2014-12-28 and the one starting 2015-12-27), which would falsely suppress a re-scroll.
+      // Uses calDate directly so navigation identity remains tied to the user's anchor.
       const scrollKey = `${this.calViewType}:${this.calDate.format('YYYY-MM-DD')}`;
       const shouldScrollToNow = scrollKey !== this.lastScrolledCalKey;
       this.lastScrolledCalKey = scrollKey;
@@ -963,8 +953,8 @@ export class CenterPanel {
 
   private captureActiveTimedBlockFocus(): void {
     if (this.pendingTimedBlockFocus?.queueSequence !== undefined) return;
-    const active = activeDocument.activeElement;
-    if (!(active instanceof HTMLElement) || !this.el.contains(active)) return;
+    const active = this.el.ownerDocument.activeElement;
+    if (!isRealmHTMLElement(active) || !this.el.contains(active)) return;
     const block = active.closest<HTMLElement>('.tc-tg-block');
     if (!block) return;
     this.retainTimedBlockFocus(block);
@@ -1058,11 +1048,17 @@ export class CenterPanel {
           block.dataset['tcTaskFile'] === pending.filePath &&
           block.dataset['tcTaskLine'] === String(pending.line),
       );
-      if (!candidate?.isConnected) return;
+      if (
+        !candidate?.isConnected ||
+        !isRealmHTMLElement(candidate) ||
+        candidate.ownerDocument !== this.el.ownerDocument
+      ) {
+        return;
+      }
       candidate.focus();
       candidate.classList.add('is-selected');
       if (
-        activeDocument.activeElement !== candidate ||
+        candidate.ownerDocument.activeElement !== candidate ||
         this.pendingTimedBlockFocus?.sequence !== pending.sequence
       ) {
         return;

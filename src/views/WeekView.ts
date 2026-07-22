@@ -1,5 +1,5 @@
 import { Component, type App } from 'obsidian';
-import { weekStartOffset } from '../domain/weekGridOffset';
+import { resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
@@ -39,24 +39,13 @@ export class WeekView extends BaseView {
     const today = window.moment().format('YYYY-MM-DD');
     const grid = container.createDiv('grid');
 
-    // Task 42b: `config.startPosition` ('YYYY-ww') always round-trips to a Sunday anchor
-    // (see WeekTimeGridView.render/CalendarRenderer.buildConfig's own comments on this) —
-    // the caller (CalendarRenderer) is responsible for pre-shifting its source date back by
-    // firstDayOfWeek days before formatting, so a plain forward shift from the reconstructed
-    // anchor is correct here. The no-startPosition fallback has no such label round-trip, so
-    // "today"'s real weekday must be captured before `.startOf('week')` would collapse it to
-    // a constant 0/Sunday, and the (possibly backward) offset applied directly to today.
-    let week: ReturnType<typeof window.moment>;
-    let offset: number;
-    if (config.startPosition) {
-      week = window.moment(config.startPosition, 'YYYY-ww').startOf('week');
-      offset = config.firstDayOfWeek;
-    } else {
-      week = window.moment();
-      offset = weekStartOffset(parseInt(week.format('d'), 10), config.firstDayOfWeek);
-    }
+    const week = resolveWeekStartPosition(
+      config.startPosition,
+      config.firstDayOfWeek,
+      window.moment(),
+    );
 
-    for (let i = offset; i < offset + 7; i++) {
+    for (let i = 0; i < 7; i++) {
       const currentDate = window.moment(week).add(i, 'days').format('YYYY-MM-DD');
       const weekDay = window.moment(week).add(i, 'days').format('d');
       const longDayName = window.moment(currentDate).format('ddd, D. MMM');

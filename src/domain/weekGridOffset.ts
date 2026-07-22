@@ -20,3 +20,30 @@ export function weekStartOffset(weekday: number, firstDayOfWeek: number): number
   // `Object.is`-based equality checks (e.g. `toBe(0)` in tests).
   return -(((weekday - firstDayOfWeek) % 7) + 7) % 7 || 0;
 }
+
+/** Returns the exact local date of the configured week start containing `anchor`. */
+export function firstVisibleWeekDate(
+  anchor: ReturnType<typeof window.moment>,
+  firstDayOfWeek: number,
+): string {
+  const weekday = parseInt(anchor.format('d'), 10);
+  return anchor.clone().add(weekStartOffset(weekday, firstDayOfWeek), 'days').format('YYYY-MM-DD');
+}
+
+/**
+ * Resolves the week view's start position. Internal producers use an exact YYYY-MM-DD first
+ * visible date; the old YYYY-ww label remains readable for stored/external configurations.
+ */
+export function resolveWeekStartPosition(
+  startPosition: string | undefined,
+  firstDayOfWeek: number,
+  fallback: ReturnType<typeof window.moment>,
+): ReturnType<typeof window.moment> {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(startPosition ?? '')) {
+    return window.moment(startPosition, 'YYYY-MM-DD');
+  }
+  if (/^\d{4}-\d{2}$/.test(startPosition ?? '')) {
+    return window.moment(startPosition, 'YYYY-ww').startOf('week').add(firstDayOfWeek, 'days');
+  }
+  return window.moment(firstVisibleWeekDate(fallback, firstDayOfWeek), 'YYYY-MM-DD');
+}

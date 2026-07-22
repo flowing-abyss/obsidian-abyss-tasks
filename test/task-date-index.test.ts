@@ -166,6 +166,91 @@ describe('TaskDateIndex', () => {
     collectSpy.mockRestore();
   });
 
+  it('keeps a warmed sparse overlap query near O(log R + k)', () => {
+    type Entry = { readonly id: number; readonly start: LocalDate; readonly due: LocalDate };
+    const total = 65_535;
+    const overlapStride = 257;
+    const epoch = Date.UTC(1800, 0, 1);
+    const dateAt = (id: number): LocalDate =>
+      new Date(epoch + id * 86_400_000).toISOString().slice(0, 10) as LocalDate;
+    const query = dateAt(total - 1);
+    const entries = Array.from({ length: total }, (_, id): Entry => {
+      const start = dateAt(id);
+      const overlaps = id % overlapStride === 0;
+      return { id, start, due: overlaps ? query : start };
+    });
+    // 65,535 ranges with one overlap every 257 starts is deliberately adversarial for an
+    // augmented start-only BST: max-due pruning repeatedly revisits non-output paths. A centered
+    // interval tree visits only a logarithmic search path plus the 256 emitted overlaps.
+    const expected = entries.filter((entry) => entry.start <= query && query <= entry.due);
+    expect(expected).toHaveLength(256);
+
+    const idx = new TaskDateIndex<Entry>(
+      () => [],
+      (entry) => entry,
+    );
+    idx.updateFile('ranges.md', entries);
+    // Warm the lazily rebuilt tree before measuring query work.
+    expect(idx.get(query)).toEqual(expected);
+
+    const collectSpy = vi.spyOn(
+      idx as unknown as {
+        collectRangeMatches(node: unknown, date: LocalDate, matches: unknown[]): void;
+      },
+      'collectRangeMatches',
+    );
+    expect(idx.get(query)).toEqual(expected);
+    expect(collectSpy.mock.calls.length).toBeLessThanOrEqual(280);
+    collectSpy.mockRestore();
+
+    const singleMatchSpy = vi.spyOn(
+      idx as unknown as {
+        collectRangeMatches(node: unknown, date: LocalDate, matches: unknown[]): void;
+      },
+      'collectRangeMatches',
+    );
+    expect(idx.get(dateAt(0))).toEqual([entries[0]]);
+    expect(singleMatchSpy.mock.calls.length).toBeLessThanOrEqual(32);
+    singleMatchSpy.mockRestore();
+  });
+
+  it('returns nested and overlapping ranges once, and rebuilds after update/remove', () => {
+    type Entry = { readonly id: string; readonly start: LocalDate; readonly due: LocalDate };
+    const idx = new TaskDateIndex<Entry>(
+      () => [],
+      (entry) => entry,
+    );
+    const outer: Entry = {
+      id: 'outer',
+      start: localDate('2026-01-01'),
+      due: localDate('2026-12-31'),
+    };
+    const nested: Entry = {
+      id: 'nested',
+      start: localDate('2026-06-01'),
+      due: localDate('2026-06-30'),
+    };
+    const overlap: Entry = {
+      id: 'overlap',
+      start: localDate('2026-06-15'),
+      due: localDate('2026-07-15'),
+    };
+    idx.updateFile('a.md', [outer, nested]);
+    idx.updateFile('b.md', [overlap]);
+    expect(new Set(idx.get(localDate('2026-06-20')))).toEqual(new Set([outer, nested, overlap]));
+
+    const moved: Entry = {
+      id: 'moved',
+      start: localDate('2027-01-01'),
+      due: localDate('2027-01-02'),
+    };
+    idx.updateFile('a.md', [moved]);
+    expect(idx.get(localDate('2026-06-20'))).toEqual([overlap]);
+    idx.removeFile('b.md');
+    expect(idx.get(localDate('2026-06-20'))).toEqual([]);
+    expect(idx.get(localDate('2027-01-01'))).toEqual([moved]);
+  });
+
   it('does not sort matches again after the interval tree has emitted them in order', () => {
     const idx = createIndex();
     const ranges = [
@@ -201,9 +286,11 @@ describe('TaskDateIndex', () => {
         originalCollect(node, date, matches);
       });
 
+    // Query is right of this node's center, so the centered tree emits its due-descending scan.
+    // Consumer-facing order is applied by TaskIndex, not by this low-level overlap index.
     expect(idx.get(localDate('2026-07-10')).map((value) => value.title)).toEqual([
-      'earlier-start',
       'later-start',
+      'earlier-start',
     ]);
     collectSpy.mockRestore();
   });

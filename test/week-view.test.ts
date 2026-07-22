@@ -1,5 +1,6 @@
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
 import type { LinkToken } from '../src/parser/links';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -87,6 +88,24 @@ describe('WeekView', () => {
       c.querySelectorAll('.cell').forEach((cell) => {
         expect((cell as HTMLElement).getAttribute('data-weekday')).not.toBeNull();
       });
+    });
+
+    it('treats an exact startPosition as the first visible day across Dec/Jan', () => {
+      const { view } = makeView();
+      const c = freshContainer();
+      view.render(c, [], resolvedConfig({ startPosition: '2025-12-29', firstDayOfWeek: 1 }));
+      const dates = Array.from(c.querySelectorAll<HTMLAnchorElement>('.cellName')).map((cell) =>
+        cell.getAttribute('href')?.split('/').pop(),
+      );
+      expect(dates).toEqual([
+        '2025-12-29',
+        '2025-12-30',
+        '2025-12-31',
+        '2026-01-01',
+        '2026-01-02',
+        '2026-01-03',
+        '2026-01-04',
+      ]);
     });
 
     it('cellName href follows dailyNoteFolder rule', () => {
@@ -271,12 +290,8 @@ describe('WeekView', () => {
     });
   });
 
-  // Regression coverage for the CalendarRenderer/WeekView "today exclusion" bug
-  // (fixed once for WeekTimeGridView in Task 42b, then reintroduced for this legacy
-  // code-block path by a copy-pasted patch that didn't account for CalendarRenderer's
-  // different, already-week-boundary-anchored `selectedDate`). Mirrors the exhaustive
-  // 7-weekday x firstDayOfWeek matrix in test/week-time-grid-view.test.ts — this is the
-  // exact kind of test that was missing here and would have caught the regression.
+  // Mirrors the exhaustive anchor-weekday x firstDayOfWeek matrix for the legacy code-block
+  // renderer as well as the main time-grid renderer.
   describe('the rendered week always contains "today", for every weekday and firstDayOfWeek', () => {
     // 2026-07-06..12 is a real Mon..Sun span.
     const weekdays: Array<{ date: string; label: string }> = [
@@ -302,7 +317,7 @@ describe('WeekView', () => {
       describe(`today is ${label} (${date})`, () => {
         fixedToday(date);
 
-        for (const firstDayOfWeek of [0, 1] as const) {
+        for (const firstDayOfWeek of [0, 1, 2, 3, 4, 5, 6] as const) {
           it(`no-startPosition fallback: contains today exactly once, spans 7 consecutive days, starts on firstDayOfWeek=${firstDayOfWeek}`, () => {
             const { view } = makeView();
             const c = freshContainer();
@@ -318,16 +333,10 @@ describe('WeekView', () => {
             expect(parseInt(window.moment(dates[0]).format('d'), 10)).toBe(firstDayOfWeek);
           });
 
-          it(`startPosition path (CalendarRenderer's own subtract-then-format compensation): contains today for firstDayOfWeek=${firstDayOfWeek}`, () => {
+          it(`exact startPosition path contains today for firstDayOfWeek=${firstDayOfWeek}`, () => {
             const { view } = makeView();
             const c = freshContainer();
-            // Mirrors CenterPanel/CalendarRenderer's `startPositionFor`/`buildConfig`:
-            // shift the (real-weekday-preserving) anchor back by firstDayOfWeek days
-            // before formatting to 'YYYY-ww'.
-            const startPosition = window
-              .moment()
-              .subtract(firstDayOfWeek, 'days')
-              .format('YYYY-ww');
+            const startPosition = firstVisibleWeekDate(window.moment(), firstDayOfWeek);
             view.render(c, [], resolvedConfig({ startPosition, firstDayOfWeek }));
 
             const dates = cellDates(c);

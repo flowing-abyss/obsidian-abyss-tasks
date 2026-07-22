@@ -1,4 +1,4 @@
-import { weekStartOffset } from '../domain/weekGridOffset';
+import { firstVisibleWeekDate, weekStartOffset } from '../domain/weekGridOffset';
 
 export type CalViewType = 'today' | 'week' | 'month';
 
@@ -18,20 +18,9 @@ export function visibleCalendarDates(
   }
 
   if (viewType === 'week') {
-    // Must reproduce CenterPanel's own startPosition computation exactly (not just
-    // calDate.startOf('week') directly) — moment's non-ISO 'ww' week-of-year token always
-    // round-trips to a Sunday anchor (misassigning late-December dates to week 01 of a
-    // different year at year boundaries, and — Task 42b — always excluding calDate itself
-    // whenever calDate IS that Sunday and firstDayOfWeek isn't 0), so a "more correct"
-    // independent computation here would silently diverge from what the view actually
-    // renders. CenterPanel.startPositionFor shifts calDate back by firstDayOfWeek days
-    // before formatting to compensate — this must mirror that exact shift, or the store
-    // query scopes to a different week than what actually renders and every cell goes empty.
-    const week = window
-      .moment(calDate.clone().subtract(firstDayOfWeek, 'days').format('YYYY-ww'), 'YYYY-ww')
-      .startOf('week');
+    const week = window.moment(firstVisibleWeekDate(calDate, firstDayOfWeek), 'YYYY-MM-DD');
     const dates: string[] = [];
-    for (let i = firstDayOfWeek; i < firstDayOfWeek + 7; i++) {
+    for (let i = 0; i < 7; i++) {
       dates.push(week.clone().add(i, 'days').format('YYYY-MM-DD'));
     }
     return dates;

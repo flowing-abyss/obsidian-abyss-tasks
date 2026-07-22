@@ -1334,6 +1334,7 @@ function okTaskUnchanged(updated: TaskSnapshot): TaskCommandResult {
 function keyboardPanelHarness(
   initial: readonly TaskSnapshot[],
   execute: TaskApplicationApi['execute'],
+  ownerDocument: Document = activeDocument,
 ): {
   panel: CenterPanel;
   state: AppState;
@@ -1361,8 +1362,8 @@ function keyboardPanelHarness(
     null,
     tasks,
   );
-  const el = freshContainer();
-  activeDocument.body.append(el);
+  const el = ownerDocument.createElement('div');
+  ownerDocument.body.append(el);
   panel.mount(el);
   state.set('mode', 'calendar');
   return {
@@ -1402,6 +1403,130 @@ function press(block: HTMLElement, key: string, shiftKey = false): void {
 }
 
 describe('CenterPanel calendar mode — serialized keyboard focus and follow', () => {
+  it('uses the mounted popout document for command origin and restoration through remount', async () => {
+    const iframe = activeDocument.createElement('iframe');
+    activeDocument.body.append(iframe);
+    const foreignDocument = iframe.contentDocument;
+    const foreignWindow = iframe.contentWindow;
+    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
+    const foreignRealm = foreignWindow as unknown as typeof globalThis;
+    // Obsidian extends the host HTMLElement prototype with createDiv/empty/etc. Mirror that
+    // prototype chain in jsdom so this is a real foreign-document CenterPanel, not a synthetic
+    // event aimed at a main-window panel.
+    const prototypePairs: Array<[object, object]> = [
+      [HTMLElement.prototype, foreignRealm.HTMLElement.prototype],
+      [Element.prototype, foreignRealm.Element.prototype],
+      [Node.prototype, foreignRealm.Node.prototype],
+    ];
+    for (const [source, target] of prototypePairs) {
+      for (const name of Object.getOwnPropertyNames(source)) {
+        if (name === 'constructor' || name in target) continue;
+        const descriptor = Object.getOwnPropertyDescriptor(source, name);
+        if (descriptor) Object.defineProperty(target, name, descriptor);
+      }
+    }
+    const foreignElementPrototype = foreignRealm.HTMLElement.prototype as unknown as Record<
+      string,
+      unknown
+    >;
+    const createEl = function (
+      this: HTMLElement,
+      tag: string,
+      options: { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+    ): HTMLElement {
+      const child = this.ownerDocument.createElement(tag);
+      const classes = Array.isArray(options.cls) ? options.cls : options.cls?.split(' ');
+      if (classes) child.classList.add(...classes.filter(Boolean));
+      if (options.text !== undefined) child.textContent = options.text;
+      for (const [name, value] of Object.entries(options.attr ?? {}))
+        child.setAttribute(name, value);
+      this.append(child);
+      return child;
+    };
+    Object.defineProperties(foreignElementPrototype, {
+      createEl: { configurable: true, value: createEl },
+      createDiv: {
+        configurable: true,
+        value: function (
+          this: HTMLElement,
+          value:
+            | string
+            | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+        ) {
+          return createEl.call(this, 'div', typeof value === 'string' ? { cls: value } : value);
+        },
+      },
+      createSpan: {
+        configurable: true,
+        value: function (
+          this: HTMLElement,
+          value:
+            | string
+            | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+        ) {
+          return createEl.call(this, 'span', typeof value === 'string' ? { cls: value } : value);
+        },
+      },
+    });
+
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const updated = keyboardSnapshot(TODAY, '09:15', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute, foreignDocument);
+    try {
+      clickCalendarView(h.el, 'Day');
+      const block = timedBlock(h.el);
+      expect(block instanceof HTMLElement).toBe(false);
+      expect(block instanceof foreignRealm.HTMLElement).toBe(true);
+      block.focus();
+      expect(foreignDocument.activeElement).toBe(block);
+      press(block, 'ArrowDown');
+      expect(execute).toHaveBeenCalledOnce();
+      const pendingFocus = (
+        h.panel as unknown as {
+          pendingTimedBlockFocus?: { readonly originElement?: HTMLElement };
+        }
+      ).pendingTimedBlockFocus;
+      expect(pendingFocus?.originElement).toBe(block);
+
+      h.setSnapshots([updated]);
+      h.emit();
+      pending.resolve(okTask(updated));
+      await flushMicrotasks();
+
+      const remounted = timedBlock(h.el);
+      expect(remounted).not.toBe(block);
+      expect(foreignDocument.activeElement).toBe(remounted);
+    } finally {
+      h.panel.destroy();
+      iframe.remove();
+    }
+  });
+
+  it('cancels pending keyboard ownership when the mounted window blurs', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+
+    h.el.ownerDocument.defaultView!.dispatchEvent(new Event('blur'));
+    h.setSnapshots([updated]);
+    h.emit();
+    pending.resolve(okTask(updated));
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.ownerDocument.activeElement).not.toBe(block);
+    expect(h.el.ownerDocument.activeElement?.classList.contains('tc-tg-block')).not.toBe(true);
+  });
+
   it('retains a special-path locator across two remounts and focuses only the newest connected block', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
@@ -1579,6 +1704,57 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     );
     expect(followedDates).toContain(outside);
     expect(followedDates).not.toEqual(originalDates);
+  });
+
+  it('follows ArrowRight across the exact Dec/Jan week boundary and restores focus', async () => {
+    const original = keyboardSnapshot('2026-01-04');
+    const updated = keyboardSnapshot('2026-01-05', '09:00', original.source.filePath, 'revision-2');
+    let h!: ReturnType<typeof keyboardPanelHarness>;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      h.setSnapshots([updated]);
+      h.emit();
+      return okTask(updated);
+    });
+    h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Week');
+    const calendar = h.panel as unknown as {
+      calDate: ReturnType<typeof moment>;
+      render(): void;
+    };
+    calendar.calDate = moment('2025-12-29', 'YYYY-MM-DD');
+    calendar.render();
+
+    expect(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+        (column) => column.dataset['tgDate'],
+      ),
+    ).toEqual([
+      '2025-12-29',
+      '2025-12-30',
+      '2025-12-31',
+      '2026-01-01',
+      '2026-01-02',
+      '2026-01-03',
+      '2026-01-04',
+    ]);
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    await flushMicrotasks();
+
+    const followedDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+      (column) => column.dataset['tgDate'],
+    );
+    expect(followedDates).toEqual([
+      '2026-01-05',
+      '2026-01-06',
+      '2026-01-07',
+      '2026-01-08',
+      '2026-01-09',
+      '2026-01-10',
+      '2026-01-11',
+    ]);
+    expect(h.el.ownerDocument.activeElement).toBe(timedBlock(h.el));
   });
 
   it('does not let task A late completion navigate or focus after task B owns the queue', async () => {
@@ -1779,10 +1955,14 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
   it('removes its document focus ownership listener on destroy', () => {
     const addSpy = vi.spyOn(activeDocument, 'addEventListener');
     const removeSpy = vi.spyOn(activeDocument, 'removeEventListener');
+    const addWindowSpy = vi.spyOn(window, 'addEventListener');
+    const removeWindowSpy = vi.spyOn(window, 'removeEventListener');
     try {
       const h = keyboardPanelHarness([keyboardSnapshot(TODAY)], vi.fn());
       const registration = addSpy.mock.calls.find(([type]) => type === 'focusin');
+      const blurRegistration = addWindowSpy.mock.calls.find(([type]) => type === 'blur');
       expect(registration).toBeDefined();
+      expect(blurRegistration).toBeDefined();
 
       h.panel.destroy();
 
@@ -1792,10 +1972,20 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
             type === 'focusin' && listener === registration?.[1] && options === registration?.[2],
         ),
       ).toBe(true);
+      expect(
+        removeWindowSpy.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'blur' &&
+            listener === blurRegistration?.[1] &&
+            options === blurRegistration?.[2],
+        ),
+      ).toBe(true);
       h.el.remove();
     } finally {
       addSpy.mockRestore();
       removeSpy.mockRestore();
+      addWindowSpy.mockRestore();
+      removeWindowSpy.mockRestore();
     }
   });
 

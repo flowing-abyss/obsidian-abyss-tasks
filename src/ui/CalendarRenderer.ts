@@ -1,4 +1,5 @@
 import { Modal, type App } from 'obsidian';
+import { firstVisibleWeekDate, resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { localDate, type TaskApplicationApi, type TaskQueryApi, type TaskSnapshot } from '../tasks';
@@ -40,19 +41,16 @@ export class CalendarRenderer {
     private taskPrefix = '',
   ) {
     this.activeViewType = config.defaultView;
-    this.selectedDate = window.moment().date(1);
-    if (config.startPosition) {
-      this.selectedDate = window.moment(config.startPosition, 'YYYY-MM').date(1);
-    }
     if (this.activeViewType === 'week') {
-      // Regression fix: do NOT collapse to `.startOf('week')` here. buildConfig()'s
-      // `.subtract(firstDayOfWeek, 'days').format('YYYY-ww')` compensation (see its own
-      // comment) only produces the correct week when `selectedDate` still carries today's
-      // *real* weekday — collapsing it to a fixed Sunday anchor first destroys that
-      // information and makes the compensation shift the display a full week off for
-      // every day except the one day (Sunday) it was designed to fix. See `navigate()` and
-      // `goToday()` below, which must preserve the same invariant.
-      this.selectedDate = window.moment();
+      this.selectedDate = resolveWeekStartPosition(
+        config.startPosition,
+        config.firstDayOfWeek,
+        window.moment(),
+      );
+    } else {
+      this.selectedDate = config.startPosition
+        ? window.moment(config.startPosition, 'YYYY-MM').date(1)
+        : window.moment().date(1);
     }
   }
 
@@ -102,9 +100,6 @@ export class CalendarRenderer {
     if (this.activeViewType === 'month' || this.activeViewType === 'list') {
       this.selectedDate = window.moment(this.selectedDate).add(dir, 'months');
     } else {
-      // No `.startOf('week')` here — see the constructor's comment. Shifting by a whole
-      // week (+/- 7 days) naturally preserves `selectedDate`'s weekday, which buildConfig()
-      // relies on.
       this.selectedDate = window.moment(this.selectedDate).add(dir * 7, 'days');
     }
     this.renderView();
@@ -112,7 +107,6 @@ export class CalendarRenderer {
 
   private goToday(): void {
     if (this.activeViewType === 'week') {
-      // No `.startOf('week')` here — see the constructor's comment.
       this.selectedDate = window.moment();
     } else {
       this.selectedDate = window.moment().date(1);
@@ -172,19 +166,9 @@ export class CalendarRenderer {
   private buildConfig(): ResolvedConfig {
     return {
       ...this.config,
-      // Task 42b (and its regression fix — see the constructor's comment): see
-      // CenterPanel's startPositionFor for the full explanation — moment's non-ISO 'ww'
-      // token always round-trips to a Sunday anchor, so `selectedDate` must be shifted
-      // back by `firstDayOfWeek` days before formatting, or the reconstructed week can land
-      // one week later than intended whenever `selectedDate` itself falls on the configured
-      // firstDayOfWeek boundary. This compensation is only correct when `selectedDate`
-      // still carries its *real* weekday (i.e. is not pre-collapsed to a week-start
-      // boundary) — do not reintroduce a `.startOf('week')`/`.startOf('isoWeek')` reset
-      // anywhere `selectedDate` is assigned outside of `onWeekClick` (which deliberately
-      // targets a specific ISO week, not "today").
       startPosition:
         this.activeViewType === 'week'
-          ? this.selectedDate.clone().subtract(this.config.firstDayOfWeek, 'days').format('YYYY-ww')
+          ? firstVisibleWeekDate(this.selectedDate, this.config.firstDayOfWeek)
           : this.selectedDate.format('YYYY-MM'),
     };
   }

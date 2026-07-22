@@ -1,5 +1,5 @@
 import { Component } from 'obsidian';
-import { weekStartOffset } from '../domain/weekGridOffset';
+import { resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { ResolvedConfig } from '../settings/types';
 import type { TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
@@ -43,29 +43,13 @@ export class WeekTimeGridView extends BaseView {
 
     this.containerEl = container;
     const dates: string[] = [];
-    if (config.startPosition) {
-      // `config.startPosition` ('YYYY-ww') always round-trips to a Sunday anchor (moment's
-      // non-ISO 'ww' token is Sunday-first, and parsing a format with no day-of-week token
-      // defaults the day to the locale's start of week) — regardless of which real calendar
-      // day the caller originally derived the label from. CenterPanel/CalendarRenderer's own
-      // startPosition-computing code is responsible for pre-shifting that source date back by
-      // `firstDayOfWeek` days before formatting (Task 42b), so this simple forward shift from
-      // the reconstructed Sunday anchor always lands on the correct 7-day window.
-      const week = window.moment(config.startPosition, 'YYYY-ww').startOf('week');
-      for (let i = config.firstDayOfWeek; i < config.firstDayOfWeek + 7; i++) {
-        dates.push(window.moment(week).add(i, 'days').format('YYYY-MM-DD'));
-      }
-    } else {
-      // No lossy label round-trip here — capture "today"'s real weekday (Task 42b: this MUST
-      // happen before `.startOf('week')` would collapse it to a constant 0/Sunday) so the
-      // offset below can correctly walk backward when today falls before firstDayOfWeek in the
-      // week (e.g. today is Sunday and firstDayOfWeek is Monday).
-      const today = window.moment();
-      const currentWeekday = parseInt(today.format('d'), 10);
-      const offset = weekStartOffset(currentWeekday, config.firstDayOfWeek);
-      for (let i = offset; i < offset + 7; i++) {
-        dates.push(today.clone().add(i, 'days').format('YYYY-MM-DD'));
-      }
+    const week = resolveWeekStartPosition(
+      config.startPosition,
+      config.firstDayOfWeek,
+      window.moment(),
+    );
+    for (let i = 0; i < 7; i++) {
+      dates.push(week.clone().add(i, 'days').format('YYYY-MM-DD'));
     }
 
     const handles = renderHourGrid(

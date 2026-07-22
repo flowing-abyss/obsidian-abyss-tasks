@@ -17,7 +17,7 @@ export interface ViewConfig {
   upcomingDays: number;
   style: string; // CSS class, e.g. 'style1'–'style11'
   globalTaskFilter: string; // tag to strip, e.g. '#task' or ''
-  startPosition: string; // 'YYYY-MM' or 'YYYY-ww' or ''
+  startPosition: string; // month 'YYYY-MM', exact week start 'YYYY-MM-DD', legacy week 'YYYY-ww', or ''
   tag: string; // scope to vault tag or ''
   folder: string; // scope to vault folder prefix or ''
 }

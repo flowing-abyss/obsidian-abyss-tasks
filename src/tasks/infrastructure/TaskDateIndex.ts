@@ -36,28 +36,42 @@ interface OrderedRange<T> extends IndexedRange<T> {
 }
 
 interface RangeNode<T> {
-  readonly range: OrderedRange<T>;
-  readonly maxDue: LocalDate;
+  readonly center: LocalDate;
+  readonly spanningByStart: readonly OrderedRange<T>[];
+  readonly spanningByDue: readonly OrderedRange<T>[];
   readonly left?: RangeNode<T>;
   readonly right?: RangeNode<T>;
 }
 
-function buildRangeTree<T>(
-  ranges: readonly OrderedRange<T>[],
-  from = 0,
-  to = ranges.length,
-): RangeNode<T> | undefined {
-  if (from >= to) return undefined;
-  const middle = Math.floor((from + to) / 2);
-  const range = ranges[middle]!;
-  const left = buildRangeTree(ranges, from, middle);
-  const right = buildRangeTree(ranges, middle + 1, to);
-  let maxDue = range.due;
-  if (left && left.maxDue > maxDue) maxDue = left.maxDue;
-  if (right && right.maxDue > maxDue) maxDue = right.maxDue;
+/**
+ * Builds a centered interval tree from ranges already sorted by start date.
+ *
+ * The median start keeps both recursive partitions balanced. Ranges crossing the center live at
+ * that node in two scan orders, so a warmed point query visits O(log R + k) entries. Rebuilding is
+ * lazy after a batch of file updates and costs O(R log R); point queries never sort.
+ */
+function buildRangeTree<T>(ranges: readonly OrderedRange<T>[]): RangeNode<T> | undefined {
+  if (ranges.length === 0) return undefined;
+  const center = ranges[Math.floor(ranges.length / 2)]!.start;
+  const leftRanges: OrderedRange<T>[] = [];
+  const rightRanges: OrderedRange<T>[] = [];
+  const spanningByStart: OrderedRange<T>[] = [];
+  for (const range of ranges) {
+    if (range.due < center) leftRanges.push(range);
+    else if (range.start > center) rightRanges.push(range);
+    else spanningByStart.push(range);
+  }
+  const spanningByDue = [...spanningByStart].sort((left, right) => {
+    if (left.due !== right.due) return left.due > right.due ? -1 : 1;
+    if (left.start !== right.start) return left.start < right.start ? -1 : 1;
+    return left.ordinal - right.ordinal;
+  });
+  const left = buildRangeTree(leftRanges);
+  const right = buildRangeTree(rightRanges);
   return {
-    range,
-    maxDue,
+    center,
+    spanningByStart,
+    spanningByDue,
     ...(left && { left }),
     ...(right && { right }),
   };
@@ -116,9 +130,9 @@ export class TaskDateIndex<T> {
     const tasks = new Set(this.byDate.get(date) ?? []);
     this.ensureRangeTree();
     const matches: OrderedRange<T>[] = [];
-    // collectRangeMatches traverses the start/due/ordinal-sorted tree in-order, so its output is
-    // already deterministic. Do not sort this result again: the overlap query must remain
-    // O(log R + k), while TaskIndex applies the consumer-facing stable task order afterwards.
+    // The centered tree emits in deterministic node-local scan order. Do not sort this result:
+    // the overlap query must remain O(log R + k), while TaskIndex applies consumer-facing stable
+    // task order afterwards.
     this.collectRangeMatches(this.rangeTree, date, matches);
     for (const match of matches) tasks.add(match.task);
     return [...tasks];
@@ -144,13 +158,23 @@ export class TaskDateIndex<T> {
     matches: OrderedRange<T>[],
   ): void {
     if (!node) return;
-    if (node.left && node.left.maxDue >= date) {
+    if (date < node.center) {
+      for (const range of node.spanningByStart) {
+        if (range.start > date) break;
+        matches.push(range);
+      }
       this.collectRangeMatches(node.left, date, matches);
+      return;
     }
-    if (node.range.start <= date && date <= node.range.due) matches.push(node.range);
-    if (node.range.start <= date && node.right && node.right.maxDue >= date) {
+    if (date > node.center) {
+      for (const range of node.spanningByDue) {
+        if (range.due < date) break;
+        matches.push(range);
+      }
       this.collectRangeMatches(node.right, date, matches);
+      return;
     }
+    matches.push(...node.spanningByStart);
   }
 
   clear(): void {

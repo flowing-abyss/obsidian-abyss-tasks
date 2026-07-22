@@ -100,20 +100,30 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
-    // CURRENT BEHAVIOR (follow-up: FU-19): startPosition ignored when defaultView === 'week'
-    it('startPosition ignored when defaultView === week', () => {
+    it('preserves an exact configured startPosition when defaultView is week', () => {
       const store = new StubStore();
       const root = freshContainer();
       const r = makeRenderer(
         root,
         store,
-        resolvedConfig({ defaultView: 'week', startPosition: '2026-03' }),
+        resolvedConfig({ defaultView: 'week', startPosition: '2025-12-29', firstDayOfWeek: 1 }),
         fakeApp(),
       );
       r.mount();
       const tb = root.querySelector('.current') as HTMLButtonElement;
-      // title is current week, not March
-      expect(tb.textContent).toMatch(/^Week \d+ · \d{4}$/);
+      expect(tb.textContent).toBe('Week 1 · 2025');
+      const dates = Array.from(root.querySelectorAll<HTMLAnchorElement>('.cellName')).map((cell) =>
+        cell.getAttribute('href')?.split('/').pop(),
+      );
+      expect(dates).toEqual([
+        '2025-12-29',
+        '2025-12-30',
+        '2025-12-31',
+        '2026-01-01',
+        '2026-01-02',
+        '2026-01-03',
+        '2026-01-04',
+      ]);
       r.destroy();
     });
 
