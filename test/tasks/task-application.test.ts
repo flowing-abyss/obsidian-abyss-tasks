@@ -68,6 +68,7 @@ function service(
 describe('TaskApplicationService planning commands', () => {
   it.each([
     ['zero shift', { type: 'shift-schedule' as const, ref, days: 0 }],
+    ['unsafe shift', { type: 'shift-schedule' as const, ref, days: Number.MAX_SAFE_INTEGER + 1 }],
     [
       'fractional timed move',
       { type: 'move-time-slot' as const, ref, days: 1.5, time: localTime('09:15') },
@@ -110,6 +111,24 @@ describe('TaskApplicationService planning commands', () => {
       changed: true,
     });
     expect(edit).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledWith(command);
+  });
+
+  it('executes a zero-day all-day conversion through exactly one repository write', async () => {
+    const committed: TaskRepositoryResult = {
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    };
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
+    const command = { type: 'move-to-all-day' as const, ref, days: 0 };
+
+    await expect(service({ edit }).execute(command)).resolves.toEqual({
+      type: 'ok',
+      outcome: committed.outcome,
+      changed: true,
+    });
+    expect(edit).toHaveBeenCalledTimes(1);
     expect(edit).toHaveBeenCalledWith(command);
   });
 

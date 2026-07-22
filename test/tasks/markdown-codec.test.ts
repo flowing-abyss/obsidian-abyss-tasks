@@ -126,6 +126,27 @@ describe('TaskMarkdownCodec', () => {
         content: '- [ ] Timed 📅 2026-07-20',
       });
     });
+
+    it.each([
+      {
+        command: {
+          type: 'move-time-slot' as const,
+          ref,
+          days: -1,
+          time: localTime('10:15'),
+        },
+        source: '- [ ] Earliest 🛫 0000-01-01 📅 0000-01-03 ⏰ 09:30',
+      },
+      {
+        command: { type: 'move-to-all-day' as const, ref, days: 1 },
+        source: '- [ ] Latest 🛫 9999-12-29 📅 9999-12-31 ⏰ 09:30 ⏱️ 45m',
+      },
+    ])('rejects an out-of-range final date for $command.type atomically', ({ command, source }) => {
+      expect(applyTaskCommand(codec, source, command)).toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-date', field: 'schedule' }],
+      });
+    });
   });
 
   it('inserts a title before metadata when the source has no editable title fragment', () => {
