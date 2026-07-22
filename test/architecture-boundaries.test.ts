@@ -80,6 +80,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskSnapshot: ['src/ui/TaskCard.ts'],
   TaskStatusType: ['src/settings/SettingsTab.ts'],
   TaskTextTarget: ['src/panels/RightPanel.ts'],
+  daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],
   localDate: ['src/main.ts'],
   localTime: ['src/panels/CenterPanel.ts'],

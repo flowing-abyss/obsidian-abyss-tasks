@@ -9,23 +9,53 @@ function daysInMonth(year: number, month: number): number {
   return [31, leapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]!;
 }
 
-export function shiftLocalDate(value: LocalDate, days: -1 | 1): LocalDate | undefined {
-  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
-  let nextYear = year;
-  let nextMonth = month;
-  let nextDay = day + days;
-  if (nextDay === 0) {
-    if (month === 1 && year === 0) return undefined;
-    nextMonth = month === 1 ? 12 : month - 1;
-    nextYear = month === 1 ? year - 1 : year;
-    nextDay = daysInMonth(nextYear, nextMonth);
-  } else if (nextDay > daysInMonth(year, month)) {
-    if (month === 12 && year === 9999) return undefined;
-    nextMonth = month === 12 ? 1 : month + 1;
-    nextYear = month === 12 ? year + 1 : year;
-    nextDay = 1;
-  }
-  return localDate(
-    `${String(nextYear).padStart(4, '0')}-${String(nextMonth).padStart(2, '0')}-${String(nextDay).padStart(2, '0')}`,
+function daysBeforeYear(year: number): number {
+  return (
+    year * 365 +
+    Math.floor((year + 3) / 4) -
+    Math.floor((year + 99) / 100) +
+    Math.floor((year + 399) / 400)
   );
+}
+
+function ordinal(value: LocalDate): number {
+  const [year, month, day] = value.split('-').map(Number) as [number, number, number];
+  let result = daysBeforeYear(year) + day - 1;
+  for (let candidate = 1; candidate < month; candidate++) {
+    result += daysInMonth(year, candidate);
+  }
+  return result;
+}
+
+function localDateFromOrdinal(value: number): LocalDate {
+  let low = 0;
+  let high = 10_000;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (daysBeforeYear(middle) <= value) low = middle;
+    else high = middle;
+  }
+
+  const year = low;
+  let dayOfYear = value - daysBeforeYear(year);
+  let month = 1;
+  while (dayOfYear >= daysInMonth(year, month)) {
+    dayOfYear -= daysInMonth(year, month);
+    month++;
+  }
+  const day = dayOfYear + 1;
+  return localDate(
+    `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
+  );
+}
+
+export function shiftLocalDate(value: LocalDate, days: number): LocalDate | undefined {
+  if (!Number.isSafeInteger(days)) return undefined;
+  const shifted = ordinal(value) + days;
+  if (shifted < 0 || shifted >= daysBeforeYear(10_000)) return undefined;
+  return localDateFromOrdinal(shifted);
+}
+
+export function daysBetweenLocalDates(from: LocalDate, to: LocalDate): number {
+  return ordinal(to) - ordinal(from);
 }

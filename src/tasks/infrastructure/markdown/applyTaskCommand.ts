@@ -1,7 +1,7 @@
 import type { TaskEditCommand } from '../../application/TaskRepository';
 import type { FieldUpdate, TaskPatch } from '../../domain/commands';
 import { shiftLocalDate } from '../../domain/localDateMath';
-import { localDate } from '../../domain/validation';
+import { localDate, type TaskValidationField } from '../../domain/validation';
 import {
   TaskMarkdownCodec,
   type LineEdit,
@@ -83,7 +83,7 @@ function semanticSchedulingFields(
 
 type SchedulingEditPlan = {
   readonly edits: readonly LineEdit[];
-  readonly requestedFields: readonly SchedulingDateField[];
+  readonly requestedFields: readonly TaskValidationField[];
 };
 
 function parsedLocalDate(value: string) {
@@ -96,8 +96,12 @@ function parsedLocalDate(value: string) {
 
 function shiftScheduleEditPlan(
   parsed: ParsedTaskLine,
-  days: -1 | 1,
+  days: number,
+  allowZero = false,
 ): SchedulingEditPlan | LineEditResult {
+  if (!Number.isSafeInteger(days) || (!allowZero && days === 0)) {
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'days' }] };
+  }
   if (parsed.planning.start && parsed.planning.due) {
     const startDate = parsedLocalDate(parsed.planning.start);
     const dueDate = parsedLocalDate(parsed.planning.due);
@@ -146,7 +150,7 @@ export function applyTaskCommand(
   if (!parsed) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
 
   let edits: readonly LineEdit[];
-  let requestedFields: readonly SchedulingDateField[] = [];
+  let requestedFields: readonly TaskValidationField[] = [];
   switch (command.type) {
     case 'patch': {
       const start = command.patch.start?.type === 'set' ? command.patch.start.value : undefined;
@@ -195,6 +199,24 @@ export function applyTaskCommand(
       if ('type' in plan) return plan;
       requestedFields = plan.requestedFields;
       edits = plan.edits;
+      break;
+    }
+    case 'move-time-slot': {
+      const plan = shiftScheduleEditPlan(parsed, command.days, true);
+      if ('type' in plan) return plan;
+      requestedFields = [...plan.requestedFields, 'time'];
+      edits = [...plan.edits, { type: 'set-time', value: command.time }];
+      break;
+    }
+    case 'move-to-all-day': {
+      const plan = shiftScheduleEditPlan(parsed, command.days, true);
+      if ('type' in plan) return plan;
+      requestedFields = [...plan.requestedFields, 'time', 'duration'];
+      edits = [
+        ...plan.edits,
+        { type: 'set-time', value: null },
+        { type: 'set-duration', value: null },
+      ];
       break;
     }
     case 'set-time-slot': {

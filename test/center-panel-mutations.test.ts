@@ -211,7 +211,12 @@ describe('CenterPanel planning API delegation', () => {
         status: 'open',
         statusSymbol: ' ',
         priority: 'D',
-        planning: { due: '2026-07-20', time: '09:00', duration: 60 } as never,
+        planning: {
+          start: '2026-07-18',
+          due: '2026-07-20',
+          time: '09:00',
+          duration: 60,
+        } as never,
         tags: [],
         subtasks: [],
         comments: [],
@@ -236,9 +241,9 @@ describe('CenterPanel planning API delegation', () => {
 
     expect(execute.mock.calls.map(([command]) => command)).toEqual([
       {
-        type: 'set-time-slot',
+        type: 'move-time-slot',
         ref,
-        date: '2026-07-21',
+        days: 1,
         time: '10:15',
       },
       {
@@ -264,7 +269,7 @@ describe('CenterPanel planning API delegation', () => {
         date: '2026-07-22',
       },
       { type: 'extend-span', ref, due: '2026-07-23' },
-      { type: 'convert-to-all-day', ref, date: '2026-07-24' },
+      { type: 'move-to-all-day', ref, days: 4 },
     ]);
     expect(execute).toHaveBeenCalledTimes(7);
     expect(process).not.toHaveBeenCalled();

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import type { TaskRef } from '../../src/tasks/domain/types';
+import { localTime } from '../../src/tasks/domain/validation';
+import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
 import {
   TaskMarkdownCodec,
   type ParsedTaskLine,
@@ -8,6 +11,7 @@ import { canonicalStatusCatalog } from '../helpers';
 
 const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 const location = { filePath: 'Projects/Test.md', line: 4 };
+const ref: TaskRef = { ...location, revision: 'test-revision' };
 
 function parse(source: string): ParsedTaskLine {
   const parsed = codec.parseLine(source, location);
@@ -33,6 +37,97 @@ function expectLosslessPartition(parsed: ParsedTaskLine): void {
 }
 
 describe('TaskMarkdownCodec', () => {
+  describe('atomic schedule commands', () => {
+    it('shifts both boundaries of a three-day span backward by two days', () => {
+      const source = '- [/] Span #keep 🛫 2026-03-01 📅 2026-03-03 ⏰ 09:30 ⏱️ 45m';
+
+      expect(applyTaskCommand(codec, source, { type: 'shift-schedule', ref, days: -2 })).toEqual({
+        type: 'changed',
+        content: '- [/] Span #keep 🛫 2026-02-27 📅 2026-03-01 ⏰ 09:30 ⏱️ 45m',
+      });
+    });
+
+    it('moves both span boundaries and its time in one lossless edit', () => {
+      const source =
+        '- [x] [[Exact title]] #alpha/sub 🔺 🛫 2026-07-18 ⏳ 2026-07-01 📅 2026-07-20 ⏰ 09:30 ⏱️ 1h45m 🆔 keep-id ^keep-block';
+
+      expect(
+        applyTaskCommand(codec, source, {
+          type: 'move-time-slot',
+          ref,
+          days: 2,
+          time: localTime('13:15'),
+        }),
+      ).toEqual({
+        type: 'changed',
+        content:
+          '- [x] [[Exact title]] #alpha/sub 🔺 🛫 2026-07-20 ⏳ 2026-07-01 📅 2026-07-22 ⏰ 13:15 ⏱️ 1h45m 🆔 keep-id ^keep-block',
+      });
+    });
+
+    it('changes time on the same day and treats an identical target as a no-op', () => {
+      const source = '- [ ] Timed 📅 2026-07-20 ⏰ 09:30 ⏱️ 45m';
+
+      expect(
+        applyTaskCommand(codec, source, {
+          type: 'move-time-slot',
+          ref,
+          days: 0,
+          time: localTime('10:15'),
+        }),
+      ).toEqual({
+        type: 'changed',
+        content: '- [ ] Timed 📅 2026-07-20 ⏰ 10:15 ⏱️ 45m',
+      });
+      expect(
+        applyTaskCommand(codec, source, {
+          type: 'move-time-slot',
+          ref,
+          days: 0,
+          time: localTime('09:30'),
+        }),
+      ).toEqual({ type: 'unchanged', content: source });
+    });
+
+    it('moves a timed span to all-day without changing unrelated bytes', () => {
+      const source =
+        '- [/] [[Exact title]] #alpha/sub 🔺 🛫 2026-07-18 ⏳ 2026-07-01 📅 2026-07-20 ⏰ 09:30 ⏱️ 1h45m 🆔 keep-id ^keep-block';
+
+      expect(applyTaskCommand(codec, source, { type: 'move-to-all-day', ref, days: -2 })).toEqual({
+        type: 'changed',
+        content:
+          '- [/] [[Exact title]] #alpha/sub 🔺 🛫 2026-07-16 ⏳ 2026-07-01 📅 2026-07-18 🆔 keep-id ^keep-block',
+      });
+    });
+
+    it('moves a non-span anchor to all-day and clears its timed fields', () => {
+      const source = '- [ ] Planned ⏳ 2026-07-20 📅 2026-07-30 ⏰ 09:30 ⏱️ 45m';
+
+      expect(applyTaskCommand(codec, source, { type: 'move-to-all-day', ref, days: 3 })).toEqual({
+        type: 'changed',
+        content: '- [ ] Planned ⏳ 2026-07-23 📅 2026-07-30',
+      });
+    });
+
+    it('does no write for an already all-day schedule with zero delta', () => {
+      const source = '- [ ] All day 🛫 2026-07-18 📅 2026-07-20';
+
+      expect(applyTaskCommand(codec, source, { type: 'move-to-all-day', ref, days: 0 })).toEqual({
+        type: 'unchanged',
+        content: source,
+      });
+    });
+
+    it('converts a timed task to all-day on the same day', () => {
+      const source = '- [ ] Timed 📅 2026-07-20 ⏰ 09:30 ⏱️ 45m';
+
+      expect(applyTaskCommand(codec, source, { type: 'move-to-all-day', ref, days: 0 })).toEqual({
+        type: 'changed',
+        content: '- [ ] Timed 📅 2026-07-20',
+      });
+    });
+  });
+
   it('inserts a title before metadata when the source has no editable title fragment', () => {
     expect(
       codec.applyLineEdit('- [ ] 📅 2026-07-20', {

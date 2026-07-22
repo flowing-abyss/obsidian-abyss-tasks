@@ -22,6 +22,7 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
 import { searchTaskList, selectTaskList } from '../task-lists/TaskListSelector';
 import {
+  daysBetweenLocalDates,
   durationMinutes,
   localDate,
   localTime,
@@ -2559,13 +2560,21 @@ export class CenterPanel {
     if (!ref || !this.tasks) return;
     try {
       const date = localDate(targetDate);
-      presentTaskCommandResult(
-        await this.tasks.execute(
-          task.planning.time
-            ? { type: 'convert-to-all-day', ref, date }
-            : { type: 'reschedule', ref, date },
-        ),
-      );
+      const anchor =
+        task.planning.start && task.planning.due
+          ? task.planning.due
+          : (task.planning.scheduled ?? task.planning.due);
+      let command: Parameters<TaskApplicationApi['execute']>[0];
+      if (!task.planning.time) command = { type: 'reschedule', ref, date };
+      else if (!anchor) command = { type: 'convert-to-all-day', ref, date };
+      else {
+        command = {
+          type: 'move-to-all-day',
+          ref,
+          days: daysBetweenLocalDates(anchor, date),
+        };
+      }
+      presentTaskCommandResult(await this.tasks.execute(command));
     } catch {
       // Calendar controls supply the date; malformed gesture input remains a no-op.
     }
@@ -2584,13 +2593,19 @@ export class CenterPanel {
     const ref = task.ref;
     if (!ref || !this.tasks) return;
     try {
+      const targetDate = localDate(date);
+      const targetTime = localTime(time);
       presentTaskCommandResult(
-        await this.tasks.execute({
-          type: 'set-time-slot',
-          ref,
-          date: localDate(date),
-          time: localTime(time),
-        }),
+        await this.tasks.execute(
+          task.planning.start && task.planning.due
+            ? {
+                type: 'move-time-slot',
+                ref,
+                days: daysBetweenLocalDates(task.planning.due, targetDate),
+                time: targetTime,
+              }
+            : { type: 'set-time-slot', ref, date: targetDate, time: targetTime },
+        ),
       );
     } catch {
       // A malformed drag payload is ignored without touching the task.

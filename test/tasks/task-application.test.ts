@@ -66,6 +66,53 @@ function service(
 }
 
 describe('TaskApplicationService planning commands', () => {
+  it.each([
+    ['zero shift', { type: 'shift-schedule' as const, ref, days: 0 }],
+    [
+      'fractional timed move',
+      { type: 'move-time-slot' as const, ref, days: 1.5, time: localTime('09:15') },
+    ],
+    [
+      'unsafe timed move',
+      {
+        type: 'move-time-slot' as const,
+        ref,
+        days: Number.MAX_SAFE_INTEGER + 1,
+        time: localTime('09:15'),
+      },
+    ],
+    ['fractional all-day move', { type: 'move-to-all-day' as const, ref, days: -0.5 }],
+  ])('rejects a $name day delta before repository access', async (_name, command) => {
+    const edit = vi.fn<TaskRepository['edit']>();
+
+    await expect(service({ edit }).execute(command)).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'days' }],
+    });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { type: 'shift-schedule' as const, ref, days: -2 },
+    { type: 'move-time-slot' as const, ref, days: 0, time: localTime('14:45') },
+    { type: 'move-to-all-day' as const, ref, days: 0 },
+  ])('delegates one atomic arbitrary-day $type command unchanged', async (command) => {
+    const committed: TaskRepositoryResult = {
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    };
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
+
+    await expect(service({ edit }).execute(command)).resolves.toEqual({
+      type: 'ok',
+      outcome: committed.outcome,
+      changed: true,
+    });
+    expect(edit).toHaveBeenCalledOnce();
+    expect(edit).toHaveBeenCalledWith(command);
+  });
+
   it('rejects an empty create body before destination resolution or repository access', async () => {
     const edit = vi.fn<TaskRepository['edit']>();
     const create = vi.fn<TaskRepository['create']>();

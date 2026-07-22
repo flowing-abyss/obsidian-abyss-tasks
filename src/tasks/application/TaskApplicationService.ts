@@ -94,6 +94,15 @@ type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'mov
 
 function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefined {
   if (
+    (command.type === 'shift-schedule' ||
+      command.type === 'move-time-slot' ||
+      command.type === 'move-to-all-day') &&
+    (!Number.isSafeInteger(command.days) ||
+      (command.type === 'shift-schedule' && command.days === 0))
+  ) {
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'days' }] };
+  }
+  if (
     command.type === 'create' &&
     (!isSingleLineText(command.markdownBody) || command.markdownBody.trim().length === 0)
   ) {
