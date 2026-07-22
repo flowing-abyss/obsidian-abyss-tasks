@@ -116,8 +116,10 @@ export class TaskDateIndex<T> {
     const tasks = new Set(this.byDate.get(date) ?? []);
     this.ensureRangeTree();
     const matches: OrderedRange<T>[] = [];
+    // collectRangeMatches traverses the start/due/ordinal-sorted tree in-order, so its output is
+    // already deterministic. Do not sort this result again: the overlap query must remain
+    // O(log R + k), while TaskIndex applies the consumer-facing stable task order afterwards.
     this.collectRangeMatches(this.rangeTree, date, matches);
-    matches.sort((left, right) => left.ordinal - right.ordinal);
     for (const match of matches) tasks.add(match.task);
     return [...tasks];
   }

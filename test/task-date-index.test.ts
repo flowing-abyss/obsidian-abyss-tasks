@@ -166,6 +166,48 @@ describe('TaskDateIndex', () => {
     collectSpy.mockRestore();
   });
 
+  it('does not sort matches again after the interval tree has emitted them in order', () => {
+    const idx = createIndex();
+    const ranges = [
+      task({
+        title: 'later-start',
+        planning: { start: '2026-07-05', due: '2026-07-20' },
+        source: { filePath: 'ranges.md', line: 0 },
+      }),
+      task({
+        title: 'earlier-start',
+        planning: { start: '2026-07-01', due: '2026-07-15' },
+        source: { filePath: 'ranges.md', line: 1 },
+      }),
+    ];
+    idx.updateFile('ranges.md', ranges);
+
+    type Match = { readonly task: TaskSnapshot };
+    type Collect = (node: unknown, date: LocalDate, matches: Match[]) => void;
+    const internals = idx as unknown as { collectRangeMatches: Collect };
+    const originalCollect = internals.collectRangeMatches.bind(idx);
+    let armed = false;
+    const collectSpy = vi
+      .spyOn(internals, 'collectRangeMatches')
+      .mockImplementation((node, date, matches) => {
+        if (!armed) {
+          armed = true;
+          Object.defineProperty(matches, 'sort', {
+            value: () => {
+              throw new Error('per-query sort is not allowed');
+            },
+          });
+        }
+        originalCollect(node, date, matches);
+      });
+
+    expect(idx.get(localDate('2026-07-10')).map((value) => value.title)).toEqual([
+      'earlier-start',
+      'later-start',
+    ]);
+    collectSpy.mockRestore();
+  });
+
   it('clear() empties the whole index', () => {
     const idx = createIndex();
     idx.updateFile('a.md', [

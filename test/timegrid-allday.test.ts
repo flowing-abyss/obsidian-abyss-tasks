@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { renderAllDayCell } from '../src/views/timegrid/renderAllDay';
-import { dispatchDnD, freshContainer, task, taskComment } from './helpers';
+import { dispatchDnD, freshContainer, task, taskComment, taskFromCodecLine } from './helpers';
 
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const fakeApp = {} as App;
@@ -148,11 +148,10 @@ describe('renderAllDayCell', () => {
   });
 
   it('renders a human-readable plain continuation title while the due terminal retains rich rendering', () => {
-    const t = task({
-      title: 'Trip to Note with bold text',
-      markdownTitle: 'Trip to [[Note]] with **bold text**',
-      planning: { start: '2026-07-08', due: '2026-07-12' },
-    });
+    const t = taskFromCodecLine(
+      '- [ ] Trip to [[Note]] with **bold**, ~~old~~ and `code` [site](https://example.test) 🛫 2026-07-08 📅 2026-07-12',
+    );
+    expect(t.title).toBe('Trip to 🔗 Note with **bold**, ~~old~~ and `code` 🌐 site');
     const continuationCell = freshContainer();
     const terminalCell = freshContainer();
 
@@ -164,10 +163,12 @@ describe('renderAllDayCell', () => {
     expect(continuation?.querySelector('.tc-md')).toBeNull();
     expect(continuation?.querySelector('a')).toBeNull();
     expect(continuation?.querySelector('.tc-tg-body-title')?.textContent).toBe(
-      'Trip to Note with bold text',
+      'Trip to 🔗 Note with bold, old and code 🌐 site',
     );
     expect(continuation?.textContent).not.toContain('[[');
     expect(continuation?.textContent).not.toContain('**');
+    expect(continuation?.textContent).not.toContain('~~');
+    expect(continuation?.textContent).not.toContain('`');
     expect(terminal?.querySelector('.tc-md')).not.toBeNull();
   });
 

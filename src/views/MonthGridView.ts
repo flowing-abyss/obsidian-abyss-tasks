@@ -5,6 +5,7 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
 import { tagFillTextColorVar } from '../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
+import { plainGhostTaskTitle } from '../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
@@ -239,7 +240,7 @@ export class MonthGridView extends BaseView {
   private renderTitle(container: HTMLElement, t: TaskSnapshot, linkAware = true): void {
     const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
     if (!linkAware) {
-      titleEl.setText(t.title);
+      titleEl.setText(plainGhostTaskTitle(t));
       return;
     }
     renderTaskText(titleEl, t.markdownTitle, {

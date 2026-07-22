@@ -1724,6 +1724,58 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     }
   });
 
+  it('abandons an in-flight sequence for a focused control from another window realm', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+    const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+    const h = keyboardPanelHarness([original], execute);
+    const registration = addSpy.mock.calls.find(([type]) => type === 'focusin');
+    addSpy.mockRestore();
+    if (!registration) throw new Error('missing CenterPanel focusin registration');
+    clickCalendarView(h.el, 'Day');
+
+    const iframe = activeDocument.createElement('iframe');
+    activeDocument.body.append(iframe);
+    const foreignDocument = iframe.contentDocument;
+    const foreignWindow = iframe.contentWindow;
+    if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
+    const externalControl = foreignDocument.createElement('button');
+    foreignDocument.body.append(externalControl);
+    expect(externalControl instanceof HTMLElement).toBe(false);
+
+    try {
+      const block = timedBlock(h.el);
+      block.focus();
+      press(block, 'ArrowRight');
+      externalControl.focus();
+      const ForeignFocusEvent = (foreignWindow as unknown as { FocusEvent: typeof FocusEvent })
+        .FocusEvent;
+      const foreignFocus = new ForeignFocusEvent('focusin', { bubbles: true });
+      externalControl.dispatchEvent(foreignFocus);
+      // A real Obsidian popout owns its own document listener. Calling the captured listener
+      // with the iframe event models that dispatch while retaining a genuinely foreign-realm
+      // event target (the regression is specifically the global HTMLElement instanceof check).
+      const listener = registration[1] as EventListener;
+      listener(foreignFocus);
+
+      h.setSnapshots([updated]);
+      h.emit();
+      pending.resolve(okTask(updated));
+      await flushMicrotasks();
+
+      expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+      expect(foreignDocument.activeElement).toBe(externalControl);
+      expect(activeDocument.activeElement?.classList.contains('tc-tg-block')).not.toBe(true);
+    } finally {
+      iframe.remove();
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
   it('removes its document focus ownership listener on destroy', () => {
     const addSpy = vi.spyOn(activeDocument, 'addEventListener');
     const removeSpy = vi.spyOn(activeDocument, 'removeEventListener');

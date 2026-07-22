@@ -233,6 +233,33 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
   };
 }
 
+/** Build a render-test snapshot from the real markdown codec's title/link projection. */
+export function taskFromCodecLine(
+  sourceLine: string,
+  overrides: TaskFixtureInput = {},
+): TaskSnapshot {
+  const source = {
+    filePath: overrides.source?.filePath ?? 'f.md',
+    line: overrides.source?.line ?? 0,
+  };
+  const parsed = new TaskMarkdownCodec(canonicalStatusCatalog()).parseLine(sourceLine, source);
+  if (!parsed) throw new Error(`Expected a task line: ${sourceLine}`);
+  return task({
+    ...overrides,
+    title: parsed.title,
+    markdownTitle: parsed.markdownTitle,
+    planning: parsed.planning,
+    priority: parsed.priority,
+    tags: [...parsed.tags],
+    statusSymbol: parsed.statusSymbol,
+    source: {
+      ...overrides.source,
+      originalMarkdown: sourceLine,
+      originalBlock: sourceLine,
+    },
+  });
+}
+
 export type SubtaskFixtureInput = Omit<Partial<SubtaskSnapshot>, 'planning' | 'ref'> & {
   readonly planning?: {
     readonly due?: string;

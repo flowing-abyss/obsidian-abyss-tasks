@@ -9,7 +9,14 @@ import {
   renderTimedSpanContinuation,
   toTimedBlockInputs,
 } from '../src/views/timegrid/renderTimedBlocks';
-import { dispatchDnD, freshContainer, task, taskComment, useRealMoment } from './helpers';
+import {
+  dispatchDnD,
+  freshContainer,
+  task,
+  taskComment,
+  taskFromCodecLine,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -1976,6 +1983,35 @@ describe('renderTimedBlocksForDay', () => {
       renderTimedSpanContinuation(container, [t]);
       const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
       expect(seg.textContent).toContain('Conference');
+    });
+
+    it('renders the same inert human-readable ghost title as the all-day and month continuations', () => {
+      const container = freshContainer();
+      const t = taskFromCodecLine(
+        '- [ ] Conference at [[Note]] with **bold**, ~~old~~ and `code` [site](https://example.test) 🛫 2026-07-01 📅 2026-07-03 ⏰ 09:00',
+      );
+      expect(t.title).toBe('Conference at 🔗 Note with **bold**, ~~old~~ and `code` 🌐 site');
+
+      renderTimedSpanContinuation(container, [t]);
+
+      const title = container.querySelector('.tc-tg-block-continuation-title');
+      expect(title?.textContent).toBe('Conference at 🔗 Note with bold, old and code 🌐 site');
+      expect(title?.querySelector('.tc-md')).toBeNull();
+      expect(title?.querySelector('a')).toBeNull();
+      expect(title?.textContent).not.toMatch(/\*\*|~~|`|\[\[/u);
+    });
+
+    it('preserves escaped emphasis markers as literal title characters', () => {
+      const container = freshContainer();
+      const t = taskFromCodecLine(
+        String.raw`- [ ] Keep \*literal\* and \_literal\_ with **bold** 🛫 2026-07-01 📅 2026-07-03 ⏰ 09:00`,
+      );
+
+      renderTimedSpanContinuation(container, [t]);
+
+      expect(container.querySelector('.tc-tg-block-continuation-title')?.textContent).toBe(
+        'Keep *literal* and _literal_ with bold',
+      );
     });
 
     it('a right-click fires onTaskClick, same as a full block', () => {

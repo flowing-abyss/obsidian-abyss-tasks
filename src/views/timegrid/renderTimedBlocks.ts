@@ -5,8 +5,9 @@ import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
-import { renderStatusMarker } from '../../ui/StatusMarker';
+import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../../ui/renderTaskText';
+import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
 import {
@@ -387,7 +388,7 @@ export function renderTimedSpanContinuation(
     // same way rather than looking untouched while its anchor block elsewhere shows struck-through.
     seg.createSpan({
       cls: `tc-tg-block-continuation-title${statusTitleClass(t.status)}`,
-      text: t.markdownTitle,
+      text: plainGhostTaskTitle(t),
     });
     if (onTaskClick) {
       seg.addEventListener('contextmenu', (e) => {

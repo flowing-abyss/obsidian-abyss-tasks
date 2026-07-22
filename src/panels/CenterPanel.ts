@@ -82,6 +82,13 @@ interface PendingTimedBlockRestoration {
   readonly renderGeneration: number;
 }
 
+function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
+  if (!target || !('ownerDocument' in target)) return false;
+  const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
+  const realm = ownerDocument?.defaultView;
+  return realm !== null && realm !== undefined && target instanceof realm.HTMLElement;
+}
+
 function projectNameFromPath(path: string): string {
   return (path.split('/').pop() ?? path).replace(/\.md$/, '');
 }
@@ -288,7 +295,7 @@ export class CenterPanel {
     this.offs.push(() => this.el.removeEventListener('keydown', onKeyDown));
     const onFocusIn = (event: FocusEvent): void => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
+      if (!isRealmHTMLElement(target)) return;
       const ownerDocument = this.el.ownerDocument;
       // Removing the active block during a calendar remount temporarily leaves the document
       // body focused. That is renderer lifecycle, not an explicit user focus transfer, so it

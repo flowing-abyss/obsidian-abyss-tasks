@@ -12,6 +12,7 @@ import {
   subtask,
   task,
   taskComment,
+  taskFromCodecLine,
   useRealMoment,
 } from './helpers';
 
@@ -901,11 +902,10 @@ describe('MonthGridView', () => {
     it('renders a human-readable plain ghost title while the due terminal retains rich rendering', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
-      const t = task({
-        title: 'Conference at Note with bold text',
-        markdownTitle: 'Conference at [[Note]] with **bold text**',
-        planning: { start: '2026-07-14', due: '2026-07-16' },
-      });
+      const t = taskFromCodecLine(
+        '- [ ] Conference at [[Note]] with **bold**, ~~old~~ and `code` [site](https://example.test) 🛫 2026-07-14 📅 2026-07-16',
+      );
+      expect(t.title).toBe('Conference at 🔗 Note with **bold**, ~~old~~ and `code` 🌐 site');
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
       const ghost = requiredElement(
@@ -919,10 +919,12 @@ describe('MonthGridView', () => {
       expect(ghost.querySelector('.tc-md')).toBeNull();
       expect(ghost.querySelector('a')).toBeNull();
       expect(ghost.querySelector('.tc-mg-item-title')?.textContent).toBe(
-        'Conference at Note with bold text',
+        'Conference at 🔗 Note with bold, old and code 🌐 site',
       );
       expect(ghost.textContent).not.toContain('[[');
       expect(ghost.textContent).not.toContain('**');
+      expect(ghost.textContent).not.toContain('~~');
+      expect(ghost.textContent).not.toContain('`');
       expect(terminal.querySelector('.tc-md')).not.toBeNull();
     });
 

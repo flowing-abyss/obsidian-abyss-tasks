@@ -4,8 +4,9 @@ import type { StatusRegistry } from '../../status/StatusRegistry';
 import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
-import { renderStatusMarker } from '../../ui/StatusMarker';
+import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../../ui/renderTaskText';
+import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
@@ -115,7 +116,7 @@ function renderAllDayBody(
       component: callbacks.component,
     });
   } else {
-    titleEl.setText(task.title);
+    titleEl.setText(plainGhostTaskTitle(task));
   }
   // Count badges (subtasks/comments/links) only — Task 44: tag chips were removed here too,
   // mirroring Task 35's identical removal for timed blocks (renderTimedBlocks.ts): the item's
