@@ -289,7 +289,11 @@ export class CenterPanel {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
       const block = target.closest<HTMLElement>('.tc-tg-block');
-      if (block) this.retainTimedBlockFocus(block);
+      if (block) {
+        this.retainTimedBlockFocus(block);
+      } else if (this.pendingTimedBlockFocus) {
+        this.cancelKeyboardInteraction();
+      }
     };
     this.el.addEventListener('focusin', onFocusIn);
     this.offs.push(() => this.el.removeEventListener('focusin', onFocusIn));
@@ -989,7 +993,7 @@ export class CenterPanel {
       scheduledCandidate !== scheduled.originElement
         ? ++this.nextTimedBlockRestoration
         : undefined;
-    if (restorationId !== undefined) {
+    if (restorationId !== undefined && queueSequence !== undefined) {
       this.pendingTimedBlockRestorations.set(restorationId, {
         queueSequence,
         focusSequence,

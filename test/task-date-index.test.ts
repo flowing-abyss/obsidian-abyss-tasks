@@ -1,14 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskSnapshot } from '../src/tasks';
 import { localDate } from '../src/tasks';
-import { calendarDatesForPlanning, TaskDateIndex } from '../src/tasks/infrastructure/TaskDateIndex';
+import {
+  calendarDatesForPlanning,
+  calendarRangeForPlanning,
+  TaskDateIndex,
+} from '../src/tasks/infrastructure/TaskDateIndex';
 import { task, useRealMoment } from './helpers';
 
 useRealMoment();
 
 describe('TaskDateIndex', () => {
   const createIndex = () =>
-    new TaskDateIndex<TaskSnapshot>((value) => calendarDatesForPlanning(value.planning));
+    new TaskDateIndex<TaskSnapshot>(
+      (value) => calendarDatesForPlanning(value.planning),
+      (value) => calendarRangeForPlanning(value.planning),
+    );
 
   it('indexes a due-only task under its due date', () => {
     const idx = createIndex();
@@ -51,11 +58,15 @@ describe('TaskDateIndex', () => {
   it("updateFile replaces a file's prior entries (moves task off old date)", () => {
     const idx = createIndex();
     idx.updateFile('a.md', [
-      task({ planning: { due: '2026-07-10' }, source: { filePath: 'a.md' } }),
+      task({
+        planning: { start: '2026-07-08', due: '2026-07-10' },
+        source: { filePath: 'a.md' },
+      }),
     ]);
     idx.updateFile('a.md', [
       task({ planning: { due: '2026-07-11' }, source: { filePath: 'a.md' } }),
     ]);
+    expect(idx.get(localDate('2026-07-09'))).toHaveLength(0);
     expect(idx.get(localDate('2026-07-10'))).toHaveLength(0);
     expect(idx.get(localDate('2026-07-11'))).toHaveLength(1);
   });
@@ -72,9 +83,13 @@ describe('TaskDateIndex', () => {
   it("removeFile clears all of that file's entries", () => {
     const idx = createIndex();
     idx.updateFile('a.md', [
-      task({ planning: { due: '2026-07-10' }, source: { filePath: 'a.md' } }),
+      task({
+        planning: { start: '2026-07-08', due: '2026-07-10' },
+        source: { filePath: 'a.md' },
+      }),
     ]);
     idx.removeFile('a.md');
+    expect(idx.get(localDate('2026-07-09'))).toHaveLength(0);
     expect(idx.get(localDate('2026-07-10'))).toHaveLength(0);
   });
 
@@ -103,12 +118,41 @@ describe('TaskDateIndex', () => {
     expect(() => idx.get(localDate('2026-01-01'))).not.toThrow();
   });
 
+  it('represents the full valid date domain as one range without enumerating its dates', () => {
+    const planning = {
+      start: localDate('0000-01-01'),
+      due: localDate('9999-12-31'),
+    };
+    expect(calendarDatesForPlanning(planning)).toEqual([]);
+    expect(calendarRangeForPlanning(planning)).toEqual(planning);
+
+    const idx = createIndex();
+    const extreme = task({ planning, source: { filePath: 'extreme.md' } });
+    idx.updateFile('extreme.md', [extreme]);
+    expect(idx.get(localDate('5000-06-15'))).toEqual([extreme]);
+  });
+
+  it('deduplicates a task present in both an explicit bucket and a containing range', () => {
+    const date = localDate('2026-07-10');
+    const indexed = task({ planning: { due: date }, source: { filePath: 'a.md' } });
+    const idx = new TaskDateIndex<TaskSnapshot>(
+      () => [date],
+      () => ({ start: date, due: date }),
+    );
+    idx.updateFile('a.md', [indexed]);
+    expect(idx.get(date)).toEqual([indexed]);
+  });
+
   it('clear() empties the whole index', () => {
     const idx = createIndex();
     idx.updateFile('a.md', [
-      task({ planning: { due: '2026-07-10' }, source: { filePath: 'a.md' } }),
+      task({
+        planning: { start: '2026-07-08', due: '2026-07-10' },
+        source: { filePath: 'a.md' },
+      }),
     ]);
     idx.clear();
+    expect(idx.get(localDate('2026-07-09'))).toHaveLength(0);
     expect(idx.get(localDate('2026-07-10'))).toHaveLength(0);
   });
 });

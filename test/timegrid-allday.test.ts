@@ -147,6 +147,26 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
 
+  it('keeps linked continuation titles non-interactive while the due terminal retains link rendering', () => {
+    const t = task({
+      title: 'Trip to Note',
+      markdownTitle: 'Trip to [[Note]]',
+      planning: { start: '2026-07-08', due: '2026-07-12' },
+    });
+    const continuationCell = freshContainer();
+    const terminalCell = freshContainer();
+
+    renderAllDayCell(continuationCell, '2026-07-10', [t], [], [], callbacks());
+    renderAllDayCell(terminalCell, '2026-07-12', [t], [], [], callbacks());
+
+    const continuation = continuationCell.querySelector('.tc-tg-span-continuation');
+    const terminal = terminalCell.querySelector('.tc-tg-span');
+    expect(continuation?.querySelector('.tc-md')).toBeNull();
+    expect(continuation?.querySelector('a')).toBeNull();
+    expect(continuation?.textContent).toContain('Trip to [[Note]]');
+    expect(terminal?.querySelector('.tc-md')).not.toBeNull();
+  });
+
   it("uses the continuation's 18% tag fill when choosing a readable title-text variant", () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
     document.body.style.setProperty('--background-primary', '#444444');

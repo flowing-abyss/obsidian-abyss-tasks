@@ -27,7 +27,7 @@ import { TaskBlockEditor } from './markdown/TaskBlockEditor';
 import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
-import { calendarDatesForPlanning, TaskDateIndex } from './TaskDateIndex';
+import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
 
 export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
@@ -350,8 +350,9 @@ function relocateSnapshot(
 
 export class TaskIndex implements TaskQueryApi {
   private readonly taskMap = new Map<string, readonly TaskSnapshot[]>();
-  private readonly dateIndex = new TaskDateIndex<TaskSnapshot>((task) =>
-    calendarDatesForPlanning(task.planning),
+  private readonly dateIndex = new TaskDateIndex<TaskSnapshot>(
+    (task) => calendarDatesForPlanning(task.planning),
+    (task) => calendarRangeForPlanning(task.planning),
   );
   private listeners: Listener[] = [];
   private readonly pendingFiles = new Set<string>();

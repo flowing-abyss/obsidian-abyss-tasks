@@ -1595,6 +1595,32 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(other);
   });
 
+  it('abandons an in-flight sequence when focus moves to a non-task calendar control', async () => {
+    const pending = deferredResult();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const original = keyboardSnapshot(TODAY);
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    const updated = keyboardSnapshot(tomorrow, '09:00', original.source.filePath, 'revision-2');
+    const h = keyboardPanelHarness([original], execute);
+    clickCalendarView(h.el, 'Day');
+
+    const block = timedBlock(h.el);
+    block.focus();
+    press(block, 'ArrowRight');
+    const toolbarControl = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    toolbarControl.focus();
+    h.setSnapshots([updated]);
+    h.emit();
+    expect(toolbarControl.isConnected).toBe(true);
+    expect(activeDocument.activeElement).toBe(toolbarControl);
+
+    pending.resolve(okTask(updated));
+    await flushMicrotasks();
+
+    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(activeDocument.activeElement).toBe(toolbarControl);
+  });
+
   it('clears focus ownership when a clamped command executes without changing the task', async () => {
     const pending = deferredResult();
     const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
@@ -1712,8 +1738,6 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     second.resolve(okTaskUnchanged(changed));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
-    nav.focus();
     h.setSnapshots([changed]);
     h.emit();
     await flushMicrotasks();
@@ -1796,9 +1820,6 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     third.resolve(okTask(final));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
-    nav.focus();
-    expect(activeDocument.activeElement).toBe(nav);
     h.setSnapshots([final]);
     h.emit();
     await flushMicrotasks();

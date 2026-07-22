@@ -26,6 +26,12 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function requiredElement(root: ParentNode, selector: string): HTMLElement {
+  const element = root.querySelector<HTMLElement>(selector);
+  if (!element) throw new Error(`Expected element matching ${selector}`);
+  return element;
+}
+
 function callbacks() {
   return {
     app: fakeApp,
@@ -830,11 +836,12 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map(
-        (date) =>
-          container.querySelector(`[data-mg-date="${date}"] .tc-mg-span-segment`) as HTMLElement,
+      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map((date) =>
+        requiredElement(container, `[data-mg-date="${date}"] .tc-mg-span-segment`),
       );
-      const [startGhost, middleGhost, terminal] = segments;
+      const startGhost = segments[0]!;
+      const middleGhost = segments[1]!;
+      const terminal = segments[2]!;
 
       expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
       expect(terminal.getAttribute('draggable')).toBe('true');
@@ -865,11 +872,12 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map(
-        (date) =>
-          container.querySelector(`[data-mg-date="${date}"] .tc-mg-span-segment`) as HTMLElement,
+      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map((date) =>
+        requiredElement(container, `[data-mg-date="${date}"] .tc-mg-span-segment`),
       );
-      const [startGhost, middleGhost, terminal] = segments;
+      const startGhost = segments[0]!;
+      const middleGhost = segments[1]!;
+      const terminal = segments[2]!;
 
       expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
       expect(terminal.getAttribute('draggable')).toBe('true');
@@ -888,6 +896,30 @@ describe('MonthGridView', () => {
       middleGhost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expect(cbs.onTaskClick).toHaveBeenCalledTimes(1);
       expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
+    });
+
+    it('keeps linked ghost titles non-interactive while the due terminal retains link rendering', () => {
+      const container = freshContainer();
+      const view = new MonthGridView(callbacks());
+      const t = task({
+        title: 'Conference at Note',
+        markdownTitle: 'Conference at [[Note]]',
+        planning: { start: '2026-07-14', due: '2026-07-16' },
+      });
+      view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+      const ghost = requiredElement(
+        container,
+        '[data-mg-date="2026-07-15"] .tc-mg-span-continuation',
+      );
+      const terminal = requiredElement(
+        container,
+        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+      );
+      expect(ghost.querySelector('.tc-md')).toBeNull();
+      expect(ghost.querySelector('a')).toBeNull();
+      expect(ghost.textContent).toContain('Conference at [[Note]]');
+      expect(terminal.querySelector('.tc-md')).not.toBeNull();
     });
 
     it('styles span continuations as translucent dashed tag-aware ghosts', () => {

@@ -96,12 +96,16 @@ describe('TaskQueryApi contract', () => {
     index.destroy();
   });
 
-  it('caps start-to-due span indexing at 366 days', async () => {
+  it('queries every part of a multi-year span without leaking outside its range', async () => {
     const index = await queryIndex({
       'long.md': '- [ ] long 🛫 2026-01-01 📅 2027-12-31',
     });
+    expect(index.forCalendarDates([localDate('2026-01-01')])).toHaveLength(1);
+    expect(index.forCalendarDates([localDate('2026-07-01')])).toHaveLength(1);
+    expect(index.forCalendarDates([localDate('2027-01-02')])).toHaveLength(1);
+    expect(index.forCalendarDates([localDate('2027-12-31')])).toHaveLength(1);
+    expect(index.forCalendarDates([localDate('2028-01-01')])).toHaveLength(0);
     expect(index.forCalendarDates([localDate('2027-01-01')])).toHaveLength(1);
-    expect(index.forCalendarDates([localDate('2027-01-02')])).toHaveLength(0);
     index.destroy();
   });
 });

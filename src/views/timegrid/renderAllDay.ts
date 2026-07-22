@@ -108,11 +108,15 @@ function renderAllDayBody(
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
   const titleEl = el.createSpan({ cls: `tc-tg-body-title${statusTitleClass(task.status)}` });
-  renderTaskText(titleEl, task.markdownTitle, {
-    app: callbacks.app,
-    sourcePath: task.source.filePath,
-    component: callbacks.component,
-  });
+  if (interactive) {
+    renderTaskText(titleEl, task.markdownTitle, {
+      app: callbacks.app,
+      sourcePath: task.source.filePath,
+      component: callbacks.component,
+    });
+  } else {
+    titleEl.setText(task.markdownTitle);
+  }
   // Count badges (subtasks/comments/links) only — Task 44: tag chips were removed here too,
   // mirroring Task 35's identical removal for timed blocks (renderTimedBlocks.ts): the item's
   // own tag-colored fill (set below) already conveys the tag, so a chip repeating it was

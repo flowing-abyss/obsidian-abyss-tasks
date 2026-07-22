@@ -211,7 +211,7 @@ export class MonthGridView extends BaseView {
     this.applyTagFill(bar, task, tagGroups, terminal ? 40 : 18);
     if (terminal) this.renderMarker(bar, task);
     if (timed) bar.createSpan({ cls: 'tc-mg-item-time', text: `${task.planning.time} ` });
-    this.renderTitle(bar, task);
+    this.renderTitle(bar, task, terminal);
     bar.addEventListener('contextmenu', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -236,8 +236,12 @@ export class MonthGridView extends BaseView {
    * timedSpan, plain, AND deadline markers, see renderCompactCell above), so one change here
    * covers all of them.
    */
-  private renderTitle(container: HTMLElement, t: TaskSnapshot): void {
+  private renderTitle(container: HTMLElement, t: TaskSnapshot, linkAware = true): void {
     const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
+    if (!linkAware) {
+      titleEl.setText(t.markdownTitle);
+      return;
+    }
     renderTaskText(titleEl, t.markdownTitle, {
       app: this.callbacks.app,
       sourcePath: t.source.filePath,
