@@ -5,7 +5,7 @@ import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../../src/tasks/domain/types';
-import { localDate } from '../../src/tasks/domain/validation';
+import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
@@ -127,6 +127,50 @@ describe('ObsidianTaskRepository planning contract', () => {
     const clear = await h.repository.edit(patch(refFor(h, 'tasks.md', changed), 'due', null));
     expect(clear).toMatchObject({ type: 'committed', changed: true });
     expect(await read(h.app, 'tasks.md')).toBe(source);
+  });
+
+  it('converts a timed task to all-day through exactly one vault process', async () => {
+    const source = '- [/] task #keep 📅 2026-07-20 ⏰ 09:30 ⏱️ 45m\n';
+    const h = await harness({ 'tasks.md': source });
+    const process = vi.spyOn(h.app.vault, 'process');
+
+    await expect(
+      h.repository.edit({
+        type: 'move-to-all-day',
+        ref: refFor(h, 'tasks.md', source),
+        days: 0,
+      }),
+    ).resolves.toMatchObject({ type: 'committed', changed: true });
+
+    expect(await read(h.app, 'tasks.md')).toBe('- [/] task #keep 📅 2026-07-20\n');
+    expect(process).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    {
+      command: {
+        type: 'move-time-slot' as const,
+        days: -1,
+        time: localTime('10:15'),
+      },
+      source: '- [ ] earliest 🛫 0000-01-01 📅 0000-01-03 ⏰ 09:30\n',
+    },
+    {
+      command: { type: 'move-to-all-day' as const, days: 1 },
+      source: '- [ ] latest 🛫 9999-12-29 📅 9999-12-31 ⏰ 09:30 ⏱️ 45m\n',
+    },
+  ])('rejects an out-of-range $command.type before vault process', async ({ command, source }) => {
+    const h = await harness({ 'tasks.md': source });
+    const process = vi.spyOn(h.app.vault, 'process');
+
+    await expect(
+      h.repository.edit({ ...command, ref: refFor(h, 'tasks.md', source) }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-date', field: 'schedule' }],
+    });
+    expect(await read(h.app, 'tasks.md')).toBe(source);
+    expect(process.mock.calls).toHaveLength(0);
   });
 
   it('reschedules scheduled before due and adds due when neither exists', async () => {

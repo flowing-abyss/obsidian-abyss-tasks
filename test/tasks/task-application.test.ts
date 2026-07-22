@@ -114,24 +114,6 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).toHaveBeenCalledWith(command);
   });
 
-  it('executes a zero-day all-day conversion through exactly one repository write', async () => {
-    const committed: TaskRepositoryResult = {
-      type: 'committed',
-      outcome: { type: 'task', task: snapshot() },
-      changed: true,
-    };
-    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
-    const command = { type: 'move-to-all-day' as const, ref, days: 0 };
-
-    await expect(service({ edit }).execute(command)).resolves.toEqual({
-      type: 'ok',
-      outcome: committed.outcome,
-      changed: true,
-    });
-    expect(edit).toHaveBeenCalledTimes(1);
-    expect(edit).toHaveBeenCalledWith(command);
-  });
-
   it('rejects an empty create body before destination resolution or repository access', async () => {
     const edit = vi.fn<TaskRepository['edit']>();
     const create = vi.fn<TaskRepository['create']>();
