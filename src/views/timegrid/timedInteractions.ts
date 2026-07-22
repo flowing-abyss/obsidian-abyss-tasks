@@ -9,7 +9,7 @@ import {
   type TimedDragTarget,
   type TimedDurationTarget,
 } from './dragGeometry';
-import { minutesToPixels } from './layout';
+import { MIN_BLOCK_HEIGHT_PX, minutesToPixels } from './layout';
 
 export type TimedBoundaryTarget =
   | SpanBoundaryTarget
@@ -113,13 +113,23 @@ function previewElement(
   source: HTMLElement,
   target: object,
   className: 'tc-tg-drag-preview' | 'tc-tg-boundary-preview',
+  copyLaneGeometry = true,
 ): HTMLElement {
   const preview = source.ownerDocument.createElement('div');
   preview.className = className;
   preview.dataset['target'] = JSON.stringify(target);
-  preview.style.left = source.style.left;
-  preview.style.width = source.style.width;
+  if (copyLaneGeometry) {
+    preview.style.left = source.style.left;
+    preview.style.width = source.style.width;
+  }
+  const tagColor = source.style.getPropertyValue('--tc-tag-color');
+  if (tagColor) preview.style.setProperty('--tc-tag-color', tagColor);
   return preview;
+}
+
+function minimumPreviewHeight(source: HTMLElement): number {
+  const inlineMinimum = Number.parseFloat(source.style.minHeight);
+  return Number.isFinite(inlineMinimum) ? inlineMinimum : MIN_BLOCK_HEIGHT_PX;
 }
 
 function capture(element: HTMLElement, pointerId: number): void {
@@ -171,6 +181,8 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     event.preventDefault();
     event.stopPropagation();
 
+    if (kind === 'move') source.focus();
+
     const columns = measuredColumns(source);
     const originColumn = columns.find((column) => column.date === segmentDate);
     if (!originColumn) return;
@@ -179,7 +191,10 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     const sourceRect = source.getBoundingClientRect();
     const pixelsPerMinute =
       (originColumn.drag.timeGridBottom - originColumn.drag.timeGridTop) / (24 * 60);
-    const grabOffsetMinutes = Math.max(0, (event.clientY - sourceRect.top) / pixelsPerMinute);
+    const grabOffsetMinutes = Math.min(
+      durationMinutes,
+      Math.max(0, (event.clientY - sourceRect.top) / pixelsPerMinute),
+    );
     let preview: HTMLElement | undefined;
     let latest:
       | Readonly<TimedDragTarget>
@@ -198,10 +213,15 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       const column = columns.find((candidate) => candidate.date === target.date);
       const host = target.destination === 'all-day' ? column?.allDay : column?.hour;
       if (!host) return;
-      preview = previewElement(source, target, 'tc-tg-drag-preview');
+      preview = previewElement(
+        source,
+        target,
+        'tc-tg-drag-preview',
+        target.destination === 'time-grid',
+      );
       if (target.destination === 'time-grid') {
         preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
-        preview.style.height = `${minutesToPixels(durationMinutes)}px`;
+        preview.style.height = `${sourceRect.height}px`;
       } else {
         preview.classList.add('is-all-day');
       }
@@ -212,7 +232,10 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       clearPreview();
       preview = previewElement(source, target, 'tc-tg-drag-preview');
       preview.style.top = source.style.top;
-      preview.style.height = `${minutesToPixels(target.durationMinutes)}px`;
+      preview.style.height = `${Math.max(
+        minutesToPixels(target.durationMinutes),
+        minimumPreviewHeight(source),
+      )}px`;
       originColumn.hour.appendChild(preview);
     };
 
@@ -222,7 +245,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       if (!column) return;
       preview = previewElement(source, target, 'tc-tg-boundary-preview');
       preview.style.top = source.style.top;
-      preview.style.height = source.style.height;
+      preview.style.height = `${sourceRect.height}px`;
       column.hour.appendChild(preview);
     };
 

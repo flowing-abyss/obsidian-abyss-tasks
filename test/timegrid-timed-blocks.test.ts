@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
   renderTimedBlocksForDay,
   renderTimedSpanContinuation,
@@ -93,6 +94,163 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it.each([
+    { duration: 5, terminal: true },
+    { duration: 15, terminal: false },
+  ])(
+    'keeps the full visible $duration-minute $terminal segment draggable and previews its rendered height',
+    ({ duration, terminal }) => {
+      const { owner, columns } = timedGestureGrid();
+      const onTimedMove = vi.fn();
+      const t = task({
+        planning: terminal
+          ? { due: '2026-07-06', time: '09:00', duration }
+          : {
+              start: '2026-07-06',
+              due: '2026-07-08',
+              time: '09:00',
+              duration,
+            },
+      });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedMove, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal },
+      );
+      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const visualTop = 9 * 48 + 100;
+      block.getBoundingClientRect = () => rect(0, visualTop, 100, MIN_BLOCK_HEIGHT_PX);
+
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 25,
+          clientY: visualTop + MIN_BLOCK_HEIGHT_PX - 1,
+          pointerId: 21,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 21 }),
+      );
+
+      const preview = columns[1].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      expect(preview).not.toBeNull();
+      expect(preview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 21 }),
+      );
+      expect(onTimedMove).toHaveBeenCalledOnce();
+
+      const durationHandle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      durationHandle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: visualTop + MIN_BLOCK_HEIGHT_PX,
+          pointerId: 24,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 50,
+          clientY: visualTop + MIN_BLOCK_HEIGHT_PX + 12,
+          pointerId: 24,
+        }),
+      );
+      const durationPreview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      expect(durationPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 24 }));
+
+      const boundaryHandle = block.querySelector(
+        terminal ? '[data-boundary="create-span"]' : '[data-boundary="start"]',
+      ) as HTMLElement;
+      boundaryHandle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: visualTop + MIN_BLOCK_HEIGHT_PX / 2,
+          pointerId: 25,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 125, clientY: visualTop, pointerId: 25 }),
+      );
+      const boundaryPreview = columns[1].hour.querySelector(
+        '.tc-tg-boundary-preview',
+      ) as HTMLElement;
+      expect(boundaryPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 25 }));
+    },
+  );
+
+  it('renders an overlapping second-lane all-day preview across the full destination cell', () => {
+    const { owner, columns } = timedGestureGrid();
+    const first = task({
+      source: { filePath: 'first.md', line: 0 },
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    const second = task({
+      source: { filePath: 'second.md', line: 0 },
+      planning: { due: '2026-07-06', time: '09:15', duration: 60 },
+    });
+    renderTimedBlocksForDay(
+      columns[0].hour,
+      [first, second],
+      { ...callbacks(), interactionOwner: owner },
+      [],
+      { date: '2026-07-06' },
+    );
+    const secondLane = columns[0].hour.querySelector<HTMLElement>(
+      '.tc-tg-block[data-tc-task-file="second.md"]',
+    );
+    if (!secondLane) throw new Error('missing overlapping second lane');
+    expect(secondLane.style.left).toBe('50%');
+    expect(secondLane.style.width).toBe('50%');
+    secondLane.getBoundingClientRect = () => rect(50, 9.25 * 48 + 100, 50, 48);
+
+    secondLane.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 75, clientY: 556, pointerId: 22 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 125, clientY: 25, pointerId: 22 }),
+    );
+
+    const preview = columns[1].allDay.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    expect(preview.style.left).toBe('');
+    expect(preview.style.width).toBe('');
+    expect(declarationsFor('.tc-tg-drag-preview.is-all-day')).toMatch(/width\s*:\s*100%/u);
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 22 }));
+  });
+
+  it('focuses and selects a block when its body starts a pointer gesture', () => {
+    const { root, owner, columns } = timedGestureGrid();
+    activeDocument.body.append(root);
+    const cbs = callbacks();
+    const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+    renderTimedBlocksForDay(columns[0].hour, [t], { ...cbs, interactionOwner: owner }, [], {
+      date: '2026-07-06',
+    });
+    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 23 }),
+    );
+    expect(block.ownerDocument.activeElement).toBe(block);
+    expect(block.classList.contains('is-selected')).toBe(true);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 25, clientY: 544, pointerId: 23 }),
+    );
+    block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
+      type: 'move-time',
+      deltaMinutes: 15,
+    });
+    root.remove();
+  });
+
   it('binds session listeners to source.ownerDocument.defaultView, not the global window', () => {
     const iframe = activeDocument.createElement('iframe');
     activeDocument.body.append(iframe);
