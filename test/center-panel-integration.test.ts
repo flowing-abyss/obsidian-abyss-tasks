@@ -17,6 +17,7 @@ import type {
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -1403,6 +1404,78 @@ function press(block: HTMLElement, key: string, shiftKey = false): void {
 }
 
 describe('CenterPanel calendar mode — timed pointer command bridge', () => {
+  it('does not execute a command for stationary visible-body clicks on short terminal or ghost segments', async () => {
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const weekStart = moment().startOf('isoWeek');
+    const start = weekStart.format('YYYY-MM-DD');
+    const due = weekStart.clone().add(2, 'days').format('YYYY-MM-DD');
+    const t = task({
+      ref: { filePath: 'short-span.md', line: 4, revision: 'revision-1' },
+      source: { filePath: 'short-span.md', line: 4 },
+      planning: { start, due, time: '09:00', duration: 5 },
+    });
+    const h = keyboardPanelHarness([t], execute);
+    clickCalendarView(h.el, 'Week');
+
+    const days = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column'));
+    for (const [index, day] of days.entries()) {
+      day.getBoundingClientRect = () =>
+        ({
+          left: index * 100,
+          right: (index + 1) * 100,
+          top: 100,
+          bottom: 100 + 24 * 48,
+          width: 100,
+          height: 24 * 48,
+        }) as DOMRect;
+      const hour = day.querySelector<HTMLElement>('.tc-tg-hour-column');
+      if (!hour) throw new Error('missing hour column');
+      hour.getBoundingClientRect = day.getBoundingClientRect;
+    }
+    const allDayCells = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-allday-cell'));
+    for (const [index, cell] of allDayCells.entries()) {
+      cell.getBoundingClientRect = () =>
+        ({
+          left: index * 100,
+          right: (index + 1) * 100,
+          top: 10,
+          bottom: 40,
+          width: 100,
+          height: 30,
+        }) as DOMRect;
+    }
+
+    const segments = [start, due].map((date) => {
+      const block = h.el.querySelector<HTMLElement>(`.tc-tg-block[data-tg-segment-date="${date}"]`);
+      if (!block) throw new Error(`missing timed segment ${date}`);
+      const index = days.findIndex((day) => day.dataset['tgDate'] === date);
+      block.getBoundingClientRect = () =>
+        ({
+          left: index * 100,
+          right: (index + 1) * 100,
+          top: 9 * 48 + 100,
+          bottom: 9 * 48 + 100 + MIN_BLOCK_HEIGHT_PX,
+          width: 100,
+          height: MIN_BLOCK_HEIGHT_PX,
+        }) as DOMRect;
+      return { block, clientX: index * 100 + 25 };
+    });
+
+    for (const [index, { block, clientX }] of segments.entries()) {
+      const pointerId = 40 + index;
+      const clientY = 9 * 48 + 100 + 14;
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, clientX, clientY, pointerId }),
+      );
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX, clientY, pointerId }));
+      expect(h.el.querySelector('.tc-tg-drag-preview')).toBeNull();
+    }
+    await flushMicrotasks();
+    expect(execute).not.toHaveBeenCalled();
+    h.panel.destroy();
+    h.el.remove();
+  });
+
   it('routes exact move, all-day, duration, and actual boundary targets through TaskApplicationApi', async () => {
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
       type: 'ok',

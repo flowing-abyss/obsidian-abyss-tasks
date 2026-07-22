@@ -101,19 +101,17 @@ export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBl
 
 /**
  * Task 37: `capMinHeightsPx`'s continuation-segment counterpart. `.tc-tg-block-continuation`
- * (renderTimedSpanContinuation's non-anchor-day segment of a multi-day timed span) got the same
+ * (the retained `renderTimedSpanContinuation` compatibility shape) got the same
  * CSS min-height treatment `.tc-tg-block` did (Task 36) — but continuation segments never go
  * through `packOverlaps`: they're always rendered full-width, one per task, with no column
  * packing at all. So the same growth-crossing-into-a-neighbor problem `capMinHeightsPx` solves for
  * anchor blocks can happen here too, just without a `column` to key off of.
  *
- * Rather than inventing column packing for continuations (they're deliberately always
+ * Rather than inventing column packing for these compatibility continuations (they're always
  * full-width), this treats every continuation segment for a day as occupying one shared "column"
  * with each other AND with that day's already-positioned anchor blocks (passed as `others`, e.g.
- * `renderTimedBlocksForDay`'s `positioned` array for the same day) — anchor blocks and
- * continuation segments are rendered into the very same `hourColumnEl` by the two call sites
- * (WeekTimeGridView.ts/TodayView.ts), so a continuation's min-height can just as easily cross into
- * an anchor block below it as into another continuation.
+ * `renderTimedBlocksForDay`'s `positioned` array for the same day), so a continuation's
+ * min-height can clamp against an anchor supplied by a legacy caller too.
  *
  * Only continuation segments are ever capped (returned in the map) — an anchor block's own cap
  * against OTHER anchor blocks is still `capMinHeightsPx`'s unchanged job; this function only ever

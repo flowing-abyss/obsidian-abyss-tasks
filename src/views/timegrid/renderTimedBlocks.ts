@@ -93,40 +93,12 @@ const SNAP_MINUTES = 15;
 const MAX_START_MINUTES = 24 * 60 - SNAP_MINUTES; // 23:45 — the last valid quarter-hour slot.
 const MAX_DURATION_MINUTES = 24 * 60; // A full day is already a generous, unambiguous cap.
 
-// Code review gap (fix): every pointer-drag gesture below (`attachDrag`'s move/resize, and
-// `attachHorizontalResize`'s left/right edges) tears down its state — including, for resize,
-// restoring `block`'s `draggable="true"` — from a `cleanup()` reachable only via `pointerup`/
-// `pointercancel`. If NEITHER is ever delivered for a given gesture (e.g. the pointer is
-// released while positioned outside the browser window entirely, or some other browser/OS quirk
-// swallows the up-event), cleanup never runs and, for a resize gesture, `draggable` stays
-// "false" forever — silently disabling the legitimate whole-block native-drag-to-all-day feature
-// until the block's next from-scratch re-render.
-//
-// Pointer Capture (`setPointerCapture`/`releasePointerCapture`) is the standard, spec-correct fix
-// for exactly this class of problem: per the Pointer Events spec, once an element captures a
-// pointerId, that element keeps receiving `pointermove`/`pointerup` for that pointer even if it
-// moves outside the element — or outside the browser window/document — for the remainder of the
-// gesture. That is a guarantee from the browser itself, not something this codebase's own logic
-// can fail to uphold, so it closes the gap for real rather than adding another window/document
-// listener that could itself be skipped by the same class of quirk.
-//
-// Verified this does NOT fight the existing native-HTML5-DnD-hijack-produces-pointercancel
-// behavior these same handlers already rely on (see attachDrag's onPointerCancel/cleanup and
-// attachHorizontalResize's mirror of it): Pointer Capture and HTML5 Drag-and-Drop are two
-// independent browser subsystems, but the spec is explicit that starting a native drag operation
-// implicitly releases any active pointer capture and then fires `pointercancel` at the (now
-// former) capturing element — i.e. capture does not suppress or delay the hijack's pointercancel,
-// it just additionally guarantees delivery for the ordinary (non-hijacked) release path this
-// gap is about. `releasePointerCapture` in `cleanup()` below is therefore redundant-but-cheap
-// hygiene for the two paths that already end in a real pointerup/pointercancel; the guarantee
-// that actually closes the gap is the implicit one the browser provides for a captured pointer
-// that never gets hijacked into DnD.
-//
-// jsdom implements neither method at all (confirmed: `typeof el.setPointerCapture === 'undefined'`
-// — calling it throws, it does not silently no-op), so both helpers below feature-detect before
-// calling, keeping every existing pointerdown-driven test in this file (most of which stub these
-// two methods onto the element under test) working unchanged, and tolerating any other host that
-// similarly lacks Pointer Events capture support.
+// The helpers below serve only the retained no-date compatibility handlers (`attachDrag` and
+// `attachHorizontalResize`). Production Today/Week rendering passes a date and uses the
+// view-owned engine in timedInteractions.ts instead. Pointer capture keeps a compatibility
+// gesture receiving its terminal up/cancel event outside the source; cleanup returns the root to
+// its attribute-free, non-native-draggable state. jsdom lacks these methods, so both helpers are
+// feature-detected.
 function tryCapturePointer(el: HTMLElement, pointerId: number): void {
   if (typeof el.setPointerCapture !== 'function') return;
   try {
@@ -142,17 +114,13 @@ function tryReleasePointer(el: HTMLElement, pointerId: number): void {
   try {
     el.releasePointerCapture(pointerId);
   } catch {
-    // Harmless if capture was already released (e.g. implicitly, by a native-drag hijack — see
-    // this constant block's own comment above) or never actually granted.
+    // Harmless if the host already released capture or never granted it.
   }
 }
 
 /**
- * Task 37: shared `TaskSnapshot[]` -> `TimedBlockInput[]` conversion, factored out of
- * `renderTimedBlocksForDay` so callers (WeekTimeGridView.ts/TodayView.ts) can build the same
- * `startMinutes`/`durationMinutes` shape for a day's anchor blocks and hand it to
- * `renderTimedSpanContinuation`'s `otherBlocks` parameter — letting a continuation segment's
- * min-height clamp see the anchor block(s) sharing its day column, not just other continuations.
+ * Shared `TaskSnapshot[]` -> `TimedBlockInput[]` conversion used by the production renderer and
+ * retained legacy continuation tests/callers.
  */
 export function toTimedBlockInputs(tasks: TaskSnapshot[]): TimedBlockInput[] {
   return tasks.map((t) => ({
@@ -430,30 +398,25 @@ function attachOwnedInteractions(
 }
 
 /**
- * Task 29: renders the lighter, non-interactive "continuation" segment for a non-anchor day of
- * a multi-day timed span (`start` < `due`, `time` set) — the anchor day (matching `due`, per
- * this project's due-centric anchor-priority rule) gets the full interactive block via
- * `renderTimedBlocksForDay` instead; every OTHER day the span covers gets this instead, so the
- * same task never renders two full interactive blocks across a Week view.
+ * Legacy no-date compatibility renderer for the old inert continuation shape. Production
+ * Today/Week rendering no longer calls this function: both terminal and ghost segments now go
+ * through one `renderTimedBlocksForDay` overlap pass and share the owned interaction contract.
  *
  * Deliberately minimal — no checkbox, no drag, no resize handles, no markdown-link-aware title
  * rendering (a plain textContent title, unlike the anchor block's renderTaskText) — visually
  * similar in spirit to MonthGridView's existing `.tc-mg-span-segment` continuation bars for
  * untimed spans: clearly linked to the task (same title, tag color, time-of-day position) but
- * unmistakably not a second interactive copy of it. A contextmenu still opens the task modal
- * (`onTaskClick`), same as a full block, since that's a read-only action.
+ * unmistakably not a second interactive copy within this compatibility API. A contextmenu opens
+ * the task modal (`onTaskClick`), same as a full block, since that's a read-only action.
  *
  * Task 35 (expanded scope): also shows the same time-range+duration subtitle and count badges
  * (subtasks/comments/links) the anchor block shows, so a continuation segment reads as more than
- * just a title bar — but stays purely presentational: no checkbox, and neither the subtitle nor
- * the badges container gets a click/drag handler, so this remains as non-interactive as before.
+ * just a title bar — but this legacy shape stays purely presentational: no checkbox, and neither
+ * the subtitle nor the badges container gets a click/drag handler.
  *
  * Task 37: like `.tc-tg-block`, `.tc-tg-block-continuation` has a CSS min-height that keeps a
- * short segment's title legible — but, unlike anchor blocks, continuation segments never go
- * through `packOverlaps`'s column-collision avoidance (they're always rendered full-width, one
- * per task). `capContinuationMinHeightsPx` closes that gap: `otherBlocks` lets a caller pass the
- * SAME day's already-positioned anchor blocks (see `toTimedBlockInputs`) so a continuation's
- * min-height growth is clamped against those too, not just other continuations.
+ * short segment's title legible — but, unlike production ghosts, these compatibility segments
+ * never go through `packOverlaps`. `capContinuationMinHeightsPx` retains their old collision cap.
  */
 export function renderTimedSpanContinuation(
   hourColumnEl: HTMLElement,
@@ -627,16 +590,12 @@ function attachDrag(
   };
 
   const cleanup = (): void => {
-    // Restore the block's own native-drag eligibility (Task 26: dragging the BODY out to the
-    // all-day row) unconditionally — harmless no-op if this gesture was 'move' (where it was
-    // never toggled off, see onPointerDown below), and the fix for 'resize' (see that same
-    // comment for why resize needs this at all).
+    // Compatibility resize temporarily sets this attribute to false; resting state is absent.
     block.removeAttribute('draggable');
     mode = null;
     // Task 39: mirrors is-dragging/is-edge-resizing's own cleanup-in-every-exit-path
     // discipline — removed here (the one place every exit path funnels through) rather than
-    // only in onPointerUp, so a pointercancel mid-gesture (native drag hijacking the pointer
-    // session, see onPointerCancel below) can never leave the "picked up" affordance stuck on.
+    // only in onPointerUp, so a pointercancel can never leave the affordance stuck on.
     block.removeClass('is-picked-up');
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', onPointerUp);
@@ -664,31 +623,9 @@ function attachDrag(
     cleanup();
   };
 
-  // Now that the block is also draggable="true" (native HTML5 DnD, for dragging out to the
-  // all-day row), a pointerdown that arms move/resize can be hijacked mid-gesture by the
-  // browser starting a native drag: per the Pointer Events spec, once native DnD takes over the
-  // pointer session it fires `pointercancel` instead of `pointerup` for that pointer. Without
-  // this handler, `mode` and the window pointermove/pointerup listeners from the aborted
-  // gesture would never be torn down — leaking listeners that would double-fire on the next
-  // real gesture — and no mutation must fire here (the drop is handled by the native DnD
-  // dragend/drop path instead, not this pointer session).
-  //
-  // Investigated as a possible root cause of "drag-to-reschedule lands at the wrong time":
-  // `onPointerMove` above already repositions `block.style.top`/`height` live, on every
-  // pointermove, as a preview of the not-yet-committed move/resize. A native-drag hijack can
-  // fire at any point during an ordinary vertical move gesture too — per the HTML Drag and Drop
-  // spec, arming only needs the pointer to move past a small threshold while the button is held
-  // on a draggable="true" element, in ANY direction, not specifically toward the all-day row.
-  // Without the reset below, a hijacked gesture left the block's DOM position/size sitting at
-  // whatever the last live-preview pointermove had set it to, even though NO mutation had
-  // committed (onTimeChange/onDurationChange only fire from onPointerUp, never from here) — a
-  // real, visible divergence between what the block showed and the task's actual, unchanged
-  // data, persisting until some unrelated re-render happened to overwrite it. Reverting to the
-  // pre-gesture position/size here, unconditionally, keeps the DOM never ahead of committed data
-  // regardless of what (if anything) the hijacked native drag itself goes on to do — including
-  // the legitimate case where it lands on the all-day row and converts the task via a completely
-  // separate mutation path (renderAllDay.ts's onDrop/rescheduleTask), which is free to run
-  // without this preview's stale position fighting it.
+  // The compatibility path mutates source geometry as its preview. Any pointer cancellation must
+  // restore that geometry and tear down listeners without committing. Production owned sessions
+  // never mutate source geometry and do not enter this branch.
   const onPointerCancel = (): void => {
     if (!mode) return;
     if (mode === 'move') {
@@ -718,29 +655,11 @@ function attachDrag(
     startY = e.clientY;
     startMinutes = initialStart;
     startDuration = initialDuration;
-    // The vertical resize handle is a non-draggable (draggable="false") island inside `block`,
-    // which is itself draggable="true" (Task 26, for dragging the BODY out to the all-day row).
-    // Per the HTML Drag and Drop spec, a gesture starting on a non-draggable child does NOT stop
-    // the browser from walking up to the nearest draggable="true" ancestor and arming a native
-    // drag from THERE instead — draggable="false" on the handle alone is not enough (this is the
-    // exact mechanism renderAllDay.ts's attachEdgeResize found and fixed the same way). Flipping
-    // `block`'s own draggable off for the duration of a resize gesture actually blocks the
-    // fallback, restored in `cleanup()` on pointerup/pointercancel. Scoped to 'resize' only:
-    // 'move' (grabbing the block body itself) is the deliberate drag-out-to-all-day gesture, so
-    // `block` must stay draggable="true" for that case.
+    // The compatibility resize path temporarily marks its root explicitly non-draggable and
+    // cleanup returns it to the normal attribute-free state. Production roots never use native
+    // drag and are managed by timedInteractions.ts.
     if (mode === 'resize') block.setAttribute('draggable', 'false');
-    // Task 39: immediate "picked up" affordance for a move-mode drag specifically (not
-    // resize) — the user's most common gesture is grabbing the block body to reschedule it,
-    // and it previously gave zero feedback that anything had been armed until the block
-    // visibly moved on the next pointermove. `.is-dragging` (Task 26) is deliberately NOT
-    // reused here: that class fires from `dragstart`/`dragend`, native HTML5 DnD events that
-    // only occur once the browser has taken over the pointer session for the drag-to-all-day
-    // gesture (dozens of ms after this pointerdown, and never at all for an ordinary
-    // vertical move that stays inside the hour grid) — reusing it here would either double
-    // up if a native drag DID start, or never fire for the common in-grid case it's meant to
-    // cover. A distinct class keeps the two mechanisms' visual language independently
-    // tunable, same reasoning Task 37 used to give edge-resize its own `.is-edge-resizing`
-    // instead of overloading `.is-dragging`.
+    // Keep the compatibility move affordance distinct from resize and selection state.
     if (mode === 'move') block.addClass('is-picked-up');
     // Pointer capture on whichever element actually received this pointerdown (`e.currentTarget`
     // — `handle` if this fired from the handle's own listener, `block` if from the block's own
@@ -760,8 +679,8 @@ function attachDrag(
 }
 
 /**
- * Task 29: right-edge horizontal drag-resize, extending a timed block into a multi-day timed
- * span. Mirrors renderAllDay.ts's `attachEdgeResize` exactly (same Pointer-Events pattern: no
+ * Legacy no-date horizontal drag-resize compatibility path. Production start/due/create-span
+ * handles use timedInteractions.ts. This path mirrors renderAllDay.ts's Pointer-Events pattern: no
  * live visual feedback while dragging, just a commit-on-release that resolves the day under the
  * pointer) rather than inventing a new interaction style — the day boundary crossing is resolved
  * from the pointer's final (clientX, clientY) via `activeDocument.elementFromPoint`, walking up
@@ -797,16 +716,8 @@ function attachHorizontalResize(
   // that can touch these fields, this is purely presentational/UX for this one gesture).
   bound?: { date: string; kind: 'max' | 'min' },
 ): void {
-  // This handle is a non-draggable (draggable="false") island inside the block's draggable="true"
-  // ancestor (Task 26). draggable="false" here is NOT enough on its own to stop a gesture
-  // starting on the handle from arming the ancestor's native dragstart: per the HTML Drag and
-  // Drop spec, a mousedown on a non-draggable descendant of a draggable element still starts a
-  // drag FROM THE ANCESTOR (the browser walks up to the nearest draggable="true" element and uses
-  // that as the drag source) — draggable="false" only stops the handle itself from being
-  // independently draggable, it does not block the ancestor fallback. Same mechanism renderAllDay
-  // .ts's attachEdgeResize found and fixed (see its own comment); fixed here the same way, by
-  // flipping the ancestor `.tc-tg-block`'s own draggable off for the duration of the gesture
-  // (armed on this handle's pointerdown, restored on pointerup/pointercancel below).
+  // Compatibility-only horizontal handles remain explicitly non-draggable. Their root is also
+  // marked non-draggable while armed and returns to the normal attribute-free state on cleanup.
   handle.setAttribute('draggable', 'false');
   const block = handle.closest<HTMLElement>('.tc-tg-block');
 

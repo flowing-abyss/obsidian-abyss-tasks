@@ -191,8 +191,9 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     const sourceRect = source.getBoundingClientRect();
     const pixelsPerMinute =
       (originColumn.drag.timeGridBottom - originColumn.drag.timeGridTop) / (24 * 60);
+    const renderedHeightMinutes = sourceRect.height / pixelsPerMinute;
     const grabOffsetMinutes = Math.min(
-      durationMinutes,
+      renderedHeightMinutes,
       Math.max(0, (event.clientY - sourceRect.top) / pixelsPerMinute),
     );
     let preview: HTMLElement | undefined;
@@ -256,6 +257,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
             date: segmentDate as TimedDragColumn['date'],
             startMinutes,
             durationMinutes,
+            renderedHeightMinutes,
             grabOffsetMinutes,
           },
           pointer,

@@ -9,6 +9,8 @@ export interface TimedDragOrigin {
   readonly date: LocalDate;
   readonly startMinutes: number;
   readonly durationMinutes: number;
+  /** Actual rendered height normalized to grid minutes; may exceed duration for CSS min-height. */
+  readonly renderedHeightMinutes?: number;
   readonly grabOffsetMinutes: number;
 }
 
@@ -114,6 +116,7 @@ export function resolveTimedDragTarget(
   pointer: TimedDragPointer,
   columns: readonly TimedDragColumn[],
 ): TimedDragTarget | undefined {
+  const renderedHeightMinutes = origin.renderedHeightMinutes ?? origin.durationMinutes;
   if (
     !validDate(origin.date) ||
     !Number.isInteger(origin.startMinutes) ||
@@ -122,9 +125,11 @@ export function resolveTimedDragTarget(
     !Number.isInteger(origin.durationMinutes) ||
     origin.durationMinutes <= 0 ||
     origin.durationMinutes > MINUTES_PER_DAY ||
+    !Number.isFinite(renderedHeightMinutes) ||
+    renderedHeightMinutes < origin.durationMinutes ||
     !Number.isFinite(origin.grabOffsetMinutes) ||
     origin.grabOffsetMinutes < 0 ||
-    origin.grabOffsetMinutes > origin.durationMinutes ||
+    origin.grabOffsetMinutes > renderedHeightMinutes ||
     !Number.isFinite(pointer.clientX) ||
     !Number.isFinite(pointer.clientY) ||
     columns.length === 0 ||

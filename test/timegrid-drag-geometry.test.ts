@@ -110,6 +110,37 @@ describe('resolveTimedDragTarget', () => {
     expect(resolveTimedDragTarget(origin, { clientX: 150, clientY: 670 }, columns)).toBeUndefined();
   });
 
+  it('preserves a visual min-height grab offset for short blocks without turning a click into a move', () => {
+    const shortColumns: readonly TimedDragColumn[] = [
+      {
+        date: localDate('2026-07-20'),
+        left: 100,
+        right: 200,
+        timeGridTop: 100,
+        timeGridBottom: 1252,
+      },
+    ];
+    const shortOrigin: TimedDragOrigin = {
+      date: localDate('2026-07-20'),
+      startMinutes: 540,
+      durationMinutes: 5,
+      renderedHeightMinutes: 30.6,
+      grabOffsetMinutes: 17.5,
+    };
+
+    expect(
+      resolveTimedDragTarget(shortOrigin, { clientX: 150, clientY: 546 }, shortColumns),
+    ).toBeUndefined();
+    expect(
+      resolveTimedDragTarget(shortOrigin, { clientX: 150, clientY: 594 }, shortColumns),
+    ).toEqual({
+      date: localDate('2026-07-20'),
+      startMinutes: 600,
+      dayDelta: 0,
+      destination: 'time-grid',
+    });
+  });
+
   it('does not move an off-grid start on release and accepts a duration crossing midnight', () => {
     expect(
       resolveTimedDragTarget(

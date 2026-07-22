@@ -95,6 +95,173 @@ function timedGestureGrid() {
 
 describe('Task 2 unified timed interaction contract', () => {
   it.each([
+    { name: 'terminal', terminal: true },
+    { name: 'ghost', terminal: false },
+  ])(
+    'keeps a stationary visible-body click on a 5-minute $name segment inert and preserves its moved visual offset',
+    ({ terminal }) => {
+      const { root, owner, columns } = timedGestureGrid();
+      const onTimedMove = vi.fn();
+      const t = task({
+        planning: terminal
+          ? { due: '2026-07-06', time: '09:00', duration: 5 }
+          : { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 5 },
+      });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedMove, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal },
+      );
+      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const visualTop = 9 * 48 + 100;
+      const bodyOffsetPx = 14;
+      expect(bodyOffsetPx).toBeLessThan(MIN_BLOCK_HEIGHT_PX - 6);
+      block.getBoundingClientRect = () => rect(0, visualTop, 100, MIN_BLOCK_HEIGHT_PX);
+
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 25,
+          clientY: visualTop + bodyOffsetPx,
+          pointerId: 31,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 25,
+          clientY: visualTop + bodyOffsetPx,
+          pointerId: 31,
+        }),
+      );
+      expect(root.querySelector('.tc-tg-drag-preview')).toBeNull();
+      expect(onTimedMove).not.toHaveBeenCalled();
+
+      block.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 25,
+          clientY: visualTop + bodyOffsetPx,
+          pointerId: 32,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 25,
+          clientY: visualTop + bodyOffsetPx + 48,
+          pointerId: 32,
+        }),
+      );
+      const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      const target = JSON.parse(preview.dataset['target'] ?? '{}') as { startMinutes?: number };
+      expect(target.startMinutes).toBe(600);
+      expect(preview.style.top).toBe('480px');
+      expect(visualTop + bodyOffsetPx + 48 - (100 + Number.parseFloat(preview.style.top))).toBe(
+        bodyOffsetPx,
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 25,
+          clientY: visualTop + bodyOffsetPx + 48,
+          pointerId: 32,
+        }),
+      );
+      expect(onTimedMove).toHaveBeenCalledOnce();
+      expect(onTimedMove).toHaveBeenCalledWith(
+        t,
+        expect.objectContaining({ startMinutes: 600, dayDelta: 0 }),
+      );
+    },
+  );
+
+  it('commits duration from a ghost bottom handle through the owned DOM path', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedDuration = vi.fn();
+    const t = task({
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 5 },
+    });
+    renderTimedBlocksForDay(
+      columns[1].hour,
+      [t],
+      { ...callbacks(), onTimedDuration, interactionOwner: owner },
+      [],
+      { date: '2026-07-07', terminal: false },
+    );
+    const ghost = columns[1].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const handle = ghost.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    ghost.getBoundingClientRect = () => rect(100, 9 * 48 + 100, 100, MIN_BLOCK_HEIGHT_PX);
+
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 150, clientY: 556, pointerId: 33 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 568, pointerId: 33 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 150, clientY: 568, pointerId: 33 }),
+    );
+
+    expect(onTimedDuration).toHaveBeenCalledOnce();
+    expect(onTimedDuration).toHaveBeenCalledWith(t, {
+      durationMinutes: 20,
+      endMinutes: 560,
+    });
+  });
+
+  it.each([
+    {
+      name: 'ghost start',
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 5 },
+      terminal: false,
+      selector: '[data-boundary="start"]',
+      expected: { boundary: 'start', date: '2026-07-07', dayDelta: 1 },
+    },
+    {
+      name: 'terminal create-span',
+      planning: { due: '2026-07-06', time: '09:00', duration: 5 },
+      terminal: true,
+      selector: '[data-boundary="create-span"]',
+      expected: { boundary: 'create-span', date: '2026-07-07', dayDelta: 1 },
+    },
+  ])(
+    'commits the $name boundary through the owned DOM path',
+    ({ planning, terminal, selector, expected }) => {
+      const { owner, columns } = timedGestureGrid();
+      const onTimedBoundary = vi.fn();
+      const t = task({ planning });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedBoundary, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal },
+      );
+      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const handle = block.querySelector(selector) as HTMLElement;
+      block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, MIN_BLOCK_HEIGHT_PX);
+
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          clientX: 50,
+          clientY: 544,
+          pointerId: 34,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 34 }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 150, clientY: 544, pointerId: 34 }),
+      );
+
+      expect(onTimedBoundary).toHaveBeenCalledOnce();
+      expect(onTimedBoundary).toHaveBeenCalledWith(t, expected);
+    },
+  );
+
+  it.each([
     { duration: 5, terminal: true },
     { duration: 15, terminal: false },
   ])(
@@ -1201,7 +1368,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(container.querySelector('.tc-task-tag')).toBeNull();
   });
 
-  describe('plugin-owned pointer interaction replaces native HTML5 drag-out', () => {
+  describe('native drag remains absent in the legacy no-date seam', () => {
     it('the block is not native draggable', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
@@ -1210,7 +1377,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.getAttribute('draggable')).toBeNull();
     });
 
-    it('the resize handle stays draggable="false" (Round 2 Task 9 pattern: a non-draggable island inside a draggable ancestor)', () => {
+    it('the resize handle stays explicitly draggable=false', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -1238,7 +1405,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.hasClass('is-dragging')).toBe(false);
     });
 
-    it('regression: vertical Pointer-Events move still fires onTimeChange after draggable="true" was added', () => {
+    it('legacy no-date vertical Pointer-Events move still fires onTimeChange', () => {
       const container = freshContainer();
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
@@ -1254,7 +1421,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(onTimeChange).toHaveBeenCalledWith(t, 9 * 60 + 60);
     });
 
-    it('a pointercancel mid-gesture (simulating the browser hijacking the pointer session into a native drag) cleans up without firing onTimeChange/onDurationChange', () => {
+    it('a pointercancel in the legacy no-date path cleans up without firing callbacks', () => {
       const container = freshContainer();
       const onTimeChange = vi.fn();
       const onDurationChange = vi.fn();
@@ -1267,8 +1434,7 @@ describe('renderTimedBlocksForDay', () => {
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
       );
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 148, pointerId: 1 }));
-      // The native drag has taken over the pointer session: the browser fires pointercancel
-      // instead of a normal pointerup for this gesture.
+      // Cancellation replaces the normal pointerup for this gesture.
       block.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: 1 }));
       expect(onTimeChange).not.toHaveBeenCalled();
       expect(onDurationChange).not.toHaveBeenCalled();
@@ -1324,8 +1490,8 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.style.height).toBe(originalHeight);
     });
 
-    describe('ancestor-draggable-toggle fix: draggable="false" on the handle alone does not stop the ancestor fallback (mirrors renderAllDay.ts attachEdgeResize)', () => {
-      it("pointerdown on the vertical resize handle flips the block's own draggable to false (resize mode), restored on pointerup", () => {
+    describe('legacy no-date resize returns the root to its attribute-free draggable state', () => {
+      it('temporarily marks the root draggable=false and removes the attribute on pointerup', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
@@ -1343,7 +1509,7 @@ describe('renderTimedBlocksForDay', () => {
         expect(block.getAttribute('draggable')).toBeNull();
       });
 
-      it("a pointercancel mid-resize (native drag hijacking the session) also restores the block's draggable to true", () => {
+      it('a pointercancel mid-resize also removes the temporary draggable attribute', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
@@ -1360,7 +1526,7 @@ describe('renderTimedBlocksForDay', () => {
         expect(block.getAttribute('draggable')).toBeNull();
       });
 
-      it('grabbing the block BODY (move mode, the legitimate drag-out-to-all-day gesture) does NOT flip draggable to false — only the resize handle does', () => {
+      it('a legacy body move leaves the root attribute-free', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
@@ -1865,7 +2031,7 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('horizontal edge-resize to a multi-day timed span (Task 29, right edge only)', () => {
+  describe('legacy no-date horizontal right-edge resize compatibility', () => {
     // jsdom has no elementFromPoint implementation at all (unlike a real browser, where it
     // always resolves to something). Any test in this block that dispatches a real window
     // pointerup for the horizontal handle's pointerId — including a *stale* one left behind by
@@ -1883,7 +2049,7 @@ describe('renderTimedBlocksForDay', () => {
       activeDocument.elementFromPoint = originalElementFromPoint;
     });
 
-    it('renders a right-edge horizontal resize handle on every timed block', () => {
+    it('renders a right-edge handle on every legacy timed block', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -1892,7 +2058,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(handle).not.toBeNull();
     });
 
-    it('the horizontal handle stays draggable="false" (same defensive island-in-a-draggable-ancestor pattern as the vertical resize handle)', () => {
+    it('the horizontal handle stays explicitly draggable=false', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2002,7 +2168,7 @@ describe('renderTimedBlocksForDay', () => {
       });
     });
 
-    it("a pointercancel mid-gesture on the horizontal handle (simulating the browser hijacking the pointer session into a native drag, mirroring Task 26's vertical-drag fix) tears down its window listeners: a subsequent real pointerup that WOULD resolve to a day does not fire onExtendToSpan", () => {
+    it('a pointercancel on the legacy right edge tears down listeners before a subsequent pointerup', () => {
       const container = freshContainer();
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
@@ -2059,7 +2225,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
     });
 
-    it("pointerdown on the right-edge handle flips the block's own draggable to false (blocking the native-drag-ancestor-fallback), restored on pointerup", () => {
+    it('the legacy right edge temporarily marks the root non-draggable, then removes the attribute', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2073,7 +2239,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.getAttribute('draggable')).toBeNull();
     });
 
-    it('a pointercancel mid-drag on the right-edge handle also restores draggable to true', () => {
+    it('a pointercancel on the legacy right edge removes the temporary draggable attribute', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2087,7 +2253,7 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('horizontal edge-resize to a multi-day timed span (Task 34: left edge, adding/moving `start`)', () => {
+  describe('legacy no-date horizontal left-edge resize compatibility', () => {
     // Same jsdom elementFromPoint caveat/stub as the Task 29 right-edge suite above.
     let originalElementFromPoint: typeof activeDocument.elementFromPoint;
     beforeEach(() => {
@@ -2098,7 +2264,7 @@ describe('renderTimedBlocksForDay', () => {
       activeDocument.elementFromPoint = originalElementFromPoint;
     });
 
-    it('renders a left-edge horizontal resize handle on every timed block, alongside the existing right edge', () => {
+    it('renders both legacy horizontal edge handles', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2107,7 +2273,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.querySelector('.tc-tg-span-edge--right')).not.toBeNull();
     });
 
-    it('the left-edge handle stays draggable="false" (same defensive island-in-a-draggable-ancestor pattern as the right edge and the vertical resize handle)', () => {
+    it('the left-edge handle stays explicitly draggable=false', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2225,7 +2391,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(cbs.onExtendToSpan).not.toHaveBeenCalledWith(t, '2026-07-08');
     });
 
-    it('coexistence: all five interaction modes now living on one .tc-tg-block (left edge, right edge, vertical move, vertical resize, native whole-block drag) each fire only their own callback', () => {
+    it('keeps the four legacy pointer modes isolated and native drag absent', () => {
       const container = freshContainer();
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60, due: '2026-07-10' } });
@@ -2235,7 +2401,7 @@ describe('renderTimedBlocksForDay', () => {
       const rightHandle = block.querySelector('.tc-tg-span-edge--right') as HTMLElement;
       const resizeHandle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
 
-      // Mode 5: native whole-block HTML5 drag-out — still present and independently wired.
+      // Native whole-block drag remains absent.
       expect(block.getAttribute('draggable')).toBeNull();
 
       // Modes 1 and 2 resolve via real pointerup + a stubbed elementFromPoint (rather than the
@@ -2290,7 +2456,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(cbs.onDurationChange).toHaveBeenCalledTimes(1);
     });
 
-    it("pointerdown on the left-edge handle flips the block's own draggable to false (blocking the native-drag-ancestor-fallback), restored on pointerup", () => {
+    it('the legacy left edge temporarily marks the root non-draggable, then removes the attribute', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2304,7 +2470,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.getAttribute('draggable')).toBeNull();
     });
 
-    it('a pointercancel mid-drag on the left-edge handle also restores draggable to true', () => {
+    it('a pointercancel on the legacy left edge removes the temporary draggable attribute', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
@@ -2318,7 +2484,7 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('pointer capture: closes the "abandoned gesture" gap (draggable="false" stuck forever if pointerup/pointercancel never fires)', () => {
+  describe('legacy no-date pointer capture closes the abandoned-gesture cleanup gap', () => {
     // The horizontal-edge-resize handles' own pointerup resolves the day under the pointer via
     // `activeDocument.elementFromPoint`, unimplemented in jsdom — same stub this file's other
     // horizontal-edge-resize suites use.
@@ -2331,12 +2497,7 @@ describe('renderTimedBlocksForDay', () => {
       activeDocument.elementFromPoint = originalElementFromPoint;
     });
 
-    // Code review gap: cleanup() — which restores block's draggable="true" — only runs from
-    // onPointerUp/onPointerCancel. If NEITHER is ever delivered after a resize pointerdown (e.g.
-    // the pointer is released outside the browser window entirely, or some other browser/OS
-    // quirk swallows the up-event), draggable stays "false" forever, silently disabling the
-    // legitimate whole-block native-drag-to-all-day feature until the block's next from-scratch
-    // re-render. The spec-correct fix is Pointer Capture: `setPointerCapture` on pointerdown
+    // Compatibility cleanup only runs from pointerup/pointercancel. Pointer Capture on pointerdown
     // guarantees the capturing element keeps receiving pointermove/pointerup for that pointerId
     // even once the pointer leaves the element/window — so the browser itself can no longer
     // produce the "neither pointerup nor pointercancel ever arrives" scenario for a captured
@@ -2443,7 +2604,7 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('renderTimedSpanContinuation (Task 29: non-anchor days of a multi-day timed span)', () => {
+  describe('legacy renderTimedSpanContinuation compatibility API', () => {
     it('renders a continuation segment positioned at the same time-of-day row as a full block would be', () => {
       const container = freshContainer();
       const t = task({
@@ -2456,7 +2617,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(seg.style.height).toBe(`${(90 / 60) * 48}px`);
     });
 
-    it('is not draggable and carries no resize handles (non-interactive continuation, not a duplicate full block)', () => {
+    it('keeps the legacy shape inert and without resize handles', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' } });
       renderTimedSpanContinuation(container, [t]);
@@ -2530,8 +2691,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(seg.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
     });
 
-    // Task 35 (expanded scope): continuation segments gain the same time/duration subtitle and
-    // count badges the anchor block shows, but must stay just as non-interactive as before.
+    // This compatibility shape retains its historical subtitle/badges while remaining inert.
     it("shows the time range + duration subtitle, matching the anchor block's format", () => {
       const container = freshContainer();
       const t = task({
@@ -2570,7 +2730,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(seg.querySelector('.tc-tg-block-badges')).toBeNull();
     });
 
-    it('still has no checkbox/status marker and no draggable/resize/pointer-driven interactivity now that the subtitle and badges were added (regression: must stay non-interactive)', () => {
+    it('keeps the legacy subtitle/badges shape marker-free and inert', () => {
       const container = freshContainer();
       const t = task({
         comments: [taskComment({ text: 'note' })],
@@ -2582,8 +2742,7 @@ describe('renderTimedBlocksForDay', () => {
       expect(seg.getAttribute('draggable')).not.toBe('true');
       expect(seg.querySelector('.tc-tg-resize-handle')).toBeNull();
       expect(seg.querySelector('.tc-tg-span-edge')).toBeNull();
-      // A pointer gesture across the segment must not throw or move anything — there is no
-      // move/resize wiring at all on a continuation segment (unlike the anchor block).
+      // This deprecated compatibility renderer intentionally has no move/resize wiring.
       expect(() => {
         seg.dispatchEvent(
           new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
@@ -2653,13 +2812,9 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  // Task 37: renderTimedSpanContinuation renders `.tc-tg-block-continuation` segments, which got
-  // the same CSS min-height rule `.tc-tg-block` has (Task 36) but — unlike anchor blocks — never
-  // went through any collision-avoidance pass, since continuation segments don't participate in
-  // `packOverlaps`'s column packing at all (they're always rendered full-width). These tests mirror
-  // the anchor-block "two back-to-back short blocks"/"generous gap"/"lone block" suite above,
-  // proving continuation segments now get the same guarantee.
-  describe('Task 37: continuation segments get the same min-height collision clamp as anchor blocks', () => {
+  // The retained compatibility renderer has its own min-height collision cap; production ghosts
+  // use the common packOverlaps/capMinHeightsPx path instead.
+  describe('legacy continuation min-height collision compatibility', () => {
     it('a 10-minute continuation does not get an explicit inline min-height override when nothing follows it (the CSS rule alone is enough)', () => {
       const container = freshContainer();
       const t = task({
