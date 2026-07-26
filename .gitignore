@@ -27,10 +27,19 @@ docs/
 coverage/
 
 AGENTS.md
+GEMINI.md
+
+.codegraph/
 
 .opencode/
 .claude/
 .agents/
+.cursor/
+.gemini/
+.kilo/
+
+.mcp.json
+opencode.jsonc
 
 # Dev vault for local testing (not for repo)
 dev-vault/
