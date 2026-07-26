@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   mixHexColors,
   relativeLuminanceOfHex,
+  tagFillTextColorVar,
   tagFillTextVariant,
 } from '../src/tags/tagFillContrast';
 
@@ -52,30 +53,64 @@ describe('tagFillTextVariant', () => {
   });
 
   it('picks dark text for a bright/light tag mixed into a light background', () => {
-    // Bright yellow, 40% mixed into a light-theme background, stays very light overall.
-    expect(tagFillTextVariant('#ffee58', '#ffffff')).toBe('dark');
+    expect(tagFillTextVariant('#ffee58', '#ffffff', 14)).toBe('dark');
   });
 
   it('picks light text for a bright/light tag mixed into a dark background', () => {
-    // 40% bright yellow into a near-black dark-theme background is dominated by the 60%
-    // dark background (resulting luminance ~0.16, below the ~0.179 WCAG contrast-parity
-    // point) so white text still reads better than black there, even though the tag
-    // itself is a light color.
-    expect(tagFillTextVariant('#ffee58', '#1e1e1e')).toBe('light');
+    expect(tagFillTextVariant('#ffee58', '#1e1e1e', 18)).toBe('light');
   });
 
   it('picks light text for a dark/desaturated tag mixed into a dark background', () => {
-    expect(tagFillTextVariant('#1a1a40', '#1e1e1e')).toBe('light');
+    expect(tagFillTextVariant('#1a1a40', '#1e1e1e', 18)).toBe('light');
   });
 
   it('picks dark text for a dark/desaturated tag mixed into a light background', () => {
-    // Navy mixed 40% into white is dominated by the 60% light background (resulting
-    // luminance ~0.33, above the WCAG contrast-parity point) so black text wins there.
-    expect(tagFillTextVariant('#00004d', '#ffffff')).toBe('dark');
+    expect(tagFillTextVariant('#00004d', '#ffffff', 14)).toBe('dark');
   });
 
   it('picks a sensible variant for a mid-saturation "normal" color (blue) in both themes', () => {
-    expect(tagFillTextVariant('#2196f3', '#ffffff')).toBe('dark');
-    expect(tagFillTextVariant('#2196f3', '#1e1e1e')).toBe('light');
+    expect(tagFillTextVariant('#2196f3', '#ffffff', 14)).toBe('dark');
+    expect(tagFillTextVariant('#2196f3', '#1e1e1e', 18)).toBe('light');
+  });
+
+  it.each([
+    ['yellow', '#ffee58'],
+    ['navy', '#00004d'],
+    ['pale green', '#d8f3dc'],
+    ['red', '#d32f2f'],
+    ['neutral', '#808080'],
+  ])(
+    'keeps %s readable at restrained event and ghost strengths in both themes',
+    (_name, tagColor) => {
+      expect(tagFillTextVariant(tagColor, '#ffffff', 14)).toBe('dark');
+      expect(tagFillTextVariant(tagColor, '#ffffff', 7)).toBe('dark');
+      expect(tagFillTextVariant(tagColor, '#1e1e1e', 18)).toBe('light');
+      expect(tagFillTextVariant(tagColor, '#1e1e1e', 10)).toBe('light');
+    },
+  );
+});
+
+describe('tagFillTextColorVar', () => {
+  it('resolves event and ghost strength from the rendered element owner document in both themes', () => {
+    const frame = document.createElement('iframe');
+    document.body.appendChild(frame);
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.classList.add('theme-dark');
+    ownerDocument.body.style.setProperty('--background-primary', '#1e1e1e');
+    const event = ownerDocument.createElement('div');
+    const ghost = ownerDocument.createElement('div');
+    ownerDocument.body.append(event, ghost);
+
+    try {
+      expect(tagFillTextColorVar(event, '#ffffff', 'event')).toBe('var(--tc-tag-text-light)');
+      expect(tagFillTextColorVar(ghost, '#ffffff', 'ghost')).toBe('var(--tc-tag-text-light)');
+
+      ownerDocument.body.classList.remove('theme-dark');
+      ownerDocument.body.style.setProperty('--background-primary', '#ffffff');
+      expect(tagFillTextColorVar(event, '#ffffff', 'event')).toBe('var(--tc-tag-text-dark)');
+      expect(tagFillTextColorVar(ghost, '#ffffff', 'ghost')).toBe('var(--tc-tag-text-dark)');
+    } finally {
+      frame.remove();
+    }
   });
 });

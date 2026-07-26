@@ -94,6 +94,51 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it('uses event contrast for terminal blocks and ghost contrast for both continuation renderers', () => {
+    const originalBackground = document.body.style.getPropertyValue('--background-primary');
+    document.body.style.setProperty('--background-primary', '#666666');
+    const tagGroups = [
+      { id: 'work', name: 'Work', mode: 'prefix' as const, prefix: 'work', color: '#fff' },
+    ];
+    const spanTask = task({
+      tags: ['#work'],
+      planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00', duration: 60 },
+    });
+
+    try {
+      const terminalContainer = freshContainer();
+      renderTimedBlocksForDay(terminalContainer, [spanTask], callbacks(), tagGroups, {
+        date: '2026-07-08',
+        terminal: true,
+      });
+      const ghostContainer = freshContainer();
+      renderTimedBlocksForDay(ghostContainer, [spanTask], callbacks(), tagGroups, {
+        date: '2026-07-07',
+        terminal: false,
+      });
+      const legacyGhostContainer = freshContainer();
+      renderTimedSpanContinuation(legacyGhostContainer, [spanTask], undefined, tagGroups);
+
+      expect(
+        (terminalContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
+          '--tc-tag-text-color',
+        ),
+      ).toBe('var(--tc-tag-text-dark)');
+      expect(
+        (ghostContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
+          '--tc-tag-text-color',
+        ),
+      ).toBe('var(--tc-tag-text-light)');
+      expect(
+        (
+          legacyGhostContainer.querySelector('.tc-tg-block-continuation') as HTMLElement
+        ).style.getPropertyValue('--tc-tag-text-color'),
+      ).toBe('var(--tc-tag-text-light)');
+    } finally {
+      document.body.style.setProperty('--background-primary', originalBackground);
+    }
+  });
+
   it.each([
     { name: 'terminal', terminal: true },
     { name: 'ghost', terminal: false },

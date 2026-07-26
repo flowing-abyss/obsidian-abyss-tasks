@@ -1,17 +1,16 @@
 /**
  * Task 40 (Round 4): the tag-fill background (styles.css's shared `.tc-tg-block`/`.tc-tg-body`/
- * `.tc-mg-*` rule — `color-mix(in srgb, var(--tc-tag-color) 40%, var(--background-primary))`)
+ * `.tc-mg-*` rule — an opaque, theme-dependent mix against `var(--background-primary)`)
  * lets a user pick ANY hex color for a tag group. A single fixed `var(--text-normal)` title/
  * subtitle color (the pre-existing behavior) reads fine against a mid-saturation color like blue
  * or red, but loses contrast against a bright/pale tag color in light mode, or a very dark/
  * desaturated one in dark mode — exactly the complaint that survived Round 3 Task 24 (which only
  * fixed the fill's opacity, not this).
  *
- * This module replicates that CSS `color-mix` in JS (same 40/60 sRGB channel-wise mix, gamma-
- * encoded — that's what `color-mix(in srgb, ...)` does, no linear-light conversion), computes the
+ * This module replicates that CSS `color-mix` in JS (the same sRGB channel-wise mix, gamma-encoded
+ * — that's what `color-mix(in srgb, ...)` does, with no linear-light conversion), computes the
  * resulting fill's WCAG relative luminance, and picks whichever of a light-text/dark-text variant
- * gives the higher contrast ratio against it — rather than an arbitrary "is it light or dark"
- * luminance cutoff, this directly optimizes for the thing that actually matters (legibility).
+ * gives the higher contrast ratio against it.
  *
  * Deliberately pure/DOM-free so it's unit-testable without a real browser's `color-mix` support
  * (jsdom, used by this project's tests, doesn't implement `color-mix()`), and reusable from every
@@ -92,7 +91,7 @@ export type TagFillTextVariant = 'light' | 'dark';
 export function tagFillTextVariant(
   tagHex: string | undefined,
   backgroundHex: string,
-  tagPercent = 40,
+  tagPercent = 14,
 ): TagFillTextVariant | undefined {
   if (!tagHex) return undefined;
   const mixed = mixHexColors(tagHex, backgroundHex, tagPercent);
@@ -114,8 +113,20 @@ export function tagFillTextVariant(
  */
 function currentBackgroundPrimaryHex(referenceEl: HTMLElement): string {
   const doc = referenceEl.ownerDocument;
-  const win = doc.defaultView ?? window;
+  const win = doc.defaultView;
+  if (!win) return '';
   return win.getComputedStyle(doc.body).getPropertyValue('--background-primary').trim();
+}
+
+type TagFillKind = 'event' | 'ghost';
+
+function currentTagFillPercent(referenceEl: HTMLElement, kind: TagFillKind): number {
+  const doc = referenceEl.ownerDocument;
+  const dark =
+    doc.body.classList.contains('theme-dark') ||
+    doc.documentElement.classList.contains('theme-dark');
+  if (kind === 'ghost') return dark ? 10 : 7;
+  return dark ? 18 : 14;
 }
 
 /**
@@ -129,8 +140,12 @@ function currentBackgroundPrimaryHex(referenceEl: HTMLElement): string {
 export function tagFillTextColorVar(
   el: HTMLElement,
   tagHex: string | undefined,
-  tagPercent = 40,
+  kind: TagFillKind = 'event',
 ): string | undefined {
-  const variant = tagFillTextVariant(tagHex, currentBackgroundPrimaryHex(el), tagPercent);
+  const variant = tagFillTextVariant(
+    tagHex,
+    currentBackgroundPrimaryHex(el),
+    currentTagFillPercent(el, kind),
+  );
   return variant ? `var(--tc-tag-text-${variant})` : undefined;
 }

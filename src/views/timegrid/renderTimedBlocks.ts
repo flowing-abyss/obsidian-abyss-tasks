@@ -183,7 +183,7 @@ export function renderTimedBlocksForDay(
       // mode, or a very dark/desaturated one in dark mode — see tagFillContrast.ts's own doc
       // comment for the full reasoning. Only set when a variant was actually computed (falls
       // through to the CSS rule's own var(--text-normal) fallback otherwise).
-      const textColorVar = tagFillTextColorVar(block, tagColor);
+      const textColorVar = tagFillTextColorVar(block, tagColor, terminal ? 'event' : 'ghost');
       if (textColorVar) block.setCssProps({ '--tc-tag-text-color': textColorVar });
     }
     // Time-range+duration subtitle renders first (top of the block), e.g. "09:00–11:00 (2h)".
@@ -445,9 +445,8 @@ export function renderTimedSpanContinuation(
     if (tagColor) {
       seg.setCssProps({ '--tc-tag-color': tagColor });
       // Task 40 (Round 4): same contrast-driven text-color fix as the anchor block above,
-      // applied to the continuation segment's own (lighter, 22%-mix) fill — the 22% here
-      // matches .tc-tg-block-continuation's own color-mix percentage in styles.css.
-      const textColorVar = tagFillTextColorVar(seg, tagColor, 22);
+      // applied to the continuation segment's own restrained ghost fill.
+      const textColorVar = tagFillTextColorVar(seg, tagColor, 'ghost');
       if (textColorVar) seg.setCssProps({ '--tc-tag-text-color': textColorVar });
     }
     const topRow = seg.createDiv({ cls: 'tc-tg-block-toprow' });

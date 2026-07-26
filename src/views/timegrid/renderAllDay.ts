@@ -211,10 +211,10 @@ function renderAllDayBody(
     // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
     // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
     // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-    // Continuations use their own 18% translucent CSS fill; interactive terminal/plain bodies
-    // retain the shared 40% fill, so each variant is chosen against the fill it actually has.
-    const tagFillPercent = interactive ? 40 : 18;
-    const textColorVar = tagFillTextColorVar(el, tagColor, tagFillPercent);
+    // Continuations use the restrained ghost token while terminal/plain bodies use the event
+    // token; tagFillTextColorVar resolves each token's light/dark percentage from this element's
+    // owner document so popouts and live theme changes choose against the fill actually rendered.
+    const textColorVar = tagFillTextColorVar(el, tagColor, interactive ? 'event' : 'ghost');
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
   if (nativeDraggable) {
@@ -366,8 +366,8 @@ function attachEdgeResize(
   // nearest draggable=true element and uses that as the drag source) — draggable="false" only
   // stops the handle itself from being independently draggable, it does not block the ancestor
   // fallback. Confirmed live (Task 37): dragging an edge handle armed the body's own `dragstart`,
-  // which added `.is-dragging` (opacity: 0.5, styles.css) to the whole item for the duration of
-  // the resize and fired `dragover`/`.is-drag-over` on every day cell the pointer crossed — the
+  // which used to add an opacity fade to `.is-dragging` for the duration of the resize and fired
+  // `dragover`/`.is-drag-over` on every day cell the pointer crossed — the
   // washed-out "phantom" look and "grid becomes uneven" reports were this accidental native drag,
   // not a deliberate preview. Fixed below by flipping the ancestor's own `draggable` off for the
   // duration of the gesture (armed on this handle's pointerdown, restored on pointerup/cancel),

@@ -9,6 +9,10 @@
   --tc-priority-f: var(--color-purple);
   --tc-date-overdue: var(--color-red);
   --tc-date-tomorrow: var(--color-orange);
+  /* Calendar events stay quiet enough for dense schedule scanning. The tag remains identifiable
+     through one full-strength rail while the opaque body tint adapts to the host theme. */
+  --tc-event-fill-strength: 14%;
+  --tc-ghost-fill-strength: 7%;
   /* Task 40 (Round 4): fixed contrast anchors consumed by --tc-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
      the full reasoning). Deliberately NOT theme-variable tokens like --text-normal: their whole
@@ -18,6 +22,11 @@
      black/white so they don't look harsh next to the softer surrounding UI text. */
   --tc-tag-text-light: #f5f5f5;
   --tc-tag-text-dark: #161616;
+}
+
+.theme-dark .tc-panel-view {
+  --tc-event-fill-strength: 18%;
+  --tc-ghost-fill-strength: 10%;
 }
 
 /* ============================================================
@@ -1328,7 +1337,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
     var(--background-primary)
   );
 }
@@ -1611,20 +1620,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--tc-tag-text-color, var(--text-muted));
 }
 
-/* Task 33: was `bottom: -3px` — .tc-tg-block clips its content (overflow: hidden, for the
-   tag-fill background), which clipped the bottom half of this handle's 6px hit area (the half
-   sitting outside the block's own box) down to ~3px, so a click aimed at the visible handle
-   often landed on whatever sits behind/below the block instead and never armed resize mode
-   (misclassified as a plain move, or missed the block entirely) — the exact "stretch vertically
-   instead moves it" bug reported for this handle. Same root cause and fix as
-   `.tc-tg-block > .tc-tg-span-edge--right` below (Task 29 review): pull the handle fully inside
-   the block instead of straddling its edge, so the full 6px stays hittable. */
+/* Task 33: .tc-tg-block clips its content (overflow: hidden, for the tag-fill background), so
+   the resize target sits fully inside the block and exposes its complete 10px hit area rather
+   than straddling the edge and losing half of the target to clipping. */
 .tc-tg-resize-handle {
   position: absolute;
   left: 25%;
   right: 25%;
   bottom: 0;
-  height: 6px;
+  height: 10px;
   cursor: ns-resize;
 }
 
@@ -1672,65 +1676,61 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-span-continuation {
-  opacity: 0.55;
   cursor: grab;
-  border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
-  background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
+  border-inline-start: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  background: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--background-primary)
+  );
 }
 
 .tc-tg-plain {
   border: 1px solid var(--background-modifier-border);
 }
 
-/* Tag-colored fill only (fill reflects the task's tag group, falling back to the neutral
-   accent when no tag/group matches). The priority-colored left border was removed
-   (Task 12): the status marker inside each item already conveys priority via its own
-   border, so a second priority border here was redundant visual noise. Timed
-   blocks/spans/plain chips share this fill pattern; deadline markers deliberately do
-   NOT (see .tc-tg-deadline-marker below — their shape, not a filled body, is what
-   signals "deadline", and they keep their own priority-colored border). */
+/* Event bodies use one restrained, opaque theme-aware tint. Their single full-strength tag cue
+   is the inline-start rail; priority stays exclusively on the crisp status marker. */
 .tc-tg-block,
 .tc-tg-span,
 .tc-tg-plain,
 .tc-mg-block-dot,
 .tc-mg-span-segment,
 .tc-mg-plain {
-  /* Round 3 Task 24: raised from a 16%-into-transparent mix (real alpha, which let the
-     hour-gridline bleed through and read as "sliced," and looked pale since the tag
-     color was diluted by whatever sat behind it) to an opaque mix against the panel's
-     own solid background. Two changes at once: (1) mixing against a solid color instead
-     of `transparent` makes the result opaque at *any* percentage, so nothing behind it —
-     gridlines, the now-line's track, anything — can ever show through again; solidity is
-     no longer coupled to how vivid the tint reads. (2) 40% was chosen after comparing it
-     against 16% (too pale, gridline visible) and 58% (highly saturated blocks read as
-     overwhelming next to each other, and — more importantly — .tc-task-tag's chip text,
-     which is colored with the same --tc-tag-color at full strength, lost contrast against
-     a background that close to the same hue). 40% keeps the fill reading as a clear,
-     intentional tag-color tint in both themes while leaving enough separation from the
-     chip text color to stay legible. */
+  box-sizing: border-box;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 40%,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
     var(--background-primary)
   );
+  border-inline-start: 3px solid var(--tc-tag-color, var(--interactive-accent));
+}
+
+.tc-tg-block:hover,
+.tc-tg-span:hover,
+.tc-tg-plain:hover,
+.tc-tg-block-continuation:hover,
+.tc-tg-span-continuation:hover,
+.tc-mg-block-dot:hover,
+.tc-mg-span-segment:hover,
+.tc-mg-plain:hover {
+  box-shadow: inset 0 0 0 1px var(--background-modifier-hover);
 }
 
 .tc-tg-span-edge {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 10px;
   cursor: ew-resize;
 }
 .tc-tg-span-edge--left {
-  left: -3px;
+  left: -5px;
 }
 .tc-tg-span-edge--right {
-  right: -3px;
+  right: -5px;
 }
-/* .tc-tg-block clips its content (overflow: hidden, for the tag-fill background), which would
-   clip half of the shared -3px offset above and shrink the actual clickable/visible hit area to
-   ~3px — pull it fully inside the block instead so the full 6px handle stays hittable. */
+/* Clipping roots keep the complete 10px target inside their box. */
 .tc-tg-block > .tc-tg-span-edge--right {
   right: 0;
 }
@@ -1738,24 +1738,31 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-block > .tc-tg-span-edge--left {
   left: 0;
 }
+.tc-tg-body > .tc-tg-span-edge--right {
+  right: 0;
+}
+.tc-tg-body > .tc-tg-span-edge--left {
+  left: 0;
+}
 
 /* A pre-due timed continuation keeps the common .tc-tg-block root and full-opacity text. Its
    dashed rail communicates continuity without making the segment look disabled; interaction,
    focus, identity, and resize behavior remain identical to the terminal root. */
 .tc-tg-block-continuation {
+  box-sizing: border-box;
   position: absolute;
   z-index: 1;
   left: 4px;
   right: 4px;
   pointer-events: auto;
   border-radius: 4px;
-  border-left: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border-inline-start: 2px dashed var(--tc-tag-color, var(--interactive-accent));
   padding: 2px 6px;
   font-size: 0.8em;
   overflow: hidden;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 22%,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
     var(--background-primary)
   );
   /* Task 36: same flex-column layout as `.tc-tg-block` (see its own comment) so this segment's
@@ -1780,7 +1787,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
     var(--background-primary)
   );
 }
@@ -1794,7 +1801,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
     var(--background-primary)
   );
 }
@@ -1805,9 +1812,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   width: 100%;
 }
 .tc-tg-block-continuation-title {
-  /* Task 40 (Round 4): same --tc-tag-text-color fallback pattern as .tc-tg-block-title, applied
-     to the continuation segment's own (lighter, 22%-mix) fill — see renderTimedSpanContinuation
-     (renderTimedBlocks.ts) and tagFillContrast.ts's own doc comment. */
+  /* Same --tc-tag-text-color fallback pattern as .tc-tg-block-title, resolved against this
+     continuation segment's restrained ghost fill. */
   color: var(--tc-tag-text-color, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
@@ -1869,6 +1875,17 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 1.6em;
   flex: 0 0 1.6em;
 }
+
+/* A panel-background halo keeps the checkbox/status shape crisp over arbitrary user tag colors
+   without changing the marker's priority border or icon color. */
+.tc-tg-block-head .tc-status-marker,
+.tc-tg-body .tc-status-marker,
+.tc-mg-block-dot .tc-status-marker,
+.tc-mg-span-segment .tc-status-marker,
+.tc-mg-plain .tc-status-marker {
+  background: var(--background-primary);
+  box-shadow: 0 0 0 1px var(--background-primary);
+}
 .tc-tg-body .tc-status-marker svg,
 .tc-tg-deadline-marker .tc-status-marker svg,
 .tc-mg-block-dot .tc-status-marker svg,
@@ -1880,19 +1897,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-block.is-dragging,
-.tc-tg-body.is-dragging {
-  opacity: 0.5;
+.tc-tg-body.is-dragging,
+.tc-mg-block-dot.is-dragging,
+.tc-mg-plain.is-dragging {
+  box-shadow: inset 0 0 0 1px var(--background-modifier-active-hover);
+  cursor: grabbing;
 }
 
-/* Task 39: "picked up" affordance shown the instant a vertical move-mode drag is armed
-   (renderTimedBlocks.ts's attachDrag, pointerdown, mode === 'move' only — resize and the
-   native drag-to-all-day gesture each already have their own distinct feedback, see
-   .is-edge-resizing below and .is-dragging above). A subtle lift (scale + shadow), not an
-   opacity change like .is-dragging — that reads as "leaving"/"being removed" (matches its
-   real use: fading the source element mid-native-drag), the opposite of the "under your
-   control, about to move" signal this needs to send. z-index bump keeps the lifted block
-   drawn above its still-stationary same-column neighbors instead of tucking underneath one
-   as it's dragged past. */
+/* "Picked up" feedback is a subtle lift rather than an opacity change; the source and its tag
+   identity remain fully legible throughout the gesture. */
 .tc-tg-block.is-picked-up {
   transform: scale(1.02);
   box-shadow: var(--shadow-l);
@@ -1913,42 +1926,14 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   outline-offset: 1px;
 }
 
-/* Task 49: the deliberate "this task is now active/selected" treatment — applied via JS
-   (renderTimedBlocks.ts's attachSelectedState) for the full duration the block has native DOM
-   focus, from EITHER a click or Tab, unlike the narrower `:focus-visible`-only outline above.
-   Reads as clearly distinct from the other transient, gesture-scoped states on this same
-   element: `.is-picked-up` (Task 39, a brief lift+shadow shown only while a move-drag is
-   pointer-held) and `.is-dragging` (Task 26, opacity fade during the native drag-to-all-day
-   hijack) — both can coexist with `.is-selected` (e.g. starting a drag on an already-focused
-   block) without either fighting the other, since none of the three share a CSS property this
-   rule sets. A solid 2px outline (not dashed, unlike `:focus-visible`/`.is-edge-resizing`'s
-   "in-progress gesture" dashed language — this is a persisted state, not a gesture) plus a
-   faint tag-colored background wash (falling back to the neutral accent, same fallback the
-   outline and the tag-fill background already use) reads as "selected" the way a solid
-   selection highlight conventionally does, at rest, for as long as focus is held — not just for
-   the split-second of an active pointer gesture the other two classes cover. */
+/* Selection uses the host's semantic accent without replacing the event's opaque base fill. */
 .tc-tg-block.is-selected {
-  outline: 2px solid var(--tc-tag-color, var(--interactive-accent));
+  outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
-  background-color: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 10%,
-    transparent
-  );
 }
 
-/* Task 37: shown on a span/plain item's own `.tc-tg-body` while its edge-resize handle
-   (attachEdgeResize, renderAllDay.ts) is pointer-held. Before this, an edge-resize drag could
-   accidentally arm the item's native HTML5 dragstart (see attachEdgeResize's own comment) and
-   pick up `.is-dragging`'s opacity: 0.5 — an unstyled, unintentional "phantom" look, now fixed
-   at the source so it can never fire during a resize. This is the deliberate replacement: stays
-   fully opaque so the Round 3 Task 24 solid tag-fill convention keeps reading exactly as it does
-   at rest, and signals "in progress" via a dashed outline in the item's own tag color (falling
-   back to the neutral accent, same as the fill itself) — reusing the "dashed line reads as
-   still-connected/in-progress" language `.tc-tg-block-continuation`'s dashed border already
-   established, rather than inventing a new convention. Purely a class toggle on the dragged
-   item's own element — see attachEdgeResize: no DOM is created/measured and no sibling element
-   is touched while this is active. */
+/* Edge resize stays fully opaque and signals the in-progress gesture with the same dashed
+   tag-aware language as continuation rails. */
 .tc-tg-body.is-edge-resizing {
   outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
   outline-offset: 1px;
@@ -2192,10 +2177,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-mg-span-continuation {
-  opacity: 0.55;
   cursor: grab;
-  border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
-  background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
 }
 
 /* .tc-mg-plain / .tc-mg-block-dot / .tc-mg-span-segment tag-colored fill is set by the
@@ -4307,7 +4289,7 @@ body.tc-modal-open .popover.hover-popover {
 
 /* ── Drag-and-drop states ────────────────────────────────── */
 
-.is-dragging {
+.is-dragging:not(.tc-tg-block):not(.tc-tg-body):not(.tc-mg-block-dot):not(.tc-mg-plain) {
   opacity: 0.4;
   cursor: grabbing;
 }

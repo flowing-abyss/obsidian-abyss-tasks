@@ -104,6 +104,13 @@ describe('PanelView', () => {
       ).not.toThrow();
     });
 
+    it('recomputes rendered tag contrast when Obsidian emits css-change', () => {
+      const panels = view as unknown as { center: { refresh(): void } };
+      const refresh = vi.spyOn(panels.center, 'refresh');
+      app.workspace.trigger('css-change');
+      expect(refresh).toHaveBeenCalledOnce();
+    });
+
     it('lets CenterPanel own the sole calendar patch while PanelView refreshes only LeftPanel', () => {
       const state = (view as unknown as { state: AppState }).state;
       const panels = view as unknown as {

@@ -14,7 +14,75 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function declarationsForRuleContaining(...selectors: string[]): string {
+  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    const selectorList = match[1] ?? '';
+    if (selectors.every((selector) => selectorList.includes(selector))) {
+      return match[2] ?? '';
+    }
+  }
+  return '';
+}
+
 describe('renderHourGrid', () => {
+  it('defines restrained light/dark event and ghost fill tokens', () => {
+    const light = declarationsFor('.tc-panel-view');
+    const dark = declarationsFor('.theme-dark .tc-panel-view');
+    expect(light).toMatch(/--tc-event-fill-strength\s*:\s*14%/u);
+    expect(light).toMatch(/--tc-ghost-fill-strength\s*:\s*7%/u);
+    expect(dark).toMatch(/--tc-event-fill-strength\s*:\s*18%/u);
+    expect(dark).toMatch(/--tc-ghost-fill-strength\s*:\s*10%/u);
+  });
+
+  it('keeps timed event fills opaque and preserves them through hover, selection, and drag', () => {
+    const fills = declarationsForRuleContaining(
+      '.tc-tg-block',
+      '.tc-tg-span',
+      '.tc-tg-plain',
+      '.tc-mg-block-dot',
+      '.tc-mg-span-segment',
+      '.tc-mg-plain',
+    );
+    expect(fills).toMatch(
+      /var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength\)/u,
+    );
+    expect(fills).toMatch(/var\(--background-primary\)/u);
+    expect(fills).not.toMatch(/transparent/u);
+    expect(fills).toMatch(/border-inline-start\s*:/u);
+
+    const hover = declarationsForRuleContaining(
+      '.tc-tg-block:hover',
+      '.tc-tg-span-continuation:hover',
+      '.tc-mg-plain:hover',
+    );
+    expect(hover).not.toMatch(/background(?:-color)?\s*:/u);
+    expect(hover).toMatch(/box-shadow\s*:.*var\(--background-modifier-hover\)/u);
+
+    const selected = declarationsFor('.tc-tg-block.is-selected');
+    expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
+    expect(selected).toMatch(/outline\s*:.*var\(--interactive-accent\)/u);
+
+    const dragging = declarationsForRuleContaining(
+      '.tc-tg-block.is-dragging',
+      '.tc-tg-body.is-dragging',
+      '.tc-mg-block-dot.is-dragging',
+      '.tc-mg-plain.is-dragging',
+    );
+    expect(dragging).not.toMatch(/opacity\s*:/u);
+    expect(dragging).not.toMatch(/background(?:-color)?\s*:/u);
+    expect(css).not.toMatch(/(?:^|\n)\.is-dragging\s*\{[^}]*opacity\s*:/u);
+    expect(
+      declarationsFor(
+        '.is-dragging:not(.tc-tg-block):not(.tc-tg-body):not(.tc-mg-block-dot):not(.tc-mg-plain)',
+      ),
+    ).toMatch(/opacity\s*:\s*0\.4/u);
+  });
+
+  it('provides full 10px vertical and horizontal resize hit targets', () => {
+    expect(declarationsFor('.tc-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+    expect(declarationsFor('.tc-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
+  });
+
   it('renders a day-header cell per date with weekday + day number', () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10', '2026-07-11']);
@@ -349,17 +417,10 @@ describe('tag-fill background (Round 3 Task 24: solid, not washed-out/gridline-b
     const selector =
       '.tc-tg-block,\n.tc-tg-span,\n.tc-tg-plain,\n.tc-mg-block-dot,\n.tc-mg-span-segment,\n.tc-mg-plain';
     const declarations = declarationsFor(selector);
-    const match = new RegExp(
-      'background:\\s*color-mix\\(\\s*in srgb,\\s*var\\(--tc-tag-color, var\\(--interactive-accent\\)\\)\\s*(\\d+)%,\\s*([^,)]+)\\s*\\)',
-      'u',
-    ).exec(declarations);
-    expect(match).not.toBeNull();
-    expect(match?.[2]?.trim()).not.toBe('transparent');
-    // A meaningful lower bound, not a pixel-perfect pin: below this the tag color reads as
-    // pale/washed-out (the original bug report). The upper bound isn't asserted here — that's
-    // a visual/legibility judgment call (see styles.css comment), not a testable invariant.
-    const pct = Number(match?.[1]);
-    expect(pct).toBeGreaterThanOrEqual(30);
+    expect(declarations).toMatch(
+      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
+    );
+    expect(declarations).not.toMatch(/transparent/u);
   });
 });
 

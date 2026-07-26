@@ -439,6 +439,40 @@ describe('MonthGridView', () => {
     expect(row.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
   });
 
+  it('uses event contrast for both native Month drag origins', () => {
+    const originalBackground = document.body.style.getPropertyValue('--background-primary');
+    document.body.style.setProperty('--background-primary', '#666666');
+    try {
+      const container = freshContainer();
+      const view = new MonthGridView({
+        ...callbacks(),
+        tagGroups: [{ id: 'work', name: 'Work', mode: 'prefix', prefix: 'work', color: '#fff' }],
+      });
+      const source = {
+        originalMarkdown: '- [ ] task #work',
+        originalBlock: '- [ ] task #work',
+      };
+      view.render(
+        container,
+        [
+          task({ tags: ['#work'], planning: { due: '2026-07-15' }, source }),
+          task({ tags: ['#work'], planning: { due: '2026-07-15', time: '09:00' }, source }),
+        ],
+        resolvedConfig({ startPosition: '2026-07' }),
+      );
+
+      for (const selector of ['.tc-mg-plain', '.tc-mg-block-dot']) {
+        expect(
+          (container.querySelector(selector) as HTMLElement).style.getPropertyValue(
+            '--tc-tag-text-color',
+          ),
+        ).toBe('var(--tc-tag-text-dark)');
+      }
+    } finally {
+      document.body.style.setProperty('--background-primary', originalBackground);
+    }
+  });
+
   it('clicking a current-month day cell (not a task) fires onDayClick with that date', () => {
     const container = freshContainer();
     const cbs = callbacks();
@@ -1228,21 +1262,22 @@ describe('MonthGridView', () => {
       expect(terminal.querySelector('.tc-md')).not.toBeNull();
     });
 
-    it('styles span continuations as translucent dashed tag-aware ghosts', () => {
-      const declarations = declarationsFor('.tc-mg-span-continuation');
-      expect(declarations).toMatch(/opacity\s*:\s*0\.55/u);
-      expect(declarations).toMatch(
-        /border\s*:\s*1px dashed var\(--tc-tag-color,\s*var\(--background-modifier-border\)\)/u,
+    it('styles span continuations as opaque restrained ghosts through their shared root', () => {
+      const monthDeclarations = declarationsFor('.tc-mg-span-continuation');
+      const ghostDeclarations = declarationsFor('.tc-tg-span-continuation');
+      expect(monthDeclarations).not.toMatch(/opacity\s*:/u);
+      expect(ghostDeclarations).toMatch(
+        /border-inline-start\s*:\s*2px dashed var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
       );
-      expect(declarations).toMatch(
-        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
+      expect(ghostDeclarations).toMatch(
+        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-ghost-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
       );
-      expect(declarations).toMatch(/cursor\s*:\s*grab/u);
+      expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
     });
 
-    it("uses the ghost's 18% tag fill when choosing a readable title-text variant", () => {
+    it('uses event versus ghost strength when choosing readable title text', () => {
       const originalBackground = document.body.style.getPropertyValue('--background-primary');
-      document.body.style.setProperty('--background-primary', '#444444');
+      document.body.style.setProperty('--background-primary', '#666666');
       try {
         const container = freshContainer();
         const view = new MonthGridView({

@@ -18,6 +18,17 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function declarationsForRuleContaining(...selectors: string[]): string {
+  let declarations = '';
+  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    const selectorList = (match[1] ?? '').split(',').map((selector) => selector.trim());
+    if (selectors.every((selector) => selectorList.includes(selector))) {
+      declarations = match[2] ?? '';
+    }
+  }
+  return declarations;
+}
+
 const callbacks = () => ({
   app: fakeApp,
   component: new Component(),
@@ -172,9 +183,9 @@ describe('renderAllDayCell', () => {
     expect(terminal?.querySelector('.tc-md')).not.toBeNull();
   });
 
-  it("uses the continuation's 18% tag fill when choosing a readable title-text variant", () => {
+  it('uses event versus ghost strength when choosing readable title text', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
-    document.body.style.setProperty('--background-primary', '#444444');
+    document.body.style.setProperty('--background-primary', '#666666');
     try {
       const t = task({
         title: 'Trip',
@@ -206,16 +217,22 @@ describe('renderAllDayCell', () => {
     }
   });
 
-  it('styles span continuations as translucent dashed tag-aware ghosts', () => {
+  it('styles span continuations as opaque, restrained tag-aware ghosts', () => {
     const declarations = declarationsFor('.tc-tg-span-continuation');
-    expect(declarations).toMatch(/opacity\s*:\s*0\.55/u);
+    expect(declarations).not.toMatch(/opacity\s*:/u);
     expect(declarations).toMatch(
-      /border\s*:\s*1px dashed var\(--tc-tag-color,\s*var\(--background-modifier-border\)\)/u,
+      /border-inline-start\s*:\s*2px dashed var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
     expect(declarations).toMatch(
-      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
+      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-ghost-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
     );
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);
+  });
+
+  it('keeps the all-day marker crisp with a theme-derived halo', () => {
+    const declarations = declarationsForRuleContaining('.tc-tg-body .tc-status-marker');
+    expect(declarations).toMatch(/background\s*:\s*var\(--background-primary\)/u);
+    expect(declarations).toMatch(/box-shadow\s*:.*var\(--background-primary\)/u);
   });
 
   it('renders a deadline marker as non-draggable, structurally distinct from a plain chip', () => {
@@ -860,7 +877,7 @@ describe('renderAllDayCell', () => {
   });
 
   describe("Task 37: edge-resize no longer races/borrows the ancestor's native cross-day drag", () => {
-    it("'.tc-tg-body.is-edge-resizing' stays fully opaque (no opacity override) and uses a dashed outline in the tag-color convention, distinct from '.is-dragging''s opacity:0.5", () => {
+    it("'.tc-tg-body.is-edge-resizing' and native drag both stay opaque while using distinct theme-safe feedback", () => {
       const resizingDecls = declarationsFor('.tc-tg-body.is-edge-resizing');
       expect(resizingDecls).not.toBe('');
       // Opaque: unlike .is-dragging, this must never dim the item — the whole point is that it
@@ -875,7 +892,8 @@ describe('renderAllDayCell', () => {
       expect(resizingDecls).toMatch(/dashed/u);
 
       const draggingDecls = declarationsFor('.tc-tg-body.is-dragging');
-      expect(draggingDecls).toMatch(/opacity\s*:\s*0\.5/u);
+      expect(draggingDecls).not.toMatch(/opacity\s*:/u);
+      expect(draggingDecls).not.toMatch(/background(?:-color)?\s*:/u);
     });
 
     it('pointerdown on a span edge handle flips the ancestor .tc-tg-body draggable to false and adds is-edge-resizing (blocking the native-drag-ancestor-fallback that used to arm mid-resize)', () => {
