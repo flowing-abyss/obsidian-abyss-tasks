@@ -1202,16 +1202,17 @@ export class CenterPanel {
       updated.planning.start && updated.planning.due
         ? updated.planning.due
         : (updated.planning.scheduled ?? updated.planning.due);
-    if (!anchor) return;
+    const followDate = nextSegmentDate ?? anchor;
+    if (!followDate) return;
 
     const firstDayOfWeek =
       this.settings.desktop.firstDayOfWeek ?? DEFAULT_VIEW_CONFIG.firstDayOfWeek;
     const shouldFollow =
       this.calViewType === 'today' ||
       (this.calViewType === 'week' &&
-        !visibleCalendarDates('week', this.calDate, firstDayOfWeek).includes(anchor));
+        !visibleCalendarDates('week', this.calDate, firstDayOfWeek).includes(followDate));
     if (!shouldFollow) return;
-    this.calDate = window.moment(anchor);
+    this.calDate = window.moment(followDate);
     this.render();
   }
 

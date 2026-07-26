@@ -13,13 +13,13 @@ import { statusTitleClass } from '../../ui/statusTitleClass';
 import type { TimedDragTarget, TimedDurationTarget } from './dragGeometry';
 import {
   capContinuationMinHeightsPx,
-  capMinHeightsPx,
+  layoutTimedDay,
   MIN_BLOCK_HEIGHT_PX,
   minutesToPixels,
   minutesToTimeString,
-  packOverlaps,
   snapMinutes,
   timeStringToMinutes,
+  type PositionedBlock,
   type TimedBlockInput,
 } from './layout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
@@ -69,6 +69,11 @@ export interface TimedBlockCallbacks {
 export interface TimedDayRenderOptions {
   readonly date: string;
   readonly terminal?: boolean;
+  readonly previewPositionFor?: (
+    task: TaskSnapshot,
+    planning: TaskSnapshot['planning'],
+    date: string,
+  ) => PositionedBlock | undefined;
 }
 
 type BoundaryHandleBinding = {
@@ -122,7 +127,7 @@ function tryReleasePointer(el: HTMLElement, pointerId: number): void {
  * Shared `TaskSnapshot[]` -> `TimedBlockInput[]` conversion used by the production renderer and
  * retained legacy continuation tests/callers.
  */
-export function toTimedBlockInputs(tasks: TaskSnapshot[]): TimedBlockInput[] {
+export function toTimedBlockInputs(tasks: readonly TaskSnapshot[]): TimedBlockInput[] {
   return tasks.map((t) => ({
     task: t,
     startMinutes: timeStringToMinutes(t.planning.time ?? '00:00'),
@@ -138,13 +143,11 @@ export function renderTimedBlocksForDay(
   options?: TimedDayRenderOptions,
 ): void {
   const inputs: TimedBlockInput[] = toTimedBlockInputs(tasksWithTime);
-  const positioned = packOverlaps(inputs);
+  const { positioned, minHeightCaps } = layoutTimedDay(inputs);
   // Task 36: `.tc-tg-block`'s CSS min-height keeps a short block's checkbox+title row legible,
   // but only ever grows a block past its duration-derived height — see capMinHeightsPx's own
   // doc comment for why a same-column neighbor can still need that growth clamped back down so
   // the two blocks never visually cross.
-  const minHeightCaps = capMinHeightsPx(positioned);
-
   for (const p of positioned) {
     const widthPct = 100 / p.columns;
     const terminal = options
@@ -378,6 +381,7 @@ function attachOwnedInteractions(
     startMinutes,
     durationMinutes,
     owner,
+    previewPositionFor: options.previewPositionFor,
     onMove: (movedTask, target) => {
       if (callbacks.onTimedMove) callbacks.onTimedMove(movedTask, target);
       else if (target.destination === 'time-grid') {

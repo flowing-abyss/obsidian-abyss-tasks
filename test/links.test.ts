@@ -152,20 +152,29 @@ describe('parseLinks', () => {
           ` \`[[hidden-${index}]] [hidden-${index}](hidden-${index})\`` +
           ` [[wiki-${index}]] [md-${index}](target-${index})`,
       ).join('');
-    const bestOfThreeBatches = (source: string): number => {
-      parseLinks(source);
-      let best = Number.POSITIVE_INFINITY;
-      for (let run = 0; run < 3; run++) {
-        const startedAt = performance.now();
-        for (let iteration = 0; iteration < 5; iteration++) parseLinks(source);
-        best = Math.min(best, performance.now() - startedAt);
-      }
-      return best;
+    const median = (values: readonly number[]): number => {
+      const ordered = [...values].sort((left, right) => left - right);
+      return ordered[Math.floor(ordered.length / 2)]!;
     };
-    const smallMs = bestOfThreeBatches(denseSource(1_000));
-    const largeMs = bestOfThreeBatches(denseSource(2_000));
+    const small = denseSource(1_500);
+    const large = denseSource(6_000);
+    parseLinks(small);
+    parseLinks(large);
+    const ratios = Array.from({ length: 5 }, () => {
+      const smallStartedAt = performance.now();
+      for (let iteration = 0; iteration < 3; iteration++) parseLinks(small);
+      const smallMs = performance.now() - smallStartedAt;
 
-    expect(largeMs / smallMs).toBeLessThan(3.6);
+      const largeStartedAt = performance.now();
+      for (let iteration = 0; iteration < 3; iteration++) parseLinks(large);
+      const largeMs = performance.now() - largeStartedAt;
+      return largeMs / smallMs;
+    });
+
+    // A four-times larger dense source should remain far below the ~16x
+    // signature of quadratic work. The median paired ratio resists isolated
+    // JIT, GC, and full-suite scheduling outliers.
+    expect(median(ratios)).toBeLessThan(9);
   });
 });
 

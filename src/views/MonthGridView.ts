@@ -15,7 +15,7 @@ import {
   type InteractiveSpanBoundaryTarget,
   type SpanMoveTarget,
 } from './spanInteractions';
-import { layoutVisibleSpans } from './spanLayout';
+import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from './spanLayout';
 import { renderAllDaySpanLayer, type AllDayCallbacks } from './timegrid/renderAllDay';
 import { bucketTasksForDate } from './TodayView';
 
@@ -81,7 +81,7 @@ export class MonthGridView extends BaseView {
     );
     this.visibleDates = visibleDates;
     const spanRows = layoutVisibleSpans(tasks, visibleDates).rows;
-    const spanCallbacks = this.buildSpanCallbacks();
+    const spanCallbacks = this.buildSpanCallbacks(tasks);
 
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
@@ -209,7 +209,7 @@ export class MonthGridView extends BaseView {
     this.md.load();
 
     const spanRows = layoutVisibleSpans(tasks, this.visibleDates).rows;
-    const spanCallbacks = this.buildSpanCallbacks();
+    const spanCallbacks = this.buildSpanCallbacks(tasks);
     const rows = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-row'));
     for (const [rowIndex, row] of rows.entries()) {
       const spanRow = spanRows[rowIndex];
@@ -246,7 +246,7 @@ export class MonthGridView extends BaseView {
     ].join('|');
   }
 
-  private buildSpanCallbacks(): AllDayCallbacks {
+  private buildSpanCallbacks(tasks: readonly TaskSnapshot[]): AllDayCallbacks {
     return {
       app: this.callbacks.app,
       component: this.md,
@@ -273,6 +273,8 @@ export class MonthGridView extends BaseView {
       onSpanMove: this.callbacks.onSpanMove,
       onSpanBoundary: this.callbacks.onSpanBoundary,
       spanInteractionOwner: this.spanInteractions,
+      spanPreviewLayoutFor: (task, planning) =>
+        layoutVisibleSpansWithReplacement(tasks, this.visibleDates, task, planning),
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,

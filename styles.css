@@ -1302,7 +1302,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   z-index: 4;
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(var(--tc-span-track-count), minmax(0, 1fr));
   grid-auto-rows: 1.55em;
   gap: 2px 0;
   pointer-events: none;

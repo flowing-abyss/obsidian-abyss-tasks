@@ -4,8 +4,9 @@ import type { ResolvedConfig } from '../settings/types';
 import type { TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
 import { createSpanInteractionOwner } from './spanInteractions';
-import { layoutVisibleSpans } from './spanLayout';
+import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from './spanLayout';
 import { renderHourGrid, repositionNowLine, type HourGridHandles } from './timegrid/HourGrid';
+import type { PositionedBlock } from './timegrid/layout';
 import { minutesToPixels } from './timegrid/layout';
 import {
   renderAllDayCell,
@@ -14,7 +15,12 @@ import {
 } from './timegrid/renderAllDay';
 import { renderTimedBlocksForDay, type TimedBlockCallbacks } from './timegrid/renderTimedBlocks';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
-import { bucketTasksForDate, NOW_LINE_REFRESH_MS, type TimeGridCallbacks } from './TodayView';
+import {
+  bucketTasksForDate,
+  NOW_LINE_REFRESH_MS,
+  previewTimedPositionFor,
+  type TimeGridCallbacks,
+} from './TodayView';
 
 export class WeekTimeGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
@@ -163,6 +169,12 @@ export class WeekTimeGridView extends BaseView {
       onSetPriority: this.callbacks.onSetPriority,
       statusRegistry: this.callbacks.statusRegistry,
     };
+    const previewPositionFor = (
+      task: TaskSnapshot,
+      planning: TaskSnapshot['planning'],
+      previewDate: string,
+    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
+    const spanTasks = tasks.filter((task) => !task.planning.time);
     const allDayCallbacks: AllDayCallbacks = {
       app: this.callbacks.app,
       component: this.md,
@@ -174,6 +186,8 @@ export class WeekTimeGridView extends BaseView {
       onSpanMove: this.callbacks.onSpanMove,
       onSpanBoundary: this.callbacks.onSpanBoundary,
       spanInteractionOwner: this.spanInteractions,
+      spanPreviewLayoutFor: (task, planning) =>
+        layoutVisibleSpansWithReplacement(spanTasks, dates, task, planning),
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
@@ -182,10 +196,7 @@ export class WeekTimeGridView extends BaseView {
     };
 
     const tagGroups = this.callbacks.tagGroups ?? [];
-    const spanLayout = layoutVisibleSpans(
-      tasks.filter((task) => !task.planning.time),
-      dates,
-    );
+    const spanLayout = layoutVisibleSpans(spanTasks, dates);
     const spanRow = spanLayout.rows[0]!;
     renderAllDaySpanLayer(
       handles.allDaySpanLayerEl,
@@ -210,7 +221,7 @@ export class WeekTimeGridView extends BaseView {
         [...timed, ...timedSpans],
         timedCallbacks,
         tagGroups,
-        { date: day.date },
+        { date: day.date, previewPositionFor },
       );
       day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
       if (installCellBindings) {

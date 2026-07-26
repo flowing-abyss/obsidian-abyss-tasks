@@ -93,6 +93,16 @@ function allDayCallbacks() {
   };
 }
 
+function measureMonthCells(container: HTMLElement): void {
+  Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell')).forEach((cell, index) => {
+    const column = index % 7;
+    const row = Math.floor(index / 7);
+    vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(column * 100, row * 100, 100, 100),
+    );
+  });
+}
+
 describe('MonthGridView', () => {
   it('patches only task layers while retaining month headers, rows, day cells, and static listeners', () => {
     const container = freshContainer();
@@ -291,39 +301,145 @@ describe('MonthGridView', () => {
     const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-    const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell'));
-    for (const cell of cells) {
-      const index = cells.indexOf(cell) % 7;
-      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
-        left: index * 100,
-        right: (index + 1) * 100,
-        top: 0,
-        bottom: 100,
-        width: 100,
-        height: 100,
-        x: index * 100,
-        y: 0,
-        toJSON: () => ({}),
-      });
-    }
+    measureMonthCells(container);
     const due = requiredElement(container, '[data-boundary="due"]');
     due.dispatchEvent(
-      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 350 }) as PointerEvent,
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 350,
+        clientY: 250,
+        pointerId: 40,
+      }),
     );
     window.dispatchEvent(
-      new MouseEvent('pointermove', { bubbles: true, button: 0, clientX: 450 }) as PointerEvent,
+      new PointerEvent('pointermove', { clientX: 450, clientY: 250, pointerId: 40 }),
     );
     expect(container.querySelector('.tc-span-boundary-preview')?.getAttribute('style')).toContain(
-      'grid-column: 4 / 6',
+      'grid-column: 2 / 6',
     );
     window.dispatchEvent(
-      new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 450 }) as PointerEvent,
+      new PointerEvent('pointerup', { clientX: 450, clientY: 250, pointerId: 40 }),
     );
 
     expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
       t,
       expect.objectContaining({ boundary: 'due', date: '2026-07-17' }),
     );
+    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+  });
+
+  it('moves an actual Month start boundary into the previous week and previews every clipped row piece', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 }));
+    measureMonthCells(container);
+
+    const handle = requiredElement(container, '[data-boundary="start"]');
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 150,
+        clientY: 250,
+        pointerId: 41,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 350, clientY: 150, pointerId: 41 }),
+    );
+
+    const previousRow = requiredElement(
+      container,
+      '[data-mg-date="2026-07-09"]',
+    ).closest<HTMLElement>('.tc-mg-row')!;
+    const sourceRow = requiredElement(
+      container,
+      '[data-mg-date="2026-07-14"]',
+    ).closest<HTMLElement>('.tc-mg-row')!;
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+    );
+    expect(previews).toHaveLength(2);
+    expect(
+      previousRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
+    ).toBe('4 / 8');
+    expect(
+      sourceRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
+    ).toBe('1 / 5');
+    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual([
+      { boundary: 'start', date: '2026-07-09', dayDelta: -5 },
+      { boundary: 'start', date: '2026-07-09', dayDelta: -5 },
+    ]);
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 350, clientY: 150, pointerId: 41 }),
+    );
+    expect(cbs.onSpanBoundary).toHaveBeenCalledOnce();
+    expect(cbs.onSpanBoundary).toHaveBeenCalledWith(t, {
+      boundary: 'start',
+      date: '2026-07-09',
+      dayDelta: -5,
+    });
+    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+  });
+
+  it('moves an actual Month due boundary into the following week and previews every clipped row piece', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 }));
+    measureMonthCells(container);
+
+    const handle = requiredElement(container, '[data-boundary="due"]');
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 350,
+        clientY: 250,
+        pointerId: 42,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 350, pointerId: 42 }),
+    );
+
+    const sourceRow = requiredElement(
+      container,
+      '[data-mg-date="2026-07-14"]',
+    ).closest<HTMLElement>('.tc-mg-row')!;
+    const followingRow = requiredElement(
+      container,
+      '[data-mg-date="2026-07-21"]',
+    ).closest<HTMLElement>('.tc-mg-row')!;
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+    );
+    expect(previews).toHaveLength(2);
+    expect(
+      sourceRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
+    ).toBe('2 / 8');
+    expect(
+      followingRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
+    ).toBe('1 / 3');
+    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual([
+      { boundary: 'due', date: '2026-07-21', dayDelta: 5 },
+      { boundary: 'due', date: '2026-07-21', dayDelta: 5 },
+    ]);
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 150, clientY: 350, pointerId: 42 }),
+    );
+    expect(cbs.onSpanBoundary).toHaveBeenCalledOnce();
+    expect(cbs.onSpanBoundary).toHaveBeenCalledWith(t, {
+      boundary: 'due',
+      date: '2026-07-21',
+      dayDelta: 5,
+    });
     expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
   });
 
@@ -334,23 +450,7 @@ describe('MonthGridView', () => {
     const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-    const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell'));
-    for (const cell of cells) {
-      const index = cells.indexOf(cell);
-      const column = index % 7;
-      const row = Math.floor(index / 7);
-      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
-        left: column * 100,
-        right: (column + 1) * 100,
-        top: row * 100,
-        bottom: (row + 1) * 100,
-        width: 100,
-        height: 100,
-        x: column * 100,
-        y: row * 100,
-        toJSON: () => ({}),
-      });
-    }
+    measureMonthCells(container);
 
     const ghost = requiredElement(container, '[data-span-kind="ghost"]');
     ghost.dispatchEvent(

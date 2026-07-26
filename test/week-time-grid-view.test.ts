@@ -33,6 +33,31 @@ function callbacks() {
   };
 }
 
+function measureAllDayCells(container: HTMLElement): () => void {
+  const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-allday-cell'));
+  cells.forEach((cell, index) => {
+    vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(new DOMRect(index * 100, 0, 100, 100));
+  });
+  const originalElementFromPoint = document.elementFromPoint;
+  document.elementFromPoint = (clientX) => cells[Math.floor(clientX / 100)] ?? null;
+  return () => {
+    document.elementFromPoint = originalElementFromPoint;
+  };
+}
+
+function measureTimedColumns(container: HTMLElement): void {
+  const days = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-day-column'));
+  days.forEach((day, index) => {
+    vi.spyOn(day, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(index * 100, 100, 100, 24 * 48),
+    );
+    const hour = day.querySelector<HTMLElement>('.tc-tg-hour-column')!;
+    vi.spyOn(hour, 'getBoundingClientRect').mockReturnValue(
+      new DOMRect(index * 100, 100, 100, 24 * 48),
+    );
+  });
+}
+
 describe('WeekTimeGridView', () => {
   it('patches only task layers while retaining the week skeleton, scroll position, listeners, and now-line interval', () => {
     vi.useFakeTimers();
@@ -139,6 +164,7 @@ describe('WeekTimeGridView', () => {
     const terminal = layer?.querySelector<HTMLElement>('[data-span-kind="terminal"]');
     expect(layer).not.toBeNull();
     expect(layer?.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(1);
+    expect((layer as HTMLElement).style.getPropertyValue('--tc-span-track-count')).toBe('7');
     expect(ghost?.style.gridColumn).toBe('2 / 4');
     expect(terminal?.style.gridColumn).toBe('4 / 5');
     expect(ghost?.getAttribute('tabindex')).toBe('0');
@@ -237,25 +263,166 @@ describe('WeekTimeGridView', () => {
       tasks,
       resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
     );
+    const restoreElementFromPoint = measureAllDayCells(container);
 
     const handles = Array.from(
       container.querySelectorAll<HTMLElement>('[data-boundary="create-span"]'),
     );
-    const target = container.querySelector<HTMLElement>('[data-tg-date="2026-07-10"]')!;
-    const originalElementFromPoint = document.elementFromPoint;
-    document.elementFromPoint = () => target;
     try {
       handles[0]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       handles[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2 }));
-      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 1 }),
+      );
       expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
-      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 2 }),
+      );
       expect(cbs.onExtendToSpan).toHaveBeenCalledTimes(1);
       expect(cbs.onExtendToSpan).toHaveBeenCalledWith(tasks[1], '2026-07-10');
     } finally {
-      document.elementFromPoint = originalElementFromPoint;
+      restoreElementFromPoint();
     }
   });
+
+  it('previews the exact segment targeted by a plain create-span handle and restores native dragging after commit', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const t = task({ planning: { scheduled: '2026-07-08' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
+    const restoreElementFromPoint = measureAllDayCells(container);
+    const body = container.querySelector<HTMLElement>('.tc-tg-plain')!;
+    const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 250,
+        clientY: 50,
+        pointerId: 31,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 31 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
+    expect(preview).not.toBeNull();
+    expect(preview.style.gridColumn).toBe('3 / 6');
+    expect(JSON.parse(preview.dataset['target']!)).toEqual({
+      boundary: 'create-span',
+      date: '2026-07-10',
+      dayDelta: 2,
+    });
+    expect(container.querySelector('.tc-tg-allday-cell.is-drag-over')).toBeNull();
+    expect(body.getAttribute('draggable')).toBe('false');
+    expect(body.classList.contains('is-edge-resizing')).toBe(true);
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 31 }),
+    );
+
+    expect(cbs.onExtendToSpan).toHaveBeenCalledWith(t, '2026-07-10');
+    expect(cbs.onExtendToSpan).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+    expect(body.getAttribute('draggable')).toBe('true');
+    expect(body.classList.contains('is-edge-resizing')).toBe(false);
+    view.destroy();
+    restoreElementFromPoint();
+  });
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur'] as const)(
+    '%s cancels a plain create-span handle through the owner-document session and restores its body',
+    (cleanup) => {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new WeekTimeGridView(cbs);
+      const t = task({ planning: { scheduled: '2026-07-08' } });
+      view.render(
+        container,
+        [t],
+        resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+      );
+      const restoreElementFromPoint = measureAllDayCells(container);
+      const body = container.querySelector<HTMLElement>('.tc-tg-plain')!;
+      const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 250,
+          clientY: 50,
+          pointerId: 32,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 32 }),
+      );
+      expect(container.querySelector('.tc-span-boundary-preview')).not.toBeNull();
+
+      if (cleanup === 'pointercancel') {
+        window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 32 }));
+      } else if (cleanup === 'lostpointercapture') {
+        handle.dispatchEvent(new Event('lostpointercapture'));
+      } else {
+        window.dispatchEvent(new Event('blur'));
+      }
+
+      expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+      expect(body.getAttribute('draggable')).toBe('true');
+      expect(body.classList.contains('is-edge-resizing')).toBe(false);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 32 }),
+      );
+      expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
+      view.destroy();
+      restoreElementFromPoint();
+    },
+  );
+
+  it.each(['patch', 'destroy'] as const)(
+    '%s disposes an active plain create-span handle without a stale commit',
+    (cleanup) => {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new WeekTimeGridView(cbs);
+      const t = task({ planning: { scheduled: '2026-07-08' } });
+      const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+      view.render(container, [t], config);
+      const restoreElementFromPoint = measureAllDayCells(container);
+      const body = container.querySelector<HTMLElement>('.tc-tg-plain')!;
+      const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 250,
+          clientY: 50,
+          pointerId: 33,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 33 }),
+      );
+      expect(container.querySelector('.tc-span-boundary-preview')).not.toBeNull();
+
+      if (cleanup === 'patch') view.patch(container, [t], config);
+      else view.destroy();
+
+      expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+      expect(body.getAttribute('draggable')).toBe('true');
+      expect(body.classList.contains('is-edge-resizing')).toBe(false);
+      window.dispatchEvent(
+        new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 33 }),
+      );
+      expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
+      if (cleanup === 'patch') view.destroy();
+      restoreElementFromPoint();
+    },
+  );
+
   it('threads relative keyboard intents from timed blocks', () => {
     const container = freshContainer();
     const cbs = callbacks();
@@ -334,6 +501,170 @@ describe('WeekTimeGridView', () => {
     expect(container.querySelectorAll('.tc-tg-block')).toHaveLength(1);
   });
 
+  it('previews a timed move with the exact destination-overlap packing used after commit', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView({ ...callbacks(), onTimedMove: vi.fn() });
+    const moving = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    const destination = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { due: '2026-07-07', time: '09:00', duration: 60 },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [moving, destination], config);
+    measureTimedColumns(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-06"] [data-tc-task-file="a.md"]',
+    )!;
+    vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 532, 100, 48));
+    source.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 50,
+        clientY: 544,
+        pointerId: 41,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 41 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] .tc-tg-drag-preview',
+    )!;
+    expect(preview.style.left).toBe('0%');
+    expect(preview.style.width).toBe('50%');
+    const previewGeometry = { left: preview.style.left, width: preview.style.width };
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 41 }));
+    const moved = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { due: '2026-07-07', time: '09:00', duration: 60 },
+    });
+    view.patch(container, [moved, destination], config);
+    const committed = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] [data-tc-task-file="a.md"]',
+    )!;
+    expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
+    view.destroy();
+  });
+
+  it('previews a timed move out of source contention with the full-width destination packing', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView({ ...callbacks(), onTimedMove: vi.fn() });
+    const incumbent = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    const moving = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [incumbent, moving], config);
+    measureTimedColumns(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-06"] [data-tc-task-file="b.md"]',
+    )!;
+    expect(source.style.left).toBe('50%');
+    expect(source.style.width).toBe('50%');
+    vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(50, 532, 50, 48));
+    source.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 75,
+        clientY: 544,
+        pointerId: 42,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 42 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] .tc-tg-drag-preview',
+    )!;
+    expect(preview.style.left).toBe('0%');
+    expect(preview.style.width).toBe('100%');
+    const previewGeometry = { left: preview.style.left, width: preview.style.width };
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 42 }));
+    const moved = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { due: '2026-07-07', time: '09:00', duration: 60 },
+    });
+    view.patch(container, [incumbent, moved], config);
+    const committed = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] [data-tc-task-file="b.md"]',
+    )!;
+    expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
+    view.destroy();
+  });
+
+  it('previews a timed boundary extension with the destination lane assigned after commit', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView({ ...callbacks(), onTimedBoundary: vi.fn() });
+    const extending = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    const destination = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { due: '2026-07-07', time: '09:00', duration: 60 },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [extending, destination], config);
+    measureTimedColumns(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-06"] [data-tc-task-file="a.md"]',
+    )!;
+    vi.spyOn(source, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 532, 100, 48));
+    const handle = source.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 50,
+        clientY: 544,
+        pointerId: 43,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 43 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] .tc-tg-boundary-preview',
+    )!;
+    expect(preview.style.left).toBe('50%');
+    expect(preview.style.width).toBe('50%');
+    const previewGeometry = { left: preview.style.left, width: preview.style.width };
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 43 }));
+    const extended = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: {
+        start: '2026-07-06',
+        due: '2026-07-07',
+        time: '09:00',
+        duration: 60,
+      },
+    });
+    view.patch(container, [extended, destination], config);
+    const committed = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-07-07"] [data-tc-task-file="a.md"]',
+    )!;
+    expect({ left: committed.style.left, width: committed.style.width }).toEqual(previewGeometry);
+    view.destroy();
+  });
+
   it('a span crossing multiple days in the week renders continuations before one due-date terminal', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());
@@ -341,6 +672,171 @@ describe('WeekTimeGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
     expect(container.querySelectorAll('.tc-tg-span')).toHaveLength(1);
     expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(1);
+  });
+
+  it('previews a continuous-span move in the exact destination lanes used after commit', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const moving = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-06', due: '2026-07-07' },
+    });
+    const destination = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-08', due: '2026-07-10' },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [moving, destination], config);
+    const restoreElementFromPoint = measureAllDayCells(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-task-path="a.md"][data-span-kind="ghost"]',
+    )!;
+    source.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 50,
+        clientY: 50,
+        pointerId: 51,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 250, clientY: 50, pointerId: 51 }),
+    );
+
+    const previews = Array.from(container.querySelectorAll<HTMLElement>('.tc-span-move-preview'));
+    expect(
+      previews.map((preview) => ({
+        column: preview.style.gridColumn,
+        row: preview.style.gridRow,
+      })),
+    ).toEqual([{ column: '3 / 5', row: '2' }]);
+    const previewGeometry = previews.map((preview) => ({
+      column: preview.style.gridColumn,
+      row: preview.style.gridRow,
+    }));
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 51 }));
+    const moved = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-08', due: '2026-07-09' },
+    });
+    view.patch(container, [moved, destination], config);
+    const committed = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-task-path="a.md"][data-span-kind]'),
+    ).map((piece) => ({ column: piece.style.gridColumn, row: piece.style.gridRow }));
+    expect(new Set(committed.map((piece) => piece.row))).toEqual(
+      new Set(previewGeometry.map((piece) => piece.row)),
+    );
+    expect(
+      `${committed[0]!.column.split(' / ')[0]} / ${committed[committed.length - 1]!.column.split(' / ')[1]}`,
+    ).toBe(previewGeometry[0]!.column);
+    view.destroy();
+    restoreElementFromPoint();
+  });
+
+  it('previews a continuous-span move out of source contention in the freed committed lane', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const blocker = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-06', due: '2026-07-08' },
+    });
+    const moving = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-06', due: '2026-07-07' },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [blocker, moving], config);
+    const restoreElementFromPoint = measureAllDayCells(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-task-path="b.md"][data-span-kind="ghost"]',
+    )!;
+    expect(source.style.gridRow).toBe('2');
+    source.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 50,
+        clientY: 50,
+        pointerId: 52,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 52 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>('.tc-span-move-preview')!;
+    expect(preview.style.gridColumn).toBe('5 / 7');
+    expect(preview.style.gridRow).toBe('1');
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 52 }));
+    const moved = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-10', due: '2026-07-11' },
+    });
+    view.patch(container, [blocker, moved], config);
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>('[data-task-path="b.md"][data-span-kind]'),
+      ).map((piece) => piece.style.gridRow),
+    ).toEqual(['1', '1']);
+    view.destroy();
+    restoreElementFromPoint();
+  });
+
+  it('previews a continuous-span boundary resize in its deterministic post-command lane', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const resizing = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-08', due: '2026-07-09' },
+    });
+    const blocker = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-06', due: '2026-07-09' },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [resizing, blocker], config);
+    const restoreElementFromPoint = measureAllDayCells(container);
+
+    const source = container.querySelector<HTMLElement>(
+      '[data-task-path="a.md"][data-span-kind="ghost"]',
+    )!;
+    expect(source.style.gridRow).toBe('2');
+    const handle = source.querySelector<HTMLElement>('[data-boundary="start"]')!;
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 250,
+        clientY: 50,
+        pointerId: 53,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 53 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
+    expect(preview.style.gridColumn).toBe('1 / 5');
+    expect(preview.style.gridRow).toBe('1');
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 53 }));
+    const resized = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-06', due: '2026-07-09' },
+    });
+    view.patch(container, [resized, blocker], config);
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>('[data-task-path="a.md"][data-span-kind]'),
+      ).map((piece) => piece.style.gridRow),
+    ).toEqual(['1', '1']);
+    view.destroy();
+    restoreElementFromPoint();
   });
 
   it('destroy() does not throw', () => {

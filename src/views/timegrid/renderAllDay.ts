@@ -15,7 +15,7 @@ import {
   type SpanInteractionOwner,
   type SpanMoveTarget,
 } from '../spanInteractions';
-import type { VisibleSpanRow } from '../spanLayout';
+import type { VisibleSpanLayout, VisibleSpanRow } from '../spanLayout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
 
 export interface AllDayCallbacks {
@@ -29,6 +29,10 @@ export interface AllDayCallbacks {
   onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
   onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
   spanInteractionOwner?: SpanInteractionOwner;
+  spanPreviewLayoutFor?: (
+    task: TaskSnapshot,
+    planning: TaskSnapshot['planning'],
+  ) => VisibleSpanLayout;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
@@ -246,6 +250,7 @@ export function renderAllDaySpanLayer(
 ): void {
   layerEl.empty();
   layerEl.setAttribute('data-span-lanes', String(row.laneCount));
+  layerEl.style.setProperty('--tc-span-track-count', String(dates.length));
   attachSpanOverlayDropForwarding(layerEl, callbacks, variant);
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
 
@@ -313,6 +318,7 @@ export function renderAllDaySpanLayer(
       segmentStart: segment.startDate,
       segmentEnd: segment.endDate,
       owner: interactionOwner,
+      previewLayoutFor: callbacks.spanPreviewLayoutFor,
       boundaryHandles,
       onMove: (task, target) => callbacks.onSpanMove?.(task, target),
       onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
@@ -383,31 +389,6 @@ function attachEdgeResize(
   };
   const withHook = cellEl as AllDayResizeCell;
 
-  // Task 39: live feedback for this edge-resize's day-crossing, mirroring
-  // renderTimedBlocks.ts's attachHorizontalResize (Task 34/29's timed-span equivalent of this
-  // gesture) — same reasoning: the commit already resolves the day under the pointer via
-  // `elementFromPoint` on release, this just surfaces that resolution live by toggling
-  // `.is-drag-over` on whichever `[data-tg-date]` cell the pointer is currently over, reusing
-  // the SAME class the native cross-day drag (`renderAllDayCell`'s own dragover handler below)
-  // already uses for an identical "this is where you'd land" signal.
-  let hoveredDayEl: Element | null = null;
-
-  const clearHoveredDay = (): void => {
-    hoveredDayEl?.classList.remove('is-drag-over');
-    hoveredDayEl = null;
-  };
-
-  const onPointerMove = (e: PointerEvent): void => {
-    if (e.pointerId !== capturedPointerId) return;
-    e.preventDefault();
-    const target = ownerDocument.elementFromPoint(e.clientX, e.clientY);
-    const dayEl = target?.closest('[data-tg-date]') ?? null;
-    if (dayEl === hoveredDayEl) return;
-    hoveredDayEl?.classList.remove('is-drag-over');
-    dayEl?.classList.add('is-drag-over');
-    hoveredDayEl = dayEl;
-  };
-
   // Task 37: a deliberate, lightweight "this is being reshaped" state — toggled purely as a CSS
   // class on the dragged item's own element (see .tc-tg-body.is-edge-resizing in styles.css), no
   // DOM creation/measurement and no sibling elements touched, so it can't itself cause the sibling
@@ -417,8 +398,6 @@ function attachEdgeResize(
   const endResize = (): void => {
     body?.setAttribute('draggable', 'true');
     body?.removeClass('is-edge-resizing');
-    clearHoveredDay();
-    ownerWindow.removeEventListener('pointermove', onPointerMove);
     ownerWindow.removeEventListener('pointerup', onPointerUp);
     ownerWindow.removeEventListener('pointercancel', onPointerCancel);
     if (capturedPointerId !== null) tryReleasePointer(handle, capturedPointerId);
@@ -457,7 +436,6 @@ function attachEdgeResize(
     withHook.__tgPendingEdgeResize = resolve;
     interactionOwner?.begin(endResize);
     tryCapturePointer(handle, capturedPointerId);
-    ownerWindow.addEventListener('pointermove', onPointerMove);
     ownerWindow.addEventListener('pointerup', onPointerUp);
     ownerWindow.addEventListener('pointercancel', onPointerCancel);
   });
@@ -497,13 +475,21 @@ export function renderAllDayCell(
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
     const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
     rightEdge.setAttribute('data-boundary', 'create-span');
-    attachEdgeResize(
-      rightEdge,
-      cellEl,
-      t,
-      callbacks.onExtendToSpan,
-      callbacks.spanInteractionOwner,
-    );
+    if (callbacks.spanInteractionOwner) {
+      attachSpanInteractions({
+        source: chip,
+        task: t,
+        segmentStart: date,
+        segmentEnd: date,
+        owner: callbacks.spanInteractionOwner,
+        boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
+        onMove: () => {},
+        onBoundary: (task, target) => callbacks.onExtendToSpan(task, target.date),
+        enableMove: false,
+      });
+    } else {
+      attachEdgeResize(rightEdge, cellEl, t, callbacks.onExtendToSpan);
+    }
   }
   for (const t of deadlines) {
     const marker = cellEl.createDiv({ cls: 'tc-tg-deadline-marker' });

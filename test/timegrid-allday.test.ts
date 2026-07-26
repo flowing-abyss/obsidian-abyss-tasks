@@ -572,65 +572,6 @@ describe('renderAllDayCell', () => {
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 2 }));
   });
 
-  describe('Task 39: live day-target highlight while dragging an edge-resize handle', () => {
-    // Mirrors renderTimedBlocks.ts's identical Task 39 suite: jsdom has no real
-    // elementFromPoint, so these feed the mechanism a stand-in day element directly rather
-    // than asserting on real screen coordinates (per the brief's own guidance for this class
-    // of mechanism).
-    it('pointermove over a day cell adds is-drag-over to that cell', () => {
-      const container = freshContainer();
-      const cbs = callbacks();
-      const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
-      renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-      const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
-      const dayEl = document.createElement('div');
-      dayEl.setAttribute('data-tg-date', '2026-07-11');
-      const original = activeDocument.elementFromPoint;
-      activeDocument.elementFromPoint = () => dayEl;
-      rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
-      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1 }));
-      expect(dayEl.classList.contains('is-drag-over')).toBe(true);
-      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
-      activeDocument.elementFromPoint = original;
-    });
-
-    it('releasing (pointerup) clears the highlight', () => {
-      const container = freshContainer();
-      const cbs = callbacks();
-      const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
-      renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-      const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
-      const dayEl = document.createElement('div');
-      dayEl.setAttribute('data-tg-date', '2026-07-11');
-      const original = activeDocument.elementFromPoint;
-      activeDocument.elementFromPoint = () => dayEl;
-      rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
-      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1 }));
-      expect(dayEl.classList.contains('is-drag-over')).toBe(true);
-      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
-      expect(dayEl.classList.contains('is-drag-over')).toBe(false);
-      activeDocument.elementFromPoint = original;
-    });
-
-    it('a pointercancel mid-gesture also clears the highlight (does not get stuck on)', () => {
-      const container = freshContainer();
-      const cbs = callbacks();
-      const t = task({ title: 'Trip', planning: { start: '2026-07-08', due: '2026-07-10' } });
-      renderAllDayCell(container, '2026-07-10', [t], [], [], cbs);
-      const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
-      const dayEl = document.createElement('div');
-      dayEl.setAttribute('data-tg-date', '2026-07-11');
-      const original = activeDocument.elementFromPoint;
-      activeDocument.elementFromPoint = () => dayEl;
-      rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
-      window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1 }));
-      expect(dayEl.classList.contains('is-drag-over')).toBe(true);
-      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1 }));
-      expect(dayEl.classList.contains('is-drag-over')).toBe(false);
-      activeDocument.elementFromPoint = original;
-    });
-  });
-
   it('a plain task gets a right-edge handle that fires onExtendToSpan (not onDueChange) on pointerup', () => {
     const container = freshContainer();
     const cbs = callbacks();

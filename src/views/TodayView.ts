@@ -8,10 +8,15 @@ import {
   type InteractiveSpanBoundaryTarget,
   type SpanMoveTarget,
 } from './spanInteractions';
-import { layoutVisibleSpans } from './spanLayout';
+import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from './spanLayout';
 import type { TimedDragTarget, TimedDurationTarget } from './timegrid/dragGeometry';
 import { renderHourGrid, repositionNowLine, type HourGridHandles } from './timegrid/HourGrid';
-import { minutesToPixels } from './timegrid/layout';
+import {
+  layoutTimedDay,
+  minutesToPixels,
+  taskLayoutIdentity,
+  type PositionedBlock,
+} from './timegrid/layout';
 import {
   renderAllDayCell,
   renderAllDaySpanLayer,
@@ -19,6 +24,7 @@ import {
 } from './timegrid/renderAllDay';
 import {
   renderTimedBlocksForDay,
+  toTimedBlockInputs,
   type TimedBlockCallbacks,
   type TimedBlockKeyboardIntent,
 } from './timegrid/renderTimedBlocks';
@@ -128,6 +134,22 @@ export function bucketTasksForDate(
   }
 
   return { timed, spans, timedSpans, plain, deadlines };
+}
+
+export function previewTimedPositionFor(
+  tasks: readonly TaskSnapshot[],
+  source: TaskSnapshot,
+  planning: TaskSnapshot['planning'],
+  date: string,
+): PositionedBlock | undefined {
+  const identity = taskLayoutIdentity(source);
+  const prospectiveTasks = tasks.map((candidate) =>
+    taskLayoutIdentity(candidate) === identity ? { ...candidate, planning } : candidate,
+  );
+  const { timed, timedSpans } = bucketTasksForDate(prospectiveTasks, date);
+  return layoutTimedDay(toTimedBlockInputs([...timed, ...timedSpans])).positioned.find(
+    (positioned) => taskLayoutIdentity(positioned.task) === identity,
+  );
 }
 
 /** How often the now-line is repositioned while a Today/Week view showing today stays mounted. */
@@ -270,6 +292,11 @@ export class TodayView extends BaseView {
       onSetPriority: this.callbacks.onSetPriority,
       statusRegistry: this.callbacks.statusRegistry,
     };
+    const previewPositionFor = (
+      task: TaskSnapshot,
+      planning: TaskSnapshot['planning'],
+      previewDate: string,
+    ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
     const tagGroups = this.callbacks.tagGroups ?? [];
     if (!installCellBindings) {
       day.hourColumnEl
@@ -281,9 +308,10 @@ export class TodayView extends BaseView {
       [...timed, ...timedSpans],
       timedCallbacks,
       tagGroups,
-      { date },
+      { date, previewPositionFor },
     );
 
+    const spanTasks = tasks.filter((task) => !task.planning.time);
     const allDayCallbacks: AllDayCallbacks = {
       app: this.callbacks.app,
       component: this.md,
@@ -295,6 +323,8 @@ export class TodayView extends BaseView {
       onSpanMove: this.callbacks.onSpanMove,
       onSpanBoundary: this.callbacks.onSpanBoundary,
       spanInteractionOwner: this.spanInteractions,
+      spanPreviewLayoutFor: (task, planning) =>
+        layoutVisibleSpansWithReplacement(spanTasks, [date], task, planning),
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,

@@ -13,6 +13,15 @@ export interface PositionedBlock extends TimedBlockInput {
   columns: number;
 }
 
+export interface TimedDayLayout {
+  readonly positioned: readonly PositionedBlock[];
+  readonly minHeightCaps: ReadonlyMap<PositionedBlock, number>;
+}
+
+export function taskLayoutIdentity(task: TaskSnapshot): string {
+  return `${task.source.filePath}\u0000${String(task.source.line).padStart(12, '0')}`;
+}
+
 export function minutesToPixels(minutes: number): number {
   return (minutes / 60) * PIXELS_PER_HOUR;
 }
@@ -154,7 +163,7 @@ export function capContinuationMinHeightsPx(
  * occupant has already ended, then set `columns` to the max column index + 1
  * within each maximal overlapping cluster.
  */
-export function packOverlaps(blocks: TimedBlockInput[]): PositionedBlock[] {
+export function packOverlaps(blocks: readonly TimedBlockInput[]): PositionedBlock[] {
   const sorted = [...blocks].sort((a, b) => a.startMinutes - b.startMinutes);
   const positioned: PositionedBlock[] = [];
   let columnEnds: number[] = [];
@@ -190,4 +199,10 @@ export function packOverlaps(blocks: TimedBlockInput[]): PositionedBlock[] {
   closeCluster();
 
   return positioned;
+}
+
+/** Shared committed/preview timed layout pass. */
+export function layoutTimedDay(inputs: readonly TimedBlockInput[]): TimedDayLayout {
+  const positioned = packOverlaps(inputs);
+  return { positioned, minHeightCaps: capMinHeightsPx(positioned) };
 }

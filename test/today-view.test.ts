@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
@@ -9,6 +11,7 @@ useRealMoment();
 
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
 function callbacks() {
   return {
@@ -173,6 +176,24 @@ describe('TodayView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
     expect(container.querySelector('.tc-tg-plain')).not.toBeNull();
     expect(container.querySelector('.tc-tg-block')).toBeNull();
+  });
+
+  it('gives a Day all-day span one stylesheet-backed track so its segment fills the layer', () => {
+    const container = freshContainer();
+    const view = new TodayView(callbacks());
+    view.render(
+      container,
+      [task({ planning: { start: '2026-07-09', due: '2026-07-10' } })],
+      resolvedConfig({ startPosition: '2026-07-10' }),
+    );
+
+    const layer = container.querySelector<HTMLElement>('.tc-tg-span-layer')!;
+    const segment = layer.querySelector<HTMLElement>('.tc-span-piece')!;
+    expect(layer.style.getPropertyValue('--tc-span-track-count')).toBe('1');
+    expect(segment.style.gridColumn).toBe('1 / 2');
+    expect(css).toMatch(
+      /\.tc-tg-span-layer,\s*\.tc-mg-span-layer\s*\{[^}]*grid-template-columns:\s*repeat\(var\(--tc-span-track-count\),\s*minmax\(0,\s*1fr\)\)/u,
+    );
   });
 
   it('renders a scheduled+due task as a plain body on its scheduled day, and a deadline marker on due day (not shown here since due != this day)', () => {

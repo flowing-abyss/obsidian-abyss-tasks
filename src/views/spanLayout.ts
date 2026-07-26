@@ -1,4 +1,5 @@
 import { localDate, type LocalDate, type TaskSnapshot } from '../tasks';
+import { taskLayoutIdentity } from './timegrid/layout';
 
 type SpanPieceKind = 'ghost' | 'terminal';
 
@@ -33,10 +34,6 @@ interface RowInterval {
   readonly startIndex: number;
   readonly endIndex: number;
   readonly continuing: boolean;
-}
-
-function taskIdentity(task: TaskSnapshot): string {
-  return `${task.source.filePath}\u0000${String(task.source.line).padStart(12, '0')}`;
 }
 
 function isSpan(task: TaskSnapshot): task is TaskSnapshot & {
@@ -115,7 +112,7 @@ export function layoutVisibleSpans(
         return [
           {
             task,
-            identity: taskIdentity(task),
+            identity: taskLayoutIdentity(task),
             actualStart: task.planning.start,
             actualDue: task.planning.due,
             visibleStart,
@@ -183,4 +180,23 @@ export function layoutVisibleSpans(
   }
 
   return { rows };
+}
+
+/**
+ * Stateless preview projection: replace one task's planning in the committed render snapshot and
+ * run the same lane allocator the subsequent render will use.
+ */
+export function layoutVisibleSpansWithReplacement(
+  tasks: readonly TaskSnapshot[],
+  dates: readonly string[],
+  source: TaskSnapshot,
+  planning: TaskSnapshot['planning'],
+): VisibleSpanLayout {
+  const identity = taskLayoutIdentity(source);
+  return layoutVisibleSpans(
+    tasks.map((candidate) =>
+      taskLayoutIdentity(candidate) === identity ? { ...candidate, planning } : candidate,
+    ),
+    dates,
+  );
 }

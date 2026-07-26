@@ -5,7 +5,9 @@ import {
   type LocalDate,
   type TaskSnapshot,
 } from '../tasks';
+import type { VisibleSpanLayout } from './spanLayout';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
+import { taskLayoutIdentity } from './timegrid/layout';
 
 export interface SpanDateColumn {
   readonly date: string;
@@ -182,6 +184,7 @@ function measuredColumns(source: HTMLElement): MeasuredSpanColumn[] {
 function columnAtPoint(
   pointer: Pick<PointerEvent, 'clientX' | 'clientY'>,
   columns: readonly MeasuredSpanColumn[],
+  allowXFallback = true,
 ): MeasuredSpanColumn | undefined {
   const byRect = columns.filter(
     (column) =>
@@ -191,6 +194,7 @@ function columnAtPoint(
       pointer.clientY <= column.bottom,
   );
   if (byRect.length === 1) return byRect[0];
+  if (!allowXFallback) return undefined;
   const byX = columns.filter(
     (column) => pointer.clientX >= column.left && pointer.clientX <= column.right,
   );
@@ -237,12 +241,17 @@ export interface SpanInteractionBinding {
   readonly segmentStart: string;
   readonly segmentEnd: string;
   readonly owner: SpanInteractionOwner;
+  readonly previewLayoutFor?: (
+    task: TaskSnapshot,
+    planning: TaskSnapshot['planning'],
+  ) => VisibleSpanLayout;
   readonly boundaryHandles: readonly {
     readonly element: HTMLElement;
     readonly boundary: 'start' | 'due' | 'create-span';
   }[];
   readonly onMove: (task: TaskSnapshot, target: SpanMoveTarget) => void;
   readonly onBoundary: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
+  readonly enableMove?: boolean;
 }
 
 export function attachSpanInteractions(binding: SpanInteractionBinding): void {
@@ -264,10 +273,12 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     event.preventDefault();
     event.stopPropagation();
 
+    owner.disposeActive();
     const columns = measuredColumns(source);
     const sourceColumn = columns.find((column) => column.date === parsedDate(binding.segmentStart));
     if (!sourceColumn) return;
     const sourceRowColumns = rowColumns(sourceColumn, columns);
+    const isMonth = source.closest('.tc-mg-grid') !== null;
     const grabbedDate =
       kind === 'move'
         ? resolveGrabbedDate(
@@ -280,6 +291,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     if (kind === 'move') source.focus();
     const pointerId = event.pointerId;
     const capturedElement = event.currentTarget as HTMLElement;
+    const originalDraggable = source.getAttribute('draggable');
     let previews: HTMLElement[] = [];
     let latest: Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget> | undefined;
     let disposed = false;
@@ -289,6 +301,20 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       previews = [];
     };
 
+    const previewRow = (
+      candidates: readonly MeasuredSpanColumn[],
+      planning: TaskSnapshot['planning'],
+    ): string => {
+      const layout = binding.previewLayoutFor?.(task, planning);
+      const rowStart = candidates[0]?.date;
+      if (!layout || !rowStart) return source.style.gridRow;
+      const identity = taskLayoutIdentity(task);
+      const segment = layout.rows
+        .find((row) => row.startDate === rowStart)
+        ?.segments.find((candidate) => candidate.identity === identity);
+      return segment ? String(segment.lane + 1) : source.style.gridRow;
+    };
+
     const renderMovePreview = (target: SpanMoveTarget): void => {
       clearPreview();
       const actualStart = task.planning.start ?? localDate(binding.segmentStart);
@@ -296,6 +322,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       const shiftedStart = shiftLocalDate(actualStart, target.days);
       const shiftedEnd = shiftLocalDate(actualDue, target.days);
       if (!shiftedStart || !shiftedEnd) return;
+      const planning = { ...task.planning, start: shiftedStart, due: shiftedEnd };
       const rows = new Set(columns.map((column) => column.row));
       for (const row of rows) {
         const candidates = columns.filter((column) => column.row === row);
@@ -307,7 +334,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         const last = candidates.indexOf(visible[visible.length - 1]!);
         const preview = createPreview(source, 'tc-span-move-preview', target);
         preview.style.gridColumn = `${first + 1} / ${last + 2}`;
-        preview.style.gridRow = source.style.gridRow;
+        preview.style.gridRow = previewRow(candidates, planning);
         visible[0]!.layer.appendChild(preview);
         previews.push(preview);
       }
@@ -315,27 +342,45 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
 
     const renderBoundaryPreview = (target: InteractiveSpanBoundaryTarget): void => {
       clearPreview();
-      const column = columns.find((candidate) => candidate.date === target.date);
-      if (!column) return;
-      const candidates = columns.filter((candidate) => candidate.row === column.row);
-      const fixedDate = target.boundary === 'start' ? binding.segmentEnd : binding.segmentStart;
-      const fixedColumn = candidates.find((candidate) => candidate.date === fixedDate);
-      if (!fixedColumn) return;
-      const startIndex = Math.min(candidates.indexOf(column), candidates.indexOf(fixedColumn));
-      const endIndex = Math.max(candidates.indexOf(column), candidates.indexOf(fixedColumn));
-      const preview = createPreview(source, 'tc-span-boundary-preview', target);
-      preview.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
-      preview.style.gridRow = source.style.gridRow;
-      column.layer.appendChild(preview);
-      previews = [preview];
+      const actualStart =
+        task.planning.start ??
+        task.planning.scheduled ??
+        task.planning.due ??
+        parsedDate(binding.segmentStart);
+      const actualDue =
+        task.planning.due ??
+        task.planning.scheduled ??
+        task.planning.start ??
+        parsedDate(binding.segmentEnd);
+      if (!actualStart || !actualDue) return;
+      const prospectiveStart = target.boundary === 'start' ? target.date : actualStart;
+      const prospectiveDue = target.boundary === 'start' ? actualDue : target.date;
+      const planning = {
+        ...task.planning,
+        start: prospectiveStart,
+        due: prospectiveDue,
+      };
+      const previewColumns = isMonth ? columns : sourceRowColumns;
+      const rows = new Set(previewColumns.map((column) => column.row));
+      for (const row of rows) {
+        const candidates = previewColumns.filter((column) => column.row === row);
+        const visible = candidates.filter(
+          (column) => column.date >= prospectiveStart && column.date <= prospectiveDue,
+        );
+        if (visible.length === 0) continue;
+        const startIndex = candidates.indexOf(visible[0]!);
+        const endIndex = candidates.indexOf(visible[visible.length - 1]!);
+        const preview = createPreview(source, 'tc-span-boundary-preview', target);
+        preview.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
+        preview.style.gridRow = previewRow(candidates, planning);
+        visible[0]!.layer.appendChild(preview);
+        previews.push(preview);
+      }
     };
 
     const resolve = (pointer: PointerEvent): typeof latest => {
-      // A Month layer is scoped to one visual week.  Looking across every month cell
-      // makes the hit ambiguous (and makes a gesture on one row accidentally target a
-      // same-column cell in a different row); the source segment's row is the complete
-      // set of legal destinations for this interaction.
-      const column = columnAtPoint(pointer, kind === 'move' ? columns : sourceRowColumns);
+      const targetColumns = kind === 'move' || isMonth ? columns : sourceRowColumns;
+      const column = columnAtPoint(pointer, targetColumns, !isMonth);
       if (!column) return undefined;
       if (kind === 'move') {
         const payload: SpanMovePayload = {
@@ -375,6 +420,10 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       disposed = true;
       clearPreview();
       source.classList.remove('is-picked-up', 'is-edge-resizing');
+      if (kind !== 'move') {
+        if (originalDraggable === null) source.removeAttribute('draggable');
+        else source.setAttribute('draggable', originalDraggable);
+      }
       ownerWindow.removeEventListener('pointermove', onPointerMove);
       ownerWindow.removeEventListener('pointerup', onPointerUp);
       ownerWindow.removeEventListener('pointercancel', onCancel);
@@ -401,6 +450,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     owner.begin(dispose);
     source.classList.toggle('is-picked-up', kind === 'move');
     source.classList.toggle('is-edge-resizing', kind !== 'move');
+    if (kind !== 'move') source.setAttribute('draggable', 'false');
     capture(capturedElement, pointerId);
     ownerWindow.addEventListener('pointermove', onPointerMove);
     ownerWindow.addEventListener('pointerup', onPointerUp);
@@ -409,8 +459,11 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     capturedElement.addEventListener('lostpointercapture', onCancel);
   };
 
-  source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
+  if (binding.enableMove !== false) {
+    source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
+  }
   for (const handle of binding.boundaryHandles) {
+    handle.element.setAttribute('draggable', 'false');
     handle.element.addEventListener('pointerdown', (event) => startSession(event, handle.boundary));
   }
 }

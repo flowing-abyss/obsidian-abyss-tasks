@@ -57,14 +57,20 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
     list,
     forCalendarDates: (dates) => {
       const wanted = new Set(dates);
-      return getTasks().filter((item) =>
-        [
+      return getTasks().filter((item) => {
+        const exactDate = [
           item.planning.due,
           item.planning.scheduled,
           item.planning.start,
           item.presentation.dailyNoteDate,
-        ].some((date) => date !== undefined && wanted.has(date)),
-      );
+        ].some((date) => date !== undefined && wanted.has(date));
+        if (exactDate) return true;
+        return (
+          item.planning.start !== undefined &&
+          item.planning.due !== undefined &&
+          dates.some((date) => date >= item.planning.start! && date <= item.planning.due!)
+        );
+      });
     },
     resolve: (ref) => {
       const found = getTasks().find(
@@ -1739,6 +1745,152 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(activeDocument.activeElement).toBe(replacement);
   });
 
+  it.each([
+    {
+      direction: 'left',
+      ordering: 'event-before-result',
+      key: 'ArrowLeft',
+      originalStart: '2026-07-06',
+      originalDue: '2026-07-08',
+      updatedStart: '2026-07-05',
+      updatedDue: '2026-07-07',
+      focusedDate: '2026-07-06',
+      nextSegmentDate: '2026-07-05',
+      expectedWeekStart: '2026-06-29',
+    },
+    {
+      direction: 'left',
+      ordering: 'result-before-event',
+      key: 'ArrowLeft',
+      originalStart: '2026-07-06',
+      originalDue: '2026-07-08',
+      updatedStart: '2026-07-05',
+      updatedDue: '2026-07-07',
+      focusedDate: '2026-07-06',
+      nextSegmentDate: '2026-07-05',
+      expectedWeekStart: '2026-06-29',
+    },
+    {
+      direction: 'right',
+      ordering: 'event-before-result',
+      key: 'ArrowRight',
+      originalStart: '2026-07-10',
+      originalDue: '2026-07-22',
+      updatedStart: '2026-07-11',
+      updatedDue: '2026-07-23',
+      focusedDate: '2026-07-12',
+      nextSegmentDate: '2026-07-13',
+      expectedWeekStart: '2026-07-13',
+    },
+    {
+      direction: 'right',
+      ordering: 'result-before-event',
+      key: 'ArrowRight',
+      originalStart: '2026-07-10',
+      originalDue: '2026-07-22',
+      updatedStart: '2026-07-11',
+      updatedDue: '2026-07-23',
+      focusedDate: '2026-07-12',
+      nextSegmentDate: '2026-07-13',
+      expectedWeekStart: '2026-07-13',
+    },
+  ] as const)(
+    'follows the exact timed ghost across the Week $direction boundary with $ordering ordering',
+    async ({
+      ordering,
+      key,
+      originalStart,
+      originalDue,
+      updatedStart,
+      updatedDue,
+      focusedDate,
+      nextSegmentDate,
+      expectedWeekStart,
+    }) => {
+      const pending = deferredResult();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      const original = task({
+        ref: { filePath: 'boundary-span.md', line: 4, revision: 'revision-1' },
+        source: { filePath: 'boundary-span.md', line: 4 },
+        planning: {
+          start: originalStart,
+          due: originalDue,
+          time: '09:00',
+          duration: 60,
+        },
+      });
+      const updated = task({
+        ...original,
+        ref: { ...original.ref, revision: 'revision-2' },
+        planning: {
+          start: updatedStart,
+          due: updatedDue,
+          time: '09:00',
+          duration: 60,
+        },
+      });
+      const h = keyboardPanelHarness([original], execute);
+      clickCalendarView(h.el, 'Week');
+      const calendar = h.panel as unknown as {
+        calDate: ReturnType<typeof moment>;
+        render(): void;
+      };
+      calendar.calDate = moment('2026-07-06', 'YYYY-MM-DD');
+      calendar.render();
+
+      const outgoing = h.el.querySelector<HTMLElement>(
+        `.tc-tg-block-continuation[data-tg-segment-date="${focusedDate}"]`,
+      );
+      if (!outgoing) throw new Error(`missing outgoing timed ghost ${focusedDate}`);
+      outgoing.focus();
+      press(outgoing, key);
+
+      let preEventCandidate: HTMLElement | null = null;
+      if (ordering === 'event-before-result') {
+        h.setSnapshots([updated]);
+        h.emit();
+        pending.resolve(okTask(updated));
+      } else {
+        pending.resolve(okTask(updated));
+        await flushMicrotasks();
+        preEventCandidate = h.el.querySelector<HTMLElement>(
+          `.tc-tg-block[data-tg-segment-date="${nextSegmentDate}"]`,
+        );
+        h.setSnapshots([updated]);
+        h.emit();
+      }
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'shift-schedule',
+        ref: original.ref,
+        days: key === 'ArrowLeft' ? -1 : 1,
+      });
+      const visibleDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+        (column) => column.dataset['tgDate'],
+      );
+      expect(visibleDates[0]).toBe(expectedWeekStart);
+      expect(visibleDates).toContain(nextSegmentDate);
+      expect(
+        Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).map(
+          (block) => block.dataset['tgSegmentDate'],
+        ),
+      ).toContain(nextSegmentDate);
+      const replacement = h.el.querySelector<HTMLElement>(
+        `.tc-tg-block-continuation[data-tg-segment-date="${nextSegmentDate}"]`,
+      );
+      expect(replacement).not.toBeNull();
+      expect(replacement).not.toBe(outgoing);
+      if (preEventCandidate) expect(replacement).not.toBe(preEventCandidate);
+      await vi.waitFor(() => {
+        expect(h.el.ownerDocument.activeElement).toBe(replacement);
+      });
+
+      h.panel.destroy();
+      h.el.remove();
+    },
+  );
+
   it('uses the mounted popout document for command origin and restoration through remount', async () => {
     const iframe = activeDocument.createElement('iframe');
     activeDocument.body.append(iframe);
@@ -2093,7 +2245,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       '2026-01-10',
       '2026-01-11',
     ]);
-    expect(h.el.ownerDocument.activeElement).toBe(timedBlock(h.el));
+    await vi.waitFor(() => {
+      expect(h.el.ownerDocument.activeElement).toBe(timedBlock(h.el));
+    });
   });
 
   it('does not let task A late completion navigate or focus after task B owns the queue', async () => {
