@@ -534,7 +534,7 @@ describe('Task 2 unified timed interaction contract', () => {
       expect(declarations).toMatch(/position\s*:\s*absolute/u);
       expect(declarations).toMatch(/border\s*:[^;]*dashed/u);
       expect(declarations).toMatch(
-        /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 55%,\s*var\(--text-normal\)\s*\)/u,
+        /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-preview-border-tag-strength\),\s*var\(--text-normal\)\s*\)/u,
       );
       expect(declarations).toMatch(/pointer-events\s*:\s*none/u);
     }

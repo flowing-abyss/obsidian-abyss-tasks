@@ -39,6 +39,11 @@ describe('duration parsing', () => {
   it('parses minutes only', () => {
     expect(parseDurationToMinutes('45m')).toBe(45);
   });
+  it('parses clock-style hours and minutes used by existing vault tasks', () => {
+    expect(parseDurationToMinutes('01:00')).toBe(60);
+    expect(parseDurationToMinutes('1:30')).toBe(90);
+    expect(parseDurationToMinutes('01:60')).toBeUndefined();
+  });
   it('returns undefined for garbage', () => {
     expect(parseDurationToMinutes('')).toBeUndefined();
   });
@@ -54,6 +59,27 @@ describe('duration parsing', () => {
     expect(t?.time).toBe('15:00');
     expect(t?.duration).toBe(120);
     expect(t?.text).toBe('gym');
+  });
+
+  it('parses and safely canonicalizes a clock-style duration when resizing', () => {
+    const source = '- [ ] gym ⏰ 09:00 ⏱️ 01:00';
+    const parsed = codec.parseLine(source, { filePath: 'f.md', line: 0 });
+
+    expect(parsed?.planning.duration).toBe(60);
+    expect(parsed?.title).toBe('gym');
+    expect(codec.applyLineEdit(source, { type: 'set-duration', value: 90 })).toEqual({
+      type: 'changed',
+      content: '- [ ] gym ⏰ 09:00 ⏱️ 1h30m',
+    });
+  });
+
+  it('rejects editing a clock-style duration with a non-whitespace suffix', () => {
+    expect(
+      codec.applyLineEdit('- [ ] gym ⏱️ 01:00oops', { type: 'set-duration', value: 90 }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-duration', field: 'duration' }],
+    });
   });
 
   it('parseTask leaves duration undefined when absent', () => {

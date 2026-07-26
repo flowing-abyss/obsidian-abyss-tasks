@@ -128,7 +128,7 @@ const DATE_PATTERNS: ReadonlyArray<{
   { kind: 'cancelled', regex: /❌\s*(\d{4}-\d{2}-\d{2})/gu },
 ];
 const TIME_RE = /⏰\s*(\d{1,2}:\d{2})/gu;
-const DURATION_RE = /⏱️\s*(?:(\d+)h)?(?:(\d+)m)?/gu;
+const DURATION_RE = /⏱️\s*(?:(\d{1,2}):([0-5]\d)(?=\s|$)|(?:(\d+)h)?(?:(\d+)m)?)/gu;
 const RECURRENCE_MARKER_RE = /🔁/gu;
 const BLOCK_ID_RE = /\^[A-Za-z0-9-]+(?=\s*$)/gu;
 
@@ -1139,13 +1139,21 @@ export class TaskMarkdownCodec {
     pushPinnedCarrierCandidates(candidates, body, prefixEnd, '⛔', DEPENDS_ON_RE, 'depends-on');
 
     for (const match of matches(DURATION_RE, body)) {
-      if (match[1] === undefined && match[2] === undefined) continue;
+      if (
+        match[1] === undefined &&
+        match[2] === undefined &&
+        match[3] === undefined &&
+        match[4] === undefined
+      )
+        continue;
+      const hours = match[1] ?? match[3];
+      const minutes = match[2] ?? match[4];
       candidates.push({
         kind: 'duration',
         from: prefixEnd + match.index,
         to: prefixEnd + match.index + match[0].length,
-        ...(durationMinutes(match[1], match[2]) !== undefined
-          ? { value: durationMinutes(match[1], match[2]) }
+        ...(durationMinutes(hours, minutes) !== undefined
+          ? { value: durationMinutes(hours, minutes) }
           : {}),
       });
     }

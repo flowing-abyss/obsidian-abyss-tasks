@@ -29,6 +29,42 @@ function declarationsForRuleContaining(...selectors: string[]): string {
   return declarations;
 }
 
+function rgb(hex: string): readonly [number, number, number] {
+  return [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16)) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+function mix(foreground: string, background: string, foregroundStrength: number): string {
+  const foregroundRgb = rgb(foreground);
+  const backgroundRgb = rgb(background);
+  return `#${foregroundRgb
+    .map((channel, index) =>
+      Math.round(channel * foregroundStrength + backgroundRgb[index]! * (1 - foregroundStrength))
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`;
+}
+
+function contrastRatio(left: string, right: string): number {
+  const luminance = (color: string): number => {
+    const [red, green, blue] = rgb(color).map((channel) => {
+      const normalized = channel / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    });
+    return 0.2126 * red! + 0.7152 * green! + 0.0722 * blue!;
+  };
+  const leftLuminance = luminance(left);
+  const rightLuminance = luminance(right);
+  return (
+    (Math.max(leftLuminance, rightLuminance) + 0.05) /
+    (Math.min(leftLuminance, rightLuminance) + 0.05)
+  );
+}
+
 const callbacks = () => ({
   app: fakeApp,
   component: new Component(),
@@ -229,12 +265,23 @@ describe('renderAllDayCell', () => {
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);
   });
 
-  it('keeps exact span previews visible for dark and pale tag colors', () => {
+  it('uses theme-aware preview borders with at least 3:1 contrast for representative tag colors', () => {
+    expect(declarationsFor('.tc-panel-view')).toMatch(
+      /--tc-preview-border-tag-strength\s*:\s*35%/u,
+    );
+    expect(declarationsFor('.theme-dark .tc-panel-view')).toMatch(
+      /--tc-preview-border-tag-strength\s*:\s*55%/u,
+    );
     expect(
       declarationsForRuleContaining('.tc-span-move-preview', '.tc-span-boundary-preview'),
     ).toMatch(
-      /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 55%,\s*var\(--text-normal\)\s*\)/u,
+      /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-preview-border-tag-strength\),\s*var\(--text-normal\)\s*\)/u,
     );
+    const tagColors = ['#1a1a40', '#ffee58', '#d5f5e3', '#d64343'];
+    for (const tagColor of tagColors) {
+      expect(contrastRatio(mix(tagColor, '#2e3338', 0.35), '#ffffff')).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(mix(tagColor, '#dadada', 0.55), '#1e1e21')).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it('keeps the all-day marker crisp with a theme-derived halo', () => {

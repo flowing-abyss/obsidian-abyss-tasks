@@ -3,11 +3,17 @@ import { TaskMarkdownCodec } from '../tasks/infrastructure/markdown/TaskMarkdown
 import { legacyTaskFromParsed } from './legacyTaskProjection';
 import type { ParseContext, Task } from './types';
 
-const DURATION_RE = /⏱️\s*(?:(\d+)h)?(?:(\d+)m)?/u;
+const DURATION_RE = /⏱️\s*(?:(\d{1,2}):([0-5]\d)(?=\s|$)|(?:(\d+)h)?(?:(\d+)m)?)/u;
 
-/** Parse a duration token body (e.g. "1h30m", "2h", "45m") into total minutes. */
+/** Parse a duration token body (e.g. "1h30m", "2h", "45m", or legacy "01:30"). */
 export function parseDurationToMinutes(raw: string): number | undefined {
-  const m = /^(?:(\d+)h)?(?:(\d+)m)?$/u.exec(raw.trim());
+  const value = raw.trim();
+  const clock = /^(\d{1,2}):([0-5]\d)$/u.exec(value);
+  if (clock) {
+    const total = Number(clock[1]) * 60 + Number(clock[2]);
+    return total > 0 ? total : undefined;
+  }
+  const m = /^(?:(\d+)h)?(?:(\d+)m)?$/u.exec(value);
   if (!m) return undefined;
   const hours = m[1] ? parseInt(m[1], 10) : 0;
   const mins = m[2] ? parseInt(m[2], 10) : 0;
@@ -22,18 +28,22 @@ export function formatDurationFromMinutes(minutes: number): string {
 
 /**
  * Find a ⏱️ duration token in `text` and parse it via `parseDurationToMinutes`,
- * the single source of truth for h/m parsing (including the "0m -> undefined"
+ * the single source of truth for h/m and clock-style parsing (including the "0m -> undefined"
  * rule). Returns `undefined` when no digit group follows ⏱️ at all (a bare/
  * malformed token) — callers should then treat it as ordinary title text, not
  * metadata, matching `parseTask`'s behavior for malformed input.
  */
 function matchDuration(text: string): { raw: string; minutes: number | undefined } | undefined {
   const m = DURATION_RE.exec(text);
-  if (!m || (!m[1] && !m[2])) return undefined;
-  const parts: string[] = [];
-  if (m[1]) parts.push(`${m[1]}h`);
-  if (m[2]) parts.push(`${m[2]}m`);
-  return { raw: m[0], minutes: parseDurationToMinutes(parts.join('')) };
+  if (!m || (!m[1] && !m[2] && !m[3] && !m[4])) return undefined;
+  let body = '';
+  if (m[1] && m[2]) {
+    body = `${m[1]}:${m[2]}`;
+  } else {
+    if (m[3]) body += `${m[3]}h`;
+    if (m[4]) body += `${m[4]}m`;
+  }
+  return { raw: m[0], minutes: parseDurationToMinutes(body) };
 }
 
 export function parseTask(rawText: string, ctx: ParseContext): Task | null {

@@ -13,6 +13,9 @@
      through one full-strength rail while the opaque body tint adapts to the host theme. */
   --tc-event-fill-strength: 14%;
   --tc-ghost-fill-strength: 7%;
+  /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
+     light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
+  --tc-preview-border-tag-strength: 35%;
   /* Task 40 (Round 4): fixed contrast anchors consumed by --tc-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
      the full reasoning). Deliberately NOT theme-variable tokens like --text-normal: their whole
@@ -27,6 +30,7 @@
 .theme-dark .tc-panel-view {
   --tc-event-fill-strength: 18%;
   --tc-ghost-fill-strength: 10%;
+  --tc-preview-border-tag-strength: 55%;
 }
 
 /* ============================================================
@@ -1334,7 +1338,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-sizing: border-box;
   pointer-events: none;
   border: 2px dashed
-    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
+      var(--text-normal)
+    );
   border-radius: 4px;
   background: color-mix(
     in srgb,
@@ -1785,7 +1793,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-sizing: border-box;
   pointer-events: none;
   border: 2px dashed
-    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
+      var(--text-normal)
+    );
   border-radius: 4px;
   background: color-mix(
     in srgb,
@@ -1800,7 +1812,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-sizing: border-box;
   pointer-events: none;
   border: 2px dashed
-    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
+      var(--text-normal)
+    );
   border-radius: 4px;
   background: color-mix(
     in srgb,
