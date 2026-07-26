@@ -26,7 +26,11 @@ export abstract class BaseView {
     preservedScrollTop?: number,
   ): void;
 
-  // Default patch = full re-render. Override in views that need to preserve DOM state.
+  /**
+   * Apply a task-query update to an already mounted view. The default remains a full render for
+   * views without stable skeleton state. Calendar-grid overrides retain their static DOM when the
+   * container and skeleton key match, and may delegate back to render when either changes.
+   */
   patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
     this.render(container, tasks, config);
   }

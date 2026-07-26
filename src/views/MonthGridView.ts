@@ -37,6 +37,8 @@ export interface MonthGridViewCallbacks {
 
 export class MonthGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
+  private skeletonKey: string | null = null;
+  private visibleDates: string[] = [];
   private md = new Component();
   private spanInteractions = createSpanInteractionOwner();
 
@@ -58,6 +60,7 @@ export class MonthGridView extends BaseView {
       ? window.moment(config.startPosition, 'YYYY-MM').date(1)
       : window.moment().date(1);
     const firstDayOfMonth = parseInt(window.moment(month).format('d'), 10);
+    this.skeletonKey = this.buildSkeletonKey(month.format('YYYY-MM'), config);
 
     const grid = container.createDiv({ cls: 'tc-mg-grid' });
     const headRow = grid.createDiv({ cls: 'tc-mg-head-row' });
@@ -76,38 +79,9 @@ export class MonthGridView extends BaseView {
         .add(monthOffset + index, 'days')
         .format('YYYY-MM-DD'),
     );
+    this.visibleDates = visibleDates;
     const spanRows = layoutVisibleSpans(tasks, visibleDates).rows;
-    const spanCallbacks: AllDayCallbacks = {
-      app: this.callbacks.app,
-      component: this.md,
-      onTaskClick: this.callbacks.onTaskClick,
-      onDrop: this.callbacks.onDrop,
-      onStartChange: (task, date) =>
-        this.callbacks.onSpanBoundary?.(task, {
-          boundary: 'start',
-          date: date as never,
-          dayDelta: 0,
-        }),
-      onDueChange: (task, date) =>
-        this.callbacks.onSpanBoundary?.(task, {
-          boundary: 'due',
-          date: date as never,
-          dayDelta: 0,
-        }),
-      onExtendToSpan: (task, date) =>
-        this.callbacks.onSpanBoundary?.(task, {
-          boundary: 'create-span',
-          date: date as never,
-          dayDelta: 0,
-        }),
-      onSpanMove: this.callbacks.onSpanMove,
-      onSpanBoundary: this.callbacks.onSpanBoundary,
-      spanInteractionOwner: this.spanInteractions,
-      onToggle: this.callbacks.onToggle,
-      onSetStatus: this.callbacks.onSetStatus,
-      onSetPriority: this.callbacks.onSetPriority,
-      statusRegistry: this.callbacks.statusRegistry,
-    };
+    const spanCallbacks = this.buildSpanCallbacks();
 
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
@@ -214,6 +188,96 @@ export class MonthGridView extends BaseView {
       );
       starts += 7;
     }
+  }
+
+  override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+    const month = config.startPosition
+      ? window.moment(config.startPosition, 'YYYY-MM').date(1)
+      : window.moment().date(1);
+    if (
+      container !== this.containerEl ||
+      this.skeletonKey !== this.buildSkeletonKey(month.format('YYYY-MM'), config) ||
+      this.visibleDates.length !== 42
+    ) {
+      this.render(container, tasks, config);
+      return;
+    }
+
+    this.spanInteractions.disposeActive();
+    this.md.unload();
+    this.md = new Component();
+    this.md.load();
+
+    const spanRows = layoutVisibleSpans(tasks, this.visibleDates).rows;
+    const spanCallbacks = this.buildSpanCallbacks();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-row'));
+    for (const [rowIndex, row] of rows.entries()) {
+      const spanRow = spanRows[rowIndex];
+      if (!spanRow) continue;
+      const rowDates = this.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
+      for (const date of rowDates) {
+        const cell = row.querySelector<HTMLElement>(`.tc-mg-cell[data-mg-date="${date}"]`);
+        const items = cell?.querySelector<HTMLElement>(':scope > .tc-mg-cell-items');
+        if (!cell || !items) continue;
+        items.empty();
+        this.renderCompactCell(items, tasks, date);
+        cell.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+      }
+      const layer = row.querySelector<HTMLElement>(':scope > .tc-mg-span-layer');
+      if (!layer) continue;
+      renderAllDaySpanLayer(
+        layer,
+        spanRow,
+        rowDates,
+        spanCallbacks,
+        this.callbacks.tagGroups ?? [],
+        this.spanInteractions,
+        'month',
+      );
+    }
+  }
+
+  private buildSkeletonKey(month: string, config: ResolvedConfig): string {
+    return [
+      month,
+      config.firstDayOfWeek,
+      config.dailyNoteFolder,
+      window.moment().format('YYYY-MM-DD'),
+    ].join('|');
+  }
+
+  private buildSpanCallbacks(): AllDayCallbacks {
+    return {
+      app: this.callbacks.app,
+      component: this.md,
+      onTaskClick: this.callbacks.onTaskClick,
+      onDrop: this.callbacks.onDrop,
+      onStartChange: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'start',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onDueChange: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'due',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onExtendToSpan: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'create-span',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onSpanMove: this.callbacks.onSpanMove,
+      onSpanBoundary: this.callbacks.onSpanBoundary,
+      spanInteractionOwner: this.spanInteractions,
+      onToggle: this.callbacks.onToggle,
+      onSetStatus: this.callbacks.onSetStatus,
+      onSetPriority: this.callbacks.onSetPriority,
+      statusRegistry: this.callbacks.statusRegistry,
+    };
   }
 
   private renderCompactCell(cell: HTMLElement, tasks: TaskSnapshot[], date: string): void {
@@ -347,6 +411,8 @@ export class MonthGridView extends BaseView {
   destroy(): void {
     this.spanInteractions.disposeActive();
     this.containerEl = null;
+    this.skeletonKey = null;
+    this.visibleDates = [];
     this.md.unload();
   }
 }

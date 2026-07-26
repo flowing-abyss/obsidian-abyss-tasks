@@ -64,6 +64,71 @@ function allDayCallbacks() {
 }
 
 describe('MonthGridView', () => {
+  it('patches only task layers while retaining month headers, rows, day cells, and static listeners', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
+    const initial = task({
+      title: 'Initial month task',
+      markdownTitle: 'Initial month task',
+      planning: { due: '2026-07-15' },
+    });
+
+    view.render(container, [initial], config);
+    const header = container.querySelector('.tc-mg-head-row');
+    const row = requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.tc-mg-row');
+    const cell = container.querySelector('[data-mg-date="2026-07-15"]');
+    const dayLabel = cell?.querySelector('.tc-mg-day-label');
+    const spanLayer = row?.querySelector('.tc-mg-span-layer');
+
+    for (let revision = 1; revision <= 3; revision++) {
+      view.patch(
+        container,
+        [
+          task({
+            title: `Updated month task ${revision}`,
+            markdownTitle: `Updated month task ${revision}`,
+            planning: { due: '2026-07-15' },
+          }),
+          task({
+            title: `Updated span ${revision}`,
+            markdownTitle: `Updated span ${revision}`,
+            planning: { start: '2026-07-14', due: '2026-07-16' },
+            source: { filePath: 'span.md', line: revision },
+          }),
+        ],
+        config,
+      );
+    }
+
+    expect(container.querySelector('.tc-mg-head-row')).toBe(header);
+    expect(requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.tc-mg-row')).toBe(
+      row,
+    );
+    expect(container.querySelector('[data-mg-date="2026-07-15"]')).toBe(cell);
+    expect(cell?.querySelector('.tc-mg-day-label')).toBe(dayLabel);
+    expect(row?.querySelector('.tc-mg-span-layer')).toBe(spanLayer);
+    expect(container.textContent).not.toContain('Initial month task');
+    expect(container.textContent).toContain('Updated month task 3');
+    expect(container.textContent).toContain('Updated span 3');
+
+    cell?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(cbs.onDayClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('patch falls back to a full render when the visible month changes', () => {
+    const container = freshContainer();
+    const view = new MonthGridView(callbacks());
+    view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
+    const header = container.querySelector('.tc-mg-head-row');
+
+    view.patch(container, [], resolvedConfig({ startPosition: '2026-08' }));
+
+    expect(container.querySelector('.tc-mg-head-row')).not.toBe(header);
+    expect(container.querySelector('[data-mg-date="2026-08-01"]')).not.toBeNull();
+  });
+
   it('keeps one current overlay drop listener when the same layer renders repeatedly', () => {
     const container = freshContainer();
     const parent = container.createDiv();

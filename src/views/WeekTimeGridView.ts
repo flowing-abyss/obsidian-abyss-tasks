@@ -5,7 +5,7 @@ import type { TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
 import { createSpanInteractionOwner } from './spanInteractions';
 import { layoutVisibleSpans } from './spanLayout';
-import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
+import { renderHourGrid, repositionNowLine, type HourGridHandles } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
 import {
   renderAllDayCell,
@@ -18,6 +18,9 @@ import { bucketTasksForDate, NOW_LINE_REFRESH_MS, type TimeGridCallbacks } from 
 
 export class WeekTimeGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
+  private skeletonKey: string | null = null;
+  private gridHandles: HourGridHandles | null = null;
+  private visibleDates: string[] = [];
   private md = new Component();
   private nowLineIntervalId: number | null = null;
   private timedInteractions = createTimedInteractionOwner();
@@ -48,15 +51,9 @@ export class WeekTimeGridView extends BaseView {
     }
 
     this.containerEl = container;
-    const dates: string[] = [];
-    const week = resolveWeekStartPosition(
-      config.startPosition,
-      config.firstDayOfWeek,
-      window.moment(),
-    );
-    for (let i = 0; i < 7; i++) {
-      dates.push(week.clone().add(i, 'days').format('YYYY-MM-DD'));
-    }
+    const dates = this.resolveDates(config);
+    this.visibleDates = dates;
+    this.skeletonKey = this.buildSkeletonKey(dates);
 
     const handles = renderHourGrid(
       container,
@@ -65,7 +62,88 @@ export class WeekTimeGridView extends BaseView {
       this.callbacks.onCreateAtTime,
       this.callbacks.onDayHeaderClick,
     );
+    this.gridHandles = handles;
+    this.renderTaskLayers(tasks, dates, handles, true);
 
+    const today = window.moment().format('YYYY-MM-DD');
+    const containsToday = dates.includes(today);
+    const gridRowEl = handles.gridRowEl;
+    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
+    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
+    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
+    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
+    if (shouldScrollToNow) {
+      if (containsToday) {
+        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
+        const nowPx = minutesToPixels(nowMinutes);
+        window.setTimeout(() => {
+          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
+        }, 0);
+      }
+    } else if (preservedScrollTop !== undefined) {
+      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
+      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
+      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
+      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
+      window.setTimeout(() => {
+        gridRowEl.scrollTop = preservedScrollTop;
+      }, 0);
+    }
+
+    if (containsToday) {
+      const nowLineEl = handles.nowLineEl;
+      if (nowLineEl) {
+        this.nowLineIntervalId = window.setInterval(() => {
+          repositionNowLine(nowLineEl);
+        }, NOW_LINE_REFRESH_MS);
+      }
+    }
+  }
+
+  override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+    const dates = this.resolveDates(config);
+    if (
+      container !== this.containerEl ||
+      this.skeletonKey !== this.buildSkeletonKey(dates) ||
+      this.gridHandles === null
+    ) {
+      this.render(container, tasks, config);
+      return;
+    }
+
+    this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
+    this.resetTaskComponent();
+    this.renderTaskLayers(tasks, this.visibleDates, this.gridHandles, false);
+  }
+
+  private resolveDates(config: ResolvedConfig): string[] {
+    const week = resolveWeekStartPosition(
+      config.startPosition,
+      config.firstDayOfWeek,
+      window.moment(),
+    );
+    return Array.from({ length: 7 }, (_, index) =>
+      week.clone().add(index, 'days').format('YYYY-MM-DD'),
+    );
+  }
+
+  private buildSkeletonKey(dates: readonly string[]): string {
+    return `${dates.join(',')}|today:${window.moment().format('YYYY-MM-DD')}`;
+  }
+
+  private resetTaskComponent(): void {
+    this.md.unload();
+    this.md = new Component();
+    this.md.load();
+  }
+
+  private renderTaskLayers(
+    tasks: TaskSnapshot[],
+    dates: readonly string[],
+    handles: HourGridHandles,
+    installCellBindings: boolean,
+  ): void {
     const timedCallbacks: TimedBlockCallbacks = {
       app: this.callbacks.app,
       component: this.md,
@@ -120,6 +198,13 @@ export class WeekTimeGridView extends BaseView {
     );
     for (const day of handles.days) {
       const { timed, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, day.date);
+      if (!installCellBindings) {
+        day.hourColumnEl
+          .querySelectorAll<HTMLElement>(
+            ':scope > .tc-tg-block, :scope > .tc-tg-block-continuation',
+          )
+          .forEach((element) => element.remove());
+      }
       renderTimedBlocksForDay(
         day.hourColumnEl,
         [...timed, ...timedSpans],
@@ -128,52 +213,35 @@ export class WeekTimeGridView extends BaseView {
         { date: day.date },
       );
       day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
-      renderAllDayCell(
-        day.allDayCellEl,
-        day.date,
-        [],
-        plain,
-        deadlines,
-        allDayCallbacks,
-        tagGroups,
-      );
-      const items = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
-      for (const child of Array.from(day.allDayCellEl.children)) {
-        if (child !== items) items.appendChild(child);
+      if (installCellBindings) {
+        renderAllDayCell(
+          day.allDayCellEl,
+          day.date,
+          [],
+          plain,
+          deadlines,
+          allDayCallbacks,
+          tagGroups,
+        );
+        const items = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+        for (const child of Array.from(day.allDayCellEl.children)) {
+          if (child !== items) items.appendChild(child);
+        }
+        continue;
       }
-    }
 
-    const today = window.moment().format('YYYY-MM-DD');
-    const containsToday = dates.includes(today);
-    const gridRowEl = handles.gridRowEl;
-    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
-    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
-    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
-    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
-    if (shouldScrollToNow) {
-      if (containsToday) {
-        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
-        const nowPx = minutesToPixels(nowMinutes);
-        window.setTimeout(() => {
-          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
-        }, 0);
-      }
-    } else if (preservedScrollTop !== undefined) {
-      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
-      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
-      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
-      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
-      window.setTimeout(() => {
-        gridRowEl.scrollTop = preservedScrollTop;
-      }, 0);
-    }
-
-    if (containsToday) {
-      const nowLineEl = handles.nowLineEl;
-      if (nowLineEl) {
-        this.nowLineIntervalId = window.setInterval(() => {
-          repositionNowLine(nowLineEl);
-        }, NOW_LINE_REFRESH_MS);
+      const items = day.allDayCellEl.querySelector<HTMLElement>(':scope > .tc-tg-cell-items');
+      if (!items) continue;
+      items.empty();
+      const scratch = day.allDayCellEl.ownerDocument.createElement('div');
+      renderAllDayCell(scratch, day.date, [], plain, deadlines, allDayCallbacks, tagGroups);
+      for (const child of Array.from(scratch.children)) items.appendChild(child);
+      const scratchHook = (scratch as unknown as { __tgTestEndDrag?: (targetDate: string) => void })
+        .__tgTestEndDrag;
+      if (scratchHook) {
+        (
+          day.allDayCellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }
+        ).__tgTestEndDrag = scratchHook;
       }
     }
   }
@@ -182,6 +250,9 @@ export class WeekTimeGridView extends BaseView {
     this.timedInteractions.disposeActive();
     this.spanInteractions.disposeActive();
     this.containerEl = null;
+    this.skeletonKey = null;
+    this.gridHandles = null;
+    this.visibleDates = [];
     this.md.unload();
     if (this.nowLineIntervalId !== null) {
       window.clearInterval(this.nowLineIntervalId);

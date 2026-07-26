@@ -34,6 +34,96 @@ function callbacks() {
 }
 
 describe('WeekTimeGridView', () => {
+  it('patches only task layers while retaining the week skeleton, scroll position, listeners, and now-line interval', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-08T09:30:00'));
+    try {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new WeekTimeGridView(cbs);
+      const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+      const initial = task({
+        title: 'Initial week task',
+        markdownTitle: 'Initial week task',
+        planning: { due: '2026-07-08', time: '09:00', duration: 60 },
+      });
+      const setIntervalSpy = vi.spyOn(window, 'setInterval');
+
+      view.render(container, [initial], config, false);
+      const header = container.querySelector('.tc-tg-header-row');
+      const gridRow = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+      const hourRow = container.querySelector('.tc-tg-hour-row');
+      const dayColumn = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-day-column');
+      const allDayCell = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-allday-cell');
+      const nowLine = container.querySelector('.tc-tg-now-line');
+      const quickAdd = (dayColumn as HTMLElement)
+        .querySelector<HTMLElement>('.tc-tg-hour-column')!
+        .createDiv({ cls: 'tc-tg-quick-add' });
+      gridRow.scrollTop = 412;
+
+      for (let revision = 1; revision <= 3; revision++) {
+        view.patch(
+          container,
+          [
+            task({
+              title: `Updated week task ${revision}`,
+              markdownTitle: `Updated week task ${revision}`,
+              planning: { due: '2026-07-09', time: '10:00', duration: 60 },
+            }),
+          ],
+          config,
+        );
+      }
+
+      expect(container.querySelector('.tc-tg-header-row')).toBe(header);
+      expect(container.querySelector('.tc-tg-grid-row')).toBe(gridRow);
+      expect(container.querySelector('.tc-tg-hour-row')).toBe(hourRow);
+      expect(container.querySelector('[data-tg-date="2026-07-08"].tc-tg-day-column')).toBe(
+        dayColumn,
+      );
+      expect(container.querySelector('[data-tg-date="2026-07-08"].tc-tg-allday-cell')).toBe(
+        allDayCell,
+      );
+      expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
+      expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
+      expect(gridRow.scrollTop).toBe(412);
+      expect(container.textContent).not.toContain('Initial week task');
+      expect(container.textContent).toContain('Updated week task 3');
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+
+      const headerCell = container.querySelector(
+        '.tc-tg-header-cell:nth-of-type(4)',
+      ) as HTMLElement;
+      headerCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(cbs.onDayHeaderClick).toHaveBeenCalledTimes(1);
+      const drop = new MouseEvent('drop', { bubbles: true });
+      Object.defineProperty(drop, 'dataTransfer', {
+        value: { getData: () => 'task.md:::1' },
+      });
+      (allDayCell as HTMLElement).dispatchEvent(drop);
+      expect(cbs.onDrop).toHaveBeenCalledTimes(1);
+
+      view.destroy();
+      setIntervalSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('patch falls back to a full render when the visible week changes', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    view.render(container, [], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
+    const header = container.querySelector('.tc-tg-header-row');
+
+    view.patch(container, [], resolvedConfig({ startPosition: '2026-07-13', firstDayOfWeek: 1 }));
+
+    expect(container.querySelector('.tc-tg-header-row')).not.toBe(header);
+    expect(container.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+      '2026-07-13',
+    );
+  });
+
   it('renders one shared continuous all-day ghost across adjacent columns with a due terminal', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());

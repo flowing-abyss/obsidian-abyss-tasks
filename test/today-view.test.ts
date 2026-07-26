@@ -45,6 +45,90 @@ function gridRect(left: number, top: number, width: number, height: number): DOM
 }
 
 describe('TodayView', () => {
+  it('patches only task layers while retaining the day skeleton, scroll position, listeners, and now-line interval', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-10T09:30:00'));
+    try {
+      const container = freshContainer();
+      const cbs = callbacks();
+      const view = new TodayView(cbs);
+      const config = resolvedConfig({ startPosition: '2026-07-10' });
+      const initial = task({
+        title: 'Initial task',
+        markdownTitle: 'Initial task',
+        planning: { due: '2026-07-10', time: '09:00', duration: 60 },
+      });
+      const setIntervalSpy = vi.spyOn(window, 'setInterval');
+
+      view.render(container, [initial], config, false);
+      const header = container.querySelector('.tc-tg-header-row');
+      const gridRow = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+      const hourRow = container.querySelector('.tc-tg-hour-row');
+      const dayColumn = container.querySelector('.tc-tg-day-column');
+      const allDayCell = container.querySelector('.tc-tg-allday-cell');
+      const nowLine = container.querySelector('.tc-tg-now-line');
+      const quickAdd = (dayColumn as HTMLElement)
+        .querySelector<HTMLElement>('.tc-tg-hour-column')!
+        .createDiv({ cls: 'tc-tg-quick-add' });
+      gridRow.scrollTop = 321;
+
+      for (let revision = 1; revision <= 3; revision++) {
+        view.patch(
+          container,
+          [
+            task({
+              title: `Updated task ${revision}`,
+              markdownTitle: `Updated task ${revision}`,
+              planning: { due: '2026-07-10', time: '10:00', duration: 60 },
+            }),
+          ],
+          config,
+        );
+      }
+
+      expect(container.querySelector('.tc-tg-header-row')).toBe(header);
+      expect(container.querySelector('.tc-tg-grid-row')).toBe(gridRow);
+      expect(container.querySelector('.tc-tg-hour-row')).toBe(hourRow);
+      expect(container.querySelector('.tc-tg-day-column')).toBe(dayColumn);
+      expect(container.querySelector('.tc-tg-allday-cell')).toBe(allDayCell);
+      expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
+      expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
+      expect(gridRow.scrollTop).toBe(321);
+      expect(container.textContent).not.toContain('Initial task');
+      expect(container.textContent).toContain('Updated task 3');
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+
+      const hourColumn = container.querySelector('.tc-tg-hour-column') as HTMLElement;
+      hourColumn.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 96 }));
+      expect(cbs.onCreateAtTime).toHaveBeenCalledTimes(1);
+      const drop = new MouseEvent('drop', { bubbles: true });
+      Object.defineProperty(drop, 'dataTransfer', {
+        value: { getData: () => 'task.md:::1' },
+      });
+      (allDayCell as HTMLElement).dispatchEvent(drop);
+      expect(cbs.onDrop).toHaveBeenCalledTimes(1);
+
+      view.destroy();
+      setIntervalSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('patch falls back to a full render when the visible day changes', () => {
+    const container = freshContainer();
+    const view = new TodayView(callbacks());
+    view.render(container, [], resolvedConfig({ startPosition: '2026-07-10' }));
+    const header = container.querySelector('.tc-tg-header-row');
+
+    view.patch(container, [], resolvedConfig({ startPosition: '2026-07-11' }));
+
+    expect(container.querySelector('.tc-tg-header-row')).not.toBe(header);
+    expect(container.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+      '2026-07-11',
+    );
+  });
+
   it('threads relative keyboard intents from timed blocks', () => {
     const container = freshContainer();
     const cbs = callbacks();

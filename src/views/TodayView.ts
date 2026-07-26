@@ -10,7 +10,7 @@ import {
 } from './spanInteractions';
 import { layoutVisibleSpans } from './spanLayout';
 import type { TimedDragTarget, TimedDurationTarget } from './timegrid/dragGeometry';
-import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
+import { renderHourGrid, repositionNowLine, type HourGridHandles } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
 import {
   renderAllDayCell,
@@ -135,6 +135,8 @@ export const NOW_LINE_REFRESH_MS = 5 * 60 * 1000;
 
 export class TodayView extends BaseView {
   private containerEl: HTMLElement | null = null;
+  private skeletonKey: string | null = null;
+  private gridHandles: HourGridHandles | null = null;
   private md = new Component();
   private nowLineIntervalId: number | null = null;
   private timedInteractions = createTimedInteractionOwner();
@@ -166,6 +168,7 @@ export class TodayView extends BaseView {
 
     this.containerEl = container;
     const date = config.startPosition || window.moment().format('YYYY-MM-DD');
+    this.skeletonKey = this.buildSkeletonKey(date);
 
     const handles = renderHourGrid(
       container,
@@ -174,8 +177,77 @@ export class TodayView extends BaseView {
       this.callbacks.onCreateAtTime,
       this.callbacks.onDayHeaderClick,
     );
-    const day = handles.days[0]!;
+    this.gridHandles = handles;
+    this.renderTaskLayers(tasks, date, handles, true);
 
+    const isToday = date === window.moment().format('YYYY-MM-DD');
+    const gridRowEl = handles.gridRowEl;
+    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
+    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
+    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
+    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
+    if (shouldScrollToNow) {
+      if (isToday) {
+        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
+        const nowPx = minutesToPixels(nowMinutes);
+        window.setTimeout(() => {
+          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
+        }, 0);
+      }
+    } else if (preservedScrollTop !== undefined) {
+      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
+      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
+      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
+      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
+      window.setTimeout(() => {
+        gridRowEl.scrollTop = preservedScrollTop;
+      }, 0);
+    }
+
+    if (isToday) {
+      const nowLineEl = handles.nowLineEl;
+      if (nowLineEl) {
+        this.nowLineIntervalId = window.setInterval(() => {
+          repositionNowLine(nowLineEl);
+        }, NOW_LINE_REFRESH_MS);
+      }
+    }
+  }
+
+  override patch(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+    const date = config.startPosition || window.moment().format('YYYY-MM-DD');
+    if (
+      container !== this.containerEl ||
+      this.skeletonKey !== this.buildSkeletonKey(date) ||
+      this.gridHandles === null
+    ) {
+      this.render(container, tasks, config);
+      return;
+    }
+
+    this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
+    this.resetTaskComponent();
+    this.renderTaskLayers(tasks, date, this.gridHandles, false);
+  }
+
+  private buildSkeletonKey(date: string): string {
+    return `${date}|today:${window.moment().format('YYYY-MM-DD')}`;
+  }
+
+  private resetTaskComponent(): void {
+    this.md.unload();
+    this.md = new Component();
+    this.md.load();
+  }
+
+  private renderTaskLayers(
+    tasks: TaskSnapshot[],
+    date: string,
+    handles: HourGridHandles,
+    installCellBindings: boolean,
+  ): void {
+    const day = handles.days[0]!;
     const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, date);
     // Terminal and continuation timed segments share one renderer/packing pass. Terminal status
     // ownership is decided from `date`; interactivity is intentionally identical on every root.
@@ -199,6 +271,11 @@ export class TodayView extends BaseView {
       statusRegistry: this.callbacks.statusRegistry,
     };
     const tagGroups = this.callbacks.tagGroups ?? [];
+    if (!installCellBindings) {
+      day.hourColumnEl
+        .querySelectorAll<HTMLElement>(':scope > .tc-tg-block, :scope > .tc-tg-block-continuation')
+        .forEach((element) => element.remove());
+    }
     renderTimedBlocksForDay(
       day.hourColumnEl,
       [...timed, ...timedSpans],
@@ -235,43 +312,27 @@ export class TodayView extends BaseView {
       'timegrid',
     );
     day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
-    renderAllDayCell(day.allDayCellEl, date, [], plain, deadlines, allDayCallbacks, tagGroups);
-    const allDayItems = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
-    for (const child of Array.from(day.allDayCellEl.children)) {
-      if (child !== allDayItems) allDayItems.appendChild(child);
+    if (installCellBindings) {
+      renderAllDayCell(day.allDayCellEl, date, [], plain, deadlines, allDayCallbacks, tagGroups);
+      const allDayItems = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+      for (const child of Array.from(day.allDayCellEl.children)) {
+        if (child !== allDayItems) allDayItems.appendChild(child);
+      }
+      return;
     }
 
-    const isToday = date === window.moment().format('YYYY-MM-DD');
-    const gridRowEl = handles.gridRowEl;
-    // One-time scroll-into-position: only when CenterPanel says this is a genuinely new
-    // (viewType, date) it hasn't scrolled for yet — NOT on every reactive re-render of the
-    // same view/date (Task 27). The periodic now-line repositioning below is unconditional
-    // and untouched — a separate, still-desired behavior (Round 2 Task 16).
-    if (shouldScrollToNow) {
-      if (isToday) {
-        const nowMinutes = window.moment().hours() * 60 + window.moment().minutes();
-        const nowPx = minutesToPixels(nowMinutes);
-        window.setTimeout(() => {
-          gridRowEl.scrollTop = Math.max(0, nowPx - gridRowEl.clientHeight / 2);
-        }, 0);
-      }
-    } else if (preservedScrollTop !== undefined) {
-      // Task 31: this is a reactive re-render (destroy/recreate) of the same view/date — restore
-      // the outgoing grid-row's scroll position instead of leaving the fresh one at 0. Deferred
-      // via setTimeout like the scroll-to-now branch above: setting scrollTop synchronously,
-      // before the browser has laid out the freshly-created grid, gets silently clamped to 0.
-      window.setTimeout(() => {
-        gridRowEl.scrollTop = preservedScrollTop;
-      }, 0);
-    }
-
-    if (isToday) {
-      const nowLineEl = handles.nowLineEl;
-      if (nowLineEl) {
-        this.nowLineIntervalId = window.setInterval(() => {
-          repositionNowLine(nowLineEl);
-        }, NOW_LINE_REFRESH_MS);
-      }
+    const allDayItems = day.allDayCellEl.querySelector<HTMLElement>(':scope > .tc-tg-cell-items');
+    if (!allDayItems) return;
+    allDayItems.empty();
+    const scratch = day.allDayCellEl.ownerDocument.createElement('div');
+    renderAllDayCell(scratch, date, [], plain, deadlines, allDayCallbacks, tagGroups);
+    for (const child of Array.from(scratch.children)) allDayItems.appendChild(child);
+    const scratchHook = (scratch as unknown as { __tgTestEndDrag?: (targetDate: string) => void })
+      .__tgTestEndDrag;
+    if (scratchHook) {
+      (
+        day.allDayCellEl as unknown as { __tgTestEndDrag?: (targetDate: string) => void }
+      ).__tgTestEndDrag = scratchHook;
     }
   }
 
@@ -279,6 +340,8 @@ export class TodayView extends BaseView {
     this.timedInteractions.disposeActive();
     this.spanInteractions.disposeActive();
     this.containerEl = null;
+    this.skeletonKey = null;
+    this.gridHandles = null;
     this.md.unload();
     if (this.nowLineIntervalId !== null) {
       window.clearInterval(this.nowLineIntervalId);
