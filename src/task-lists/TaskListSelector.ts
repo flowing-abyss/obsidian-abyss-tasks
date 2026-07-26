@@ -12,12 +12,7 @@ export interface TaskListSelectionInput {
 }
 
 function dateOf(task: TaskSnapshot): string | undefined {
-  return (
-    task.planning.due ??
-    task.planning.scheduled ??
-    task.planning.start ??
-    task.presentation.dailyNoteDate
-  );
+  return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
 }
 
 function selected(
@@ -35,12 +30,11 @@ function selected(
     return (
       task.planning.due === today ||
       task.planning.scheduled === today ||
-      task.presentation.dailyNoteDate === today ||
       (task.planning.due !== undefined && task.planning.due < today)
     );
   }
   if (selection === 'upcoming') {
-    const date = task.planning.due ?? task.planning.scheduled ?? task.presentation.dailyNoteDate;
+    const date = task.planning.due ?? task.planning.scheduled;
     return date !== undefined && date > today;
   }
   if (typeof selection === 'object' && selection.type === 'tag') {
@@ -74,7 +68,7 @@ function matchesProperty(task: TaskSnapshot, filter: PropertyFilter): boolean {
   if (filter.type === 'time') return String(task.planning.time) === filter.value;
   if (filter.type === 'priority') return task.priority === filter.value;
   if (filter.type === 'status') return task.statusSymbol === filter.value;
-  const date = task.planning.due ?? task.planning.scheduled ?? task.presentation.dailyNoteDate;
+  const date = dateOf(task);
   return date !== undefined && String(date) === filter.value;
 }
 

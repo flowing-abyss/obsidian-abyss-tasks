@@ -155,7 +155,7 @@ describe('selectTaskList', () => {
     expect(titles([startOnly], 'today')).toEqual([]);
   });
 
-  it('includes Today when scheduled or daily-note date matches despite a future due date', () => {
+  it('includes Today when scheduled matches despite a future due date', () => {
     const scheduled = snapshot('scheduled', {
       planning: { due: '2026-07-20' as LocalDate, scheduled: today },
     });
@@ -164,7 +164,61 @@ describe('selectTaskList', () => {
       planning: { due: '2026-07-20' as LocalDate },
       presentation: { linkCount: 0, dailyNoteDate: today },
     });
-    expect(titles([scheduled, daily], 'today')).toEqual(['scheduled', 'daily']);
+    expect(titles([scheduled, daily], 'today')).toEqual(['scheduled']);
+  });
+
+  it('uses only planning dates for list membership, date filters, and date sorting', () => {
+    const dailyOnly = snapshot('daily only', {
+      line: 1,
+      presentation: { linkCount: 0, dailyNoteDate: today },
+    });
+    const tomorrowDailyOnly = snapshot('tomorrow daily only', {
+      line: 2,
+      presentation: { linkCount: 0, dailyNoteDate: '2026-07-14' as LocalDate },
+    });
+    const dueToday = snapshot('due today', { line: 3, planning: { due: today } });
+    const scheduledToday = snapshot('scheduled today', {
+      line: 4,
+      planning: { scheduled: today },
+    });
+    const overdueDue = snapshot('overdue due', {
+      line: 5,
+      planning: { due: '2026-07-12' as LocalDate },
+    });
+    const futureDue = snapshot('future due', {
+      line: 6,
+      planning: { due: '2026-07-14' as LocalDate },
+    });
+    const dateFilter: ListViewState = {
+      groupBy: 'none',
+      sortBy: { field: 'title', dir: 'asc' },
+      filters: [{ type: 'date', value: today }],
+    };
+    const dateSort: ListViewState = {
+      groupBy: 'date',
+      sortBy: { field: 'date', dir: 'asc' },
+      filters: [],
+    };
+
+    expect(titles([dailyOnly, dueToday, scheduledToday, overdueDue], 'today')).toEqual([
+      'overdue due',
+      'due today',
+      'scheduled today',
+    ]);
+    expect(titles([tomorrowDailyOnly, futureDue], 'upcoming')).toEqual(['future due']);
+    expect(
+      titles([dailyOnly, dueToday], { type: 'project', path: 'tasks.md' }, dateFilter),
+    ).toEqual(['due today']);
+    expect(
+      titles(
+        [dueToday, dailyOnly, snapshot('undated', { line: 7 })],
+        {
+          type: 'project',
+          path: 'tasks.md',
+        },
+        dateSort,
+      ),
+    ).toEqual(['due today', 'daily only', 'undated']);
   });
 
   it('uses time as the secondary key for date sorting', () => {

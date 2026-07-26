@@ -147,6 +147,31 @@ async function makePanel(
   };
 }
 
+describe('CenterPanel list selection', () => {
+  it('excludes a date-less task from today while retaining an explicitly planned task from the same daily note', () => {
+    fixedToday(TODAY);
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const source = { filePath: `daily/${TODAY}.md` };
+    const dailyOnly = task({
+      title: 'daily-only',
+      source,
+      presentation: { dailyNoteDate: TODAY },
+    });
+    const planned = task({
+      title: 'planned',
+      source: { ...source, line: 1 },
+      planning: { due: TODAY },
+      presentation: { dailyNoteDate: TODAY },
+    });
+    const panel = makeStaticPanel(state, [dailyOnly, planned]);
+
+    expect(
+      (call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[]).map((item) => item.title),
+    ).toEqual(['planned']);
+  });
+});
+
 describe('CenterPanel.createTask', () => {
   it("sel='today' creates through TaskApplicationApi in customFilePath when addToToday=false", async () => {
     const settings: CalendarSettings = {

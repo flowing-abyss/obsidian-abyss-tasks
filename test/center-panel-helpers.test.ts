@@ -57,7 +57,7 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['no tag']);
     });
 
-    it('today includes tasks due/scheduled/dailyNoteDate today', () => {
+    it('today includes only tasks due or scheduled today', () => {
       const tasks = [
         task({
           title: 'dueToday',
@@ -80,7 +80,6 @@ describe('CenterPanel pure helpers', () => {
       fixedToday(TODAY);
       const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
       expect(result.map((t) => t.title).sort((a, b) => a.localeCompare(b))).toEqual([
-        'dnToday',
         'dueToday',
         'schedToday',
       ]);
@@ -196,7 +195,7 @@ describe('CenterPanel pure helpers', () => {
       expect(result.map((t) => t.title)).toEqual(['near', 'far']);
     });
 
-    it('upcoming uses due ?? scheduled ?? dailyNoteDate', () => {
+    it('upcoming uses due or scheduled dates, not daily-note metadata', () => {
       // Dates relative to "now" so the test stays correct as real time passes.
       const sched = moment().add(3, 'days').format('YYYY-MM-DD');
       const dn = moment().add(4, 'days').format('YYYY-MM-DD');
@@ -215,7 +214,7 @@ describe('CenterPanel pure helpers', () => {
       const { panel, state } = makePanel(tasks);
       state.set('selectedList', 'upcoming');
       const result = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-      expect(result.map((t) => t.title)).toEqual(['sched', 'dn']);
+      expect(result.map((t) => t.title)).toEqual(['sched']);
     });
 
     it('default string selection returns all open tasks', () => {
@@ -919,7 +918,7 @@ describe('getFilteredTasks respects property filters', () => {
     expect(tasks[0]?.title).toBe('inProgress');
   });
 
-  it('date filter matches due, scheduled, or dailyNoteDate', () => {
+  it('date filter matches explicit planning dates, not daily-note metadata', () => {
     const { panel, state } = makePanel([
       task({ title: 'due', status: 'open', planning: { due: '2026-01-10' } }),
       task({ title: 'sched', status: 'open', planning: { scheduled: '2026-01-10' } }),
@@ -936,8 +935,8 @@ describe('getFilteredTasks respects property filters', () => {
       'all-tasks' as unknown as import('../src/app/AppState').ListSelection,
     );
     const tasks = call<TaskSnapshot[]>(panel, 'getFilteredTasks');
-    expect(tasks).toHaveLength(3);
-    expect(tasks.map((t) => t.title)).toEqual(expect.arrayContaining(['due', 'sched', 'daily']));
+    expect(tasks).toHaveLength(2);
+    expect(tasks.map((t) => t.title)).toEqual(expect.arrayContaining(['due', 'sched']));
   });
 
   it('multiple property filters are combined with AND', () => {
