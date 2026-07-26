@@ -1,10 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { App } from 'obsidian';
+import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { MonthGridView } from '../src/views/MonthGridView';
+import { createSpanInteractionOwner } from '../src/views/spanInteractions';
+import { layoutVisibleSpans } from '../src/views/spanLayout';
+import { renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
 import {
   DataTransferStub,
   freshContainer,
@@ -50,7 +53,64 @@ function callbacks() {
   };
 }
 
+function allDayCallbacks() {
+  return {
+    ...callbacks(),
+    component: new Component(),
+    onStartChange: vi.fn(),
+    onDueChange: vi.fn(),
+    onExtendToSpan: vi.fn(),
+  };
+}
+
 describe('MonthGridView', () => {
+  it('keeps one current overlay drop listener when the same layer renders repeatedly', () => {
+    const container = freshContainer();
+    const parent = container.createDiv();
+    const dates = ['2026-07-13', '2026-07-14', '2026-07-15'];
+    for (const [index, date] of dates.entries()) {
+      const cell = parent.createDiv({ cls: 'tc-tg-allday-cell' });
+      cell.setAttribute('data-tg-date', date);
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
+        x: index * 100,
+        y: 0,
+        width: 100,
+        height: 20,
+        top: 0,
+        right: (index + 1) * 100,
+        bottom: 20,
+        left: index * 100,
+        toJSON: () => ({}),
+      });
+    }
+    const layer = parent.createDiv({ cls: 'tc-tg-span-layer' });
+    const row = layoutVisibleSpans(
+      [task({ planning: { start: '2026-07-13', due: '2026-07-15' } })],
+      dates,
+    ).rows[0]!;
+    const old = allDayCallbacks();
+    const latest = allDayCallbacks();
+    const owner = createSpanInteractionOwner();
+
+    renderAllDaySpanLayer(layer, row, dates, old, [], owner, 'timegrid');
+    renderAllDaySpanLayer(layer, row, dates, latest, [], owner, 'timegrid');
+    renderAllDaySpanLayer(layer, row, dates, latest, [], owner, 'timegrid');
+
+    const body = requiredElement(layer, '[data-span-kind="ghost"]');
+    const dragover = new MouseEvent('dragover', { bubbles: true, cancelable: true, clientX: 150 });
+    body.dispatchEvent(dragover);
+    const transfer = new DataTransferStub();
+    transfer.setData('text/plain', 'source.md:::7');
+    const drop = new MouseEvent('drop', { bubbles: true, cancelable: true, clientX: 150 });
+    Object.defineProperty(drop, 'dataTransfer', { value: transfer });
+    body.dispatchEvent(drop);
+
+    expect(dragover.defaultPrevented).toBe(true);
+    expect(old.onDrop).not.toHaveBeenCalled();
+    expect(latest.onDrop).toHaveBeenCalledTimes(1);
+    expect(latest.onDrop).toHaveBeenCalledWith('source.md:::7', '2026-07-14');
+  });
+
   it('forwards native drops from a span body to the covered date resolved from real cell rectangles', () => {
     const container = freshContainer();
     const cbs = callbacks();

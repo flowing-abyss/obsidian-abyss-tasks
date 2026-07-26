@@ -108,22 +108,39 @@ function spanDropDateAt(
   );
 }
 
+type SpanOverlayDropBinding = {
+  callbacks: AllDayCallbacks;
+  variant: 'timegrid' | 'month';
+};
+
+const spanOverlayDropBindings = new WeakMap<HTMLElement, SpanOverlayDropBinding>();
+
 function attachSpanOverlayDropForwarding(
   layerEl: HTMLElement,
   callbacks: AllDayCallbacks,
   variant: 'timegrid' | 'month',
 ): void {
+  const existing = spanOverlayDropBindings.get(layerEl);
+  if (existing) {
+    existing.callbacks = callbacks;
+    existing.variant = variant;
+    return;
+  }
+  spanOverlayDropBindings.set(layerEl, { callbacks, variant });
   layerEl.addEventListener('dragover', (event) => {
-    if (!spanDropDateAt(layerEl, variant, event.clientX)) return;
+    const binding = spanOverlayDropBindings.get(layerEl);
+    if (!binding || !spanDropDateAt(layerEl, binding.variant, event.clientX)) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
   });
   layerEl.addEventListener('drop', (event) => {
-    const targetDate = spanDropDateAt(layerEl, variant, event.clientX);
+    const binding = spanOverlayDropBindings.get(layerEl);
+    if (!binding) return;
+    const targetDate = spanDropDateAt(layerEl, binding.variant, event.clientX);
     if (!targetDate) return;
     event.preventDefault();
     const dragData = event.dataTransfer?.getData('text/plain');
-    if (dragData) callbacks.onDrop(dragData, targetDate);
+    if (dragData) binding.callbacks.onDrop(dragData, targetDate);
   });
 }
 
