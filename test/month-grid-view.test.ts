@@ -51,6 +51,52 @@ function callbacks() {
 }
 
 describe('MonthGridView', () => {
+  it('forwards native drops from a span body to the covered date resolved from real cell rectangles', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({
+      title: 'Trip',
+      planning: { start: '2026-07-13', due: '2026-07-16' },
+    });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+    const row = requiredElement(container, '[data-mg-date="2026-07-13"]').closest('.tc-mg-row')!;
+    const cells = Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell'));
+    for (const [index, cell] of cells.entries()) {
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
+        x: index * 100,
+        y: 0,
+        width: 100,
+        height: 100,
+        top: 0,
+        right: (index + 1) * 100,
+        bottom: 100,
+        left: index * 100,
+        toJSON: () => ({}),
+      });
+    }
+    const body = requiredElement(row, '[data-span-kind="ghost"]');
+    const dispatch = (type: 'dragover' | 'drop', clientX: number): Event => {
+      const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX });
+      const transfer = new DataTransferStub();
+      transfer.setData('text/plain', 'source.md:::7');
+      Object.defineProperty(event, 'dataTransfer', { value: transfer });
+      body.dispatchEvent(event);
+      return event;
+    };
+
+    expect(dispatch('dragover', 50).defaultPrevented).toBe(true);
+    expect(dispatch('dragover', 150).defaultPrevented).toBe(true);
+    expect(dispatch('dragover', 250).defaultPrevented).toBe(true);
+    expect(dispatch('dragover', -1).defaultPrevented).toBe(false);
+    expect(dispatch('dragover', 700).defaultPrevented).toBe(false);
+
+    dispatch('drop', 250);
+    expect(cbs.onDrop).toHaveBeenCalledTimes(1);
+    expect(cbs.onDrop).toHaveBeenCalledWith('source.md:::7', '2026-07-15');
+  });
+
   it('renders spans in one continuous per-week overlay and reserves the same lane space in every cell', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());

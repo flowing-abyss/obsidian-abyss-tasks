@@ -83,6 +83,50 @@ function endDragTestHook(cellEl: HTMLElement, targetDate: string): void {
   (cellEl as AllDayResizeCell).__tgPendingEdgeResize?.(targetDate);
 }
 
+/**
+ * Span layers sit above (rather than inside) their date cells, so native drag events from an
+ * interactive span cannot bubble to the cells' existing handlers. Resolve the physical column
+ * from the layer's own document and forward just those overlay events to the established callback.
+ */
+function spanDropDateAt(
+  layerEl: HTMLElement,
+  variant: 'timegrid' | 'month',
+  clientX: number,
+): string | undefined {
+  if (!Number.isFinite(clientX)) return undefined;
+  const attr = variant === 'month' ? 'data-mg-date' : 'data-tg-date';
+  const cls = variant === 'month' ? 'tc-mg-cell' : 'tc-tg-allday-cell';
+  const parent = layerEl.parentElement;
+  if (!parent || parent.ownerDocument !== layerEl.ownerDocument) return undefined;
+  return (
+    Array.from(parent.querySelectorAll<HTMLElement>(`:scope > .${cls}[${attr}]`))
+      .find((cell) => {
+        const rect = cell.getBoundingClientRect();
+        return clientX >= rect.left && clientX < rect.right;
+      })
+      ?.getAttribute(attr) ?? undefined
+  );
+}
+
+function attachSpanOverlayDropForwarding(
+  layerEl: HTMLElement,
+  callbacks: AllDayCallbacks,
+  variant: 'timegrid' | 'month',
+): void {
+  layerEl.addEventListener('dragover', (event) => {
+    if (!spanDropDateAt(layerEl, variant, event.clientX)) return;
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  });
+  layerEl.addEventListener('drop', (event) => {
+    const targetDate = spanDropDateAt(layerEl, variant, event.clientX);
+    if (!targetDate) return;
+    event.preventDefault();
+    const dragData = event.dataTransfer?.getData('text/plain');
+    if (dragData) callbacks.onDrop(dragData, targetDate);
+  });
+}
+
 function renderAllDayBody(
   cellEl: HTMLElement,
   cls: string,
@@ -185,6 +229,7 @@ export function renderAllDaySpanLayer(
 ): void {
   layerEl.empty();
   layerEl.setAttribute('data-span-lanes', String(row.laneCount));
+  attachSpanOverlayDropForwarding(layerEl, callbacks, variant);
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
 
   for (const segment of row.segments) {
