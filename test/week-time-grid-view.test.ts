@@ -333,6 +333,56 @@ describe('WeekTimeGridView', () => {
     restoreElementFromPoint();
   });
 
+  it('previews a plain create-span in the same hypothetical overlap lane used after commit', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const plain = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { scheduled: '2026-07-08' },
+    });
+    const overlap = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-09', due: '2026-07-10' },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [plain, overlap], config);
+    const restoreElementFromPoint = measureAllDayCells(container);
+    const body = container.querySelector<HTMLElement>('.tc-tg-plain')!;
+    const handle = body.querySelector<HTMLElement>('[data-boundary="create-span"]')!;
+
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 250,
+        clientY: 50,
+        pointerId: 34,
+      }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 34 }),
+    );
+
+    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
+    expect(preview.style.gridColumn).toBe('3 / 6');
+    expect(preview.style.gridRow).toBe('1');
+    const previewRow = preview.style.gridRow;
+
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 34 }));
+    const extended = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-08', due: '2026-07-10' },
+    });
+    view.patch(container, [extended, overlap], config);
+    const committed = container.querySelector<HTMLElement>(
+      '[data-task-path="a.md"][data-span-kind="ghost"]',
+    )!;
+    expect(committed.style.gridRow).toBe(previewRow);
+
+    view.destroy();
+    restoreElementFromPoint();
+  });
+
   it.each(['pointercancel', 'lostpointercapture', 'blur'] as const)(
     '%s cancels a plain create-span handle through the owner-document session and restores its body',
     (cleanup) => {

@@ -482,6 +482,7 @@ export function renderAllDayCell(
         segmentStart: date,
         segmentEnd: date,
         owner: callbacks.spanInteractionOwner,
+        previewLayoutFor: callbacks.spanPreviewLayoutFor,
         boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
         onMove: () => {},
         onBoundary: (task, target) => callbacks.onExtendToSpan(task, target.date),

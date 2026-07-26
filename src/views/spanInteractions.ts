@@ -303,9 +303,8 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
 
     const previewRow = (
       candidates: readonly MeasuredSpanColumn[],
-      planning: TaskSnapshot['planning'],
+      layout: VisibleSpanLayout | undefined,
     ): string => {
-      const layout = binding.previewLayoutFor?.(task, planning);
       const rowStart = candidates[0]?.date;
       if (!layout || !rowStart) return source.style.gridRow;
       const identity = taskLayoutIdentity(task);
@@ -323,6 +322,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       const shiftedEnd = shiftLocalDate(actualDue, target.days);
       if (!shiftedStart || !shiftedEnd) return;
       const planning = { ...task.planning, start: shiftedStart, due: shiftedEnd };
+      const layout = binding.previewLayoutFor?.(task, planning);
       const rows = new Set(columns.map((column) => column.row));
       for (const row of rows) {
         const candidates = columns.filter((column) => column.row === row);
@@ -334,7 +334,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         const last = candidates.indexOf(visible[visible.length - 1]!);
         const preview = createPreview(source, 'tc-span-move-preview', target);
         preview.style.gridColumn = `${first + 1} / ${last + 2}`;
-        preview.style.gridRow = previewRow(candidates, planning);
+        preview.style.gridRow = previewRow(candidates, layout);
         visible[0]!.layer.appendChild(preview);
         previews.push(preview);
       }
@@ -360,6 +360,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         start: prospectiveStart,
         due: prospectiveDue,
       };
+      const layout = binding.previewLayoutFor?.(task, planning);
       const previewColumns = isMonth ? columns : sourceRowColumns;
       const rows = new Set(previewColumns.map((column) => column.row));
       for (const row of rows) {
@@ -372,7 +373,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         const endIndex = candidates.indexOf(visible[visible.length - 1]!);
         const preview = createPreview(source, 'tc-span-boundary-preview', target);
         preview.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
-        preview.style.gridRow = previewRow(candidates, planning);
+        preview.style.gridRow = previewRow(candidates, layout);
         visible[0]!.layer.appendChild(preview);
         previews.push(preview);
       }

@@ -7,6 +7,7 @@ import {
   resolveSpanMoveTarget,
   serializeSpanMovePayload,
 } from '../src/views/spanInteractions';
+import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { task } from './helpers';
 
 const columns = [
@@ -111,6 +112,88 @@ describe('span interaction geometry', () => {
         expect.objectContaining({ boundary: 'create-span', date: '2026-07-07' }),
       );
     } finally {
+      root.remove();
+    }
+  });
+
+  it('computes one prospective layout per multi-row Month pointer update', () => {
+    const root = document.createElement('div');
+    root.className = 'tc-mg-grid';
+    const dates = [
+      '2026-07-06',
+      '2026-07-07',
+      '2026-07-08',
+      '2026-07-09',
+      '2026-07-10',
+      '2026-07-11',
+      '2026-07-12',
+      '2026-07-13',
+      '2026-07-14',
+      '2026-07-15',
+      '2026-07-16',
+      '2026-07-17',
+      '2026-07-18',
+      '2026-07-19',
+    ];
+    const layers = Array.from({ length: 2 }, (_, rowIndex) => {
+      const row = root.createDiv({ cls: 'tc-mg-row' });
+      const layer = row.createDiv({ cls: 'tc-mg-span-layer' });
+      for (let columnIndex = 0; columnIndex < 7; columnIndex++) {
+        const dateIndex = rowIndex * 7 + columnIndex;
+        const cell = row.createDiv({ cls: 'tc-mg-cell' });
+        cell.dataset['mgDate'] = dates[dateIndex];
+        vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+          new DOMRect(columnIndex * 100, rowIndex * 100, 100, 100),
+        );
+      }
+      return layer;
+    });
+    document.body.appendChild(root);
+    const source = layers[0]!.createDiv();
+    source.style.gridRow = '1';
+    const snapshot = task({
+      source: { filePath: 'span.md', line: 1 },
+      planning: { start: '2026-07-10', due: '2026-07-15' },
+    });
+    let layoutComputations = 0;
+
+    attachSpanInteractions({
+      source,
+      task: snapshot,
+      segmentStart: '2026-07-10',
+      segmentEnd: '2026-07-12',
+      owner: createSpanInteractionOwner(),
+      previewLayoutFor: (candidate, planning) => {
+        layoutComputations++;
+        return layoutVisibleSpans([{ ...candidate, planning }], dates);
+      },
+      boundaryHandles: [],
+      onMove: vi.fn(),
+      onBoundary: vi.fn(),
+    });
+
+    try {
+      source.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 450,
+          clientY: 50,
+          pointerId: 3,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 550,
+          clientY: 50,
+          pointerId: 3,
+        }),
+      );
+
+      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(2);
+      expect(layoutComputations).toBe(1);
+    } finally {
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
       root.remove();
     }
   });
