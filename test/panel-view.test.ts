@@ -104,7 +104,7 @@ describe('PanelView', () => {
       ).not.toThrow();
     });
 
-    it('lets CenterPanel own the sole calendar rebuild while PanelView refreshes only LeftPanel', () => {
+    it('lets CenterPanel own the sole calendar patch while PanelView refreshes only LeftPanel', () => {
       const state = (view as unknown as { state: AppState }).state;
       const panels = view as unknown as {
         left: { refresh(): void };
@@ -113,13 +113,13 @@ describe('PanelView', () => {
       state.set('mode', 'calendar');
       const leftRefresh = vi.spyOn(panels.left, 'refresh');
       const centerRefresh = vi.spyOn(panels.center, 'refresh');
-      const calendarRender = vi.spyOn(MonthGridView.prototype, 'render');
+      const calendarPatch = vi.spyOn(MonthGridView.prototype, 'patch');
 
       emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
 
       expect(leftRefresh).toHaveBeenCalledOnce();
       expect(centerRefresh).not.toHaveBeenCalled();
-      expect(calendarRender).toHaveBeenCalledOnce();
+      expect(calendarPatch).toHaveBeenCalledOnce();
     });
 
     it.each(['tasks', 'search', 'projects'] as const)(

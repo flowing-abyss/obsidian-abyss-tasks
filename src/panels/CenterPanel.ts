@@ -126,18 +126,11 @@ export class CenterPanel {
   private calViewInstance: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe: (() => void) | null = null;
   private calendarPickerCleanup: (() => void) | null = null;
-  // Task 27: mountView() destroys and recreates a fresh view instance on every render — including
-  // reactive re-renders driven by task-index updates (any task edit anywhere) — so the view
-  // instance itself can't remember "did I already scroll-to-now for this view/date". This key
-  // (last `${calViewType}:${startPosition}` CenterPanel actually scrolled for) survives that
-  // destroy/recreate cycle because it lives on CenterPanel, not on the torn-down view.
+  // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
+  // Query notifications use the incremental patch path and never consult this state.
   private lastScrolledCalKey: string | null = null;
-  // Task 31: render()'s calendar branch calls `this.el.empty()` (destroying the current
-  // `.tc-tg-grid-row`) *before* mountView() runs, on every reactive re-render (via PanelView's
-  // query subscription -> center.refresh() -> render()) — not just on the calUnsubscribe -> mountView()
-  // path mountView() itself guards against. This carries the pre-empty() scrollTop across that
-  // gap; mountView() consumes (and clears) it as a fallback when its own viewContainer-local read
-  // finds nothing (i.e. on a freshly (re)built viewContainer).
+  // A deliberate full refresh empties the outer calendar before mountView can inspect its grid.
+  // Carry scrollTop across that boundary; query patches retain the grid node and need no fallback.
   private pendingCalScrollTop: number | undefined = undefined;
   private keyboardQueue: TimedBlockKeyboardQueue | null = null;
   private pendingTimedBlockFocus: TimedBlockFocusLocator | undefined;
@@ -445,11 +438,7 @@ export class CenterPanel {
     if (mode !== 'projects') this.destroyProjectsPanel();
 
     if (mode === 'calendar') {
-      // Task 31: a reactive re-render arrives here too (PanelView's query subscription ->
-      // center.refresh() -> render(), independent of the calUnsubscribe -> mountView() path
-      // below), and `this.el.empty()` on the next line destroys the current `.tc-tg-grid-row`
-      // before mountView() ever gets a chance to read it — capture it now so mountView() (see
-      // its `preservedScrollTop` fallback) can still restore it on the fresh instance.
+      // Explicit refreshes (configuration/theme/view changes) remain full renders.
       this.captureActiveTimedBlockFocus();
       this.pendingCalScrollTop = this.el.querySelector<HTMLElement>('.tc-tg-grid-row')?.scrollTop;
       this.el.empty();
@@ -678,12 +667,12 @@ export class CenterPanel {
       );
       const hourColumnEl = dayColumn?.querySelector<HTMLElement>('.tc-tg-hour-column');
       if (!hourColumnEl) return;
-      this.showTimeGridQuickAdd(hourColumnEl, date, time, mountView);
+      this.showTimeGridQuickAdd(hourColumnEl, date, time);
     };
     const handleCreateAtDate = (date: string): void => {
       const cell = viewContainer.querySelector<HTMLElement>(`[data-mg-date="${date}"]`);
       if (!cell) return;
-      this.showFillCellQuickAdd(cell, date, 'tc-mg-quick-add', mountView);
+      this.showFillCellQuickAdd(cell, date, 'tc-mg-quick-add');
     };
     const handleCreateAtDateAllDay = (date: string): void => {
       // Scoped to .tc-tg-allday-cell specifically: HourGrid.ts's day-column element also
@@ -693,7 +682,7 @@ export class CenterPanel {
         `.tc-tg-allday-cell[data-tg-date="${date}"]`,
       );
       if (!cell) return;
-      this.showFillCellQuickAdd(cell, date, 'tc-tg-allday-quick-add', mountView);
+      this.showFillCellQuickAdd(cell, date, 'tc-tg-allday-quick-add');
     };
 
     const startPositionFor = (viewType: CalViewType, firstDayOfWeek: number): string => {
@@ -704,6 +693,31 @@ export class CenterPanel {
       return this.calDate.format('YYYY-MM');
     };
 
+    const currentCalendarContent = (): {
+      readonly config: ResolvedConfig;
+      readonly tasks: TaskSnapshot[];
+    } => {
+      const firstDayOfWeek =
+        this.settings.desktop.firstDayOfWeek ?? DEFAULT_VIEW_CONFIG.firstDayOfWeek;
+      const config: ResolvedConfig = {
+        ...DEFAULT_VIEW_CONFIG,
+        ...this.settings.desktop,
+        isMobile: false,
+        sourceNoteDisplay: this.settings.sourceNoteDisplay,
+        customFilePath: this.settings.customFilePath,
+        startPosition: startPositionFor(this.calViewType, firstDayOfWeek),
+      };
+      const visibleDates = visibleCalendarDates(
+        this.calViewType,
+        this.calDate,
+        config.firstDayOfWeek,
+      );
+      return {
+        config,
+        tasks: [...this.queries.forCalendarDates(visibleDates as unknown as readonly LocalDate[])],
+      };
+    };
+
     const mountView = (): void => {
       this.captureActiveTimedBlockFocus();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
@@ -711,13 +725,10 @@ export class CenterPanel {
         this.restoredKeyboardSequences.delete(pendingQueueSequence);
       }
       const renderGeneration = ++this.calendarRenderGeneration;
-      // Task 31: before tearing down the currently-mounted view, capture its scroll position so
-      // it can be restored on the fresh instance below. A freshly-created `.tc-tg-grid-row`
-      // naturally starts at scrollTop 0, which previously reset the user's scroll position on
-      // every reactive re-render (e.g. a checkbox toggle anywhere). May be undefined (no grid-row
-      // currently mounted — e.g. first mount ever, or the current view is Month) — in which case
-      // fall back to `pendingCalScrollTop`, captured by render() just before it wiped `this.el`
-      // (and hence this viewContainer) out from under this call; see that field's own comment.
+      // Full mounts replace the grid, so carry its native scroll position when this is an
+      // explicit same-date refresh. Query notifications never enter this path: patchView retains
+      // the grid itself. The fallback covers render() emptying the outer center before this
+      // closure can inspect its former viewContainer.
       const outgoingGridRow = viewContainer.querySelector<HTMLElement>('.tc-tg-grid-row');
       const preservedScrollTop = outgoingGridRow
         ? outgoingGridRow.scrollTop
@@ -726,28 +737,10 @@ export class CenterPanel {
 
       this.calViewInstance?.destroy();
       viewContainer.empty();
-      const firstDayOfWeek =
-        this.settings.desktop.firstDayOfWeek ?? DEFAULT_VIEW_CONFIG.firstDayOfWeek;
-      const cfg: ResolvedConfig = {
-        ...DEFAULT_VIEW_CONFIG,
-        ...this.settings.desktop,
-        isMobile: false,
-        sourceNoteDisplay: this.settings.sourceNoteDisplay,
-        customFilePath: this.settings.customFilePath,
-        startPosition: startPositionFor(this.calViewType, firstDayOfWeek),
-      };
-      // Scope the render to tasks visible on these dates via indexed point queries: direct
-      // anchors are O(1), while span overlaps are O(log R + k) in the interval index. This
-      // avoids scanning every task in the vault.
-      const visibleDates = visibleCalendarDates(this.calViewType, this.calDate, cfg.firstDayOfWeek);
-      const tasks = [
-        ...this.queries.forCalendarDates(visibleDates as unknown as readonly LocalDate[]),
-      ];
+      const { config, tasks } = currentCalendarContent();
 
-      // Only scroll-to-now when this (viewType, date) pair is new since the last time we
-      // scrolled — a reactive re-render of the same view/date (e.g. a store update from a task
-      // edit) must not jump the scroll position back to center. See `lastScrolledCalKey` above.
-      // Uses calDate directly so navigation identity remains tied to the user's anchor.
+      // Only scroll-to-now when this (viewType, date) pair is new. Explicit same-date refreshes
+      // must not jump back to center; query patches do not invoke this full-mount path.
       const scrollKey = `${this.calViewType}:${this.calDate.format('YYYY-MM-DD')}`;
       const shouldScrollToNow = scrollKey !== this.lastScrolledCalKey;
       this.lastScrolledCalKey = scrollKey;
@@ -857,7 +850,29 @@ export class CenterPanel {
           tagGroups: this.settings.tagGroups,
         });
       }
-      this.calViewInstance.render(viewContainer, tasks, cfg, shouldScrollToNow, preservedScrollTop);
+      this.calViewInstance.render(
+        viewContainer,
+        tasks,
+        config,
+        shouldScrollToNow,
+        preservedScrollTop,
+      );
+      this.deferTimedBlockFocus(viewContainer, renderGeneration);
+    };
+
+    const patchView = (): void => {
+      if (!this.calViewInstance) {
+        mountView();
+        return;
+      }
+      this.captureActiveTimedBlockFocus();
+      const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
+      if (pendingQueueSequence !== undefined) {
+        this.restoredKeyboardSequences.delete(pendingQueueSequence);
+      }
+      const renderGeneration = ++this.calendarRenderGeneration;
+      const { config, tasks } = currentCalendarContent();
+      this.calViewInstance.patch(viewContainer, tasks, config);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
@@ -954,25 +969,7 @@ export class CenterPanel {
       mountView();
     });
 
-    // NOTE — deliberate scope reduction vs. the spec's "targeted patch, not full re-mount":
-    // this still calls the full mountView() (destroy + rebuild the visible grid) on every
-    // coalesced notify, rather than diffing which specific cells/blocks changed and patching
-    // only those. Two of the three perf levers from the spec ARE implemented in full: (1)
-    // `tasks` above is scoped to the visible date range via TaskQueryApi.forCalendarDates,
-    // which unions O(1) direct-date buckets with O(log R + k) span-overlap queries — mountView()
-    // no longer scans every task in the vault on every render, only the ones visible on a
-    // currently-rendered date; (2) notify() is coalesced (Task 5), so a burst of file edits
-    // triggers exactly one
-    // rebuild instead of one per file. A true incremental DOM patch (diffing old vs. new task
-    // sets per cell and touching only changed nodes) is a real further optimization but adds
-    // significant complexity (diffing keyed by filePath+line across all three view shapes) for
-    // a win that may not be measurable once (1) and (2) land — verified against the real dev
-    // vault in Task 16. If a future pass shows visible lag with realistic task counts, add a
-    // follow-up: track the previous render's task-list-per-visible-date, diff against the new
-    // one on each notify, and only re-render cells/blocks whose task set changed, leaving
-    // `BaseView.patch()` (still the default no-op-over-render from `BaseView.ts`) as the
-    // extension point each of the three new view classes would override.
-    this.calUnsubscribe = this.queries.subscribe(() => mountView());
+    this.calUnsubscribe = this.queries.subscribe(() => patchView());
   }
 
   private cancelKeyboardInteraction(): void {
@@ -2251,12 +2248,7 @@ export class CenterPanel {
    * surrounding layout). On Enter, sends the body plus typed due/time initial fields through
    * TaskApplicationApi; the shared task pipeline owns Markdown encoding and persistence.
    */
-  private showTimeGridQuickAdd(
-    hourColumnEl: HTMLElement,
-    date: string,
-    time: string,
-    onDone: () => void,
-  ): void {
+  private showTimeGridQuickAdd(hourColumnEl: HTMLElement, date: string, time: string): void {
     hourColumnEl.querySelectorAll('.tc-tg-quick-add').forEach((el) => el.remove());
     const pop = hourColumnEl.createDiv({ cls: 'tc-tg-quick-add' });
     pop.style.top = `${minutesToPixels(timeStringToMinutes(time))}px`;
@@ -2279,7 +2271,7 @@ export class CenterPanel {
             due: { type: 'set', value: localDate(date) },
             time: { type: 'set', value: localTime(time) },
           },
-        ).then(() => onDone());
+        );
       }
     };
     const cancel = (): void => {
@@ -2314,12 +2306,7 @@ export class CenterPanel {
    * both just need a plain (untimed) task name typed against a given date, so only the CSS class
    * (for each cell shape's own styling) varies between callers.
    */
-  private showFillCellQuickAdd(
-    cell: HTMLElement,
-    date: string,
-    popCls: string,
-    onDone: () => void,
-  ): void {
+  private showFillCellQuickAdd(cell: HTMLElement, date: string, popCls: string): void {
     cell.querySelectorAll(`.${popCls}`).forEach((el) => el.remove());
     const pop = cell.createDiv({ cls: popCls });
     const input = pop.createEl('input', {
@@ -2340,7 +2327,7 @@ export class CenterPanel {
           {
             due: { type: 'set', value: localDate(date) },
           },
-        ).then(() => onDone());
+        );
       }
     };
     const cancel = (): void => {

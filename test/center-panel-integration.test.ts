@@ -1010,15 +1010,14 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     renderSpy.mockRestore();
   });
 
-  it('a reactive task-index update re-render of the same view/date does not scroll again', async () => {
+  it('a reactive task-index update patches the same view/date without rendering or scrolling again', async () => {
     const renderSpy = vi.spyOn(WeekTimeGridView.prototype, 'render');
+    const patchSpy = vi.spyOn(WeekTimeGridView.prototype, 'patch');
     const { el, index, tasks } = await makeCalendarPanel();
     clickViewBtn(el, 'Week');
     expect(lastShouldScrollToNow(renderSpy)).toBe(true);
+    const renderCalls = renderSpy.mock.calls.length;
 
-    // Simulate an index-driven re-render (e.g. toggling a checkbox anywhere), which routes
-    // through the query subscription in renderCalendarMode -> mountView(), NOT
-    // through CenterPanel.render() — this is the exact path the brief's root cause describes.
     const seededTask = index.list({ filePath: 't.md' })[0]!;
     await tasks.execute({
       type: 'toggle-completion',
@@ -1026,8 +1025,10 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     });
     await flushMicrotasks();
 
-    expect(lastShouldScrollToNow(renderSpy)).toBe(false);
+    expect(renderSpy).toHaveBeenCalledTimes(renderCalls);
+    expect(patchSpy).toHaveBeenCalledOnce();
     renderSpy.mockRestore();
+    patchSpy.mockRestore();
   });
 
   it('switching view type (Week -> Day -> Week) scrolls again each time, since it is a new pair', async () => {
@@ -1062,16 +1063,13 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     renderSpy.mockRestore();
   });
 
-  it("Round 2 Task 16's periodic now-line-repositioning interval is unaffected: it still registers on a scroll-suppressed reactive re-render", async () => {
+  it("Round 2 Task 16's periodic now-line interval remains registered across a query patch", async () => {
     const { el, index, tasks } = await makeCalendarPanel();
     clickViewBtn(el, 'Week');
 
     const setIntervalSpy = vi.spyOn(window, 'setInterval');
     const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
 
-    // Same view/date -> shouldScrollToNow will be false on this reactive re-render, but the
-    // now-line interval must still be torn down (old view destroy()) and re-registered (new
-    // view render()) exactly as before this change.
     const seededTask = index.list({ filePath: 't.md' })[0]!;
     await tasks.execute({
       type: 'toggle-completion',
@@ -1079,8 +1077,8 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     });
     await flushMicrotasks();
 
-    expect(clearIntervalSpy).toHaveBeenCalled();
-    expect(setIntervalSpy).toHaveBeenCalled();
+    expect(clearIntervalSpy).not.toHaveBeenCalled();
+    expect(setIntervalSpy).not.toHaveBeenCalled();
 
     setIntervalSpy.mockRestore();
     clearIntervalSpy.mockRestore();
@@ -1115,18 +1113,27 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     ).click();
   }
 
-  it('a reactive re-render (checkbox toggle elsewhere) preserves the exact scrollTop the user had, instead of resetting to 0', async () => {
-    const { el, index, tasks } = await makeCalendarPanel();
+  it('patches only the task layer on a query notification while retaining the calendar skeleton, view instance, and scroll position', async () => {
+    const { panel, el, index, tasks } = await makeCalendarPanel();
     clickViewBtn(el, 'Week');
+    await flushMicrotasks();
 
+    const nav = el.querySelector('.tc-cal-nav');
+    const body = el.querySelector('.tc-cal-body');
+    const header = el.querySelector('.tc-tg-header-row');
     const gridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const hourRow = el.querySelector('.tc-tg-hour-row');
+    const dayCell = el.querySelector(`[data-tg-date="${TODAY}"].tc-tg-day-column`);
+    const nowLine = el.querySelector('.tc-tg-now-line');
+    const taskNode = el.querySelector('.tc-tg-plain');
+    const viewInstance = (
+      panel as unknown as {
+        calViewInstance: TodayView | WeekTimeGridView | null;
+      }
+    ).calViewInstance;
     expect(gridRowEl).not.toBeNull();
-    // Simulate the user having scrolled away from "now" to some arbitrary position.
     gridRowEl.scrollTop = 777;
-    expect(gridRowEl.scrollTop).toBe(777);
 
-    // Reactive re-render of the SAME view/date, via the query subscription, exactly the
-    // path a checkbox toggle anywhere in the vault takes (not through CenterPanel.render()).
     const seededTask = index.list({ filePath: 't.md' })[0]!;
     await tasks.execute({
       type: 'toggle-completion',
@@ -1134,12 +1141,22 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     });
     await flushMicrotasks();
 
-    const newGridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
-    expect(newGridRowEl).not.toBeNull();
-    // A brand-new DOM element (destroy/recreate cycle), but its scrollTop must equal the OLD
-    // value — not 0, and not re-centered on "now".
-    expect(newGridRowEl).not.toBe(gridRowEl);
-    expect(newGridRowEl.scrollTop).toBe(777);
+    expect(el.querySelector('.tc-cal-nav')).toBe(nav);
+    expect(el.querySelector('.tc-cal-body')).toBe(body);
+    expect(
+      (
+        panel as unknown as {
+          calViewInstance: TodayView | WeekTimeGridView | null;
+        }
+      ).calViewInstance,
+    ).toBe(viewInstance);
+    expect(el.querySelector('.tc-tg-header-row')).toBe(header);
+    expect(el.querySelector('.tc-tg-grid-row')).toBe(gridRowEl);
+    expect(el.querySelector('.tc-tg-hour-row')).toBe(hourRow);
+    expect(el.querySelector(`[data-tg-date="${TODAY}"].tc-tg-day-column`)).toBe(dayCell);
+    expect(el.querySelector('.tc-tg-now-line')).toBe(nowLine);
+    expect(el.querySelector('.tc-tg-plain')).not.toBe(taskNode);
+    expect(gridRowEl.scrollTop).toBe(777);
   });
 
   it('a genuine navigation to a new view/date (Week -> Day) does not inherit the stale prior scroll position', async () => {
@@ -1179,19 +1196,31 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     taskPrefix: '',
   };
 
-  async function makeClickToCreatePanel(): Promise<{ state: AppState; el: HTMLElement; app: App }> {
+  async function makeClickToCreatePanel(): Promise<{
+    panel: CenterPanel;
+    state: AppState;
+    el: HTMLElement;
+    app: App;
+  }> {
     const { panel, state, app } = await makePanel({ 'inbox.md': '' }, clickToCreateSettings);
     const el = freshContainer();
     panel.mount(el);
     state.set('mode', 'calendar');
-    return { state, el, app };
+    return { panel, state, el, app };
   }
 
-  it("Month day cell's + button opens an inline quick-add; Enter writes a plain task on that date", async () => {
-    const { el, app } = await makeClickToCreatePanel();
+  it('Month quick-add relies on the task-index patch and retains the mounted grid and header', async () => {
+    const { panel, el, app } = await makeClickToCreatePanel();
     const cell = el.querySelector(
       '.tc-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
+    const header = el.querySelector('.tc-mg-head-row');
+    const row = cell.closest('.tc-mg-row');
+    const viewInstance = (
+      panel as unknown as {
+        calViewInstance: TodayView | WeekTimeGridView | null;
+      }
+    ).calViewInstance;
     const date = cell.getAttribute('data-mg-date')!;
     const addBtn = cell.querySelector('.tc-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1204,6 +1233,17 @@ describe('CenterPanel calendar mode — click-to-create', () => {
 
     const content = await readMd(app, 'inbox.md');
     expect(content).toContain(`- [ ] water the plants 📅 ${date}`);
+    expect(el.querySelector('.tc-mg-head-row')).toBe(header);
+    expect(el.querySelector(`[data-mg-date="${date}"]`)).toBe(cell);
+    expect(cell.closest('.tc-mg-row')).toBe(row);
+    expect(
+      (
+        panel as unknown as {
+          calViewInstance: TodayView | WeekTimeGridView | null;
+        }
+      ).calViewInstance,
+    ).toBe(viewInstance);
+    expect(cell.textContent).toContain('water the plants');
   });
 
   it('clicking the + button does not also drill into Week (onDayClick suppressed)', async () => {
@@ -1390,6 +1430,7 @@ function keyboardPanelHarness(
   el: HTMLElement;
   setSnapshots(next: readonly TaskSnapshot[]): void;
   emit(): void;
+  listenerCount(): number;
 } {
   let snapshots = initial;
   const listeners = new Set<(event: TaskIndexEvent) => void>();
@@ -1427,6 +1468,7 @@ function keyboardPanelHarness(
         listener({ type: 'changed', files: snapshots.map((item) => item.source.filePath) });
       }
     },
+    listenerCount: () => listeners.size,
   };
 }
 
@@ -1450,6 +1492,45 @@ function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {
 function press(block: HTMLElement, key: string, shiftKey = false): void {
   block.dispatchEvent(new KeyboardEvent('keydown', { key, shiftKey, bubbles: true }));
 }
+
+describe('CenterPanel calendar mode — task-index patch coordinator', () => {
+  it('keeps one subscription and performs one patch for each notification after repeated updates', () => {
+    const original = keyboardSnapshot(TODAY);
+    const h = keyboardPanelHarness([original], vi.fn());
+    const patch = vi.spyOn(TodayView.prototype, 'patch');
+    try {
+      clickCalendarView(h.el, 'Day');
+      expect(h.listenerCount()).toBe(1);
+
+      for (let revision = 2; revision <= 4; revision++) {
+        h.setSnapshots([
+          keyboardSnapshot(
+            TODAY,
+            `09:${revision * 5}`,
+            original.source.filePath,
+            `revision-${revision}`,
+          ),
+        ]);
+        const callsBefore = patch.mock.calls.length;
+        h.emit();
+        expect(patch).toHaveBeenCalledTimes(callsBefore + 1);
+        expect(h.listenerCount()).toBe(1);
+      }
+
+      clickCalendarView(h.el, 'Week');
+      clickCalendarView(h.el, 'Day');
+      expect(h.listenerCount()).toBe(1);
+      const callsBeforeFinalNotification = patch.mock.calls.length;
+      h.emit();
+      expect(patch).toHaveBeenCalledTimes(callsBeforeFinalNotification + 1);
+      expect(h.listenerCount()).toBe(1);
+    } finally {
+      patch.mockRestore();
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+});
 
 describe('CenterPanel calendar mode — timed pointer command bridge', () => {
   it('does not execute a command for stationary visible-body clicks on short terminal or ghost segments', async () => {
@@ -1636,6 +1717,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Week');
 
+    const gridRow = h.el.querySelector('.tc-tg-grid-row');
     const outgoing = h.el.querySelector<HTMLElement>(
       `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
     );
@@ -1644,6 +1726,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(outgoing, 'ArrowDown');
     pending.resolve(okTask(updated));
     await flushMicrotasks();
+    expect(activeDocument.activeElement).toBe(outgoing);
     h.setSnapshots([updated]);
     h.emit();
     await flushMicrotasks();
@@ -1651,6 +1734,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const replacement = h.el.querySelector<HTMLElement>(
       `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
     );
+    expect(h.el.querySelector('.tc-tg-grid-row')).toBe(gridRow);
     expect(replacement).not.toBe(outgoing);
     expect(activeDocument.activeElement).toBe(replacement);
   });
@@ -1882,6 +1966,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const dayThree = keyboardSnapshot(dayThreeDate, '09:00', dayOne.source.filePath, 'revision-3');
     const h = keyboardPanelHarness([dayOne], execute);
     clickCalendarView(h.el, 'Day');
+    const patch = vi.spyOn(TodayView.prototype, 'patch');
 
     const block = timedBlock(h.el);
     block.focus();
@@ -1904,7 +1989,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
       dayThreeDate,
     );
+    expect(patch).toHaveBeenCalledTimes(2);
     expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+    patch.mockRestore();
   });
 
   it('keeps Week anchored for an in-range move and follows only after crossing its visible edge', async () => {
@@ -2075,6 +2162,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
+    const gridRow = h.el.querySelector('.tc-tg-grid-row');
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowDown');
@@ -2082,6 +2170,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.emit();
     await flushMicrotasks();
     const remounted = timedBlock(h.el);
+    expect(h.el.querySelector('.tc-tg-grid-row')).toBe(gridRow);
     expect(activeDocument.activeElement).not.toBe(remounted);
 
     pending.resolve(okTask(updated));

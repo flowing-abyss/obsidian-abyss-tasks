@@ -6,17 +6,14 @@ export abstract class BaseView {
    * `shouldScrollToNow` (Task 27): TodayView/WeekTimeGridView use this to decide whether to run
    * their one-time scroll-to-now on this render. It defaults to true so every other caller
    * (tests, BaseView.patch below, views that don't have a now-line at all) keeps prior behavior
-   * unchanged; only CenterPanel — which owns the (calViewType, calDate) key that survives its
-   * mountView() destroy/recreate cycle — ever passes `false`, and only for a reactive re-render
-   * of a view/date it has already scrolled for.
+   * unchanged; only CenterPanel — which owns the (calViewType, calDate) key across full mounts —
+   * ever passes `false`, for an explicit same-date refresh it has already scrolled for.
    *
-   * `preservedScrollTop` (Task 31): CenterPanel.mountView() destroys and recreates the view
-   * instance on every render, including reactive ones, so a freshly-created `.tc-tg-grid-row`
-   * naturally starts at `scrollTop = 0`. When `shouldScrollToNow` is false (a reactive
-   * re-render, not a fresh navigation), TodayView/WeekTimeGridView restore this value onto the
-   * new grid-row instead of leaving it at 0, so a task mutation elsewhere never silently resets
-   * the user's scroll position. Ignored/unused when `shouldScrollToNow` is true — a genuine
-   * fresh navigation always takes the scroll-to-now path instead of inheriting a stale position.
+   * `preservedScrollTop` (Task 31): a full CenterPanel refresh recreates the view instance, so a
+   * freshly-created `.tc-tg-grid-row` starts at `scrollTop = 0`. When `shouldScrollToNow` is
+   * false, TodayView/WeekTimeGridView restore this value onto the new grid-row. Query updates use
+   * `patch()` and retain that grid node directly. Ignored when `shouldScrollToNow` is true — a
+   * genuine fresh navigation takes the scroll-to-now path instead of inheriting stale position.
    */
   abstract render(
     container: HTMLElement,
