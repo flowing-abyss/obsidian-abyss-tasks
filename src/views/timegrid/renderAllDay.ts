@@ -9,6 +9,13 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
+import {
+  attachSpanInteractions,
+  type InteractiveSpanBoundaryTarget,
+  type SpanInteractionOwner,
+  type SpanMoveTarget,
+} from '../spanInteractions';
+import type { VisibleSpanRow } from '../spanLayout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
 
 export interface AllDayCallbacks {
@@ -19,6 +26,9 @@ export interface AllDayCallbacks {
   onStartChange: (task: TaskSnapshot, newStart: string) => void; // pointer edge-resize
   onDueChange: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize
   onExtendToSpan: (task: TaskSnapshot, newDue: string) => void; // pointer edge-resize on a plain task
+  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
+  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
+  spanInteractionOwner?: SpanInteractionOwner;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
@@ -80,6 +90,7 @@ function renderAllDayBody(
   callbacks: AllDayCallbacks,
   tagGroups: TagGroup[],
   interactive: boolean,
+  nativeDraggable = interactive,
 ): HTMLElement {
   const el = cellEl.createDiv({ cls: `tc-tg-body ${cls}` });
   // Status marker first: lets a user mark the item done without opening the modal. Its own
@@ -145,7 +156,7 @@ function renderAllDayBody(
     const textColorVar = tagFillTextColorVar(el, tagColor, tagFillPercent);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
-  if (interactive) {
+  if (nativeDraggable) {
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
@@ -160,6 +171,91 @@ function renderAllDayBody(
     callbacks.onTaskClick(task);
   });
   return el;
+}
+
+/** Render one row's semantic spans as continuous grid pieces above the persistent day cells. */
+export function renderAllDaySpanLayer(
+  layerEl: HTMLElement,
+  row: VisibleSpanRow,
+  dates: readonly string[],
+  callbacks: AllDayCallbacks,
+  tagGroups: TagGroup[],
+  interactionOwner: SpanInteractionOwner,
+  variant: 'timegrid' | 'month',
+): void {
+  layerEl.empty();
+  layerEl.setAttribute('data-span-lanes', String(row.laneCount));
+  const indexByDate = new Map(dates.map((date, index) => [date, index]));
+
+  for (const segment of row.segments) {
+    const startIndex = indexByDate.get(segment.startDate);
+    const endIndex = indexByDate.get(segment.endDate);
+    if (startIndex === undefined || endIndex === undefined) continue;
+    const classes = [
+      segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
+      'tc-span-piece',
+      variant === 'month' ? 'tc-mg-span-segment' : '',
+      variant === 'month' && segment.kind === 'ghost' ? 'tc-mg-span-continuation' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const host = layerEl.createDiv({ cls: 'tc-span-piece-host' });
+    host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.endDate);
+    host.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
+    host.style.gridRow = String(segment.lane + 1);
+    const body = renderAllDayBody(
+      host,
+      classes,
+      segment.task,
+      callbacks,
+      tagGroups,
+      segment.kind === 'terminal',
+      false,
+    );
+    body.setAttribute('tabindex', '0');
+    body.setAttribute('data-span-kind', segment.kind);
+    body.setAttribute('data-span-start', segment.startDate);
+    body.setAttribute('data-span-end', segment.endDate);
+    body.setAttribute('data-task-path', segment.task.source.filePath);
+    body.setAttribute('data-task-line', String(segment.task.source.line));
+    body.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
+    body.style.gridRow = String(segment.lane + 1);
+    if (variant === 'month') {
+      body.querySelector('.tc-tg-body-title')?.classList.add('tc-mg-item-title');
+      if (segment.task.planning.time) {
+        const time = body.ownerDocument.createElement('span');
+        time.className = 'tc-mg-item-time';
+        time.textContent = `${segment.task.planning.time} `;
+        const title = body.querySelector('.tc-tg-body-title');
+        body.insertBefore(time, title);
+      }
+    }
+
+    const boundaryHandles: {
+      element: HTMLElement;
+      boundary: 'start' | 'due';
+    }[] = [];
+    if (segment.ownsStartBoundary) {
+      const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+      handle.setAttribute('data-boundary', 'start');
+      boundaryHandles.push({ element: handle, boundary: 'start' });
+    }
+    if (segment.ownsDueBoundary) {
+      const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      handle.setAttribute('data-boundary', 'due');
+      boundaryHandles.push({ element: handle, boundary: 'due' });
+    }
+    attachSpanInteractions({
+      source: body,
+      task: segment.task,
+      segmentStart: segment.startDate,
+      segmentEnd: segment.endDate,
+      owner: interactionOwner,
+      boundaryHandles,
+      onMove: (task, target) => callbacks.onSpanMove?.(task, target),
+      onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
+    });
+  }
 }
 
 function renderDraggableBody(
@@ -198,6 +294,7 @@ function attachEdgeResize(
   cellEl: HTMLElement,
   task: TaskSnapshot,
   onResolve: (task: TaskSnapshot, date: string) => void,
+  interactionOwner?: SpanInteractionOwner,
 ): void {
   // The handle sits inside a `draggable="true"` body (renderDraggableBody, for the
   // whole-task cross-day move). draggable="false" here is NOT enough on its own to stop a
@@ -215,6 +312,9 @@ function attachEdgeResize(
   // which actually prevents the fallback per spec, instead of racing it.
   handle.setAttribute('draggable', 'false');
   const body = handle.closest<HTMLElement>('.tc-tg-body');
+  const ownerDocument = handle.ownerDocument;
+  const ownerWindow = ownerDocument.defaultView;
+  if (!ownerWindow) return;
 
   const resolve = (date: string): void => {
     onResolve(task, date);
@@ -238,7 +338,7 @@ function attachEdgeResize(
   const onPointerMove = (e: PointerEvent): void => {
     if (e.pointerId !== capturedPointerId) return;
     e.preventDefault();
-    const target = activeDocument.elementFromPoint(e.clientX, e.clientY);
+    const target = ownerDocument.elementFromPoint(e.clientX, e.clientY);
     const dayEl = target?.closest('[data-tg-date]') ?? null;
     if (dayEl === hoveredDayEl) return;
     hoveredDayEl?.classList.remove('is-drag-over');
@@ -256,18 +356,19 @@ function attachEdgeResize(
     body?.setAttribute('draggable', 'true');
     body?.removeClass('is-edge-resizing');
     clearHoveredDay();
-    window.removeEventListener('pointermove', onPointerMove);
-    window.removeEventListener('pointerup', onPointerUp);
-    window.removeEventListener('pointercancel', onPointerCancel);
+    ownerWindow.removeEventListener('pointermove', onPointerMove);
+    ownerWindow.removeEventListener('pointerup', onPointerUp);
+    ownerWindow.removeEventListener('pointercancel', onPointerCancel);
     if (capturedPointerId !== null) tryReleasePointer(handle, capturedPointerId);
     capturedPointerId = null;
     if (withHook.__tgPendingEdgeResize === resolve) delete withHook.__tgPendingEdgeResize;
     if (withHook.__tgActiveEdgeResize?.end === endResize) delete withHook.__tgActiveEdgeResize;
+    interactionOwner?.end(endResize);
   };
 
   const onPointerUp = (upEvent: PointerEvent): void => {
     if (upEvent.pointerId !== capturedPointerId) return;
-    const target = activeDocument.elementFromPoint(upEvent.clientX, upEvent.clientY);
+    const target = ownerDocument.elementFromPoint(upEvent.clientX, upEvent.clientY);
     const dayEl = target?.closest('[data-tg-date]');
     const date = dayEl?.getAttribute('data-tg-date');
     if (date) resolve(date);
@@ -292,10 +393,11 @@ function attachEdgeResize(
     capturedPointerId = e.pointerId;
     withHook.__tgActiveEdgeResize = { end: endResize };
     withHook.__tgPendingEdgeResize = resolve;
+    interactionOwner?.begin(endResize);
     tryCapturePointer(handle, capturedPointerId);
-    window.addEventListener('pointermove', onPointerMove);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerCancel);
+    ownerWindow.addEventListener('pointermove', onPointerMove);
+    ownerWindow.addEventListener('pointerup', onPointerUp);
+    ownerWindow.addEventListener('pointercancel', onPointerCancel);
   });
 }
 
@@ -320,9 +422,11 @@ export function renderAllDayCell(
     }
     const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups);
     const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-    attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange);
+    leftEdge.setAttribute('data-boundary', 'start');
+    attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange, callbacks.spanInteractionOwner);
     const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange);
+    rightEdge.setAttribute('data-boundary', 'due');
+    attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
   }
   for (const t of plain) {
     const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups);
@@ -330,7 +434,14 @@ export function renderAllDayCell(
     // (there'd be nothing anchoring the other end) — it extends the task into a real
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
     const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    attachEdgeResize(rightEdge, cellEl, t, callbacks.onExtendToSpan);
+    rightEdge.setAttribute('data-boundary', 'create-span');
+    attachEdgeResize(
+      rightEdge,
+      cellEl,
+      t,
+      callbacks.onExtendToSpan,
+      callbacks.spanInteractionOwner,
+    );
   }
   for (const t of deadlines) {
     const marker = cellEl.createDiv({ cls: 'tc-tg-deadline-marker' });

@@ -40,6 +40,8 @@ function callbacks() {
     onCreateAtDate: vi.fn(),
     onTaskClick: vi.fn(),
     onDrop: vi.fn(),
+    onSpanMove: vi.fn(),
+    onSpanBoundary: vi.fn(),
     onToggle: vi.fn(),
     onSetStatus: vi.fn(),
     onSetPriority: vi.fn(),
@@ -49,6 +51,139 @@ function callbacks() {
 }
 
 describe('MonthGridView', () => {
+  it('renders spans in one continuous per-week overlay and reserves the same lane space in every cell', () => {
+    const container = freshContainer();
+    const view = new MonthGridView(callbacks());
+    const long = task({
+      title: 'Trip',
+      planning: { start: '2026-07-14', due: '2026-07-16' },
+      source: { line: 1 },
+    });
+    const single = task({
+      title: 'Single',
+      planning: { scheduled: '2026-07-15' },
+      source: { line: 2 },
+    });
+
+    view.render(container, [long, single], resolvedConfig({ startPosition: '2026-07' }));
+
+    const row = requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.tc-mg-row')!;
+    const ghost = row.querySelector<HTMLElement>('[data-span-kind="ghost"]');
+    expect(row.querySelectorAll('.tc-mg-span-layer')).toHaveLength(1);
+    expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(1);
+    expect(ghost?.style.gridColumn).toBe('2 / 4');
+    expect(ghost?.getAttribute('tabindex')).toBe('0');
+    expect(
+      row.querySelector('[data-mg-date="2026-07-15"] .tc-mg-cell-items .tc-mg-plain'),
+    ).not.toBeNull();
+    expect(
+      Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell')).every(
+        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '1',
+      ),
+    ).toBe(true);
+  });
+
+  it('wires Month actual start and due handles to the shared atomic boundary callback', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell'));
+    for (const cell of cells) {
+      const index = cells.indexOf(cell) % 7;
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
+        left: index * 100,
+        right: (index + 1) * 100,
+        top: 0,
+        bottom: 100,
+        width: 100,
+        height: 100,
+        x: index * 100,
+        y: 0,
+        toJSON: () => ({}),
+      });
+    }
+    const due = requiredElement(container, '[data-boundary="due"]');
+    due.dispatchEvent(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 350 }) as PointerEvent,
+    );
+    window.dispatchEvent(
+      new MouseEvent('pointermove', { bubbles: true, button: 0, clientX: 450 }) as PointerEvent,
+    );
+    expect(container.querySelector('.tc-span-boundary-preview')?.getAttribute('style')).toContain(
+      'grid-column: 4 / 6',
+    );
+    window.dispatchEvent(
+      new MouseEvent('pointerup', { bubbles: true, button: 0, clientX: 450 }) as PointerEvent,
+    );
+
+    expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
+      t,
+      expect.objectContaining({ boundary: 'due', date: '2026-07-17' }),
+    );
+    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+  });
+
+  it('moves a Month span into another week by its grabbed date and previews the full shifted range', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new MonthGridView(cbs);
+    const t = task({ planning: { start: '2026-07-14', due: '2026-07-16' } });
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell'));
+    for (const cell of cells) {
+      const index = cells.indexOf(cell);
+      const column = index % 7;
+      const row = Math.floor(index / 7);
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
+        left: column * 100,
+        right: (column + 1) * 100,
+        top: row * 100,
+        bottom: (row + 1) * 100,
+        width: 100,
+        height: 100,
+        x: column * 100,
+        y: row * 100,
+        toJSON: () => ({}),
+      });
+    }
+
+    const ghost = requiredElement(container, '[data-span-kind="ghost"]');
+    ghost.dispatchEvent(
+      new MouseEvent('pointerdown', {
+        bubbles: true,
+        button: 0,
+        clientX: 150,
+        clientY: 250,
+      }) as PointerEvent,
+    );
+    window.dispatchEvent(
+      new MouseEvent('pointermove', {
+        bubbles: true,
+        button: 0,
+        clientX: 150,
+        clientY: 350,
+      }) as PointerEvent,
+    );
+    expect(container.querySelector('.tc-span-move-preview')?.getAttribute('style')).toContain(
+      'grid-column: 2 / 5',
+    );
+    window.dispatchEvent(
+      new MouseEvent('pointerup', {
+        bubbles: true,
+        button: 0,
+        clientX: 150,
+        clientY: 350,
+      }) as PointerEvent,
+    );
+    expect(cbs.onSpanMove).toHaveBeenCalledWith(
+      t,
+      expect.objectContaining({ grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 }),
+    );
+  });
   it('renders a 6-week grid (42 day cells) for the configured month', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());
@@ -574,7 +709,7 @@ describe('MonthGridView', () => {
     expect(dt.getData('text/plain')).toBe('f.md:::7');
   });
 
-  it('a span-segment item is draggable with the filePath:::line payload', () => {
+  it('a span-segment item is focusable for pointer movement instead of native HTML drag', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());
     const t = task({
@@ -586,12 +721,8 @@ describe('MonthGridView', () => {
     const item = container.querySelector(
       '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
     ) as HTMLElement;
-    expect(item.getAttribute('draggable')).toBe('true');
-    const dt = new DataTransferStub();
-    const ev = new MouseEvent('dragstart', { bubbles: true });
-    Object.defineProperty(ev, 'dataTransfer', { value: dt, configurable: true });
-    item.dispatchEvent(ev);
-    expect(dt.getData('text/plain')).toBe('f.md:::9');
+    expect(item.hasAttribute('draggable')).toBe(false);
+    expect(item.getAttribute('tabindex')).toBe('0');
   });
 
   it('deadline markers stay non-draggable', () => {
@@ -735,7 +866,7 @@ describe('MonthGridView', () => {
   });
 
   describe('timed multi-day spans (Task 29)', () => {
-    it('renders a start+due+time task as a span-segment on every spanned day', () => {
+    it('renders a start+due+time task as one continuous ghost and one due terminal', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
       const t = task({
@@ -743,10 +874,16 @@ describe('MonthGridView', () => {
         planning: { start: '2026-07-14', due: '2026-07-16', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      for (const date of ['2026-07-14', '2026-07-15', '2026-07-16']) {
-        const bar = container.querySelector(`[data-mg-date="${date}"] .tc-mg-span-segment`);
-        expect(bar).not.toBeNull();
-      }
+      expect(container.querySelectorAll('.tc-mg-span-segment')).toHaveLength(2);
+      expect(
+        container.querySelector('[data-span-kind="ghost"]')?.getAttribute('data-span-start'),
+      ).toBe('2026-07-14');
+      expect(
+        container.querySelector('[data-span-kind="ghost"]')?.getAttribute('data-span-end'),
+      ).toBe('2026-07-15');
+      expect(
+        container.querySelector('[data-span-kind="terminal"]')?.getAttribute('data-span-start'),
+      ).toBe('2026-07-16');
     });
 
     it("prefixes the anchor (due) day's segment with the time, distinguishing it from an untimed span", () => {
@@ -815,12 +952,13 @@ describe('MonthGridView', () => {
       const bar = container.querySelector(
         '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
       ) as HTMLElement;
-      expect(bar.getAttribute('draggable')).toBe('true');
+      expect(bar.hasAttribute('draggable')).toBe(false);
+      expect(bar.getAttribute('tabindex')).toBe('0');
     });
   });
 
   describe('span continuations (Task 3)', () => {
-    it('renders an untimed span with one interactive due terminal and non-interactive tagged ghosts before it', () => {
+    it('renders an untimed span with one interactive due terminal and a movable tagged ghost before it', () => {
       const container = freshContainer();
       const cbs = callbacks();
       const view = new MonthGridView({
@@ -837,33 +975,29 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map((date) =>
-        requiredElement(container, `[data-mg-date="${date}"] .tc-mg-span-segment`),
-      );
-      const startGhost = segments[0]!;
-      const middleGhost = segments[1]!;
-      const terminal = segments[2]!;
+      const ghost = requiredElement(container, '[data-span-kind="ghost"]');
+      const terminal = requiredElement(container, '[data-span-kind="terminal"]');
 
       expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
-      expect(terminal.getAttribute('draggable')).toBe('true');
+      expect(terminal.hasAttribute('draggable')).toBe(false);
+      expect(terminal.getAttribute('tabindex')).toBe('0');
       expect(terminal.classList.contains('tc-mg-span-continuation')).toBe(false);
-      for (const ghost of [startGhost, middleGhost]) {
-        expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-        expect(ghost.querySelector('.tc-status-marker')).toBeNull();
-        expect(ghost.hasAttribute('draggable')).toBe(false);
-        expect(ghost.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
-        expect(ghost.querySelector('.tc-mg-item-title')?.classList.contains('is-done')).toBe(true);
-      }
+      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
+      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+      expect(ghost.hasAttribute('draggable')).toBe(false);
+      expect(ghost.getAttribute('tabindex')).toBe('0');
+      expect(ghost.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+      expect(ghost.querySelector('.tc-mg-item-title')?.classList.contains('is-done')).toBe(true);
 
-      middleGhost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      ghost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(cbs.onDayClick).not.toHaveBeenCalled();
       expect(cbs.onCreateAtDate).not.toHaveBeenCalled();
-      middleGhost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      ghost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expect(cbs.onTaskClick).toHaveBeenCalledTimes(1);
       expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
     });
 
-    it('renders a timed span with one interactive due terminal and time-prefixed ghosts before it', () => {
+    it('renders a timed span with one interactive due terminal and a time-prefixed movable ghost', () => {
       const container = freshContainer();
       const cbs = callbacks();
       const view = new MonthGridView(cbs);
@@ -873,28 +1007,23 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-      const segments = ['2026-07-14', '2026-07-15', '2026-07-16'].map((date) =>
-        requiredElement(container, `[data-mg-date="${date}"] .tc-mg-span-segment`),
-      );
-      const startGhost = segments[0]!;
-      const middleGhost = segments[1]!;
-      const terminal = segments[2]!;
+      const ghost = requiredElement(container, '[data-span-kind="ghost"]');
+      const terminal = requiredElement(container, '[data-span-kind="terminal"]');
 
       expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
-      expect(terminal.getAttribute('draggable')).toBe('true');
-      for (const segment of segments) {
+      expect(terminal.getAttribute('tabindex')).toBe('0');
+      for (const segment of [ghost, terminal]) {
         expect(segment.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
       }
-      for (const ghost of [startGhost, middleGhost]) {
-        expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-        expect(ghost.querySelector('.tc-status-marker')).toBeNull();
-        expect(ghost.hasAttribute('draggable')).toBe(false);
-      }
+      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
+      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+      expect(ghost.hasAttribute('draggable')).toBe(false);
+      expect(ghost.getAttribute('tabindex')).toBe('0');
 
-      middleGhost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      ghost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(cbs.onDayClick).not.toHaveBeenCalled();
       expect(cbs.onCreateAtDate).not.toHaveBeenCalled();
-      middleGhost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      ghost.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expect(cbs.onTaskClick).toHaveBeenCalledTimes(1);
       expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
     });
@@ -937,7 +1066,7 @@ describe('MonthGridView', () => {
       expect(declarations).toMatch(
         /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
       );
-      expect(declarations).toMatch(/cursor\s*:\s*default/u);
+      expect(declarations).toMatch(/cursor\s*:\s*grab/u);
     });
 
     it("uses the ghost's 18% tag fill when choosing a readable title-text variant", () => {

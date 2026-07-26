@@ -1254,6 +1254,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-faint);
 }
 
+.tc-tg-allday-days {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .tc-tg-allday-cell {
   flex: 1;
   /* Task 47: without this, a flex item's default `min-width: auto` lets its own content's
@@ -1272,6 +1279,58 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+.tc-tg-cell-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: calc(var(--tc-span-lane-count, 0) * 1.7em);
+}
+
+.tc-tg-span-layer,
+.tc-mg-span-layer {
+  position: absolute;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-auto-rows: 1.55em;
+  gap: 2px 0;
+  pointer-events: none;
+}
+
+.tc-tg-span-layer {
+  inset: 2px 4px auto;
+}
+
+.tc-span-piece {
+  box-sizing: border-box;
+  margin-inline: 1px;
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.tc-span-piece:focus-visible {
+  outline: 2px solid var(--tc-tag-color, var(--interactive-accent));
+  outline-offset: 1px;
+}
+
+.tc-span-piece.is-picked-up {
+  box-shadow: var(--shadow-s);
+}
+
+.tc-span-move-preview,
+.tc-span-boundary-preview {
+  z-index: 8;
+  box-sizing: border-box;
+  pointer-events: none;
+  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border-radius: 4px;
+  background: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 12%,
+    var(--background-primary)
+  );
 }
 
 .tc-tg-grid-row {
@@ -1614,7 +1673,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-tg-span-continuation {
   opacity: 0.55;
-  cursor: default;
+  cursor: grab;
   border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
   background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
 }
@@ -1959,8 +2018,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-mg-row {
+  position: relative;
   display: flex;
   flex: 1;
+}
+
+.tc-mg-span-layer {
+  top: 1.45em;
+  right: 0;
+  left: 22px;
 }
 
 .tc-mg-head {
@@ -2006,6 +2072,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
+}
+
+.tc-mg-cell-items {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: calc(var(--tc-span-lane-count, 0) * 1.55em);
 }
 
 /* Hover-visible "+" affordance for click-to-create (kept off plain click, which already
@@ -2120,7 +2193,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-mg-span-continuation {
   opacity: 0.55;
-  cursor: default;
+  cursor: grab;
   border: 1px dashed var(--tc-tag-color, var(--background-modifier-border));
   background: color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 18%, transparent);
 }

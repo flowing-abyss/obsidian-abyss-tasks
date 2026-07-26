@@ -3,10 +3,20 @@ import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
+import {
+  createSpanInteractionOwner,
+  type InteractiveSpanBoundaryTarget,
+  type SpanMoveTarget,
+} from './spanInteractions';
+import { layoutVisibleSpans } from './spanLayout';
 import type { TimedDragTarget, TimedDurationTarget } from './timegrid/dragGeometry';
 import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
-import { renderAllDayCell, type AllDayCallbacks } from './timegrid/renderAllDay';
+import {
+  renderAllDayCell,
+  renderAllDaySpanLayer,
+  type AllDayCallbacks,
+} from './timegrid/renderAllDay';
 import {
   renderTimedBlocksForDay,
   type TimedBlockCallbacks,
@@ -34,6 +44,8 @@ export interface TimeGridCallbacks {
   onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
   onTimedDuration?: (task: TaskSnapshot, target: TimedDurationTarget) => void;
   onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
+  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
+  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
   onDueChange: (task: TaskSnapshot, newDue: string) => void;
   onExtendToSpan: (task: TaskSnapshot, newDue: string) => void;
@@ -126,6 +138,7 @@ export class TodayView extends BaseView {
   private md = new Component();
   private nowLineIntervalId: number | null = null;
   private timedInteractions = createTimedInteractionOwner();
+  private spanInteractions = createSpanInteractionOwner();
 
   constructor(private callbacks: TimeGridCallbacks) {
     super();
@@ -139,6 +152,7 @@ export class TodayView extends BaseView {
     preservedScrollTop?: number,
   ): void {
     this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -201,13 +215,31 @@ export class TodayView extends BaseView {
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,
+      onSpanMove: this.callbacks.onSpanMove,
+      onSpanBoundary: this.callbacks.onSpanBoundary,
+      spanInteractionOwner: this.spanInteractions,
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };
-    renderAllDayCell(day.allDayCellEl, date, spans, plain, deadlines, allDayCallbacks, tagGroups);
+    const spanRow = layoutVisibleSpans(spans, [date]).rows[0]!;
+    renderAllDaySpanLayer(
+      handles.allDaySpanLayerEl,
+      spanRow,
+      [date],
+      allDayCallbacks,
+      tagGroups,
+      this.spanInteractions,
+      'timegrid',
+    );
+    day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+    renderAllDayCell(day.allDayCellEl, date, [], plain, deadlines, allDayCallbacks, tagGroups);
+    const allDayItems = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+    for (const child of Array.from(day.allDayCellEl.children)) {
+      if (child !== allDayItems) allDayItems.appendChild(child);
+    }
 
     const isToday = date === window.moment().format('YYYY-MM-DD');
     const gridRowEl = handles.gridRowEl;
@@ -245,6 +277,7 @@ export class TodayView extends BaseView {
 
   destroy(): void {
     this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
     this.containerEl = null;
     this.md.unload();
     if (this.nowLineIntervalId !== null) {

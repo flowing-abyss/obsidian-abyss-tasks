@@ -5,12 +5,18 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
 import { tagFillTextColorVar } from '../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
-import { plainGhostTaskTitle } from '../ui/plainGhostTaskTitle';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { statusTitleClass } from '../ui/statusTitleClass';
 import { BaseView } from './BaseView';
+import {
+  createSpanInteractionOwner,
+  type InteractiveSpanBoundaryTarget,
+  type SpanMoveTarget,
+} from './spanInteractions';
+import { layoutVisibleSpans } from './spanLayout';
+import { renderAllDaySpanLayer, type AllDayCallbacks } from './timegrid/renderAllDay';
 import { bucketTasksForDate } from './TodayView';
 
 export interface MonthGridViewCallbacks {
@@ -19,6 +25,8 @@ export interface MonthGridViewCallbacks {
   onCreateAtDate: (date: string) => void;
   onTaskClick: (task: TaskSnapshot) => void;
   onDrop: (dragData: string, targetDate: string) => void;
+  onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
+  onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
@@ -30,12 +38,14 @@ export interface MonthGridViewCallbacks {
 export class MonthGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
   private md = new Component();
+  private spanInteractions = createSpanInteractionOwner();
 
   constructor(private callbacks: MonthGridViewCallbacks) {
     super();
   }
 
   render(container: HTMLElement, tasks: TaskSnapshot[], config: ResolvedConfig): void {
+    this.spanInteractions.disposeActive();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -60,9 +70,50 @@ export class MonthGridView extends BaseView {
       });
     }
 
+    const visibleDates = Array.from({ length: 42 }, (_, index) =>
+      window
+        .moment(month)
+        .add(monthOffset + index, 'days')
+        .format('YYYY-MM-DD'),
+    );
+    const spanRows = layoutVisibleSpans(tasks, visibleDates).rows;
+    const spanCallbacks: AllDayCallbacks = {
+      app: this.callbacks.app,
+      component: this.md,
+      onTaskClick: this.callbacks.onTaskClick,
+      onDrop: this.callbacks.onDrop,
+      onStartChange: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'start',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onDueChange: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'due',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onExtendToSpan: (task, date) =>
+        this.callbacks.onSpanBoundary?.(task, {
+          boundary: 'create-span',
+          date: date as never,
+          dayDelta: 0,
+        }),
+      onSpanMove: this.callbacks.onSpanMove,
+      onSpanBoundary: this.callbacks.onSpanBoundary,
+      spanInteractionOwner: this.spanInteractions,
+      onToggle: this.callbacks.onToggle,
+      onSetStatus: this.callbacks.onSetStatus,
+      onSetPriority: this.callbacks.onSetPriority,
+      statusRegistry: this.callbacks.statusRegistry,
+    };
+
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
       const row = grid.createDiv({ cls: 'tc-mg-row' });
+      const rowDates = visibleDates.slice(w * 7, w * 7 + 7);
+      const spanRow = spanRows[w]!;
 
       // Week-number column: clicking it drills into the Week view for that ISO week
       // (mirrors legacy MonthView.ts's wrapperButton pattern exactly).
@@ -121,6 +172,14 @@ export class MonthGridView extends BaseView {
         });
 
         this.renderCompactCell(cell, tasks, currentDate);
+        cell.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+        const items = cell.createDiv({ cls: 'tc-mg-cell-items' });
+        for (const item of Array.from(
+          cell.querySelectorAll<HTMLElement>(
+            ':scope > .tc-mg-plain, :scope > .tc-mg-block-dot, :scope > .tc-mg-deadline-marker',
+          ),
+        ))
+          items.appendChild(item);
 
         if (inCurrentMonth) {
           cell.addEventListener('click', (e) => {
@@ -143,12 +202,22 @@ export class MonthGridView extends BaseView {
           if (dragData) this.callbacks.onDrop(dragData, currentDate);
         });
       }
+      const layer = row.createDiv({ cls: 'tc-mg-span-layer' });
+      renderAllDaySpanLayer(
+        layer,
+        spanRow,
+        rowDates,
+        spanCallbacks,
+        this.callbacks.tagGroups ?? [],
+        this.spanInteractions,
+        'month',
+      );
       starts += 7;
     }
   }
 
   private renderCompactCell(cell: HTMLElement, tasks: TaskSnapshot[], date: string): void {
-    const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, date);
+    const { timed, plain, deadlines } = bucketTasksForDate(tasks, date);
     const tagGroups = this.callbacks.tagGroups ?? [];
 
     for (const t of timed) {
@@ -163,12 +232,6 @@ export class MonthGridView extends BaseView {
         this.callbacks.onTaskClick(t);
       });
       this.makeDraggable(dot, t);
-    }
-    for (const t of spans) {
-      this.renderSpanSegment(cell, t, date, false, tagGroups);
-    }
-    for (const t of timedSpans) {
-      this.renderSpanSegment(cell, t, date, true, tagGroups);
     }
     for (const t of plain) {
       const row = cell.createDiv({ cls: 'tc-mg-plain' });
@@ -198,29 +261,6 @@ export class MonthGridView extends BaseView {
     }
   }
 
-  private renderSpanSegment(
-    cell: HTMLElement,
-    task: TaskSnapshot,
-    date: string,
-    timed: boolean,
-    tagGroups: TagGroup[],
-  ): void {
-    const terminal = String(task.planning.due) === date;
-    const bar = cell.createDiv({
-      cls: `tc-mg-span-segment${terminal ? '' : ' tc-mg-span-continuation'}`,
-    });
-    this.applyTagFill(bar, task, tagGroups, terminal ? 40 : 18);
-    if (terminal) this.renderMarker(bar, task);
-    if (timed) bar.createSpan({ cls: 'tc-mg-item-time', text: `${task.planning.time} ` });
-    this.renderTitle(bar, task, terminal);
-    bar.addEventListener('contextmenu', (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.callbacks.onTaskClick(task);
-    });
-    if (terminal) this.makeDraggable(bar, task);
-  }
-
   /**
    * Renders the task's markdown/wiki-link-aware title text as a trailing inline span.
    * `.tc-mg-item-title` (Task 21) makes it the flex child that truncates independently —
@@ -237,12 +277,8 @@ export class MonthGridView extends BaseView {
    * timedSpan, plain, AND deadline markers, see renderCompactCell above), so one change here
    * covers all of them.
    */
-  private renderTitle(container: HTMLElement, t: TaskSnapshot, linkAware = true): void {
+  private renderTitle(container: HTMLElement, t: TaskSnapshot): void {
     const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
-    if (!linkAware) {
-      titleEl.setText(plainGhostTaskTitle(t));
-      return;
-    }
     renderTaskText(titleEl, t.markdownTitle, {
       app: this.callbacks.app,
       sourcePath: t.source.filePath,
@@ -309,6 +345,7 @@ export class MonthGridView extends BaseView {
   }
 
   destroy(): void {
+    this.spanInteractions.disposeActive();
     this.containerEl = null;
     this.md.unload();
   }

@@ -21,6 +21,8 @@ function callbacks() {
     onKeyboardIntent: vi.fn(),
     onTimeChange: vi.fn(),
     onDurationChange: vi.fn(),
+    onSpanMove: vi.fn(),
+    onSpanBoundary: vi.fn(),
     onStartChange: vi.fn(),
     onDueChange: vi.fn(),
     onExtendToSpan: vi.fn(),
@@ -32,6 +34,138 @@ function callbacks() {
 }
 
 describe('WeekTimeGridView', () => {
+  it('renders one shared continuous all-day ghost across adjacent columns with a due terminal', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const t = task({
+      title: 'Trip',
+      planning: { start: '2026-07-07', due: '2026-07-09' },
+    });
+
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
+
+    const layer = container.querySelector('.tc-tg-span-layer');
+    const ghost = layer?.querySelector<HTMLElement>('[data-span-kind="ghost"]');
+    const terminal = layer?.querySelector<HTMLElement>('[data-span-kind="terminal"]');
+    expect(layer).not.toBeNull();
+    expect(layer?.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(1);
+    expect(ghost?.style.gridColumn).toBe('2 / 4');
+    expect(terminal?.style.gridColumn).toBe('4 / 5');
+    expect(ghost?.getAttribute('tabindex')).toBe('0');
+    expect(terminal?.getAttribute('tabindex')).toBe('0');
+  });
+
+  it('puts actual boundary handles on their visible pieces and no false handles on a fully clipped ghost', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const visible = task({
+      title: 'Visible edges',
+      planning: { start: '2026-07-07', due: '2026-07-09' },
+      source: { line: 1 },
+    });
+    const clipped = task({
+      title: 'Clipped',
+      planning: { start: '2026-07-01', due: '2026-07-20' },
+      source: { line: 2 },
+    });
+
+    view.render(
+      container,
+      [visible, clipped],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+
+    const visiblePieces = container.querySelectorAll<HTMLElement>('[data-task-line="1"]');
+    expect(visiblePieces[0]?.querySelector('[data-boundary="start"]')).not.toBeNull();
+    expect(visiblePieces[0]?.querySelector('[data-boundary="due"]')).toBeNull();
+    expect(visiblePieces[1]?.querySelector('[data-boundary="due"]')).not.toBeNull();
+    const clippedGhost = container.querySelector<HTMLElement>('[data-task-line="2"]');
+    expect(clippedGhost?.getAttribute('tabindex')).toBe('0');
+    expect(clippedGhost?.querySelectorAll('[data-boundary]')).toHaveLength(0);
+  });
+
+  it('keeps single-day items below equal reserved span lanes while day cells remain click/drop targets', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const spans = [
+      task({ planning: { start: '2026-07-06', due: '2026-07-10' }, source: { line: 1 } }),
+      task({ planning: { start: '2026-07-07', due: '2026-07-11' }, source: { line: 2 } }),
+    ];
+    const plain = task({
+      title: 'Single',
+      planning: { scheduled: '2026-07-08' },
+      source: { line: 3 },
+    });
+
+    view.render(
+      container,
+      [...spans, plain],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+
+    const cells = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-allday-cell'));
+    expect(cells.every((cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '2')).toBe(
+      true,
+    );
+    expect(
+      container.querySelector('[data-tg-date="2026-07-08"] .tc-tg-cell-items .tc-tg-plain'),
+    ).not.toBeNull();
+    const target = container.querySelector<HTMLElement>('[data-tg-date="2026-07-12"]')!;
+    const drop = new MouseEvent('drop', { bubbles: true });
+    Object.defineProperty(drop, 'dataTransfer', {
+      value: { getData: () => 'f.md:::3' },
+    });
+    target.dispatchEvent(drop);
+    expect(cbs.onDrop).toHaveBeenCalledWith('f.md:::3', '2026-07-12');
+  });
+
+  it('keeps a scheduled-only single body marker and labels its extension affordance explicitly', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    view.render(
+      container,
+      [task({ planning: { scheduled: '2026-07-08' } })],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+
+    const body = container.querySelector('.tc-tg-plain')!;
+    expect(body.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    expect(body.querySelector('[data-boundary="create-span"]')).not.toBeNull();
+  });
+
+  it('keeps only the latest single-date extension resize session active', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const tasks = [
+      task({ planning: { scheduled: '2026-07-08' }, source: { line: 1 } }),
+      task({ planning: { scheduled: '2026-07-09' }, source: { line: 2 } }),
+    ];
+    view.render(
+      container,
+      tasks,
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+
+    const handles = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-boundary="create-span"]'),
+    );
+    const target = container.querySelector<HTMLElement>('[data-tg-date="2026-07-10"]')!;
+    const originalElementFromPoint = document.elementFromPoint;
+    document.elementFromPoint = () => target;
+    try {
+      handles[0]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
+      handles[1]?.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 2 }));
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+      expect(cbs.onExtendToSpan).not.toHaveBeenCalled();
+      window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 2 }));
+      expect(cbs.onExtendToSpan).toHaveBeenCalledTimes(1);
+      expect(cbs.onExtendToSpan).toHaveBeenCalledWith(tasks[1], '2026-07-10');
+    } finally {
+      document.elementFromPoint = originalElementFromPoint;
+    }
+  });
   it('threads relative keyboard intents from timed blocks', () => {
     const container = freshContainer();
     const cbs = callbacks();
@@ -116,7 +250,7 @@ describe('WeekTimeGridView', () => {
     const t = task({ planning: { start: '2026-07-07', due: '2026-07-09' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
     expect(container.querySelectorAll('.tc-tg-span')).toHaveLength(1);
-    expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(2);
+    expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(1);
   });
 
   it('destroy() does not throw', () => {

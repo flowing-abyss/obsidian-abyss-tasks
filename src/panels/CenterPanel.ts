@@ -51,6 +51,7 @@ import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
 import { WeekTimeGridView } from '../views/WeekTimeGridView';
+import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
   groupTasksByDate,
   groupTasksByPriority,
@@ -616,6 +617,12 @@ export class CenterPanel {
     const handleTimedBoundary = (t: TaskSnapshot, target: TimedBoundaryTarget): void => {
       void this.commitTimedBoundary(t, target);
     };
+    const handleSpanMove = (t: TaskSnapshot, target: SpanMoveTarget): void => {
+      void this.commitSpanMove(t, target);
+    };
+    const handleSpanBoundary = (t: TaskSnapshot, target: InteractiveSpanBoundaryTarget): void => {
+      void this.commitTimedBoundary(t, target);
+    };
     const handleStartChange = (t: TaskSnapshot, newStart: string): void => {
       void this.updateTaskStart(t, newStart);
     };
@@ -758,6 +765,8 @@ export class CenterPanel {
           onTimedMove: handleTimedMove,
           onTimedDuration: handleTimedDuration,
           onTimedBoundary: handleTimedBoundary,
+          onSpanMove: handleSpanMove,
+          onSpanBoundary: handleSpanBoundary,
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
@@ -793,6 +802,8 @@ export class CenterPanel {
           onTimedMove: handleTimedMove,
           onTimedDuration: handleTimedDuration,
           onTimedBoundary: handleTimedBoundary,
+          onSpanMove: handleSpanMove,
+          onSpanBoundary: handleSpanBoundary,
           onStartChange: handleStartChange,
           onDueChange: handleDueChange,
           onExtendToSpan: handleExtendToSpan,
@@ -821,6 +832,8 @@ export class CenterPanel {
           onCreateAtDate: handleCreateAtDate,
           onTaskClick: handleTaskClick,
           onDrop: handleDrop,
+          onSpanMove: handleSpanMove,
+          onSpanBoundary: handleSpanBoundary,
           onToggle: (t) => {
             void this.toggleTask(t);
           },
@@ -2692,6 +2705,17 @@ export class CenterPanel {
       );
     } catch {
       // Keep the previous duration if a forged target fails validation.
+    }
+  }
+
+  private async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {
+    if (!this.tasks || target.days === 0) return;
+    try {
+      presentTaskCommandResult(
+        await this.tasks.execute({ type: 'shift-schedule', ref: task.ref, days: target.days }),
+      );
+    } catch {
+      // The shared resolver validates the exact frozen delta again at the command boundary.
     }
   }
 

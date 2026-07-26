@@ -3,18 +3,25 @@ import { resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { ResolvedConfig } from '../settings/types';
 import type { TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
-import { bucketTasksForDate, NOW_LINE_REFRESH_MS, type TimeGridCallbacks } from './TodayView';
+import { createSpanInteractionOwner } from './spanInteractions';
+import { layoutVisibleSpans } from './spanLayout';
 import { renderHourGrid, repositionNowLine } from './timegrid/HourGrid';
 import { minutesToPixels } from './timegrid/layout';
-import { renderAllDayCell, type AllDayCallbacks } from './timegrid/renderAllDay';
+import {
+  renderAllDayCell,
+  renderAllDaySpanLayer,
+  type AllDayCallbacks,
+} from './timegrid/renderAllDay';
 import { renderTimedBlocksForDay, type TimedBlockCallbacks } from './timegrid/renderTimedBlocks';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
+import { bucketTasksForDate, NOW_LINE_REFRESH_MS, type TimeGridCallbacks } from './TodayView';
 
 export class WeekTimeGridView extends BaseView {
   private containerEl: HTMLElement | null = null;
   private md = new Component();
   private nowLineIntervalId: number | null = null;
   private timedInteractions = createTimedInteractionOwner();
+  private spanInteractions = createSpanInteractionOwner();
 
   constructor(private callbacks: TimeGridCallbacks) {
     super();
@@ -28,6 +35,7 @@ export class WeekTimeGridView extends BaseView {
     preservedScrollTop?: number,
   ): void {
     this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -85,6 +93,9 @@ export class WeekTimeGridView extends BaseView {
       onStartChange: this.callbacks.onStartChange,
       onDueChange: this.callbacks.onDueChange,
       onExtendToSpan: this.callbacks.onExtendToSpan,
+      onSpanMove: this.callbacks.onSpanMove,
+      onSpanBoundary: this.callbacks.onSpanBoundary,
+      spanInteractionOwner: this.spanInteractions,
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
@@ -93,8 +104,22 @@ export class WeekTimeGridView extends BaseView {
     };
 
     const tagGroups = this.callbacks.tagGroups ?? [];
+    const spanLayout = layoutVisibleSpans(
+      tasks.filter((task) => !task.planning.time),
+      dates,
+    );
+    const spanRow = spanLayout.rows[0]!;
+    renderAllDaySpanLayer(
+      handles.allDaySpanLayerEl,
+      spanRow,
+      dates,
+      allDayCallbacks,
+      tagGroups,
+      this.spanInteractions,
+      'timegrid',
+    );
     for (const day of handles.days) {
-      const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, day.date);
+      const { timed, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, day.date);
       renderTimedBlocksForDay(
         day.hourColumnEl,
         [...timed, ...timedSpans],
@@ -102,15 +127,20 @@ export class WeekTimeGridView extends BaseView {
         tagGroups,
         { date: day.date },
       );
+      day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
       renderAllDayCell(
         day.allDayCellEl,
         day.date,
-        spans,
+        [],
         plain,
         deadlines,
         allDayCallbacks,
         tagGroups,
       );
+      const items = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+      for (const child of Array.from(day.allDayCellEl.children)) {
+        if (child !== items) items.appendChild(child);
+      }
     }
 
     const today = window.moment().format('YYYY-MM-DD');
@@ -150,6 +180,7 @@ export class WeekTimeGridView extends BaseView {
 
   destroy(): void {
     this.timedInteractions.disposeActive();
+    this.spanInteractions.disposeActive();
     this.containerEl = null;
     this.md.unload();
     if (this.nowLineIntervalId !== null) {

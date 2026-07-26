@@ -11,6 +11,8 @@ interface DayColumnHandles {
 export interface HourGridHandles {
   rootEl: HTMLElement;
   gridRowEl: HTMLElement;
+  allDayDaysEl: HTMLElement;
+  allDaySpanLayerEl: HTMLElement;
   days: DayColumnHandles[];
   /** The "now" red-line element, present only when `dates` includes today; null otherwise. */
   nowLineEl: HTMLElement | null;
@@ -73,11 +75,13 @@ export function renderHourGrid(
   // doesn't also warp the gutter's own `width: 3.5em` — see .tc-tg-allday-gutter-label's CSS
   // doc comment (styles.css) for the alignment bug this fixes.
   alldayGutter.createSpan({ cls: 'tc-tg-allday-gutter-label', text: 'No-time' });
+  const allDayDaysEl = alldayRow.createDiv({ cls: 'tc-tg-allday-days' });
   const alldayCells: HTMLElement[] = dates.map((date) => {
-    const cell = alldayRow.createDiv({ cls: 'tc-tg-allday-cell' });
+    const cell = allDayDaysEl.createDiv({ cls: 'tc-tg-allday-cell' });
     cell.setAttribute('data-tg-date', date);
     return cell;
   });
+  const allDaySpanLayerEl = allDayDaysEl.createDiv({ cls: 'tc-tg-span-layer' });
 
   // Hour grid: a gutter with hour labels, plus one column per date
   const gridRow = root.createDiv({ cls: 'tc-tg-grid-row' });
@@ -154,5 +158,5 @@ export function renderHourGrid(
     repositionNowLine(nowLineEl);
   }
 
-  return { rootEl: root, gridRowEl: gridRow, days, nowLineEl };
+  return { rootEl: root, gridRowEl: gridRow, allDayDaysEl, allDaySpanLayerEl, days, nowLineEl };
 }

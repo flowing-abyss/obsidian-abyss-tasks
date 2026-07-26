@@ -215,7 +215,7 @@ describe('renderAllDayCell', () => {
     expect(declarations).toMatch(
       /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 18%,\s*transparent\s*\)/u,
     );
-    expect(declarations).toMatch(/cursor\s*:\s*default/u);
+    expect(declarations).toMatch(/cursor\s*:\s*grab/u);
   });
 
   it('renders a deadline marker as non-draggable, structurally distinct from a plain chip', () => {
