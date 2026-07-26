@@ -58,13 +58,13 @@ describe('TaskQueryApi contract', () => {
     index.destroy();
   });
 
-  it('uses the daily-note date as the final inclusive list-date anchor', async () => {
+  it('does not use the daily-note date as a generic list-date anchor', async () => {
     const index = await queryIndex({ 'daily/2026-07-13.md': '- [ ] daily without marker' });
     expect(
       index.list({
         dateRange: { from: localDate('2026-07-13'), to: localDate('2026-07-13') },
       }),
-    ).toHaveLength(1);
+    ).toHaveLength(0);
     index.destroy();
   });
 

@@ -786,18 +786,14 @@ export class LeftPanel {
   private countToday(tasks: TaskSnapshot[], today: string): number {
     return tasks.filter((t) => {
       if (t.status !== 'open') return false;
-      return (
-        String(t.planning.due) === today ||
-        String(t.planning.scheduled) === today ||
-        String(t.presentation.dailyNoteDate) === today
-      );
+      return String(t.planning.due) === today || String(t.planning.scheduled) === today;
     }).length;
   }
 
   private countUpcoming(tasks: TaskSnapshot[], today: string): number {
     return tasks.filter((t) => {
       if (t.status !== 'open') return false;
-      const d = t.planning.due ?? t.planning.scheduled ?? t.presentation.dailyNoteDate;
+      const d = t.planning.due ?? t.planning.scheduled;
       return d !== undefined && d > today;
     }).length;
   }

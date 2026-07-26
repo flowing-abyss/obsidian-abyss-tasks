@@ -122,7 +122,7 @@ describe('LeftPanel smart lists', () => {
     expect(inboxRow.querySelector('.tc-left-count')?.textContent).toBe('1');
   });
 
-  it('countToday matches due/scheduled/dailyNoteDate === today', () => {
+  it('countToday matches only due/scheduled === today', () => {
     const t = today();
     const tasks = [
       task({ status: 'open', planning: { due: t } }),
@@ -134,10 +134,10 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks);
     const rows = el.querySelectorAll('.tc-left-item');
     const todayRow = rows[1]!;
-    expect(todayRow.querySelector('.tc-left-count')?.textContent).toBe('3');
+    expect(todayRow.querySelector('.tc-left-count')?.textContent).toBe('2');
   });
 
-  it('countUpcoming matches due ?? scheduled ?? dailyNoteDate > today', () => {
+  it('countUpcoming matches due ?? scheduled > today', () => {
     const tasks = [
       task({ status: 'open', planning: { due: '2099-12-31' } }),
       task({ status: 'open', planning: { scheduled: '2099-01-01' } }),
@@ -148,7 +148,7 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks);
     const rows = el.querySelectorAll('.tc-left-item');
     const upcomingRow = rows[2]!;
-    expect(upcomingRow.querySelector('.tc-left-count')?.textContent).toBe('3');
+    expect(upcomingRow.querySelector('.tc-left-count')?.textContent).toBe('2');
   });
 
   it('count badge absent when count is 0', () => {

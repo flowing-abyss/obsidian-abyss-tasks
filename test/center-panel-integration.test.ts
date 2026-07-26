@@ -474,6 +474,17 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
     expect(labels).toContain('Upcoming  1');
   });
 
+  it('renders a daily-note-only task in No date rather than Today', () => {
+    const container = renderWithGroupingByDate([
+      task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-25' } }),
+    ]);
+    expect(
+      Array.from(container.querySelectorAll('.tc-group-header')).map(
+        (header) => header.textContent,
+      ),
+    ).toContain('No date  1');
+  });
+
   it('empty groups are skipped (only non-empty groups render)', () => {
     const tasks = [
       task({
@@ -541,6 +552,18 @@ describe('CenterPanel.renderSearch', () => {
         title: t.title,
       }),
     ]);
+    panel.destroy();
+  });
+
+  it('routes a daily-note-only search result to inbox', () => {
+    const t = task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-25' } });
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'daily');
+    const panel = makeStaticPanel(state, [t]);
+    panel.mount(freshContainer());
+    panel['el'].querySelector<HTMLElement>('.tc-task-card')!.click();
+    expect(state.get('selectedList')).toBe('inbox');
     panel.destroy();
   });
 });

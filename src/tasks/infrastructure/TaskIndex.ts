@@ -432,11 +432,7 @@ export class TaskIndex implements TaskQueryApi {
     if (query?.dateRange) {
       const { from, to } = query.dateRange;
       filtered = filtered.filter((task) => {
-        const date =
-          task.planning.due ??
-          task.planning.scheduled ??
-          task.planning.start ??
-          task.presentation.dailyNoteDate;
+        const date = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
         return date !== undefined && date >= from && date <= to;
       });
     }

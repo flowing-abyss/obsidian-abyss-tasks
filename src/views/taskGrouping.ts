@@ -45,18 +45,8 @@ export function getTasksForDate(tasks: TaskSnapshot[], date: string, today: stri
 
 export function sortTasksByDateTime(tasks: TaskSnapshot[]): TaskSnapshot[] {
   return [...tasks].sort((a, b) => {
-    const da =
-      a.planning.due ??
-      a.planning.scheduled ??
-      a.planning.start ??
-      a.presentation.dailyNoteDate ??
-      '';
-    const db =
-      b.planning.due ??
-      b.planning.scheduled ??
-      b.planning.start ??
-      b.presentation.dailyNoteDate ??
-      '';
+    const da = a.planning.due ?? a.planning.scheduled ?? a.planning.start ?? '';
+    const db = b.planning.due ?? b.planning.scheduled ?? b.planning.start ?? '';
     if (da !== db) {
       if (!da) return 1;
       if (!db) return -1;
@@ -110,18 +100,8 @@ function compareNullableLast(a: string, b: string): number {
 }
 
 function compareByDate(a: TaskSnapshot, b: TaskSnapshot): number {
-  const da =
-    a.planning.due ??
-    a.planning.scheduled ??
-    a.planning.start ??
-    a.presentation.dailyNoteDate ??
-    '';
-  const db =
-    b.planning.due ??
-    b.planning.scheduled ??
-    b.planning.start ??
-    b.presentation.dailyNoteDate ??
-    '';
+  const da = a.planning.due ?? a.planning.scheduled ?? a.planning.start ?? '';
+  const db = b.planning.due ?? b.planning.scheduled ?? b.planning.start ?? '';
   const dateCmp = compareNullableLast(da, db);
   if (dateCmp !== 0) return dateCmp;
   const ta = a.planning.time ?? '';
@@ -235,8 +215,7 @@ export function groupTasksByDate(
   const noDate: TaskSnapshot[] = [];
 
   for (const t of tasks) {
-    const d =
-      t.planning.due ?? t.planning.scheduled ?? t.planning.start ?? t.presentation.dailyNoteDate;
+    const d = t.planning.due ?? t.planning.scheduled ?? t.planning.start;
     // Tasks without a date are a distinct category, not overdue.
     if (!d) noDate.push(t);
     else if (d < today) overdue.push(t);

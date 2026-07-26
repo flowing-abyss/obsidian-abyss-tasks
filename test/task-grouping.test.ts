@@ -257,12 +257,12 @@ describe('sortTasksByDateTime', () => {
     expect(out.map((t) => t.title)).toEqual(['a', 'b']);
   });
 
-  it('uses dailyNoteDate as fallback when due and scheduled are absent', () => {
+  it('keeps daily-note-only tasks with undated tasks when sorting', () => {
     const out = sortTasksByDateTime([
       task({ title: 'b', presentation: { dailyNoteDate: '2026-06-26' } }),
       task({ title: 'a', presentation: { dailyNoteDate: '2026-06-25' } }),
     ]);
-    expect(out.map((t) => t.title)).toEqual(['a', 'b']);
+    expect(out.map((t) => t.title)).toEqual(['b', 'a']);
   });
 
   it('tasks with no date sort to end', () => {
@@ -376,6 +376,23 @@ describe('groupTasksByTag', () => {
 });
 
 describe('groupTasksByDate', () => {
+  it('places a daily-note-only task in No date while retaining explicit due dates', () => {
+    const groups = groupTasksByDate(
+      [
+        task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-26' } }),
+        task({ title: 'due', planning: { due: '2026-06-26' } }),
+      ],
+      '2026-06-26',
+      '2026-06-27',
+    );
+    expect(
+      groups.find((group) => group.label === 'No date')?.tasks.map((task) => task.title),
+    ).toEqual(['daily-only']);
+    expect(
+      groups.find((group) => group.label === 'Today')?.tasks.map((task) => task.title),
+    ).toEqual(['due']);
+  });
+
   it('returns Overdue group for tasks with past due date', () => {
     const t = task({ planning: { due: '2020-01-01' } });
     const groups = groupTasksByDate([t], '2026-06-26', '2026-06-27');

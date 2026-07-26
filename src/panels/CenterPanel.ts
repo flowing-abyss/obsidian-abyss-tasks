@@ -1253,7 +1253,7 @@ export class CenterPanel {
         (e) => {
           e.stopPropagation();
           const todayStr = localDate(window.moment().format('YYYY-MM-DD'));
-          const d = task.planning.due ?? task.planning.scheduled ?? task.presentation.dailyNoteDate;
+          const d = task.planning.due ?? task.planning.scheduled;
           let list: 'inbox' | 'today' | 'upcoming' = 'inbox';
           if ((task.planning.due && task.planning.due < todayStr) || d === todayStr) {
             list = 'today';

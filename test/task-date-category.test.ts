@@ -75,7 +75,7 @@ describe('getTaskDateCategory', () => {
     expect(getTaskDateCategory(task({ planning: { due: '2030-12-31' } }), TODAY)).toBe('upcoming');
   });
 
-  // ── Date priority: due > scheduled > start > dailyNoteDate ──────────────
+  // ── Date priority: due > scheduled > start ──────────────────────────────
 
   it('uses due when both due and scheduled are present', () => {
     // due is today, scheduled is yesterday → today (due wins)
@@ -94,9 +94,9 @@ describe('getTaskDateCategory', () => {
     expect(getTaskDateCategory(task({ planning: { start: TOMORROW } }), TODAY)).toBe('upcoming');
   });
 
-  it('uses dailyNoteDate as last fallback', () => {
+  it('treats dailyNoteDate-only metadata as no date', () => {
     expect(getTaskDateCategory(task({ presentation: { dailyNoteDate: YESTERDAY } }), TODAY)).toBe(
-      'overdue',
+      'noDate',
     );
   });
 
