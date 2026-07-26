@@ -1333,7 +1333,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border: 2px dashed
+    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
   border-radius: 4px;
   background: color-mix(
     in srgb,
@@ -1783,7 +1784,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border: 2px dashed
+    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
   border-radius: 4px;
   background: color-mix(
     in srgb,
@@ -1797,7 +1799,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border: 2px dashed
+    color-mix(in srgb, var(--tc-tag-color, var(--interactive-accent)) 55%, var(--text-normal));
   border-radius: 4px;
   background: color-mix(
     in srgb,

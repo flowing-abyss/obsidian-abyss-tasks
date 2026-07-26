@@ -229,6 +229,14 @@ describe('renderAllDayCell', () => {
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);
   });
 
+  it('keeps exact span previews visible for dark and pale tag colors', () => {
+    expect(
+      declarationsForRuleContaining('.tc-span-move-preview', '.tc-span-boundary-preview'),
+    ).toMatch(
+      /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 55%,\s*var\(--text-normal\)\s*\)/u,
+    );
+  });
+
   it('keeps the all-day marker crisp with a theme-derived halo', () => {
     const declarations = declarationsForRuleContaining('.tc-tg-body .tc-status-marker');
     expect(declarations).toMatch(/background\s*:\s*var\(--background-primary\)/u);

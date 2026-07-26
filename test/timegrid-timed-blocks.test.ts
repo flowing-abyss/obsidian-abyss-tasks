@@ -533,6 +533,9 @@ describe('Task 2 unified timed interaction contract', () => {
       const declarations = declarationsFor(selector);
       expect(declarations).toMatch(/position\s*:\s*absolute/u);
       expect(declarations).toMatch(/border\s*:[^;]*dashed/u);
+      expect(declarations).toMatch(
+        /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) 55%,\s*var\(--text-normal\)\s*\)/u,
+      );
       expect(declarations).toMatch(/pointer-events\s*:\s*none/u);
     }
     expect(declarationsFor('.tc-tg-day-column.is-drag-over')).toBe('');
