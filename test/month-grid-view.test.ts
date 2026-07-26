@@ -30,6 +30,36 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function winningCssDeclaration(element: Element, property: string): string {
+  const withoutComments = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  let winner = '';
+  let winnerSpecificity = -1;
+  for (const rule of withoutComments.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    const value = new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`, 'u').exec(
+      rule[2] ?? '',
+    )?.[1];
+    if (!value) continue;
+    for (const selector of (rule[1] ?? '').split(',').map((part) => part.trim())) {
+      if (!selector) continue;
+      let matches = false;
+      try {
+        matches = element.matches(selector);
+      } catch {
+        continue;
+      }
+      if (!matches) continue;
+      const specificity =
+        (selector.match(/#[\w-]+/gu)?.length ?? 0) * 100 +
+        (selector.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/gu)?.length ?? 0) * 10;
+      if (specificity >= winnerSpecificity) {
+        winner = value.trim();
+        winnerSpecificity = specificity;
+      }
+    }
+  }
+  return winner;
+}
+
 function requiredElement(root: ParentNode, selector: string): HTMLElement {
   const element = root.querySelector<HTMLElement>(selector);
   if (!element) throw new Error(`Expected element matching ${selector}`);
@@ -1273,6 +1303,26 @@ describe('MonthGridView', () => {
         /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-ghost-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
       );
       expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
+    });
+
+    it('resolves the combined Month ghost class to ghost fill while its terminal keeps event fill', () => {
+      const container = freshContainer();
+      const view = new MonthGridView(callbacks());
+      const t = task({
+        title: 'Trip',
+        planning: { start: '2026-07-14', due: '2026-07-16' },
+      });
+      view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+      const ghost = requiredElement(container, '[data-span-kind="ghost"]');
+      const terminal = requiredElement(container, '[data-span-kind="terminal"]');
+      expect(ghost.classList.contains('tc-tg-span-continuation')).toBe(true);
+      expect(ghost.classList.contains('tc-mg-span-segment')).toBe(true);
+      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
+      expect(winningCssDeclaration(ghost, 'background')).toContain('var(--tc-ghost-fill-strength)');
+      expect(winningCssDeclaration(terminal, 'background')).toContain(
+        'var(--tc-event-fill-strength)',
+      );
     });
 
     it('uses event versus ghost strength when choosing readable title text', () => {

@@ -407,16 +407,26 @@ describe('is-today styling (Round 3: no column border anywhere, header day-numbe
 
 describe('tag-fill background (Round 3 Task 24: solid, not washed-out/gridline-bleeding)', () => {
   it('shares one background rule across timed blocks, all-day spans/plain, and Month compact items', () => {
-    const selector =
-      '.tc-tg-block,\n.tc-tg-span,\n.tc-tg-plain,\n.tc-mg-block-dot,\n.tc-mg-span-segment,\n.tc-mg-plain';
-    const declarations = declarationsFor(selector);
+    const declarations = declarationsForRuleContaining(
+      '.tc-tg-block',
+      '.tc-tg-span',
+      '.tc-tg-plain',
+      '.tc-mg-block-dot',
+      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
+      '.tc-mg-plain',
+    );
     expect(declarations).toContain('background:');
   });
 
   it('mixes the tag color against a solid background (not `transparent`), so the fill is fully opaque and can never let the hour-gridline (or anything else behind it) show through — regardless of the mix percentage', () => {
-    const selector =
-      '.tc-tg-block,\n.tc-tg-span,\n.tc-tg-plain,\n.tc-mg-block-dot,\n.tc-mg-span-segment,\n.tc-mg-plain';
-    const declarations = declarationsFor(selector);
+    const declarations = declarationsForRuleContaining(
+      '.tc-tg-block',
+      '.tc-tg-span',
+      '.tc-tg-plain',
+      '.tc-mg-block-dot',
+      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
+      '.tc-mg-plain',
+    );
     expect(declarations).toMatch(
       /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
     );

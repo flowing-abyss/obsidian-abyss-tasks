@@ -1695,7 +1695,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-span,
 .tc-tg-plain,
 .tc-mg-block-dot,
-.tc-mg-span-segment,
+.tc-mg-span-segment:not(.tc-mg-span-continuation),
 .tc-mg-plain {
   box-sizing: border-box;
   background: color-mix(
