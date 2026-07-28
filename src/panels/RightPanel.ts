@@ -1012,9 +1012,24 @@ export class RightPanel {
       });
     }
     this.positionAnchoredSurface(pop, anchor, 'below-start');
-    this.el.ownerDocument.defaultView?.setTimeout(() => {
-      this.el.addEventListener('click', () => this.removeAnchoredSurface(pop), { once: true });
+    const ownerWindow = this.el.ownerDocument.defaultView;
+    const placementCleanup = this.anchoredSurfaceCleanups.get(pop);
+    const dismiss = (): void => this.removeAnchoredSurface(pop);
+    let listening = false;
+    let registrationTimer = ownerWindow?.setTimeout(() => {
+      registrationTimer = undefined;
+      this.el.addEventListener('click', dismiss, { once: true });
+      listening = true;
     }, 0);
+    const cleanup = (): void => {
+      placementCleanup?.();
+      if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
+      if (listening) this.el.removeEventListener('click', dismiss);
+      if (this.anchoredSurfaceCleanups.get(pop) === cleanup) {
+        this.anchoredSurfaceCleanups.delete(pop);
+      }
+    };
+    this.anchoredSurfaceCleanups.set(pop, cleanup);
   }
 
   private positionAnchoredSurface(
@@ -1053,11 +1068,11 @@ export class RightPanel {
       });
       popover.style.setProperty(
         '--tc-pop-top',
-        `${placement.top - boundary.top + this.el.scrollTop}px`,
+        `${placement.top - boundary.top - this.el.clientTop + this.el.scrollTop}px`,
       );
       popover.style.setProperty(
         '--tc-pop-left',
-        `${placement.left - boundary.left + this.el.scrollLeft}px`,
+        `${placement.left - boundary.left - this.el.clientLeft + this.el.scrollLeft}px`,
       );
       popover.dataset['side'] = placement.side;
     };

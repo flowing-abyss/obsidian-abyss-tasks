@@ -30,6 +30,7 @@ import {
 useRealMoment();
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -862,13 +863,19 @@ describe('RightPanel popovers', () => {
     expect(active?.querySelector('.tc-priority-option-check')).not.toBeNull();
   });
 
-  it('priority popover measures viewport geometry and converts it to panel-local coordinates', async () => {
+  it('converts viewport placement to a bordered and scrolled panel padding box', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 50, 300, 240),
+    });
+    Object.defineProperties(el, {
+      clientLeft: { configurable: true, value: 3 },
+      clientTop: { configurable: true, value: 5 },
+      scrollLeft: { configurable: true, value: 11 },
+      scrollTop: { configurable: true, value: 13 },
     });
     Object.defineProperty(chip, 'getBoundingClientRect', {
       configurable: true,
@@ -886,8 +893,8 @@ describe('RightPanel popovers', () => {
 
     const popover = el.querySelector<HTMLElement>('.tc-priority-popover')!;
     expect(popover.parentElement).toBe(el);
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('172px');
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('54px');
+    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
+    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('62px');
     measure.mockRestore();
   });
 
@@ -904,6 +911,73 @@ describe('RightPanel popovers', () => {
 
     expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
     expect(removeDocumentListener).toHaveBeenCalledWith('scroll', expect.any(Function), true);
+  });
+
+  it('does not install priority dismissal after another surface closes it before the timer', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
+    vi.useFakeTimers();
+    const addListener = vi.spyOn(el, 'addEventListener');
+
+    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    click(el.querySelector<HTMLElement>('.tc-chip-time')!);
+    vi.runOnlyPendingTimers();
+
+    expect(
+      addListener.mock.calls.some(
+        ([type, , options]) =>
+          type === 'click' &&
+          typeof options === 'object' &&
+          options !== null &&
+          'once' in options &&
+          options.once === true,
+      ),
+    ).toBe(false);
+  });
+
+  it('does not install priority dismissal after destroy before the timer', async () => {
+    const { panel, state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
+    vi.useFakeTimers();
+    const addListener = vi.spyOn(el, 'addEventListener');
+
+    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    panel.destroy();
+    vi.runOnlyPendingTimers();
+
+    expect(
+      addListener.mock.calls.some(
+        ([type, , options]) =>
+          type === 'click' &&
+          typeof options === 'object' &&
+          options !== null &&
+          'once' in options &&
+          options.once === true,
+      ),
+    ).toBe(false);
+  });
+
+  it('removes an installed priority dismissal listener when render replaces the surface', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
+    vi.useFakeTimers();
+    const addListener = vi.spyOn(el, 'addEventListener');
+    const removeListener = vi.spyOn(el, 'removeEventListener');
+
+    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    vi.runOnlyPendingTimers();
+    const dismissalListener = addListener.mock.calls.find(
+      ([type, , options]) =>
+        type === 'click' &&
+        typeof options === 'object' &&
+        options !== null &&
+        'once' in options &&
+        options.once === true,
+    )?.[1];
+    state.set('taskStack', [task({ title: 'Replacement', priority: 'C' })]);
+
+    expect(dismissalListener).toBeDefined();
+    expect(removeListener).toHaveBeenCalledWith('click', dismissalListener);
   });
 
   it('outside click dismisses the priority popover', async () => {

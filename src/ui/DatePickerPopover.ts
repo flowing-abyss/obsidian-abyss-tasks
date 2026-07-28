@@ -47,11 +47,11 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     });
     popover.style.setProperty(
       '--tc-pop-top',
-      `${placement.top - owner.top + options.owner.scrollTop}px`,
+      `${placement.top - owner.top - options.owner.clientTop + options.owner.scrollTop}px`,
     );
     popover.style.setProperty(
       '--tc-pop-left',
-      `${placement.left - owner.left + options.owner.scrollLeft}px`,
+      `${placement.left - owner.left - options.owner.clientLeft + options.owner.scrollLeft}px`,
     );
     popover.dataset['side'] = placement.side;
   };

@@ -144,6 +144,32 @@ describe('showDatePickerPopover', () => {
     owner.remove();
   });
 
+  it('converts viewport placement to a bordered and scrolled owner padding box', () => {
+    const { anchor, boundary, owner } = host();
+    Object.defineProperty(boundary, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(100, 50, 300, 200),
+    });
+    Object.defineProperties(owner, {
+      clientLeft: { configurable: true, value: 3 },
+      clientTop: { configurable: true, value: 5 },
+      scrollLeft: { configurable: true, value: 11 },
+      scrollTop: { configurable: true, value: 13 },
+    });
+    Object.defineProperty(anchor, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(140, 70, 20, 20),
+    });
+    mockPopoverRect(120, 40);
+
+    showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
+
+    const popover = owner.querySelector<HTMLElement>('.tc-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('48px');
+    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('52px');
+    owner.remove();
+  });
+
   it.each([
     {
       edge: 'left',
