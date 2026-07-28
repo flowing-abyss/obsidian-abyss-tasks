@@ -144,17 +144,11 @@ export function renderHourGrid(
     return { date, hourColumnEl, allDayCellEl: alldayCells[i]! };
   });
 
-  // Now-line: a single element spanning the full grid-row width (right after the hour-gutter to
-  // the row's right edge), a direct child of gridRow rather than any one day-column — so in Week
-  // it visually crosses all 7 day-columns at once instead of only today's. A small dot marks
-  // today's specific column: its horizontal position is expressed as a percentage of the line's
-  // own width (which already excludes the gutter, since the line itself starts right after it),
-  // computed from today's index among the equal-width flex day-columns — not a hardcoded day
-  // count, so this works unchanged for Day view's single column and Week's seven.
+  // Now-line: attach the track to today's task layer so it appears only in that day column and
+  // remains behind its timed task blocks. The dot stays at the column's inline start in CSS.
   if (todayIndex !== -1) {
-    nowLineEl = gridRow.createDiv({ cls: 'tc-tg-now-line' });
-    const dot = nowLineEl.createDiv({ cls: 'tc-tg-now-line-dot' });
-    dot.style.left = `${((todayIndex + 0.5) / dates.length) * 100}%`;
+    nowLineEl = days[todayIndex]!.hourColumnEl.createDiv({ cls: 'tc-tg-now-line' });
+    nowLineEl.createDiv({ cls: 'tc-tg-now-line-dot' });
     repositionNowLine(nowLineEl);
   }
 

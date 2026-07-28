@@ -70,6 +70,7 @@ describe('TodayView', () => {
       const dayColumn = container.querySelector('.tc-tg-day-column');
       const allDayCell = container.querySelector('.tc-tg-allday-cell');
       const nowLine = container.querySelector('.tc-tg-now-line');
+      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.tc-tg-hour-column');
       const quickAdd = (dayColumn as HTMLElement)
         .querySelector<HTMLElement>('.tc-tg-hour-column')!
         .createDiv({ cls: 'tc-tg-quick-add' });
@@ -95,6 +96,7 @@ describe('TodayView', () => {
       expect(container.querySelector('.tc-tg-day-column')).toBe(dayColumn);
       expect(container.querySelector('.tc-tg-allday-cell')).toBe(allDayCell);
       expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
+      expect(nowLine?.parentElement).toBe(todayHourColumn);
       expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(321);
       expect(container.textContent).not.toContain('Initial task');

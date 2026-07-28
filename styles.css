@@ -1410,8 +1410,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   inset: 0;
   /* Explicit, deliberate stacking (not DOM-order accident): sits above the hour-grid
-     lines painted by the day-column's plain (non-positioned) .tc-tg-hour-row siblings,
-     below .tc-tg-block (z-index: 2) and .tc-tg-now-line (z-index: 3). */
+     lines painted by the day-column's plain (non-positioned) .tc-tg-hour-row siblings. */
   z-index: 1;
   /* Auto (not none): empty space now has a meaning of its own (click-to-create — see
      onCreateAtTime), so this layer needs to receive the click. Blocks/the quick-add popover
@@ -1420,26 +1419,21 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-now-line {
-  /* Direct child of .tc-tg-grid-row (not any single day-column) so it spans every day-column at
-     once — `left` matches .tc-tg-hour-gutter's width, so the line starts right where the gutter
-     ends and runs to the row's right edge, crossing all rendered dates (1 in Day view, 7 in Week). */
+  /* A one-pixel track within today's hour column, behind task blocks so it cannot cover text. */
   position: absolute;
-  left: 3.5em;
+  left: 0;
   right: 0;
-  height: 2px;
+  height: 1px;
   background: var(--text-error);
-  /* Deliberately above .tc-tg-block's z-index (2, below): the now-line must always be
-     visible crossing over a block, never hidden beneath one. */
-  z-index: 3;
+  z-index: 1;
+  opacity: 0.48;
   pointer-events: none;
 }
 
 .tc-tg-now-line-dot {
-  /* Marks today's specific day-column along the otherwise-undifferentiated full-width line.
-     `left` is set inline (per-render, from today's index among the rendered dates) as a
-     percentage of the line's own width — which already excludes the gutter — so this never
-     hardcodes a day count and works the same for Day view's single column or Week's seven. */
+  /* Crisp marker at today's column inline start. */
   position: absolute;
+  left: 0;
   top: 50%;
   width: 8px;
   height: 8px;
@@ -1451,8 +1445,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-block {
   position: absolute;
   /* Explicit, deliberate stacking (not DOM-order accident): above the hour-grid lines
-     (implicit z-index: auto/0), below .tc-tg-now-line (z-index: 3) so the now-line
-     always visibly crosses over a block instead of disappearing beneath it. */
+     and the now-line track, so task content remains legible. */
   z-index: 2;
   pointer-events: auto;
   border-radius: var(--tc-calendar-item-radius);
@@ -1817,7 +1810,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-block-continuation {
   box-sizing: border-box;
   position: absolute;
-  z-index: 1;
+  z-index: 2;
   left: 4px;
   right: 4px;
   pointer-events: auto;

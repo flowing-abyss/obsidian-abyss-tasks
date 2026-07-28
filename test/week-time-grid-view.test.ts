@@ -81,6 +81,7 @@ describe('WeekTimeGridView', () => {
       const dayColumn = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-day-column');
       const allDayCell = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-allday-cell');
       const nowLine = container.querySelector('.tc-tg-now-line');
+      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.tc-tg-hour-column');
       const quickAdd = (dayColumn as HTMLElement)
         .querySelector<HTMLElement>('.tc-tg-hour-column')!
         .createDiv({ cls: 'tc-tg-quick-add' });
@@ -110,6 +111,7 @@ describe('WeekTimeGridView', () => {
         allDayCell,
       );
       expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
+      expect(nowLine?.parentElement).toBe(todayHourColumn);
       expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(412);
       expect(container.textContent).not.toContain('Initial week task');
