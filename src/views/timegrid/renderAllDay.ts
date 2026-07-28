@@ -237,14 +237,94 @@ function renderAllDayBody(
   return el;
 }
 
-/** Render one row's semantic spans as continuous grid pieces above the persistent day cells. */
-function spanColumnIndex(
-  segment: VisibleSpanSegment,
-  indexByDate: ReadonlyMap<string, number>,
-): number | undefined {
-  return indexByDate.get(segment.date);
+interface AllDaySpanSegmentRenderContext {
+  readonly layerEl: HTMLElement;
+  readonly indexByDate: ReadonlyMap<string, number>;
+  readonly callbacks: AllDayCallbacks;
+  readonly tagGroups: TagGroup[];
+  readonly interactionOwner: SpanInteractionOwner;
+  readonly variant: 'timegrid' | 'month';
 }
 
+/** Render one day-local span segment, including its metadata, boundary handles, and interactions. */
+function renderAllDaySpanSegment(
+  segment: VisibleSpanSegment,
+  context: AllDaySpanSegmentRenderContext,
+): void {
+  const { layerEl, indexByDate, callbacks, tagGroups, interactionOwner, variant } = context;
+  const index = indexByDate.get(segment.date);
+  if (index === undefined) return;
+  const classes = [
+    segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
+    'tc-span-piece',
+    variant === 'month' ? 'tc-mg-span-segment' : '',
+    variant === 'month' && segment.kind === 'ghost' ? 'tc-mg-span-continuation' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const host = layerEl.createDiv({ cls: 'tc-span-piece-host' });
+  host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.date);
+  host.style.gridColumn = `${index + 1} / ${index + 2}`;
+  host.style.gridRow = String(segment.lane + 1);
+  const body = renderAllDayBody(
+    host,
+    classes,
+    segment.task,
+    callbacks,
+    tagGroups,
+    segment.kind === 'terminal',
+    false,
+  );
+  body.setAttribute('tabindex', '0');
+  body.setAttribute('data-span-kind', segment.kind);
+  body.dataset['spanDate'] = segment.date;
+  body.dataset['continuesBefore'] = String(segment.continuesBefore);
+  body.dataset['continuesAfter'] = String(segment.continuesAfter);
+  body.setAttribute('data-task-path', segment.task.source.filePath);
+  body.setAttribute('data-task-line', String(segment.task.source.line));
+  body.style.gridColumn = `${index + 1} / ${index + 2}`;
+  body.style.gridRow = String(segment.lane + 1);
+  if (variant === 'month') {
+    body.querySelector('.tc-tg-body-title')?.classList.add('tc-mg-item-title');
+    if (segment.task.planning.time) {
+      const time = body.ownerDocument.createElement('span');
+      time.className = 'tc-mg-item-time';
+      time.textContent = `${segment.task.planning.time} `;
+      const title = body.querySelector('.tc-tg-body-title');
+      body.insertBefore(time, title);
+    }
+  }
+
+  const boundaryHandles: {
+    element: HTMLElement;
+    boundary: 'start' | 'due';
+  }[] = [];
+  if (segment.ownsStartBoundary) {
+    const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+    handle.setAttribute('data-boundary', 'start');
+    handle.setAttribute('data-resize-edge', 'start-date');
+    boundaryHandles.push({ element: handle, boundary: 'start' });
+  }
+  if (segment.ownsDueBoundary) {
+    const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+    handle.setAttribute('data-boundary', 'due');
+    handle.setAttribute('data-resize-edge', 'due-date');
+    boundaryHandles.push({ element: handle, boundary: 'due' });
+  }
+  attachSpanInteractions({
+    source: body,
+    task: segment.task,
+    segmentStart: segment.date,
+    segmentEnd: segment.date,
+    owner: interactionOwner,
+    previewLayoutFor: callbacks.spanPreviewLayoutFor,
+    boundaryHandles,
+    onMove: (task, target) => callbacks.onSpanMove?.(task, target),
+    onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
+  });
+}
+
+/** Render one row's semantic spans as day-local grid pieces above the persistent day cells. */
 export function renderAllDaySpanLayer(
   layerEl: HTMLElement,
   row: VisibleSpanRow,
@@ -259,78 +339,17 @@ export function renderAllDaySpanLayer(
   layerEl.style.setProperty('--tc-span-track-count', String(dates.length));
   attachSpanOverlayDropForwarding(layerEl, callbacks, variant);
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
+  const context: AllDaySpanSegmentRenderContext = {
+    layerEl,
+    indexByDate,
+    callbacks,
+    tagGroups,
+    interactionOwner,
+    variant,
+  };
 
   for (const segment of row.segments) {
-    const index = spanColumnIndex(segment, indexByDate);
-    if (index === undefined) continue;
-    const classes = [
-      segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
-      'tc-span-piece',
-      variant === 'month' ? 'tc-mg-span-segment' : '',
-      variant === 'month' && segment.kind === 'ghost' ? 'tc-mg-span-continuation' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
-    const host = layerEl.createDiv({ cls: 'tc-span-piece-host' });
-    host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.date);
-    host.style.gridColumn = `${index + 1} / ${index + 2}`;
-    host.style.gridRow = String(segment.lane + 1);
-    const body = renderAllDayBody(
-      host,
-      classes,
-      segment.task,
-      callbacks,
-      tagGroups,
-      segment.kind === 'terminal',
-      false,
-    );
-    body.setAttribute('tabindex', '0');
-    body.setAttribute('data-span-kind', segment.kind);
-    body.dataset['spanDate'] = segment.date;
-    body.dataset['continuesBefore'] = String(segment.continuesBefore);
-    body.dataset['continuesAfter'] = String(segment.continuesAfter);
-    body.setAttribute('data-task-path', segment.task.source.filePath);
-    body.setAttribute('data-task-line', String(segment.task.source.line));
-    body.style.gridColumn = `${index + 1} / ${index + 2}`;
-    body.style.gridRow = String(segment.lane + 1);
-    if (variant === 'month') {
-      body.querySelector('.tc-tg-body-title')?.classList.add('tc-mg-item-title');
-      if (segment.task.planning.time) {
-        const time = body.ownerDocument.createElement('span');
-        time.className = 'tc-mg-item-time';
-        time.textContent = `${segment.task.planning.time} `;
-        const title = body.querySelector('.tc-tg-body-title');
-        body.insertBefore(time, title);
-      }
-    }
-
-    const boundaryHandles: {
-      element: HTMLElement;
-      boundary: 'start' | 'due';
-    }[] = [];
-    if (segment.ownsStartBoundary) {
-      const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-      handle.setAttribute('data-boundary', 'start');
-      handle.setAttribute('data-resize-edge', 'start-date');
-      boundaryHandles.push({ element: handle, boundary: 'start' });
-    }
-    if (segment.ownsDueBoundary) {
-      const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-      handle.setAttribute('data-boundary', 'due');
-      handle.setAttribute('data-resize-edge', 'due-date');
-      boundaryHandles.push({ element: handle, boundary: 'due' });
-    }
-    attachSpanInteractions({
-      source: body,
-      task: segment.task,
-      segmentStart: segment.date,
-      segmentEnd: segment.date,
-      owner: interactionOwner,
-      previewLayoutFor: callbacks.spanPreviewLayoutFor,
-      boundaryHandles,
-      onMove: (task, target) => callbacks.onSpanMove?.(task, target),
-      onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
-    });
+    renderAllDaySpanSegment(segment, context);
   }
 }
 
