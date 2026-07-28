@@ -7,6 +7,10 @@ import type { CalendarSettings, TagGroup } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
 import type { TaskApplicationApi, TaskQueryApi, TaskSnapshot } from '../tasks';
+import {
+  TagGroupAppearanceModal,
+  type TagGroupAppearanceResult,
+} from '../ui/TagGroupAppearanceModal';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 
@@ -16,6 +20,10 @@ const PROJECTS_CAP = 10;
  *  center list shows by default, so left-panel badges match the opened list. */
 function isActiveTask(t: TaskSnapshot): boolean {
   return t.status === 'open' || t.status === 'in-progress';
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }
 
 export class LeftPanel {
@@ -402,7 +410,8 @@ export class LeftPanel {
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
-      this.showChildTagMenu(e, tag);
+      e.stopPropagation();
+      this.showTagGroupMenu(e, group, tag);
     });
     this.attachTagDragSource(row, tag);
     this.attachDropZone(row, tag);
@@ -513,6 +522,11 @@ export class LeftPanel {
       this.state.set('selectedList', { type: 'group', groupId: group.id });
       this.state.set('mode', 'tasks');
     });
+    header.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.showTagGroupMenu(e, group);
+    });
 
     if (isExpanded) {
       const children = container.createDiv({ cls: 'tc-tag-group-children' });
@@ -571,7 +585,7 @@ export class LeftPanel {
     );
     menu.addItem((item) =>
       item
-        .setTitle('Rename')
+        .setTitle('Rename tag across vault…')
         .setIcon('pencil')
         .onClick(() => {
           new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
@@ -601,13 +615,101 @@ export class LeftPanel {
     );
     menu.addItem((item) =>
       item
-        .setTitle('Rename')
+        .setTitle('Rename tag across vault…')
         .setIcon('pencil')
         .onClick(() => {
           new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
         }),
     );
     menu.showAtMouseEvent(e);
+  }
+
+  private showTagGroupMenu(e: MouseEvent, group: TagGroup, flattenedTag?: string): void {
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle('Rename display name…')
+        .setIcon('pencil')
+        .onClick(() => this.openTagGroupAppearance(group, 'name')),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Change color…')
+        .setIcon('palette')
+        .onClick(() => this.openTagGroupAppearance(group, 'color')),
+    );
+
+    if (flattenedTag) {
+      const isPinned = this.settings.pinnedTags.includes(flattenedTag);
+      menu.addItem((item) =>
+        item
+          .setTitle(isPinned ? 'Unpin' : 'Pin')
+          .setIcon(isPinned ? 'pin-off' : 'pin')
+          .onClick(
+            this.makeTagOp(() =>
+              isPinned
+                ? this.tagManager.unpinTag(flattenedTag)
+                : this.tagManager.pinTag(flattenedTag),
+            ),
+          ),
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle('Archive')
+          .setIcon('archive')
+          .onClick(this.makeTagOp(() => this.tagManager.archiveTag(flattenedTag))),
+      );
+    }
+
+    if (group.mode === 'prefix' && group.prefix) {
+      const prefix = `#${group.prefix}`;
+      menu.addItem((item) =>
+        item
+          .setTitle('Rename prefix across vault…')
+          .setIcon('replace')
+          .onClick(() => {
+            new RenameTagModal(
+              this.app,
+              this.tagManager,
+              prefix,
+              () => this.render(),
+              'prefix',
+            ).open();
+          }),
+      );
+    } else {
+      const tags = uniqueStrings(flattenedTag ? [flattenedTag] : (group.tags ?? []));
+      for (const tag of tags) {
+        menu.addItem((item) =>
+          item
+            .setTitle(`Rename ${tag} across vault…`)
+            .setIcon('replace')
+            .onClick(() => {
+              new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
+            }),
+        );
+      }
+    }
+    menu.showAtMouseEvent(e);
+  }
+
+  private openTagGroupAppearance(group: TagGroup, field: 'name' | 'color'): void {
+    new TagGroupAppearanceModal(
+      this.app,
+      { name: group.name, color: group.color },
+      (result) => this.applyTagGroupAppearance(group, result),
+      field,
+    ).open();
+  }
+
+  private applyTagGroupAppearance(group: TagGroup, result: TagGroupAppearanceResult): void {
+    if (result.name === undefined && result.color === undefined) return;
+    if (result.name !== undefined) group.name = result.name;
+    if (result.color !== undefined) {
+      if (result.color === null) delete group.color;
+      else group.color = result.color;
+    }
+    void this.onSaveSettings().then(() => this.render());
   }
 
   private makeTagOp(op: () => Promise<void>): () => void {

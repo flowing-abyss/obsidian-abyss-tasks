@@ -42,7 +42,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     mutation: 'destination provisioning',
     reason: 'Creates an empty daily or project destination note.',
   },
-  'src/tags/TagManager.ts#TagManager.renameTag#process#1': {
+  'src/tags/TagManager.ts#TagManager.renameAcrossVault#process#1': {
     mutation: 'vault-wide tag rename',
     reason: 'A global tag rename intentionally updates task and non-task text across the vault.',
   },

@@ -1,10 +1,14 @@
-import { describe, expect, it, vi } from 'vitest';
+import { Menu, Notice, type MenuItem } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import { RenameTagModal } from '../src/tags/RenameTagModal';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { TagGroupAppearanceModal } from '../src/ui/TagGroupAppearanceModal';
 import {
+  flushMicrotasks,
   freshContainer,
   makeLeftPanelForTest,
   makeStubStore,
@@ -12,7 +16,78 @@ import {
   useRealMoment,
 } from './helpers';
 
+vi.mock('obsidian', async () => {
+  const actual = await vi.importActual<typeof import('obsidian')>('obsidian');
+  return { ...actual, Notice: vi.fn() };
+});
+
 useRealMoment();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(Notice).mockClear();
+  activeDocument.querySelectorAll('.modal-container').forEach((element) => element.remove());
+});
+
+interface CapturedMenuItem {
+  readonly title: string;
+  readonly click: () => unknown;
+}
+
+function captureMenu(): CapturedMenuItem[] {
+  const items: CapturedMenuItem[] = [];
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+    this: Menu,
+    build: (item: MenuItem) => unknown,
+  ) {
+    let title = '';
+    let click = (): unknown => undefined;
+    const item = {
+      setTitle(value: string) {
+        title = value;
+        return this;
+      },
+      setIcon() {
+        return this;
+      },
+      onClick(value: () => unknown) {
+        click = value;
+        return this;
+      },
+    } as unknown as MenuItem;
+    build(item);
+    items.push({
+      get title() {
+        return title;
+      },
+      click: () => click(),
+    });
+    return this;
+  });
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    return this;
+  });
+  return items;
+}
+
+function openContextMenu(element: Element): void {
+  element.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+}
+
+function renderOpenedModalsInDocument(): void {
+  vi.spyOn(TagGroupAppearanceModal.prototype, 'open').mockImplementation(function (
+    this: TagGroupAppearanceModal,
+  ) {
+    this.containerEl.addClass('modal-container');
+    activeDocument.body.appendChild(this.containerEl);
+    this.onOpen();
+  });
+  vi.spyOn(RenameTagModal.prototype, 'open').mockImplementation(function (this: RenameTagModal) {
+    this.containerEl.addClass('modal-container');
+    activeDocument.body.appendChild(this.containerEl);
+    this.onOpen();
+  });
+}
 
 function makePanel(
   tasks: TaskSnapshot[] = [],
@@ -36,20 +111,13 @@ function makePanel(
     cause: 'test',
     contentState: 'unchanged',
   });
-  const panel = makeLeftPanelForTest(
-    state,
-    store,
-    merged,
-    tm,
-    null as never,
-    undefined,
-    null,
-    null,
-    { queries, execute },
-  );
+  const panel = makeLeftPanelForTest(state, store, merged, tm, null as never, save, null, null, {
+    queries,
+    execute,
+  });
   const el = freshContainer();
   panel.mount(el);
-  return { panel, state, el, tm, execute };
+  return { panel, state, el, tm, execute, merged, save };
 }
 
 function today(): string {
@@ -554,6 +622,214 @@ describe('LeftPanel tag groups (manual mode)', () => {
     expect(leaf!.querySelector('.tc-group-dot')).toBeTruthy();
     (leaf as HTMLElement).click();
     expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#next' });
+  });
+});
+
+describe('LeftPanel top-level tag group menus', () => {
+  it('prefix header menu separates appearance from an explicit across-vault prefix rename', () => {
+    const items = captureMenu();
+    const { el, state } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
+    });
+    const header = el.querySelector('.tc-tag-group-header')!;
+    const selectedBefore = state.get('selectedList');
+
+    openContextMenu(header);
+
+    expect(items.map((item) => item.title)).toEqual([
+      'Rename display name…',
+      'Change color…',
+      'Rename prefix across vault…',
+    ]);
+    expect(state.get('selectedList')).toEqual(selectedBefore);
+    expect(state.get('draggingTag')).toBeNull();
+    expect(el.querySelector('.tc-tag-group-children')).toBeNull();
+  });
+
+  it('multi-manual header identifies every member instead of guessing a rename scope', () => {
+    const items = captureMenu();
+    const { el } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Delivery', mode: 'manual', tags: ['#client', '#client/ops'] }],
+    });
+
+    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+
+    expect(items.map((item) => item.title)).toEqual([
+      'Rename display name…',
+      'Change color…',
+      'Rename #client across vault…',
+      'Rename #client/ops across vault…',
+    ]);
+  });
+
+  it('flattened one-tag group keeps group appearance actions and an identified exact rename', () => {
+    const items = captureMenu();
+    const { el, state } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Next', mode: 'manual', tags: ['#next'] }],
+    });
+    const leaf = el.querySelector('.tc-tag-leaf')!;
+    const selectedBefore = state.get('selectedList');
+
+    openContextMenu(leaf);
+
+    expect(items.map((item) => item.title)).toEqual([
+      'Rename display name…',
+      'Change color…',
+      'Pin',
+      'Archive',
+      'Rename #next across vault…',
+    ]);
+    expect(state.get('selectedList')).toEqual(selectedBefore);
+    expect(state.get('draggingTag')).toBeNull();
+  });
+
+  it('appearance modal updates only group settings and supports resetting color', async () => {
+    renderOpenedModalsInDocument();
+    const items = captureMenu();
+    const { el, merged, save, tm } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
+    });
+    const renameExact = vi.spyOn(tm, 'renameTagExact');
+    const renamePrefix = vi.spyOn(tm, 'renameTagPrefix');
+
+    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    items.find((item) => item.title === 'Rename display name…')!.click();
+    const nameInput = activeDocument.querySelector<HTMLInputElement>(
+      '.tc-tag-group-appearance-modal input[type="text"]',
+    )!;
+    nameInput.value = 'Focused work';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .click();
+    await flushMicrotasks();
+
+    expect(merged.tagGroups[0]?.name).toBe('Focused work');
+    expect(merged.tagGroups[0]?.color).toBe('#ff0000');
+
+    items.splice(0);
+    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    items.find((item) => item.title === 'Change color…')!.click();
+    const reset = Array.from(
+      activeDocument.querySelectorAll<HTMLButtonElement>('.tc-tag-group-appearance-modal button'),
+    ).find((button) => button.textContent === 'Reset')!;
+    reset.click();
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .click();
+    await flushMicrotasks();
+
+    expect(merged.tagGroups[0]?.color).toBeUndefined();
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(renameExact).not.toHaveBeenCalled();
+    expect(renamePrefix).not.toHaveBeenCalled();
+  });
+
+  it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {
+    renderOpenedModalsInDocument();
+    const items = captureMenu();
+    const { el, tm } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
+    });
+    vi.spyOn(tm, 'renameTagPrefix').mockResolvedValue({
+      type: 'ok',
+      changedFiles: ['a.md', 'b.md'],
+    });
+
+    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    items.find((item) => item.title === 'Rename prefix across vault…')!.click();
+    const modal = activeDocument.querySelector<HTMLElement>('.tc-rename-tag-modal')!;
+    const input = modal.querySelector<HTMLInputElement>('input')!;
+    input.value = '#focus';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(modal.textContent).toContain('#work');
+    expect(modal.textContent).toContain('#focus');
+    expect(modal.textContent).toContain('subtags');
+    expect(modal.textContent).toContain('across the vault');
+
+    Array.from(modal.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Rename across vault')!
+      .click();
+    await flushMicrotasks();
+
+    expect(tm.renameTagPrefix).toHaveBeenCalledWith('#work', '#focus');
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(Notice).mock.calls[0]?.[0]).toContain('2 files');
+  });
+
+  it('partial vault rename reports both changed and failed counts as a warning', async () => {
+    renderOpenedModalsInDocument();
+    const { tm } = makePanel();
+    vi.spyOn(tm, 'renameTagExact').mockResolvedValue({
+      type: 'partial',
+      changedFiles: ['a.md', 'c.md'],
+      failedFiles: ['b.md'],
+    });
+    const onRenamed = vi.fn();
+    const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
+    modal.open();
+    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    input.value = '#focus';
+    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Rename across vault')!
+      .click();
+    await flushMicrotasks();
+
+    expect(onRenamed).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('Warning');
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('2 files');
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('1 file');
+  });
+
+  it('invalid vault rename shows validation and keeps the modal open for correction', async () => {
+    renderOpenedModalsInDocument();
+    const { tm } = makePanel();
+    vi.spyOn(tm, 'renameTagExact').mockResolvedValue({
+      type: 'invalid',
+      reason: 'invalid-tag',
+    });
+    const onRenamed = vi.fn();
+    const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
+    modal.open();
+    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    input.value = '#work/';
+    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Rename across vault')!
+      .click();
+    await flushMicrotasks();
+
+    expect(onRenamed).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('trailing slash');
+    expect(modal.contentEl.querySelector('input')).not.toBeNull();
+  });
+
+  it('child and pinned tag menus use explicit across-vault wording', () => {
+    const items = captureMenu();
+    const tasks = [
+      task({
+        tags: ['#work/dev'],
+        source: {
+          originalMarkdown: '- [ ] #work/dev task',
+          originalBlock: '- [ ] #work/dev task',
+        },
+      }),
+    ];
+    const { el } = makePanel(
+      tasks,
+      { tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }] },
+      ['#pinned'],
+    );
+
+    openContextMenu(el.querySelector('.tc-pinned-tag')!);
+    expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
+
+    items.splice(0);
+    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
+    openContextMenu(el.querySelector('.tc-tag-child')!);
+    expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
   });
 });
 
