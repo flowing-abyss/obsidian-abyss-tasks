@@ -1,17 +1,16 @@
 import { localDate, type LocalDate, type TaskSnapshot } from '../tasks';
 import { taskLayoutIdentity } from './timegrid/layout';
 
-type SpanPieceKind = 'ghost' | 'terminal';
-
-interface VisibleSpanSegment {
+export interface VisibleSpanSegment {
   readonly task: TaskSnapshot;
   readonly identity: string;
-  readonly kind: SpanPieceKind;
-  readonly startDate: LocalDate;
-  readonly endDate: LocalDate;
+  readonly kind: 'ghost' | 'terminal';
+  readonly date: LocalDate;
   readonly lane: number;
   readonly ownsStartBoundary: boolean;
   readonly ownsDueBoundary: boolean;
+  readonly continuesBefore: boolean;
+  readonly continuesAfter: boolean;
 }
 
 export interface VisibleSpanRow {
@@ -140,35 +139,20 @@ export function layoutVisibleSpans(
 
     const segments = intervals.flatMap<VisibleSpanSegment>((interval) => {
       const lane = laneByIdentity.get(interval.identity)!;
-      const ownsStartBoundary = interval.actualStart === interval.visibleStart;
-      const dueVisible = interval.actualDue === interval.visibleEnd;
-      const ghostEndIndex = dueVisible ? interval.endIndex - 1 : interval.endIndex;
-      const pieces: VisibleSpanSegment[] = [];
-      if (ghostEndIndex >= interval.startIndex) {
-        pieces.push({
+      return rowDates.slice(interval.startIndex, interval.endIndex + 1).map((date) => {
+        const terminal = date === interval.actualDue;
+        return {
           task: interval.task,
           identity: interval.identity,
-          kind: 'ghost',
-          startDate: interval.visibleStart,
-          endDate: rowDates[ghostEndIndex]!,
+          kind: terminal ? 'terminal' : 'ghost',
+          date,
           lane,
-          ownsStartBoundary,
-          ownsDueBoundary: false,
-        });
-      }
-      if (dueVisible) {
-        pieces.push({
-          task: interval.task,
-          identity: interval.identity,
-          kind: 'terminal',
-          startDate: interval.actualDue,
-          endDate: interval.actualDue,
-          lane,
-          ownsStartBoundary: ownsStartBoundary && interval.actualStart === interval.actualDue,
-          ownsDueBoundary: true,
-        });
-      }
-      return pieces;
+          ownsStartBoundary: date === interval.actualStart,
+          ownsDueBoundary: terminal,
+          continuesBefore: interval.actualStart < date,
+          continuesAfter: interval.actualDue > date,
+        };
+      });
     });
 
     rows.push({ startDate: rowStart, laneCount: occupied.length, segments });

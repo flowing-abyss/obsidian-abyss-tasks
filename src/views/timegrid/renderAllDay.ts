@@ -255,9 +255,8 @@ export function renderAllDaySpanLayer(
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
 
   for (const segment of row.segments) {
-    const startIndex = indexByDate.get(segment.startDate);
-    const endIndex = indexByDate.get(segment.endDate);
-    if (startIndex === undefined || endIndex === undefined) continue;
+    const index = indexByDate.get(segment.date);
+    if (index === undefined) continue;
     const classes = [
       segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
       'tc-span-piece',
@@ -267,8 +266,8 @@ export function renderAllDaySpanLayer(
       .filter(Boolean)
       .join(' ');
     const host = layerEl.createDiv({ cls: 'tc-span-piece-host' });
-    host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.endDate);
-    host.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
+    host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.date);
+    host.style.gridColumn = `${index + 1} / ${index + 2}`;
     host.style.gridRow = String(segment.lane + 1);
     const body = renderAllDayBody(
       host,
@@ -281,11 +280,12 @@ export function renderAllDaySpanLayer(
     );
     body.setAttribute('tabindex', '0');
     body.setAttribute('data-span-kind', segment.kind);
-    body.setAttribute('data-span-start', segment.startDate);
-    body.setAttribute('data-span-end', segment.endDate);
+    body.dataset['spanDate'] = segment.date;
+    body.dataset['continuesBefore'] = String(segment.continuesBefore);
+    body.dataset['continuesAfter'] = String(segment.continuesAfter);
     body.setAttribute('data-task-path', segment.task.source.filePath);
     body.setAttribute('data-task-line', String(segment.task.source.line));
-    body.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
+    body.style.gridColumn = `${index + 1} / ${index + 2}`;
     body.style.gridRow = String(segment.lane + 1);
     if (variant === 'month') {
       body.querySelector('.tc-tg-body-title')?.classList.add('tc-mg-item-title');
@@ -315,8 +315,8 @@ export function renderAllDaySpanLayer(
     attachSpanInteractions({
       source: body,
       task: segment.task,
-      segmentStart: segment.startDate,
-      segmentEnd: segment.endDate,
+      segmentStart: segment.date,
+      segmentEnd: segment.date,
       owner: interactionOwner,
       previewLayoutFor: callbacks.spanPreviewLayoutFor,
       boundaryHandles,

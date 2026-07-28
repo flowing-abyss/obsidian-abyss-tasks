@@ -149,7 +149,7 @@ describe('WeekTimeGridView', () => {
     );
   });
 
-  it('renders one shared continuous all-day ghost across adjacent columns with a due terminal', () => {
+  it('renders one all-day range tile per day with repeated titles and boundary ownership', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());
     const t = task({
@@ -160,15 +160,26 @@ describe('WeekTimeGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }));
 
     const layer = container.querySelector('.tc-tg-span-layer');
-    const ghost = layer?.querySelector<HTMLElement>('[data-span-kind="ghost"]');
-    const terminal = layer?.querySelector<HTMLElement>('[data-span-kind="terminal"]');
+    const row = layer!;
     expect(layer).not.toBeNull();
-    expect(layer?.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(1);
+    expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
+    expect(row.querySelectorAll('[data-span-kind="terminal"]')).toHaveLength(1);
+    expect([...row.querySelectorAll('.tc-tg-body-title')].map((el) => el.textContent)).toEqual([
+      'Trip',
+      'Trip',
+      'Trip',
+    ]);
+    expect(row.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    expect(
+      row.querySelector('[data-span-date="2026-07-07"] [data-boundary="start"]'),
+    ).not.toBeNull();
+    expect(row.querySelector('[data-span-date="2026-07-09"] [data-boundary="due"]')).not.toBeNull();
     expect((layer as HTMLElement).style.getPropertyValue('--tc-span-track-count')).toBe('7');
-    expect(ghost?.style.gridColumn).toBe('2 / 4');
-    expect(terminal?.style.gridColumn).toBe('4 / 5');
-    expect(ghost?.getAttribute('tabindex')).toBe('0');
-    expect(terminal?.getAttribute('tabindex')).toBe('0');
+    expect(
+      Array.from(row.querySelectorAll<HTMLElement>('[data-span-kind]')).map(
+        (segment) => segment.style.gridColumn,
+      ),
+    ).toEqual(['2 / 3', '3 / 4', '4 / 5']);
   });
 
   it('puts actual boundary handles on their visible pieces and no false handles on a fully clipped ghost', () => {
@@ -194,7 +205,7 @@ describe('WeekTimeGridView', () => {
     const visiblePieces = container.querySelectorAll<HTMLElement>('[data-task-line="1"]');
     expect(visiblePieces[0]?.querySelector('[data-boundary="start"]')).not.toBeNull();
     expect(visiblePieces[0]?.querySelector('[data-boundary="due"]')).toBeNull();
-    expect(visiblePieces[1]?.querySelector('[data-boundary="due"]')).not.toBeNull();
+    expect(visiblePieces[2]?.querySelector('[data-boundary="due"]')).not.toBeNull();
     const clippedGhost = container.querySelector<HTMLElement>('[data-task-line="2"]');
     expect(clippedGhost?.getAttribute('tabindex')).toBe('0');
     expect(clippedGhost?.querySelectorAll('[data-boundary]')).toHaveLength(0);
@@ -308,14 +319,19 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 31 }),
     );
 
-    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
-    expect(preview).not.toBeNull();
-    expect(preview.style.gridColumn).toBe('3 / 6');
-    expect(JSON.parse(preview.dataset['target']!)).toEqual({
-      boundary: 'create-span',
-      date: '2026-07-10',
-      dayDelta: 2,
-    });
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+    );
+    expect(
+      previews.map((preview) => ({
+        column: preview.style.gridColumn,
+        target: JSON.parse(preview.dataset['target']!),
+      })),
+    ).toEqual([
+      { column: '3 / 4', target: { boundary: 'create-span', date: '2026-07-10', dayDelta: 2 } },
+      { column: '4 / 5', target: { boundary: 'create-span', date: '2026-07-10', dayDelta: 2 } },
+      { column: '5 / 6', target: { boundary: 'create-span', date: '2026-07-10', dayDelta: 2 } },
+    ]);
     expect(container.querySelector('.tc-tg-allday-cell.is-drag-over')).toBeNull();
     expect(body.getAttribute('draggable')).toBe('false');
     expect(body.classList.contains('is-edge-resizing')).toBe(true);
@@ -363,10 +379,17 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 34 }),
     );
 
-    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
-    expect(preview.style.gridColumn).toBe('3 / 6');
-    expect(preview.style.gridRow).toBe('1');
-    const previewRow = preview.style.gridRow;
+    const previews = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+    );
+    expect(
+      previews.map((preview) => ({ column: preview.style.gridColumn, row: preview.style.gridRow })),
+    ).toEqual([
+      { column: '3 / 4', row: '1' },
+      { column: '4 / 5', row: '1' },
+      { column: '5 / 6', row: '1' },
+    ]);
+    const previewRow = previews[0]!.style.gridRow;
 
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 34 }));
     const extended = task({
@@ -721,7 +744,7 @@ describe('WeekTimeGridView', () => {
     const t = task({ planning: { start: '2026-07-07', due: '2026-07-09' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-28', firstDayOfWeek: 1 }));
     expect(container.querySelectorAll('.tc-tg-span')).toHaveLength(1);
-    expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(1);
+    expect(container.querySelectorAll('.tc-tg-span-continuation')).toHaveLength(2);
   });
 
   it('previews a continuous-span move in the exact destination lanes used after commit', () => {
@@ -761,7 +784,10 @@ describe('WeekTimeGridView', () => {
         column: preview.style.gridColumn,
         row: preview.style.gridRow,
       })),
-    ).toEqual([{ column: '3 / 5', row: '2' }]);
+    ).toEqual([
+      { column: '3 / 4', row: '2' },
+      { column: '4 / 5', row: '2' },
+    ]);
     const previewGeometry = previews.map((preview) => ({
       column: preview.style.gridColumn,
       row: preview.style.gridRow,
@@ -779,9 +805,7 @@ describe('WeekTimeGridView', () => {
     expect(new Set(committed.map((piece) => piece.row))).toEqual(
       new Set(previewGeometry.map((piece) => piece.row)),
     );
-    expect(
-      `${committed[0]!.column.split(' / ')[0]} / ${committed[committed.length - 1]!.column.split(' / ')[1]}`,
-    ).toBe(previewGeometry[0]!.column);
+    expect(committed).toEqual(previewGeometry);
     view.destroy();
     restoreElementFromPoint();
   });
@@ -818,9 +842,17 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 450, clientY: 50, pointerId: 52 }),
     );
 
-    const preview = container.querySelector<HTMLElement>('.tc-span-move-preview')!;
-    expect(preview.style.gridColumn).toBe('5 / 7');
-    expect(preview.style.gridRow).toBe('1');
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-move-preview')).map(
+        (preview) => ({
+          column: preview.style.gridColumn,
+          row: preview.style.gridRow,
+        }),
+      ),
+    ).toEqual([
+      { column: '5 / 6', row: '1' },
+      { column: '6 / 7', row: '1' },
+    ]);
 
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 52 }));
     const moved = task({
@@ -870,9 +902,19 @@ describe('WeekTimeGridView', () => {
       new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 53 }),
     );
 
-    const preview = container.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
-    expect(preview.style.gridColumn).toBe('1 / 5');
-    expect(preview.style.gridRow).toBe('1');
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => ({
+          column: preview.style.gridColumn,
+          row: preview.style.gridRow,
+        }),
+      ),
+    ).toEqual([
+      { column: '1 / 2', row: '1' },
+      { column: '2 / 3', row: '1' },
+      { column: '3 / 4', row: '1' },
+      { column: '4 / 5', row: '1' },
+    ]);
 
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 53 }));
     const resized = task({
@@ -884,7 +926,7 @@ describe('WeekTimeGridView', () => {
       Array.from(
         container.querySelectorAll<HTMLElement>('[data-task-path="a.md"][data-span-kind]'),
       ).map((piece) => piece.style.gridRow),
-    ).toEqual(['1', '1']);
+    ).toEqual(['1', '1', '1', '1']);
     view.destroy();
     restoreElementFromPoint();
   });

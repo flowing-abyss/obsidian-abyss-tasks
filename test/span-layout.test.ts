@@ -34,15 +34,91 @@ describe('layoutVisibleSpans', () => {
     const layout = layoutVisibleSpans([span('Outside', '2026-07-01', '2026-07-20', 1)], week1);
 
     expect(layout.rows).toHaveLength(1);
-    expect(layout.rows[0]?.segments).toEqual([
-      expect.objectContaining({
+    expect(
+      layout.rows[0]?.segments.map((segment) => ({
+        date: segment.date,
+        kind: segment.kind,
+        start: segment.ownsStartBoundary,
+        due: segment.ownsDueBoundary,
+        continuesBefore: segment.continuesBefore,
+        continuesAfter: segment.continuesAfter,
+      })),
+    ).toEqual([
+      {
+        date: '2026-07-06',
         kind: 'ghost',
-        startDate: '2026-07-06',
-        endDate: '2026-07-12',
-        lane: 0,
-        ownsStartBoundary: false,
-        ownsDueBoundary: false,
-      }),
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-07',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-08',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-09',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-10',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-11',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+      {
+        date: '2026-07-12',
+        kind: 'ghost',
+        start: false,
+        due: false,
+        continuesBefore: true,
+        continuesAfter: true,
+      },
+    ]);
+  });
+
+  it('emits one day-local segment for every visible date in a range', () => {
+    const layout = layoutVisibleSpans([span('Trip', '2026-07-14', '2026-07-16', 2)], week2);
+    const row = layout.rows[0]!;
+
+    expect(
+      row.segments.map((segment) => ({
+        date: segment.date,
+        kind: segment.kind,
+        lane: segment.lane,
+        start: segment.ownsStartBoundary,
+        due: segment.ownsDueBoundary,
+      })),
+    ).toEqual([
+      { date: '2026-07-14', kind: 'ghost', lane: 0, start: true, due: false },
+      { date: '2026-07-15', kind: 'ghost', lane: 0, start: false, due: false },
+      { date: '2026-07-16', kind: 'terminal', lane: 0, start: false, due: true },
     ]);
   });
 
@@ -56,16 +132,20 @@ describe('layoutVisibleSpans', () => {
       layout.rows.map((row) =>
         row.segments.map((segment) => ({
           kind: segment.kind,
-          startDate: segment.startDate,
-          endDate: segment.endDate,
+          date: segment.date,
           lane: segment.lane,
         })),
       ),
     ).toEqual([
-      [{ kind: 'ghost', startDate: '2026-07-10', endDate: '2026-07-12', lane: 0 }],
       [
-        { kind: 'ghost', startDate: '2026-07-13', endDate: '2026-07-14', lane: 0 },
-        { kind: 'terminal', startDate: '2026-07-15', endDate: '2026-07-15', lane: 0 },
+        { kind: 'ghost', date: '2026-07-10', lane: 0 },
+        { kind: 'ghost', date: '2026-07-11', lane: 0 },
+        { kind: 'ghost', date: '2026-07-12', lane: 0 },
+      ],
+      [
+        { kind: 'ghost', date: '2026-07-13', lane: 0 },
+        { kind: 'ghost', date: '2026-07-14', lane: 0 },
+        { kind: 'terminal', date: '2026-07-15', lane: 0 },
       ],
     ]);
   });
@@ -79,7 +159,7 @@ describe('layoutVisibleSpans', () => {
     expect(layout.rows[0]?.laneCount).toBe(2);
     expect(
       layout.rows[0]?.segments
-        .filter((segment) => segment.kind === 'ghost')
+        .filter((segment) => segment.ownsStartBoundary)
         .map((segment) => [segment.task.title, segment.lane]),
     ).toEqual([
       ['Long', 0],
@@ -102,7 +182,7 @@ describe('layoutVisibleSpans', () => {
     const second = span('Second identity', '2026-07-07', '2026-07-10', 2);
     const lanes = (input: (typeof first)[]) =>
       layoutVisibleSpans(input, week1)
-        .rows[0]?.segments.filter((segment) => segment.kind === 'ghost')
+        .rows[0]?.segments.filter((segment) => segment.ownsStartBoundary)
         .map((segment) => [segment.task.source.line, segment.lane]);
 
     expect(lanes([second, first])).toEqual(lanes([first, second]));

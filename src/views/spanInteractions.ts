@@ -302,15 +302,17 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     };
 
     const previewRow = (
-      candidates: readonly MeasuredSpanColumn[],
+      column: MeasuredSpanColumn,
       layout: VisibleSpanLayout | undefined,
     ): string => {
-      const rowStart = candidates[0]?.date;
+      const rowStart = rowColumns(column, columns)[0]?.date;
       if (!layout || !rowStart) return source.style.gridRow;
       const identity = taskLayoutIdentity(task);
       const segment = layout.rows
         .find((row) => row.startDate === rowStart)
-        ?.segments.find((candidate) => candidate.identity === identity);
+        ?.segments.find(
+          (candidate) => candidate.identity === identity && candidate.date === column.date,
+        );
       return segment ? String(segment.lane + 1) : source.style.gridRow;
     };
 
@@ -330,13 +332,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           (column) => column.date >= shiftedStart && column.date <= shiftedEnd,
         );
         if (visible.length === 0) continue;
-        const first = candidates.indexOf(visible[0]!);
-        const last = candidates.indexOf(visible[visible.length - 1]!);
-        const preview = createPreview(source, 'tc-span-move-preview', target);
-        preview.style.gridColumn = `${first + 1} / ${last + 2}`;
-        preview.style.gridRow = previewRow(candidates, layout);
-        visible[0]!.layer.appendChild(preview);
-        previews.push(preview);
+        for (const column of visible) {
+          const index = candidates.indexOf(column);
+          const preview = createPreview(source, 'tc-span-move-preview', target);
+          preview.style.gridColumn = `${index + 1} / ${index + 2}`;
+          preview.style.gridRow = previewRow(column, layout);
+          column.layer.appendChild(preview);
+          previews.push(preview);
+        }
       }
     };
 
@@ -369,13 +372,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           (column) => column.date >= prospectiveStart && column.date <= prospectiveDue,
         );
         if (visible.length === 0) continue;
-        const startIndex = candidates.indexOf(visible[0]!);
-        const endIndex = candidates.indexOf(visible[visible.length - 1]!);
-        const preview = createPreview(source, 'tc-span-boundary-preview', target);
-        preview.style.gridColumn = `${startIndex + 1} / ${endIndex + 2}`;
-        preview.style.gridRow = previewRow(candidates, layout);
-        visible[0]!.layer.appendChild(preview);
-        previews.push(preview);
+        for (const column of visible) {
+          const index = candidates.indexOf(column);
+          const preview = createPreview(source, 'tc-span-boundary-preview', target);
+          preview.style.gridColumn = `${index + 1} / ${index + 2}`;
+          preview.style.gridRow = previewRow(column, layout);
+          column.layer.appendChild(preview);
+          previews.push(preview);
+        }
       }
     };
 

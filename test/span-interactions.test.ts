@@ -190,8 +190,47 @@ describe('span interaction geometry', () => {
         }),
       );
 
-      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(2);
+      expect(
+        Array.from(root.querySelectorAll<HTMLElement>('.tc-span-move-preview')).map((preview) => ({
+          column: preview.style.gridColumn,
+          row: preview.style.gridRow,
+          target: JSON.parse(preview.dataset['target']!),
+        })),
+      ).toEqual([
+        {
+          column: '6 / 7',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+        {
+          column: '7 / 8',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+        {
+          column: '1 / 2',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+        {
+          column: '2 / 3',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+        {
+          column: '3 / 4',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+        {
+          column: '4 / 5',
+          row: '1',
+          target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
+        },
+      ]);
       expect(layoutComputations).toBe(1);
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
+      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
     } finally {
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
       root.remove();

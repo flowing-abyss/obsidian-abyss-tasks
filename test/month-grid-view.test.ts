@@ -262,7 +262,7 @@ describe('MonthGridView', () => {
     expect(cbs.onDrop).toHaveBeenCalledWith('source.md:::7', '2026-07-15');
   });
 
-  it('renders spans in one continuous per-week overlay and reserves the same lane space in every cell', () => {
+  it('renders month range tiles per day and reserves the same lane space in every cell', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());
     const long = task({
@@ -279,11 +279,22 @@ describe('MonthGridView', () => {
     view.render(container, [long, single], resolvedConfig({ startPosition: '2026-07' }));
 
     const row = requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.tc-mg-row')!;
-    const ghost = row.querySelector<HTMLElement>('[data-span-kind="ghost"]');
     expect(row.querySelectorAll('.tc-mg-span-layer')).toHaveLength(1);
-    expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(1);
-    expect(ghost?.style.gridColumn).toBe('2 / 4');
-    expect(ghost?.getAttribute('tabindex')).toBe('0');
+    expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
+    expect(row.querySelectorAll('[data-span-kind="terminal"]')).toHaveLength(1);
+    expect(
+      [...row.querySelectorAll('[data-span-kind] .tc-mg-item-title')].map((el) => el.textContent),
+    ).toEqual(['Trip', 'Trip', 'Trip']);
+    expect(row.querySelectorAll('[data-span-kind] .tc-status-marker')).toHaveLength(1);
+    expect(
+      row.querySelector('[data-span-date="2026-07-14"] [data-boundary="start"]'),
+    ).not.toBeNull();
+    expect(row.querySelector('[data-span-date="2026-07-16"] [data-boundary="due"]')).not.toBeNull();
+    expect(
+      Array.from(row.querySelectorAll<HTMLElement>('[data-span-kind]')).map(
+        (segment) => segment.style.gridColumn,
+      ),
+    ).toEqual(['2 / 3', '3 / 4', '4 / 5']);
     expect(
       row.querySelector('[data-mg-date="2026-07-15"] .tc-mg-cell-items .tc-mg-plain'),
     ).not.toBeNull();
@@ -315,9 +326,11 @@ describe('MonthGridView', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 450, clientY: 250, pointerId: 40 }),
     );
-    expect(container.querySelector('.tc-span-boundary-preview')?.getAttribute('style')).toContain(
-      'grid-column: 2 / 6',
-    );
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => preview.style.gridColumn,
+      ),
+    ).toEqual(['2 / 3', '3 / 4', '4 / 5', '5 / 6']);
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 450, clientY: 250, pointerId: 40 }),
     );
@@ -362,17 +375,20 @@ describe('MonthGridView', () => {
     const previews = Array.from(
       container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
     );
-    expect(previews).toHaveLength(2);
+    expect(previews).toHaveLength(8);
     expect(
-      previousRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
-    ).toBe('4 / 8');
+      Array.from(previousRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => preview.style.gridColumn,
+      ),
+    ).toEqual(['4 / 5', '5 / 6', '6 / 7', '7 / 8']);
     expect(
-      sourceRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
-    ).toBe('1 / 5');
-    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual([
-      { boundary: 'start', date: '2026-07-09', dayDelta: -5 },
-      { boundary: 'start', date: '2026-07-09', dayDelta: -5 },
-    ]);
+      Array.from(sourceRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => preview.style.gridColumn,
+      ),
+    ).toEqual(['1 / 2', '2 / 3', '3 / 4', '4 / 5']);
+    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual(
+      Array.from({ length: 8 }, () => ({ boundary: 'start', date: '2026-07-09', dayDelta: -5 })),
+    );
 
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 350, clientY: 150, pointerId: 41 }),
@@ -419,17 +435,20 @@ describe('MonthGridView', () => {
     const previews = Array.from(
       container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
     );
-    expect(previews).toHaveLength(2);
+    expect(previews).toHaveLength(8);
     expect(
-      sourceRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
-    ).toBe('2 / 8');
+      Array.from(sourceRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => preview.style.gridColumn,
+      ),
+    ).toEqual(['2 / 3', '3 / 4', '4 / 5', '5 / 6', '6 / 7', '7 / 8']);
     expect(
-      followingRow.querySelector<HTMLElement>('.tc-span-boundary-preview')?.style.gridColumn,
-    ).toBe('1 / 3');
-    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual([
-      { boundary: 'due', date: '2026-07-21', dayDelta: 5 },
-      { boundary: 'due', date: '2026-07-21', dayDelta: 5 },
-    ]);
+      Array.from(followingRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+        (preview) => preview.style.gridColumn,
+      ),
+    ).toEqual(['1 / 2', '2 / 3']);
+    expect(previews.map((preview) => JSON.parse(preview.dataset['target']!))).toEqual(
+      Array.from({ length: 8 }, () => ({ boundary: 'due', date: '2026-07-21', dayDelta: 5 })),
+    );
 
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 150, clientY: 350, pointerId: 42 }),
@@ -469,9 +488,18 @@ describe('MonthGridView', () => {
         clientY: 350,
       }) as PointerEvent,
     );
-    expect(container.querySelector('.tc-span-move-preview')?.getAttribute('style')).toContain(
-      'grid-column: 2 / 5',
-    );
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-move-preview')).map(
+        (preview) => ({
+          column: preview.style.gridColumn,
+          target: JSON.parse(preview.dataset['target']!),
+        }),
+      ),
+    ).toEqual([
+      { column: '2 / 3', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
+      { column: '3 / 4', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
+      { column: '4 / 5', target: { grabbedDate: '2026-07-14', targetDate: '2026-07-21', days: 7 } },
+    ]);
     window.dispatchEvent(
       new MouseEvent('pointerup', {
         bubbles: true,
@@ -1201,7 +1229,7 @@ describe('MonthGridView', () => {
   });
 
   describe('timed multi-day spans (Task 29)', () => {
-    it('renders a start+due+time task as one continuous ghost and one due terminal', () => {
+    it('renders a start+due+time task as one tile per date with a due terminal', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
       const t = task({
@@ -1209,16 +1237,12 @@ describe('MonthGridView', () => {
         planning: { start: '2026-07-14', due: '2026-07-16', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      expect(container.querySelectorAll('.tc-mg-span-segment')).toHaveLength(2);
+      expect(container.querySelectorAll('.tc-mg-span-segment')).toHaveLength(3);
       expect(
-        container.querySelector('[data-span-kind="ghost"]')?.getAttribute('data-span-start'),
-      ).toBe('2026-07-14');
-      expect(
-        container.querySelector('[data-span-kind="ghost"]')?.getAttribute('data-span-end'),
-      ).toBe('2026-07-15');
-      expect(
-        container.querySelector('[data-span-kind="terminal"]')?.getAttribute('data-span-start'),
-      ).toBe('2026-07-16');
+        Array.from(container.querySelectorAll<HTMLElement>('[data-span-kind]')).map(
+          (segment) => segment.dataset['spanDate'],
+        ),
+      ).toEqual(['2026-07-14', '2026-07-15', '2026-07-16']);
     });
 
     it("prefixes the anchor (due) day's segment with the time, distinguishing it from an untimed span", () => {

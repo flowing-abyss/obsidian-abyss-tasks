@@ -4,7 +4,9 @@ import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { renderAllDayCell } from '../src/views/timegrid/renderAllDay';
+import { createSpanInteractionOwner } from '../src/views/spanInteractions';
+import { layoutVisibleSpans } from '../src/views/spanLayout';
+import { renderAllDayCell, renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
 import { dispatchDnD, freshContainer, task, taskComment, taskFromCodecLine } from './helpers';
 
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
@@ -80,6 +82,46 @@ const callbacks = () => ({
 });
 
 describe('renderAllDayCell', () => {
+  it('renders day-local range tiles with date metadata and terminal-only rich content', () => {
+    const container = freshContainer();
+    const dates = ['2026-07-14', '2026-07-15', '2026-07-16'];
+    const layer = container.createDiv({ cls: 'tc-tg-span-layer' });
+    const trip = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
+    const row = layoutVisibleSpans([trip], dates).rows[0]!;
+
+    renderAllDaySpanLayer(
+      layer,
+      row,
+      dates,
+      callbacks(),
+      [],
+      createSpanInteractionOwner(),
+      'timegrid',
+    );
+
+    const segments = Array.from(layer.querySelectorAll<HTMLElement>('[data-span-kind]'));
+    expect(
+      segments.map((segment) => ({
+        column: segment.style.gridColumn,
+        date: segment.dataset['spanDate'],
+        before: segment.dataset['continuesBefore'],
+        after: segment.dataset['continuesAfter'],
+        title: segment.querySelector('.tc-tg-body-title')?.textContent,
+      })),
+    ).toEqual([
+      { column: '1 / 2', date: '2026-07-14', before: 'false', after: 'true', title: 'Trip' },
+      { column: '2 / 3', date: '2026-07-15', before: 'true', after: 'true', title: 'Trip' },
+      { column: '3 / 4', date: '2026-07-16', before: 'true', after: 'false', title: 'Trip' },
+    ]);
+    expect(layer.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    expect(
+      layer.querySelector('[data-span-date="2026-07-14"] [data-boundary="start"]'),
+    ).not.toBeNull();
+    expect(
+      layer.querySelector('[data-span-date="2026-07-16"] [data-boundary="due"]'),
+    ).not.toBeNull();
+  });
+
   it('never sets data-priority on a plain chip or span, even for a prioritized task (calendar body no longer renders a priority border)', () => {
     const container = freshContainer();
     const prioritized = task({ priority: 'B', title: 'Plain', planning: { due: '2026-07-10' } });

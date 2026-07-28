@@ -1321,6 +1321,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   margin-inline: 1px;
   pointer-events: auto;
   cursor: grab;
+  min-width: 0;
 }
 
 .tc-span-piece:focus-visible {
