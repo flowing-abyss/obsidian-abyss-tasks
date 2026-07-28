@@ -1,5 +1,6 @@
 // src/tags/TagManager.ts
 import type { App } from 'obsidian';
+import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings } from '../settings/types';
 import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
 
@@ -44,6 +45,71 @@ function sameValues(left: readonly string[], right: readonly string[]): boolean 
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+interface SettingsRenameUpdate {
+  readonly changed: boolean;
+  readonly rollback: () => void;
+}
+
+function updateTagSettings(
+  settings: CalendarSettings,
+  oldTag: string,
+  newTag: string,
+  scope: TagRenameScope,
+): SettingsRenameUpdate {
+  const replaceReference = (value: string): string =>
+    replaceSettingTag(value, oldTag, newTag, scope);
+  const rollbacks: Array<() => void> = [];
+  const updateList = (
+    current: readonly string[],
+    apply: (values: string[]) => void,
+    latest: () => readonly string[],
+  ): void => {
+    const updated = uniqueInOrder(current.map(replaceReference));
+    if (sameValues(updated, current)) return;
+    const applied = [...updated];
+    apply(updated);
+    rollbacks.push(() => {
+      if (sameValues(latest(), applied)) apply([...current]);
+    });
+  };
+  const applyPinnedTags = (values: string[]): void => {
+    settings.pinnedTags = values;
+  };
+  const applyArchivedTags = (values: string[]): void => {
+    settings.archivedTags = values;
+  };
+
+  updateList(settings.pinnedTags, applyPinnedTags, () => settings.pinnedTags);
+  updateList(settings.archivedTags, applyArchivedTags, () => settings.archivedTags);
+  for (const group of settings.tagGroups) {
+    if (group.mode === 'manual' && group.tags) {
+      const previous = group.tags;
+      const updated = uniqueInOrder(previous.map(replaceReference));
+      if (sameValues(updated, previous)) continue;
+      const applied = [...updated];
+      group.tags = updated;
+      rollbacks.push(() => {
+        if (group.tags && sameValues(group.tags, applied)) group.tags = previous;
+      });
+    } else if (scope === 'prefix' && group.mode === 'prefix' && group.prefix) {
+      const previous = group.prefix;
+      const updated = replaceReference(`#${previous}`).slice(1);
+      if (updated === previous) continue;
+      group.prefix = updated;
+      rollbacks.push(() => {
+        if (group.prefix === updated) group.prefix = previous;
+      });
+    }
+  }
+
+  return {
+    changed: rollbacks.length > 0,
+    rollback: () => {
+      for (const rollback of rollbacks) rollback();
+    },
+  };
+}
+
 export class TagManager {
   private renameQueue: Promise<void> = Promise.resolve();
 
@@ -72,20 +138,20 @@ export class TagManager {
     let n = 2;
     while (this.settings.tagGroups.some((g) => g.id === id)) id = `${base}-${n++}`;
     this.settings.tagGroups.push({ id, name: label, mode: 'manual', tags: [tag] });
-    await this.saveSettings();
+    await this.persistSettings();
   }
 
   async pinTag(tag: string): Promise<void> {
     if (this.settings.pinnedTags.includes(tag)) return;
     this.settings.pinnedTags.push(tag);
-    await this.saveSettings();
+    await this.persistSettings();
   }
 
   async unpinTag(tag: string): Promise<void> {
     const idx = this.settings.pinnedTags.indexOf(tag);
     if (idx < 0) return;
     this.settings.pinnedTags.splice(idx, 1);
-    await this.saveSettings();
+    await this.persistSettings();
   }
 
   async archiveTag(tag: string): Promise<void> {
@@ -94,14 +160,14 @@ export class TagManager {
     // also unpin
     const pi = this.settings.pinnedTags.indexOf(tag);
     if (pi >= 0) this.settings.pinnedTags.splice(pi, 1);
-    await this.saveSettings();
+    await this.persistSettings();
   }
 
   async unarchiveTag(tag: string): Promise<void> {
     const idx = this.settings.archivedTags.indexOf(tag);
     if (idx < 0) return;
     this.settings.archivedTags.splice(idx, 1);
-    await this.saveSettings();
+    await this.persistSettings();
   }
 
   async renameTagExact(oldTag: string, newTag: string): Promise<VaultTagRenameResult> {
@@ -121,6 +187,11 @@ export class TagManager {
       () => undefined,
     );
     return result;
+  }
+
+  private persistSettings(): Promise<void> {
+    beginSettingsSave(this.settings);
+    return this.saveSettings();
   }
 
   private async renameAcrossVault(
@@ -166,51 +237,18 @@ export class TagManager {
       }
     }
 
-    const replaceReference = (value: string): string =>
-      replaceSettingTag(value, oldTag, newTag, scope);
-    const settingsSnapshot = {
-      pinnedTags: [...this.settings.pinnedTags],
-      archivedTags: [...this.settings.archivedTags],
-      tagGroups: this.settings.tagGroups.map((group) => ({
-        ...group,
-        tags: group.tags ? [...group.tags] : undefined,
-      })),
-    };
-    let settingsChanged = false;
-    const pinnedTags = uniqueInOrder(this.settings.pinnedTags.map(replaceReference));
-    if (!sameValues(pinnedTags, this.settings.pinnedTags)) {
-      this.settings.pinnedTags = pinnedTags;
-      settingsChanged = true;
-    }
-    const archivedTags = uniqueInOrder(this.settings.archivedTags.map(replaceReference));
-    if (!sameValues(archivedTags, this.settings.archivedTags)) {
-      this.settings.archivedTags = archivedTags;
-      settingsChanged = true;
-    }
-    for (const g of this.settings.tagGroups) {
-      if (g.mode === 'manual' && g.tags) {
-        const tags = uniqueInOrder(g.tags.map(replaceReference));
-        if (!sameValues(tags, g.tags)) {
-          g.tags = tags;
-          settingsChanged = true;
-        }
-      } else if (scope === 'prefix' && g.mode === 'prefix' && g.prefix) {
-        const prefixTag = replaceReference(`#${g.prefix}`);
-        const prefix = prefixTag.slice(1);
-        if (prefix !== g.prefix) {
-          g.prefix = prefix;
-          settingsChanged = true;
-        }
-      }
-    }
+    const settingsUpdate = updateTagSettings(this.settings, oldTag, newTag, scope);
 
-    if (settingsChanged) {
+    if (settingsUpdate.changed) {
+      let saveRevision = latestSettingsSaveRevision(this.settings);
       try {
-        await this.saveSettings();
+        const pendingSave = this.persistSettings();
+        saveRevision = latestSettingsSaveRevision(this.settings);
+        await pendingSave;
       } catch {
-        this.settings.pinnedTags = settingsSnapshot.pinnedTags;
-        this.settings.archivedTags = settingsSnapshot.archivedTags;
-        this.settings.tagGroups = settingsSnapshot.tagGroups;
+        if (latestSettingsSaveRevision(this.settings) === saveRevision) {
+          settingsUpdate.rollback();
+        }
         return { type: 'settings-error', changedFiles, failedFiles };
       }
     }

@@ -3,6 +3,7 @@ import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
 import type { TagManager } from '../tags/TagManager';
@@ -710,12 +711,20 @@ export class LeftPanel {
       if (result.color === null) delete group.color;
       else group.color = result.color;
     }
-    void this.onSaveSettings()
+    const applied = { name: group.name, color: group.color };
+    beginSettingsSave(this.settings);
+    const save = this.onSaveSettings();
+    const saveRevision = latestSettingsSaveRevision(this.settings);
+    void save
       .then(() => this.render())
       .catch(() => {
-        group.name = previous.name;
-        if (previous.color === undefined) delete group.color;
-        else group.color = previous.color;
+        if (latestSettingsSaveRevision(this.settings) === saveRevision) {
+          if (group.name === applied.name) group.name = previous.name;
+          if (group.color === applied.color) {
+            if (previous.color === undefined) delete group.color;
+            else group.color = previous.color;
+          }
+        }
         new Notice('Tag group appearance was not saved. Your changes were rolled back.');
         this.render();
       });

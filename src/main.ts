@@ -3,6 +3,7 @@ import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import { migrateSettings } from './settings/migration';
+import { beginSettingsSave } from './settings/settingsSaveRevision';
 import { CalendarSettingsTab } from './settings/SettingsTab';
 import { toStatusRules } from './settings/statusCatalogAdapter';
 import type { CalendarSettings, CodeBlockParams } from './settings/types';
@@ -129,6 +130,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   async saveSettings(): Promise<void> {
+    beginSettingsSave(this.settings);
     await this.saveData(this.settings);
   }
 

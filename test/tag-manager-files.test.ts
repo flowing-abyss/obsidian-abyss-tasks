@@ -81,6 +81,30 @@ describe('TagManager exact and prefix vault rename', () => {
     expect(await read(app, 'notes/tasks.md')).toBe('#фокус✨ #фокус✨/next #work🚀er\n');
   });
 
+  it('accepts flag-only tags and exact rename leaves a flag-suffixed adjacent tag untouched', async () => {
+    const { tm, app } = await makeManager({
+      'notes/tasks.md': '#🇺🇸 #travel #travel/dev #travel🇺🇸\n',
+    });
+
+    const flag = await tm.renameTagExact('#🇺🇸', '#🇨🇦');
+    const exact = await tm.renameTagExact('#travel', '#trip');
+
+    expect(flag).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(exact).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(await read(app, 'notes/tasks.md')).toBe('#🇨🇦 #trip #travel/dev #travel🇺🇸\n');
+  });
+
+  it('prefix rename leaves a flag-suffixed adjacent tag untouched', async () => {
+    const { tm, app } = await makeManager({
+      'notes/tasks.md': '#travel #travel/dev #travel🇺🇸\n',
+    });
+
+    const result = await tm.renameTagPrefix('#travel', '#trip');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(await read(app, 'notes/tasks.md')).toBe('#trip #trip/dev #travel🇺🇸\n');
+  });
+
   it('exact rename updates semantic body and frontmatter tags while preserving literal examples', async () => {
     const original = [
       '---',
@@ -159,6 +183,90 @@ describe('TagManager exact and prefix vault rename', () => {
         )
         .replace('and #work/dev.', 'and #focus/dev.'),
     );
+  });
+
+  it('exact rename handles indentless and commented block tags while preserving quoted fences', async () => {
+    const original = [
+      '---',
+      'title: "keep every unrelated byte"',
+      'tags:',
+      '- work',
+      '- work/dev',
+      '- "work" # keep quoted comment',
+      '- work   # keep spaced comment',
+      '- workplace',
+      'aliases: [work]',
+      '---',
+      '> ```md',
+      '> #work',
+      '> ```',
+      'Outside #work and #work/dev.',
+      '',
+    ].join('\n');
+    const expected = [
+      '---',
+      'title: "keep every unrelated byte"',
+      'tags:',
+      '- focus',
+      '- work/dev',
+      '- "focus" # keep quoted comment',
+      '- focus   # keep spaced comment',
+      '- workplace',
+      'aliases: [work]',
+      '---',
+      '> ```md',
+      '> #work',
+      '> ```',
+      'Outside #focus and #work/dev.',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({ 'notes/exact.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/exact.md'] });
+    expect(await read(app, 'notes/exact.md')).toBe(expected);
+  });
+
+  it('prefix rename handles multiline flow tags while preserving blockquote fenced literals', async () => {
+    const original = [
+      '---',
+      'tags: [',
+      '  work,',
+      '  "work/dev",',
+      '  workplace,',
+      '  other',
+      '] # keep flow layout',
+      'category: work',
+      '---',
+      '> ~~~md',
+      '> #work/dev',
+      '> ~~~',
+      'Outside #work/dev and #workplace.',
+      '',
+    ].join('\n');
+    const expected = [
+      '---',
+      'tags: [',
+      '  focus,',
+      '  "focus/dev",',
+      '  workplace,',
+      '  other',
+      '] # keep flow layout',
+      'category: work',
+      '---',
+      '> ~~~md',
+      '> #work/dev',
+      '> ~~~',
+      'Outside #focus/dev and #workplace.',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({ 'notes/prefix.md': original });
+
+    const result = await tm.renameTagPrefix('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/prefix.md'] });
+    expect(await read(app, 'notes/prefix.md')).toBe(expected);
   });
 
   it.each([
@@ -268,6 +376,43 @@ describe('TagManager exact and prefix vault rename', () => {
       { id: 'manual', name: 'Manual', mode: 'manual', tags: ['#work', '#work/dev'] },
     ]);
     expect(save).toHaveBeenCalledOnce();
+  });
+
+  it('does not let an older rejected rename save clobber newer successfully saved settings', async () => {
+    const { tm, settings, save } = await makeManager();
+    settings.pinnedTags = ['#work'];
+    settings.tagGroups = [{ id: 'prefix', name: 'Work', mode: 'prefix', prefix: 'work' }];
+    let rejectFirst!: (error: Error) => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    save
+      .mockImplementationOnce(() => {
+        markFirstStarted();
+        return firstSave;
+      })
+      .mockResolvedValueOnce(undefined);
+
+    const rename = tm.renameTagPrefix('#work', '#focus');
+    await firstStarted;
+    settings.tagGroups[0]!.name = 'Newer name';
+    await tm.pinTag('#later');
+    rejectFirst(new Error('older save rejected'));
+
+    await expect(rename).resolves.toEqual({
+      type: 'settings-error',
+      changedFiles: [],
+      failedFiles: [],
+    });
+    expect(settings.pinnedTags).toEqual(['#focus', '#later']);
+    expect(settings.tagGroups).toEqual([
+      { id: 'prefix', name: 'Newer name', mode: 'prefix', prefix: 'focus' },
+    ]);
+    expect(save).toHaveBeenCalledTimes(2);
   });
 
   it('prepares every changed file before performing sequential writes', async () => {

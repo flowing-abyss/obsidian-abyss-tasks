@@ -2,7 +2,7 @@ import { inlineCodeRanges, type SourceRange } from '../parser/inlineCode';
 
 export type TagRenameScope = 'exact' | 'prefix';
 
-const TAG_CHARACTER = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
+const TAG_CHARACTER = String.raw`(?:[\p{L}\p{M}\p{N}\p{Pc}-]|\p{Extended_Pictographic}|\p{Regional_Indicator}|\p{Emoji_Modifier}|\uFE0F|\u200D)`;
 const VALID_TAG = new RegExp(String.raw`^#${TAG_CHARACTER}+(?:/${TAG_CHARACTER}+)*$`, 'u');
 const ALL_NUMERIC = /^\p{N}+$/u;
 
@@ -51,18 +51,10 @@ function transformYamlScalar(
   if (!scalar) return source;
 
   let comment = '';
-  if (scalar[0] !== '"' && scalar[0] !== "'") {
-    let commentAt = -1;
-    for (let index = 1; index < scalar.length; index++) {
-      if (scalar[index] === '#' && /\s/u.test(scalar[index - 1] ?? '')) {
-        commentAt = index - 1;
-        break;
-      }
-    }
-    if (commentAt >= 0) {
-      comment = scalar.slice(commentAt);
-      scalar = scalar.slice(0, commentAt);
-    }
+  const commentAt = yamlCommentStart(scalar);
+  if (commentAt >= 0) {
+    comment = scalar.slice(commentAt);
+    scalar = scalar.slice(0, commentAt);
   }
 
   const quote =
@@ -83,6 +75,55 @@ function transformYamlScalar(
   return `${leading}${quote}${displayed}${quote}${comment}${trailing}`;
 }
 
+function yamlCommentStart(source: string): number {
+  let quote = '';
+  for (let index = 0; index < source.length; index++) {
+    const character = source[index] ?? '';
+    if (quote) {
+      if (quote === '"' && character === '\\') {
+        index++;
+      } else if (character === quote) {
+        if (quote === "'" && source[index + 1] === "'") index++;
+        else quote = '';
+      }
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '#' && index > 0 && /\s/u.test(source[index - 1] ?? '')) {
+      let commentAt = index;
+      while (commentAt > 0 && /[ \t]/u.test(source[commentAt - 1] ?? '')) commentAt--;
+      return commentAt;
+    }
+  }
+  return -1;
+}
+
+function flowSequenceClose(source: string): number {
+  const open = source.indexOf('[');
+  if (open < 0) return -1;
+  let quote = '';
+  let comment = false;
+  for (let index = open + 1; index < source.length; index++) {
+    const character = source[index] ?? '';
+    if (comment) {
+      if (character === '\n') comment = false;
+    } else if (quote) {
+      if (quote === '"' && character === '\\') {
+        index++;
+      } else if (character === quote) {
+        if (quote === "'" && source[index + 1] === "'") index++;
+        else quote = '';
+      }
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === '#' && /\s/u.test(source[index - 1] ?? '')) {
+      comment = true;
+    } else if (character === ']') {
+      return index;
+    }
+  }
+  return -1;
+}
+
 function transformFlowSequence(
   source: string,
   oldTag: string,
@@ -90,16 +131,19 @@ function transformFlowSequence(
   scope: TagRenameScope,
 ): string {
   const open = source.indexOf('[');
-  const close = source.lastIndexOf(']');
+  const close = flowSequenceClose(source);
   if (open < 0 || close <= open) return source;
 
   const inner = source.slice(open + 1, close);
   const parts: string[] = [];
   let start = 0;
   let quote = '';
+  let comment = false;
   for (let index = 0; index < inner.length; index++) {
     const character = inner[index] ?? '';
-    if (quote) {
+    if (comment) {
+      if (character === '\n') comment = false;
+    } else if (quote) {
       if (quote === '"' && character === '\\') {
         index++;
       } else if (character === quote) {
@@ -108,6 +152,8 @@ function transformFlowSequence(
       }
     } else if (character === '"' || character === "'") {
       quote = character;
+    } else if (character === '#' && /\s/u.test(inner[index - 1] ?? '')) {
+      comment = true;
     } else if (character === ',') {
       parts.push(inner.slice(start, index));
       parts.push(',');
@@ -159,12 +205,56 @@ function yamlProperty(source: string): YamlProperty | null {
 function yamlListItem(source: string): { readonly prefix: string; readonly value: string } | null {
   let marker = 0;
   while (source[marker] === ' ' || source[marker] === '\t') marker++;
-  if (marker === 0 || source[marker] !== '-') return null;
+  if (source[marker] !== '-') return null;
 
   let valueFrom = marker + 1;
   if (source[valueFrom] !== ' ' && source[valueFrom] !== '\t') return null;
   while (source[valueFrom] === ' ' || source[valueFrom] === '\t') valueFrom++;
   return { prefix: source.slice(0, valueFrom), value: source.slice(valueFrom) };
+}
+
+interface TransformedTagsProperty {
+  readonly text: string;
+  readonly nextIndex: number;
+  readonly beginsBlock: boolean;
+}
+
+function transformTagsProperty(
+  lines: readonly string[],
+  index: number,
+  property: YamlProperty,
+  ending: string,
+  oldTag: string,
+  newTag: string,
+  scope: TagRenameScope,
+): TransformedTagsProperty {
+  const { separator, value } = property;
+  if (!value || value.startsWith('#')) {
+    return { text: lines[index] ?? '', nextIndex: index, beginsBlock: true };
+  }
+  if (!value.trimStart().startsWith('[')) {
+    return {
+      text: `${property.key}:${separator}${transformYamlScalar(
+        value,
+        oldTag,
+        newTag,
+        scope,
+      )}${ending}`,
+      nextIndex: index,
+      beginsBlock: false,
+    };
+  }
+
+  let flow = `${value}${ending}`;
+  while (flowSequenceClose(flow) < 0 && index + 1 < lines.length) {
+    index++;
+    flow += lines[index] ?? '';
+  }
+  return {
+    text: `${property.key}:${separator}${transformFlowSequence(flow, oldTag, newTag, scope)}`,
+    nextIndex: index,
+    beginsBlock: false,
+  };
 }
 
 function transformFrontmatterYaml(
@@ -175,40 +265,60 @@ function transformFrontmatterYaml(
 ): string {
   const lines = linesPreservingEndings(yaml);
   let inTagsBlock = false;
+  const transformedLines: string[] = [];
 
-  return lines
-    .map((line) => {
-      let ending = '';
-      if (line.endsWith('\r\n')) ending = '\r\n';
-      else if (line.endsWith('\n')) ending = '\n';
-      const core = ending ? line.slice(0, -ending.length) : line;
-      const property = yamlProperty(core);
-      if (property) {
-        inTagsBlock = false;
-        if (property.key.trim() !== 'tags') return line;
-
-        const { separator, value } = property;
-        if (!value || value.startsWith('#')) {
-          inTagsBlock = true;
-          return line;
-        }
-        const transformed = value.trimStart().startsWith('[')
-          ? transformFlowSequence(value, oldTag, newTag, scope)
-          : transformYamlScalar(value, oldTag, newTag, scope);
-        return `${property.key}:${separator}${transformed}${ending}`;
+  let index = 0;
+  while (index < lines.length) {
+    const lineIndex = index;
+    index++;
+    const line = lines[lineIndex] ?? '';
+    let ending = '';
+    if (line.endsWith('\r\n')) ending = '\r\n';
+    else if (line.endsWith('\n')) ending = '\n';
+    const core = ending ? line.slice(0, -ending.length) : line;
+    const property = yamlProperty(core);
+    if (property) {
+      inTagsBlock = false;
+      if (property.key.trim() !== 'tags') {
+        transformedLines.push(line);
+        continue;
       }
 
-      if (!inTagsBlock) return line;
-      const trimmed = core.trim();
-      if (!trimmed || trimmed.startsWith('#')) return line;
-      const item = yamlListItem(core);
-      if (!item) {
-        if (core[0] !== ' ' && core[0] !== '\t') inTagsBlock = false;
-        return line;
-      }
-      return `${item.prefix}${transformYamlScalar(item.value, oldTag, newTag, scope)}${ending}`;
-    })
-    .join('');
+      const transformed = transformTagsProperty(
+        lines,
+        lineIndex,
+        property,
+        ending,
+        oldTag,
+        newTag,
+        scope,
+      );
+      index = transformed.nextIndex + 1;
+      inTagsBlock = transformed.beginsBlock;
+      transformedLines.push(transformed.text);
+      continue;
+    }
+
+    if (!inTagsBlock) {
+      transformedLines.push(line);
+      continue;
+    }
+    const trimmed = core.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      transformedLines.push(line);
+      continue;
+    }
+    const item = yamlListItem(core);
+    if (!item) {
+      if (core[0] !== ' ' && core[0] !== '\t') inTagsBlock = false;
+      transformedLines.push(line);
+      continue;
+    }
+    transformedLines.push(
+      `${item.prefix}${transformYamlScalar(item.value, oldTag, newTag, scope)}${ending}`,
+    );
+  }
+  return transformedLines.join('');
 }
 
 interface FrontmatterRange {
@@ -238,29 +348,44 @@ function frontmatterRange(source: string): FrontmatterRange | null {
 
 function fencedCodeRanges(source: string): readonly SourceRange[] {
   const ranges: SourceRange[] = [];
-  let open: { readonly from: number; readonly marker: string; readonly length: number } | null =
-    null;
+  let open: {
+    readonly from: number;
+    readonly marker: string;
+    readonly length: number;
+    readonly quoteDepth: number;
+  } | null = null;
   let lineStart = 0;
 
   while (lineStart < source.length) {
     const newline = source.indexOf('\n', lineStart);
     const lineEnd = newline < 0 ? source.length : newline + 1;
     const core = source.slice(lineStart, newline < 0 ? lineEnd : newline).replace(/\r$/u, '');
+    const container = blockquoteContainer(core);
 
     if (open) {
-      const leading = /^ {0,3}/u.exec(core)?.[0].length ?? 0;
-      const candidate = core.slice(leading);
+      const leading = /^ {0,3}/u.exec(container.content)?.[0].length ?? 0;
+      const candidate = container.content.slice(leading);
       let run = 0;
       while (candidate[run] === open.marker) run++;
-      if (run >= open.length && /^[ \t]*$/u.test(candidate.slice(run))) {
+      if (
+        container.quoteDepth === open.quoteDepth &&
+        run >= open.length &&
+        /^[ \t]*$/u.test(candidate.slice(run))
+      ) {
         ranges.push({ from: open.from, to: lineEnd });
         open = null;
       }
     } else {
-      const match = /^ {0,3}(`{3,}|~{3,})/u.exec(core);
+      const match = /^ {0,3}(`{3,}|~{3,})/u.exec(container.content);
       const delimiter = match?.[1];
-      if (delimiter) {
-        open = { from: lineStart, marker: delimiter[0] ?? '`', length: delimiter.length };
+      const rest = match ? container.content.slice(match[0].length) : '';
+      if (delimiter && (delimiter[0] !== '`' || !rest.includes('`'))) {
+        open = {
+          from: lineStart,
+          marker: delimiter[0] ?? '`',
+          length: delimiter.length,
+          quoteDepth: container.quoteDepth,
+        };
       }
     }
 
@@ -268,6 +393,30 @@ function fencedCodeRanges(source: string): readonly SourceRange[] {
   }
   if (open) ranges.push({ from: open.from, to: source.length });
   return ranges;
+}
+
+function blockquoteContainer(source: string): {
+  readonly content: string;
+  readonly quoteDepth: number;
+} {
+  let cursor = 0;
+  let quoteDepth = 0;
+  while (cursor < source.length) {
+    const beforeMarker = cursor;
+    let spaces = 0;
+    while (spaces < 3 && source[cursor] === ' ') {
+      cursor++;
+      spaces++;
+    }
+    if (source[cursor] !== '>') {
+      cursor = beforeMarker;
+      break;
+    }
+    quoteDepth++;
+    cursor++;
+    if (source[cursor] === ' ' || source[cursor] === '\t') cursor++;
+  }
+  return { content: quoteDepth > 0 ? source.slice(cursor) : source, quoteDepth };
 }
 
 function excludedCodeRanges(source: string): readonly SourceRange[] {

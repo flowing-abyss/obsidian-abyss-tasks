@@ -751,6 +751,47 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
   });
 
+  it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
+    const { panel, merged, save } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
+    });
+    const group = merged.tagGroups[0]!;
+    let rejectFirst!: (error: Error) => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    save
+      .mockImplementationOnce(() => {
+        markFirstStarted();
+        return firstSave;
+      })
+      .mockResolvedValueOnce(undefined);
+    const applyAppearance = (
+      panel as unknown as {
+        applyTagGroupAppearance(
+          target: CalendarSettings['tagGroups'][number],
+          result: { readonly name?: string; readonly color?: string | null },
+        ): void;
+      }
+    ).applyTagGroupAppearance.bind(panel);
+
+    applyAppearance(group, { name: 'First edit' });
+    await firstStarted;
+    applyAppearance(group, { name: 'Newer edit', color: '#00ff00' });
+    await flushMicrotasks();
+    rejectFirst(new Error('older save rejected'));
+    await flushMicrotasks();
+
+    expect(group.name).toBe('Newer edit');
+    expect(group.color).toBe('#00ff00');
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(Notice).toHaveBeenCalledOnce();
+  });
+
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {
     renderOpenedModalsInDocument();
     const items = captureMenu();
