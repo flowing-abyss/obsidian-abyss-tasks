@@ -33,6 +33,13 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function declarationsForRuleContaining(...selectors: string[]): string {
+  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    if (selectors.every((selector) => (match[1] ?? '').includes(selector))) return match[2] ?? '';
+  }
+  return '';
+}
+
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const fakeApp = {} as App;
 
@@ -94,7 +101,7 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
-  it('uses event contrast for terminal blocks and ghost contrast for both continuation renderers', () => {
+  it('uses committed event-fill contrast for terminal and ghost timed blocks', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
     document.body.style.setProperty('--background-primary', '#666666');
     const tagGroups = [
@@ -128,12 +135,12 @@ describe('Task 2 unified timed interaction contract', () => {
         (ghostContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
           '--tc-tag-text-color',
         ),
-      ).toBe('var(--tc-tag-text-light)');
+      ).toBe('var(--tc-tag-text-dark)');
       expect(
         (
           legacyGhostContainer.querySelector('.tc-tg-block-continuation') as HTMLElement
         ).style.getPropertyValue('--tc-tag-text-color'),
-      ).toBe('var(--tc-tag-text-light)');
+      ).toBe('var(--tc-tag-text-dark)');
     } finally {
       document.body.style.setProperty('--background-primary', originalBackground);
     }
@@ -1818,9 +1825,10 @@ describe('renderTimedBlocksForDay', () => {
       });
     });
 
-    it('.tc-tg-block:focus-visible gets a distinct outline so a keyboard user can see which block arrow keys will nudge', () => {
+    it('.tc-tg-block:focus-visible gets a distinct tag-aware inset outline so a keyboard user can see which block arrow keys will nudge', () => {
       const rule = declarationsFor('.tc-tg-block:focus-visible');
-      expect(rule).toMatch(/outline\s*:/u);
+      expect(rule).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+      expect(rule).toMatch(/--tc-event-outline-strength/u);
     });
   });
 
@@ -2938,5 +2946,24 @@ describe('renderTimedBlocksForDay', () => {
       const anchorTopPx = ((9 * 60 + 10) / 60) * 48;
       expect(topSeg + clampedHeight).toBeLessThanOrEqual(anchorTopPx);
     });
+  });
+});
+
+describe('calendar surface style contract', () => {
+  it('gives timed terminal and ghost blocks one shared scale, rail geometry, fill, and tag outline', () => {
+    const terminal = declarationsFor('.tc-tg-block');
+    const ghost = declarationsFor('.tc-tg-block-continuation');
+    const sharedFill = declarationsForRuleContaining('.tc-tg-block', '.tc-tg-span', '.tc-tg-plain');
+
+    expect(terminal).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+    expect(terminal).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+    expect(terminal).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+    expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u);
+    expect(ghost).toMatch(/var\(--tc-event-fill-strength\)/u);
+    expect(sharedFill).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid/u);
+    expect(sharedFill).toMatch(/var\(--tc-event-fill-strength\)/u);
+    expect(sharedFill).toMatch(
+      /box-shadow\s*:\s*inset 0 0 0 1px[\s\S]*--tc-event-outline-strength/u,
+    );
   });
 });

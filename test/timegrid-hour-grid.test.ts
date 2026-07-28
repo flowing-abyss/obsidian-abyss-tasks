@@ -25,13 +25,19 @@ function declarationsForRuleContaining(...selectors: string[]): string {
 }
 
 describe('renderHourGrid', () => {
-  it('defines restrained light/dark event and ghost fill tokens', () => {
+  it('defines the shared light/dark calendar scale and committed fill tokens', () => {
     const light = declarationsFor('.tc-panel-view');
     const dark = declarationsFor('.theme-dark .tc-panel-view');
-    expect(light).toMatch(/--tc-event-fill-strength\s*:\s*14%/u);
-    expect(light).toMatch(/--tc-ghost-fill-strength\s*:\s*7%/u);
-    expect(dark).toMatch(/--tc-event-fill-strength\s*:\s*18%/u);
-    expect(dark).toMatch(/--tc-ghost-fill-strength\s*:\s*10%/u);
+    expect(light).toMatch(/--tc-calendar-item-font-size\s*:\s*0\.8em/u);
+    expect(light).toMatch(/--tc-calendar-track-height\s*:\s*1\.65em/u);
+    expect(light).toMatch(/--tc-calendar-item-radius\s*:\s*6px/u);
+    expect(light).toMatch(/--tc-calendar-item-pad-inline\s*:\s*6px/u);
+    expect(light).toMatch(/--tc-calendar-item-rail\s*:\s*3px/u);
+    expect(light).toMatch(/--tc-calendar-ghost-rail\s*:\s*2px/u);
+    expect(light).toMatch(/--tc-event-fill-strength\s*:\s*11%/u);
+    expect(light).toMatch(/--tc-event-outline-strength\s*:\s*24%/u);
+    expect(dark).toMatch(/--tc-event-fill-strength\s*:\s*14%/u);
+    expect(dark).toMatch(/--tc-event-outline-strength\s*:\s*32%/u);
   });
 
   it('keeps timed event fills opaque and preserves them through hover, selection, and drag', () => {
@@ -60,7 +66,8 @@ describe('renderHourGrid', () => {
 
     const selected = declarationsFor('.tc-tg-block.is-selected');
     expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
-    expect(selected).toMatch(/outline\s*:.*var\(--interactive-accent\)/u);
+    expect(selected).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+    expect(selected).toMatch(/--tc-event-outline-strength/u);
 
     const dragging = declarationsForRuleContaining(
       '.tc-tg-block.is-dragging',

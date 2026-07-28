@@ -261,7 +261,7 @@ describe('renderAllDayCell', () => {
     expect(terminal?.querySelector('.tc-md')).not.toBeNull();
   });
 
-  it('uses event versus ghost strength when choosing readable title text', () => {
+  it('uses committed fill strength when choosing readable title text', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
     document.body.style.setProperty('--background-primary', '#666666');
     try {
@@ -284,7 +284,7 @@ describe('renderAllDayCell', () => {
         (
           continuationCell.querySelector('.tc-tg-span-continuation') as HTMLElement
         ).style.getPropertyValue('--tc-tag-text-color'),
-      ).toBe('var(--tc-tag-text-light)');
+      ).toBe('var(--tc-tag-text-dark)');
       expect(
         (terminalCell.querySelector('.tc-tg-span') as HTMLElement).style.getPropertyValue(
           '--tc-tag-text-color',
@@ -295,14 +295,14 @@ describe('renderAllDayCell', () => {
     }
   });
 
-  it('styles span continuations as opaque, restrained tag-aware ghosts', () => {
+  it('styles span continuations as opaque, restrained tag-aware committed tiles', () => {
     const declarations = declarationsFor('.tc-tg-span-continuation');
     expect(declarations).not.toMatch(/opacity\s*:/u);
     expect(declarations).toMatch(
-      /border-inline-start\s*:\s*2px dashed var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+      /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
     expect(declarations).toMatch(
-      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-ghost-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
+      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
     );
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);
   });
@@ -1155,6 +1155,30 @@ describe('renderAllDayCell', () => {
       const scopedRule = declarationsFor('.tc-tg-block-badges .tc-task-count-badge');
       expect(scopedRule).toMatch(/--tc-tag-text-color/u);
       expect(scopedRule).toMatch(/var\(--text-muted\)/u);
+    });
+  });
+
+  describe('calendar surface style contract', () => {
+    it('uses shared span track geometry and terminal/ghost body sizing without a permanent accent border', () => {
+      const layer = declarationsForRuleContaining('.tc-tg-span-layer', '.tc-mg-span-layer');
+      const piece = declarationsFor('.tc-span-piece');
+      const host = declarationsFor('.tc-span-piece-host');
+      const item = declarationsFor('.tc-tg-body');
+      const items = declarationsFor('.tc-tg-cell-items');
+
+      expect(layer).toMatch(/grid-auto-rows\s*:\s*var\(--tc-calendar-track-height\)/u);
+      expect(layer).toMatch(/gap\s*:\s*0/u);
+      expect(piece).toMatch(/height\s*:\s*calc\(100% - 2px\)/u);
+      expect(piece).toMatch(/margin\s*:\s*1px 2px/u);
+      expect(items).toMatch(
+        /margin-top\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
+      );
+      expect(css).not.toMatch(/\.tc-tg-span\s*\{[^}]*--interactive-accent/u);
+      expect(host).toMatch(/height\s*:\s*100%/u);
+      expect(host).toMatch(/min-height\s*:\s*0/u);
+      expect(item).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+      expect(item).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+      expect(item).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
     });
   });
 });

@@ -6,6 +6,19 @@ import {
   tagFillTextVariant,
 } from '../src/tags/tagFillContrast';
 
+function rgbToHex([red, green, blue]: readonly [number, number, number]): string {
+  return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function contrastRatio(left: string, right: string): number {
+  const leftLuminance = relativeLuminanceOfHex(left)!;
+  const rightLuminance = relativeLuminanceOfHex(right)!;
+  return (
+    (Math.max(leftLuminance, rightLuminance) + 0.05) /
+    (Math.min(leftLuminance, rightLuminance) + 0.05)
+  );
+}
+
 describe('relativeLuminanceOfHex', () => {
   it('classifies known light colors as high luminance', () => {
     expect(relativeLuminanceOfHex('#ffffff')).toBeCloseTo(1, 2);
@@ -53,24 +66,24 @@ describe('tagFillTextVariant', () => {
   });
 
   it('picks dark text for a bright/light tag mixed into a light background', () => {
-    expect(tagFillTextVariant('#ffee58', '#ffffff', 14)).toBe('dark');
+    expect(tagFillTextVariant('#ffee58', '#ffffff', 11)).toBe('dark');
   });
 
   it('picks light text for a bright/light tag mixed into a dark background', () => {
-    expect(tagFillTextVariant('#ffee58', '#1e1e1e', 18)).toBe('light');
+    expect(tagFillTextVariant('#ffee58', '#1e1e1e', 14)).toBe('light');
   });
 
   it('picks light text for a dark/desaturated tag mixed into a dark background', () => {
-    expect(tagFillTextVariant('#1a1a40', '#1e1e1e', 18)).toBe('light');
+    expect(tagFillTextVariant('#1a1a40', '#1e1e1e', 14)).toBe('light');
   });
 
   it('picks dark text for a dark/desaturated tag mixed into a light background', () => {
-    expect(tagFillTextVariant('#00004d', '#ffffff', 14)).toBe('dark');
+    expect(tagFillTextVariant('#00004d', '#ffffff', 11)).toBe('dark');
   });
 
   it('picks a sensible variant for a mid-saturation "normal" color (blue) in both themes', () => {
-    expect(tagFillTextVariant('#2196f3', '#ffffff', 14)).toBe('dark');
-    expect(tagFillTextVariant('#2196f3', '#1e1e1e', 18)).toBe('light');
+    expect(tagFillTextVariant('#2196f3', '#ffffff', 11)).toBe('dark');
+    expect(tagFillTextVariant('#2196f3', '#1e1e1e', 14)).toBe('light');
   });
 
   it.each([
@@ -79,15 +92,30 @@ describe('tagFillTextVariant', () => {
     ['pale green', '#d8f3dc'],
     ['red', '#d32f2f'],
     ['neutral', '#808080'],
-  ])(
-    'keeps %s readable at restrained event and ghost strengths in both themes',
-    (_name, tagColor) => {
-      expect(tagFillTextVariant(tagColor, '#ffffff', 14)).toBe('dark');
-      expect(tagFillTextVariant(tagColor, '#ffffff', 7)).toBe('dark');
-      expect(tagFillTextVariant(tagColor, '#1e1e1e', 18)).toBe('light');
-      expect(tagFillTextVariant(tagColor, '#1e1e1e', 10)).toBe('light');
-    },
-  );
+  ])('keeps %s readable against committed fills in both themes', (_name, tagColor) => {
+    expect(tagFillTextVariant(tagColor, '#ffffff', 11)).toBe('dark');
+    expect(tagFillTextVariant(tagColor, '#1e1e1e', 14)).toBe('light');
+  });
+
+  it.each([
+    ['yellow', '#ffee58'],
+    ['navy', '#00004d'],
+    ['pale green', '#d8f3dc'],
+    ['red', '#d32f2f'],
+    ['untagged', undefined],
+  ])('keeps %s at WCAG 4.5:1 against the committed fill in both themes', (_name, tagColor) => {
+    const lightBackground = '#ffffff';
+    const darkBackground = '#1e1e1e';
+    const lightFill = tagColor
+      ? rgbToHex(mixHexColors(tagColor, lightBackground, 11)!)
+      : lightBackground;
+    const darkFill = tagColor
+      ? rgbToHex(mixHexColors(tagColor, darkBackground, 14)!)
+      : darkBackground;
+
+    expect(contrastRatio(lightFill, '#161616')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(darkFill, '#f5f5f5')).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe('tagFillTextColorVar', () => {

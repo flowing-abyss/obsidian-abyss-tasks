@@ -120,13 +120,12 @@ function currentBackgroundPrimaryHex(referenceEl: HTMLElement): string {
 
 type TagFillKind = 'event' | 'ghost';
 
-function currentTagFillPercent(referenceEl: HTMLElement, kind: TagFillKind): number {
+function currentTagFillPercent(referenceEl: HTMLElement, _kind: TagFillKind): number {
   const doc = referenceEl.ownerDocument;
   const dark =
     doc.body.classList.contains('theme-dark') ||
     doc.documentElement.classList.contains('theme-dark');
-  if (kind === 'ghost') return dark ? 10 : 7;
-  return dark ? 18 : 14;
+  return dark ? 14 : 11;
 }
 
 /**

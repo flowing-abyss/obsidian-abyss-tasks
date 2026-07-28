@@ -9,10 +9,15 @@
   --tc-priority-f: var(--color-purple);
   --tc-date-overdue: var(--color-red);
   --tc-date-tomorrow: var(--color-orange);
-  /* Calendar events stay quiet enough for dense schedule scanning. The tag remains identifiable
-     through one full-strength rail while the opaque body tint adapts to the host theme. */
-  --tc-event-fill-strength: 14%;
-  --tc-ghost-fill-strength: 7%;
+  --tc-calendar-item-font-size: 0.8em;
+  --tc-calendar-track-height: 1.65em;
+  --tc-calendar-item-radius: 6px;
+  --tc-calendar-item-pad-inline: 6px;
+  --tc-calendar-item-rail: 3px;
+  --tc-calendar-ghost-rail: 2px;
+  --tc-event-fill-strength: 11%;
+  --tc-event-outline-strength: 24%;
+  --tc-preview-fill-strength: 7%;
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
   --tc-preview-border-tag-strength: 35%;
@@ -28,8 +33,9 @@
 }
 
 .theme-dark .tc-panel-view {
-  --tc-event-fill-strength: 18%;
-  --tc-ghost-fill-strength: 10%;
+  --tc-event-fill-strength: 14%;
+  --tc-event-outline-strength: 32%;
+  --tc-preview-fill-strength: 10%;
   --tc-preview-border-tag-strength: 55%;
 }
 
@@ -1298,7 +1304,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: calc(var(--tc-span-lane-count, 0) * 1.7em);
+  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
 }
 
 .tc-tg-span-layer,
@@ -1307,8 +1313,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 4;
   display: grid;
   grid-template-columns: repeat(var(--tc-span-track-count), minmax(0, 1fr));
-  grid-auto-rows: 1.55em;
-  gap: 2px 0;
+  grid-auto-rows: var(--tc-calendar-track-height);
+  gap: 0;
   pointer-events: none;
 }
 
@@ -1318,15 +1324,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-span-piece {
   box-sizing: border-box;
-  margin-inline: 1px;
+  height: calc(100% - 2px);
+  margin: 1px 2px;
   pointer-events: auto;
   cursor: grab;
   min-width: 0;
 }
 
 .tc-span-piece:focus-visible {
-  outline: 2px solid var(--tc-tag-color, var(--interactive-accent));
-  outline-offset: 1px;
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
 }
 
 .tc-span-piece.is-picked-up {
@@ -1347,7 +1358,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
     var(--background-primary)
   );
 }
@@ -1444,9 +1455,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
      always visibly crosses over a block instead of disappearing beneath it. */
   z-index: 2;
   pointer-events: auto;
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 0.8em;
+  border-radius: var(--tc-calendar-item-radius);
+  padding: 2px var(--tc-calendar-item-pad-inline);
+  font-size: var(--tc-calendar-item-font-size);
   overflow: hidden;
   cursor: grab;
   display: flex;
@@ -1649,9 +1660,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    without a flex (or grid) parent the title that follows always wrapped onto its
    own line below it. */
 .tc-tg-body {
-  border-radius: 6px;
-  padding: 2px 8px;
-  font-size: 0.8em;
+  border-radius: var(--tc-calendar-item-radius);
+  padding: 2px var(--tc-calendar-item-pad-inline);
+  font-size: var(--tc-calendar-item-font-size);
   cursor: grab;
   position: relative;
   display: flex;
@@ -1673,6 +1684,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
      normal weight from .tc-tg-body), so an all-day item's title read visibly lighter/thinner
      than a timed block's title directly below it in the same day column. */
   font-weight: 600;
+  line-height: 1.4;
   /* Task 40 (Round 4): all-day span/plain items share the same tag-colored fill (renderAllDay.ts's
      renderDraggableBody), so their title needs the same contrast-driven override — previously
      this had no explicit color at all and simply inherited Obsidian's own body text color, which
@@ -1681,16 +1693,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--tc-tag-text-color, var(--text-normal));
 }
 
-.tc-tg-span {
-  border: 1px solid color-mix(in srgb, var(--interactive-accent) 45%, transparent);
-}
-
 .tc-tg-span-continuation {
   cursor: grab;
-  border-inline-start: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  border-inline-start: var(--tc-calendar-ghost-rail) dashed
+    var(--tc-tag-color, var(--interactive-accent));
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
     var(--background-primary)
   );
 }
@@ -1713,7 +1722,14 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
     var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
     var(--background-primary)
   );
-  border-inline-start: 3px solid var(--tc-tag-color, var(--interactive-accent));
+  border-inline-start: var(--tc-calendar-item-rail) solid
+    var(--tc-tag-color, var(--interactive-accent));
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
 }
 
 .tc-tg-block:hover,
@@ -1765,14 +1781,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   left: 4px;
   right: 4px;
   pointer-events: auto;
-  border-radius: 4px;
-  border-inline-start: 2px dashed var(--tc-tag-color, var(--interactive-accent));
-  padding: 2px 6px;
-  font-size: 0.8em;
+  border-radius: var(--tc-calendar-item-radius);
+  border-inline-start: var(--tc-calendar-ghost-rail) dashed
+    var(--tc-tag-color, var(--interactive-accent));
+  padding: 2px var(--tc-calendar-item-pad-inline);
+  font-size: var(--tc-calendar-item-font-size);
   overflow: hidden;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
     var(--background-primary)
   );
   /* Task 36: same flex-column layout as `.tc-tg-block` (see its own comment) so this segment's
@@ -1802,7 +1819,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
     var(--background-primary)
   );
 }
@@ -1821,7 +1838,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 4px;
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-ghost-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
     var(--background-primary)
   );
 }
@@ -1942,14 +1959,21 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    file's `attachSelectedState` expects, and is intentionally IDENTICAL in strength to the old
    rule (not the strengthened `.is-selected` treatment) so it never doubles up with it. */
 .tc-tg-block:focus-visible {
-  outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
-  outline-offset: 1px;
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
 }
 
-/* Selection uses the host's semantic accent without replacing the event's opaque base fill. */
 .tc-tg-block.is-selected {
-  outline: 2px solid var(--interactive-accent);
-  outline-offset: 1px;
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
 }
 
 /* Edge resize stays fully opaque and signals the in-progress gesture with the same dashed
@@ -2015,6 +2039,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   height: 100%;
+  overflow-y: auto;
 }
 
 .tc-mg-head-row {
@@ -2083,7 +2108,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-top: calc(var(--tc-span-lane-count, 0) * 1.55em);
+  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
 }
 
 /* Hover-visible "+" affordance for click-to-create (kept off plain click, which already
@@ -2137,7 +2162,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border: none;
   background: transparent;
   outline: none;
-  font-size: 0.72em;
+  font-size: var(--tc-calendar-item-font-size);
   color: var(--text-normal);
 }
 
@@ -2166,9 +2191,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-mg-block-dot,
 .tc-mg-span-segment,
 .tc-mg-deadline-marker {
-  font-size: 0.72em;
-  border-radius: 4px;
-  padding: 0 4px;
+  font-size: var(--tc-calendar-item-font-size);
+  border-radius: var(--tc-calendar-item-radius);
+  padding: 2px var(--tc-calendar-item-pad-inline);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -2183,6 +2208,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.4;
   /* Task 40 (Round 4): Month view's compact items (.tc-mg-block-dot/.tc-mg-span-segment/
      .tc-mg-plain) share the same tag-colored fill (MonthGridView.ts's applyTagFill), so their
      title needs the same contrast-driven override — see tagFillContrast.ts's own doc comment.
@@ -2198,6 +2224,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-mg-span-continuation {
   cursor: grab;
+  border-inline-start: var(--tc-calendar-ghost-rail) dashed
+    var(--tc-tag-color, var(--interactive-accent));
+}
+
+.tc-span-piece-host {
+  height: 100%;
+  min-height: 0;
 }
 
 /* .tc-mg-plain / .tc-mg-block-dot / .tc-mg-span-segment tag-colored fill is set by the

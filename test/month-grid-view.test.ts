@@ -1416,20 +1416,20 @@ describe('MonthGridView', () => {
       expect(terminal.querySelector('.tc-md')).not.toBeNull();
     });
 
-    it('styles span continuations as opaque restrained ghosts through their shared root', () => {
+    it('styles span continuations as opaque restrained committed tiles through their shared root', () => {
       const monthDeclarations = declarationsFor('.tc-mg-span-continuation');
       const ghostDeclarations = declarationsFor('.tc-tg-span-continuation');
       expect(monthDeclarations).not.toMatch(/opacity\s*:/u);
       expect(ghostDeclarations).toMatch(
-        /border-inline-start\s*:\s*2px dashed var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+        /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
       );
       expect(ghostDeclarations).toMatch(
-        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-ghost-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
+        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
       );
       expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
     });
 
-    it('resolves the combined Month ghost class to ghost fill while its terminal keeps event fill', () => {
+    it('resolves the combined Month ghost and terminal classes to the same committed fill', () => {
       const container = freshContainer();
       const view = new MonthGridView(callbacks());
       const t = task({
@@ -1443,13 +1443,13 @@ describe('MonthGridView', () => {
       expect(ghost.classList.contains('tc-tg-span-continuation')).toBe(true);
       expect(ghost.classList.contains('tc-mg-span-segment')).toBe(true);
       expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-      expect(winningCssDeclaration(ghost, 'background')).toContain('var(--tc-ghost-fill-strength)');
+      expect(winningCssDeclaration(ghost, 'background')).toContain('var(--tc-event-fill-strength)');
       expect(winningCssDeclaration(terminal, 'background')).toContain(
         'var(--tc-event-fill-strength)',
       );
     });
 
-    it('uses event versus ghost strength when choosing readable title text', () => {
+    it('uses committed fill strength when choosing readable title text', () => {
       const originalBackground = document.body.style.getPropertyValue('--background-primary');
       document.body.style.setProperty('--background-primary', '#666666');
       try {
@@ -1473,9 +1473,7 @@ describe('MonthGridView', () => {
           '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
         ) as HTMLElement;
 
-        expect(ghost.style.getPropertyValue('--tc-tag-text-color')).toBe(
-          'var(--tc-tag-text-light)',
-        );
+        expect(ghost.style.getPropertyValue('--tc-tag-text-color')).toBe('var(--tc-tag-text-dark)');
         expect(terminal.style.getPropertyValue('--tc-tag-text-color')).toBe(
           'var(--tc-tag-text-dark)',
         );
@@ -1550,6 +1548,29 @@ describe('MonthGridView', () => {
     it('.tc-mg-item-title.is-done gets the same strikethrough convention as .tc-tg-block-title.is-done', () => {
       const rule = /\.tc-mg-item-title\.is-done[^{]*\{[^}]*\}/u.exec(css)?.[0] ?? '';
       expect(rule).toMatch(/text-decoration\s*:\s*line-through/u);
+    });
+  });
+
+  describe('calendar surface style contract', () => {
+    it('keeps Month at the shared item scale while allowing vertical grid scrolling', () => {
+      const monthGrid = declarationsFor('.tc-mg-grid');
+      const monthItems = declarationsFor('.tc-mg-cell-items');
+      const monthItem = declarationsFor('.tc-mg-deadline-marker');
+      const monthGhost = declarationsFor('.tc-mg-span-continuation');
+
+      expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);
+      expect(monthItems).toMatch(
+        /margin-top\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
+      );
+      expect(monthItem).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+      expect(monthItem).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+      expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+      expect(monthGhost).toMatch(
+        /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u,
+      );
+      expect(css).not.toMatch(
+        /\.tc-mg-(?:plain|block-dot|span-segment|deadline-marker)[^{]*\{[^}]*font-size\s*:\s*0\.72em/u,
+      );
     });
   });
 });
