@@ -127,6 +127,7 @@ export class CenterPanel {
   private calViewInstance: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe: (() => void) | null = null;
   private calendarPickerCleanup: (() => void) | null = null;
+  private taskDatePickerCleanup: (() => void) | null = null;
   // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
   // Query notifications use the incremental patch path and never consult this state.
   private lastScrolledCalKey: string | null = null;
@@ -375,6 +376,7 @@ export class CenterPanel {
 
   destroy(): void {
     this.cancelKeyboardInteraction();
+    this.clearTaskDatePicker();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
@@ -479,6 +481,7 @@ export class CenterPanel {
   }
 
   private render(): void {
+    this.clearTaskDatePicker();
     this.md.unload();
     this.md = new Component();
     this.md.load();
@@ -2968,10 +2971,12 @@ export class CenterPanel {
   }
 
   private openTaskDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void {
+    this.clearTaskDatePicker();
     const firstDue = tasks[0]?.planning.due;
     const initialValue =
       firstDue && tasks.every((task) => task.planning.due === firstDue) ? firstDue : undefined;
-    showDatePickerPopover({
+    let cleanup: (() => void) | undefined;
+    cleanup = showDatePickerPopover({
       owner: this.el,
       anchor,
       ...(initialValue !== undefined && { initialValue }),
@@ -2984,7 +2989,15 @@ export class CenterPanel {
           // Native date inputs are normally valid; malformed programmatic values remain a no-op.
         }
       },
+      onClose: () => {
+        this.taskDatePickerCleanup = null;
+      },
     });
+    this.taskDatePickerCleanup = cleanup;
+  }
+
+  private clearTaskDatePicker(): void {
+    this.taskDatePickerCleanup?.();
   }
 
   private taskKey(task: TaskSnapshot): string {
@@ -3023,11 +3036,6 @@ export class CenterPanel {
       if (!visible.has(key)) this.selectedTaskKeys.delete(key);
     }
     const firstSelected = keys.find((key) => this.selectedTaskKeys.has(key)) ?? null;
-    if (firstSelected === null) {
-      this.selectionAnchorKey = null;
-      this.selectionFocusKey = null;
-      return;
-    }
     if (!this.selectionAnchorKey || !visible.has(this.selectionAnchorKey)) {
       this.selectionAnchorKey = firstSelected;
     }

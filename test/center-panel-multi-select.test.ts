@@ -326,6 +326,29 @@ describe('CenterPanel multi-selection', () => {
     expect(selectedLines(el)).toEqual([]);
   });
 
+  it('preserves a visible plain-click origin across rerender for the next Shift range', () => {
+    const { el, panel } = makeCenter([t1, t2, t3]);
+    click(cards(el).find((card) => card.dataset['line'] === '0')!);
+
+    panel.refresh();
+    click(cards(el).find((card) => card.dataset['line'] === '2')!, { shiftKey: true });
+
+    expect(selectedLines(el)).toEqual(['0', '1', '2']);
+  });
+
+  it('preserves a visible Ctrl-toggle-off origin across rerender for the next Shift range', () => {
+    const { el, panel } = makeCenter([t1, t2, t3]);
+    const origin = cards(el).find((card) => card.dataset['line'] === '0')!;
+    click(origin, { ctrlKey: true });
+    click(origin, { ctrlKey: true });
+    expect(selectedLines(el)).toEqual([]);
+
+    panel.refresh();
+    click(cards(el).find((card) => card.dataset['line'] === '2')!, { shiftKey: true });
+
+    expect(selectedLines(el)).toEqual(['0', '1', '2']);
+  });
+
   it.each([
     ['Ctrl', { ctrlKey: true }],
     ['Cmd', { metaKey: true }],

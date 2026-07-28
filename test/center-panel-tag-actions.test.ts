@@ -17,8 +17,12 @@ import {
 useRealMoment();
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   activeDocument.querySelectorAll('.tc-date-picker-popover').forEach((element) => element.remove());
+  activeDocument
+    .querySelectorAll('.tc-test-center-attached')
+    .forEach((element) => element.remove());
 });
 
 interface CapturedMenuItem {
@@ -106,7 +110,7 @@ function makeCenter(
   });
   const el = freshContainer();
   panel.mount(el);
-  return { el, state, tm, execute };
+  return { el, state, tm, execute, panel };
 }
 
 describe('CenterPanel drag source', () => {
@@ -511,6 +515,80 @@ describe('CenterPanel task date context menus', () => {
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it.each(['refresh', 'destroy'] as const)(
+    'removes picker document listeners when the panel %s removes its owner DOM',
+    (lifecycle) => {
+      vi.useFakeTimers();
+      const items = captureMenu();
+      const { el, panel } = makeCenter([first]);
+      const ownerDocument = el.ownerDocument;
+      const addListener = vi.spyOn(ownerDocument, 'addEventListener');
+      const removeListener = vi.spyOn(ownerDocument, 'removeEventListener');
+      openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      vi.runOnlyPendingTimers();
+      const added = addListener.mock.calls as unknown as Array<
+        [string, EventListenerOrEventListenerObject, boolean | AddEventListenerOptions | undefined]
+      >;
+      const keydown = added.find(([type]) => type === 'keydown')?.[1];
+      const mousedown = added.find(([type]) => type === 'mousedown')?.[1];
+
+      panel[lifecycle]();
+
+      const removed = removeListener.mock.calls as unknown as Array<
+        [string, EventListenerOrEventListenerObject, boolean | EventListenerOptions | undefined]
+      >;
+      const removedKeydown = removed.some(
+        ([type, listener, options]) =>
+          type === 'keydown' && listener === keydown && options === true,
+      );
+      const removedMousedown = removed.some(
+        ([type, listener, options]) =>
+          type === 'mousedown' && listener === mousedown && options === true,
+      );
+      ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      if (lifecycle === 'refresh') panel.destroy();
+
+      expect(keydown).toBeDefined();
+      expect(mousedown).toBeDefined();
+      expect(removedKeydown).toBe(true);
+      expect(removedMousedown).toBe(true);
+    },
+  );
+
+  it('closes the bulk picker on Escape without clearing selection or detail state', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, panel, state } = makeCenter([first, second]);
+    el.addClass('tc-test-center-attached');
+    activeDocument.body.append(el);
+    state.set('taskStack', [first]);
+    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    openMenu(cards[0]!);
+    items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+    vi.runOnlyPendingTimers();
+    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]')!;
+    const event = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    input.dispatchEvent(event);
+
+    const selectedAfterEscape = el.querySelectorAll('.tc-task-card.tc-multi-selected').length;
+    const detailAfterEscape = state.get('taskStack');
+    const pickerClosed = el.querySelector('.tc-date-picker-popover') === null;
+    panel.destroy();
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(pickerClosed).toBe(true);
+    expect(selectedAfterEscape).toBe(2);
+    expect(detailAfterEscape).toEqual([first]);
   });
 });
 

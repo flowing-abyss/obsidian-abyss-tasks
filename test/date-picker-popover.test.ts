@@ -33,6 +33,7 @@ describe('showDatePickerPopover', () => {
     const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
 
     expect(input.value).toBe('2026-07-30');
+    expect(input.getAttribute('aria-label')).toBe('Set date');
     input.value = '2026-08-02';
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -51,10 +52,12 @@ describe('showDatePickerPopover', () => {
     showDatePickerPopover({ owner, anchor, onPick, onClose });
     vi.runAllTimers();
 
-    owner.ownerDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    owner.ownerDocument.dispatchEvent(event);
 
     expect(onPick).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(true);
     expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
     owner.remove();
   });

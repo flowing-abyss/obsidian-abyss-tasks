@@ -26,6 +26,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
   const input = ownerDocument.createElement('input');
   input.className = 'tc-date-input';
   input.type = 'date';
+  input.setAttribute('aria-label', 'Set date');
   input.value = options.initialValue ?? '';
   row.append(input);
   popover.append(row);
@@ -48,7 +49,10 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     cleanup();
   };
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') cleanup();
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    cleanup();
   };
   const cleanup = (): void => {
     if (closed) return;
