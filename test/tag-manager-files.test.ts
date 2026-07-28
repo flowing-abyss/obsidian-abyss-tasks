@@ -270,6 +270,86 @@ describe('TagManager exact and prefix vault rename', () => {
   });
 
   it.each([
+    {
+      scope: 'exact',
+      expectedOutside: 'Outside #focus and #work/dev.',
+    },
+    {
+      scope: 'prefix',
+      expectedOutside: 'Outside #focus and #focus/dev.',
+    },
+  ] as const)(
+    '$scope rename exits an unclosed blockquote fence before transforming outside prose',
+    async ({ scope, expectedOutside }) => {
+      const original = ['> ```md', '> #work', '', 'Outside #work and #work/dev.', ''].join('\n');
+      const expected = ['> ```md', '> #work', '', expectedOutside, ''].join('\n');
+      const { tm, app } = await makeManager({ 'notes/unclosed-quote.md': original });
+
+      const result =
+        scope === 'exact'
+          ? await tm.renameTagExact('#work', '#focus')
+          : await tm.renameTagPrefix('#work', '#focus');
+
+      expect(result).toEqual({ type: 'ok', changedFiles: ['notes/unclosed-quote.md'] });
+      expect(await read(app, 'notes/unclosed-quote.md')).toBe(expected);
+    },
+  );
+
+  it.each([
+    {
+      scope: 'exact',
+      target: '  work,',
+      expectedTarget: '  focus,',
+      following: '  work/dev,',
+    },
+    {
+      scope: 'prefix',
+      target: '  work/dev,',
+      expectedTarget: '  focus/dev,',
+      following: '  workplace,',
+    },
+  ] as const)(
+    '$scope rename handles an element after a comment-only multiline flow line',
+    async ({ scope, target, expectedTarget, following }) => {
+      const original = [
+        '---',
+        'title: "preserve"',
+        'tags: [',
+        '  # keep this comment-only line',
+        target,
+        following,
+        '  other',
+        '] # preserve closing bytes',
+        'aliases: [work]',
+        '---',
+        '',
+      ].join('\n');
+      const expected = [
+        '---',
+        'title: "preserve"',
+        'tags: [',
+        '  # keep this comment-only line',
+        expectedTarget,
+        following,
+        '  other',
+        '] # preserve closing bytes',
+        'aliases: [work]',
+        '---',
+        '',
+      ].join('\n');
+      const { tm, app } = await makeManager({ 'notes/commented-flow.md': original });
+
+      const result =
+        scope === 'exact'
+          ? await tm.renameTagExact('#work', '#focus')
+          : await tm.renameTagPrefix('#work', '#focus');
+
+      expect(result).toEqual({ type: 'ok', changedFiles: ['notes/commented-flow.md'] });
+      expect(await read(app, 'notes/commented-flow.md')).toBe(expected);
+    },
+  );
+
+  it.each([
     ['', '#new'],
     ['#', '#new'],
     ['#1984', '#new'],

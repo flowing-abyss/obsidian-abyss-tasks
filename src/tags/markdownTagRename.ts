@@ -41,6 +41,14 @@ function transformYamlScalar(
   newTag: string,
   scope: TagRenameScope,
 ): string {
+  const commentPrefixEnd = leadingYamlCommentPrefixEnd(source);
+  if (commentPrefixEnd > 0) {
+    return (
+      source.slice(0, commentPrefixEnd) +
+      transformYamlScalar(source.slice(commentPrefixEnd), oldTag, newTag, scope)
+    );
+  }
+
   let from = 0;
   while (from < source.length && /\s/u.test(source[from] ?? '')) from++;
   let to = source.length;
@@ -73,6 +81,25 @@ function transformYamlScalar(
 
   const displayed = hasHash ? replacement : replacement.slice(1);
   return `${leading}${quote}${displayed}${quote}${comment}${trailing}`;
+}
+
+function leadingYamlCommentPrefixEnd(source: string): number {
+  let cursor = 0;
+  let sawComment = false;
+  while (cursor < source.length) {
+    const newline = source.indexOf('\n', cursor);
+    const lineEnd = newline < 0 ? source.length : newline + 1;
+    const coreEnd = newline < 0 ? lineEnd : newline;
+    const trimmed = source.slice(cursor, coreEnd).replace(/\r$/u, '').trim();
+    if (!trimmed) {
+      cursor = lineEnd;
+      continue;
+    }
+    if (!trimmed.startsWith('#')) break;
+    sawComment = true;
+    cursor = lineEnd;
+  }
+  return sawComment ? cursor : 0;
 }
 
 function yamlCommentStart(source: string): number {
@@ -362,6 +389,10 @@ function fencedCodeRanges(source: string): readonly SourceRange[] {
     const core = source.slice(lineStart, newline < 0 ? lineEnd : newline).replace(/\r$/u, '');
     const container = blockquoteContainer(core);
 
+    if (open && open.quoteDepth > 0 && container.quoteDepth < open.quoteDepth) {
+      ranges.push({ from: open.from, to: lineStart });
+      open = null;
+    }
     if (open) {
       const leading = /^ {0,3}/u.exec(container.content)?.[0].length ?? 0;
       const candidate = container.content.slice(leading);
