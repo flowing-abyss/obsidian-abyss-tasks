@@ -217,6 +217,7 @@ describe('renderHourGrid', () => {
     expect(nowLines).toHaveLength(1);
     const nowLine = nowLines[0] as HTMLElement;
     expect(nowLine.parentElement).toBe(handles.days[0]?.hourColumnEl);
+    expect(nowLine.closest('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(today);
     expect(handles.days[1]?.hourColumnEl.querySelector('.tc-tg-now-line')).toBeNull();
     const top = parseFloat(nowLine.style.top);
     expect(top).toBeGreaterThanOrEqual(0);
@@ -259,6 +260,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const other = window.moment().add(5, 'days').format('YYYY-MM-DD');
     renderHourGrid(container, [other]);
+    expect(container.querySelectorAll('.tc-tg-now-line')).toHaveLength(0);
     expect(container.querySelector('.tc-tg-now-line-dot')).toBeNull();
   });
 
@@ -274,6 +276,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const other = window.moment().add(5, 'days').format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [other]);
+    expect(container.querySelectorAll('.tc-tg-now-line')).toHaveLength(0);
     expect(handles.nowLineEl).toBeNull();
   });
 
