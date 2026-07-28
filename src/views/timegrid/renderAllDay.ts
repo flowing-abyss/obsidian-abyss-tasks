@@ -304,11 +304,13 @@ export function renderAllDaySpanLayer(
     if (segment.ownsStartBoundary) {
       const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
       handle.setAttribute('data-boundary', 'start');
+      handle.setAttribute('data-resize-edge', 'start-date');
       boundaryHandles.push({ element: handle, boundary: 'start' });
     }
     if (segment.ownsDueBoundary) {
       const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
       handle.setAttribute('data-boundary', 'due');
+      handle.setAttribute('data-resize-edge', 'due-date');
       boundaryHandles.push({ element: handle, boundary: 'due' });
     }
     attachSpanInteractions({
@@ -462,9 +464,11 @@ export function renderAllDayCell(
     const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups);
     const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
     leftEdge.setAttribute('data-boundary', 'start');
+    leftEdge.setAttribute('data-resize-edge', 'start-date');
     attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange, callbacks.spanInteractionOwner);
     const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
     rightEdge.setAttribute('data-boundary', 'due');
+    rightEdge.setAttribute('data-resize-edge', 'due-date');
     attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
   }
   for (const t of plain) {
@@ -474,6 +478,7 @@ export function renderAllDayCell(
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
     const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
     rightEdge.setAttribute('data-boundary', 'create-span');
+    rightEdge.setAttribute('data-resize-edge', 'due-date');
     if (callbacks.spanInteractionOwner) {
       attachSpanInteractions({
         source: chip,

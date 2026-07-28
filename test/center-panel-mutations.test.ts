@@ -639,3 +639,26 @@ describe('CenterPanel.updateTaskTime — Task 33 data-safety net (the disappeari
     expect(content).not.toContain('⏰ 10:00');
   });
 });
+
+describe('CenterPanel timed vertical resize', () => {
+  it('patches time and duration atomically while preserving unrelated Markdown byte-for-byte', async () => {
+    const raw = '- [ ] Atomic **label** #work ⏰ 09:00 keep-this ⏱️ 1h 📅 2026-07-06 ^task-anchor';
+    const current = task({
+      title: 'Atomic **label** #work keep-this ^task-anchor',
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+      source: { filePath: 'f.md', line: 0, originalMarkdown: raw, originalBlock: raw },
+    });
+    const { panel, app } = await makePanel({ 'f.md': `${raw}\n` }, [current]);
+
+    await callPrivate(panel, 'commitTimedDuration', current, {
+      edge: 'start',
+      startMinutes: 8 * 60 + 30,
+      durationMinutes: 90,
+      endMinutes: 10 * 60,
+    });
+
+    expect(await readMd(app, 'f.md')).toBe(
+      '- [ ] Atomic **label** #work ⏰ 08:30 keep-this ⏱️ 1h30m 📅 2026-07-06 ^task-anchor\n',
+    );
+  });
+});

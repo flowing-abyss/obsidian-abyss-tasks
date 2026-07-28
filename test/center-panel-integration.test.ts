@@ -1642,6 +1642,8 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
       destination: 'all-day',
     });
     await call<void>(h.panel, 'commitTimedDuration', t, {
+      edge: 'end',
+      startMinutes: 540,
       durationMinutes: 120,
       endMinutes: 660,
     });
@@ -1665,7 +1667,10 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     expect(execute).toHaveBeenNthCalledWith(3, {
       type: 'patch',
       target: { type: 'task', ref: t.ref },
-      patch: { duration: { type: 'set', value: 120 } },
+      patch: {
+        time: { type: 'set', value: '09:00' },
+        duration: { type: 'set', value: 120 },
+      },
     });
     expect(execute).toHaveBeenNthCalledWith(4, {
       type: 'set-span-boundary',

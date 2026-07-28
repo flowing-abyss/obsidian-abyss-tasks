@@ -9,7 +9,7 @@ import {
   type SpanMoveTarget,
 } from './spanInteractions';
 import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from './spanLayout';
-import type { TimedDragTarget, TimedDurationTarget } from './timegrid/dragGeometry';
+import type { TimedDragTarget, TimedVerticalResizeTarget } from './timegrid/dragGeometry';
 import { renderHourGrid, repositionNowLine, type HourGridHandles } from './timegrid/HourGrid';
 import {
   layoutTimedDay,
@@ -48,7 +48,7 @@ export interface TimeGridCallbacks {
   onTimeChange: (task: TaskSnapshot, newStartMinutes: number) => void;
   onDurationChange: (task: TaskSnapshot, newDurationMinutes: number) => void;
   onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  onTimedDuration?: (task: TaskSnapshot, target: TimedDurationTarget) => void;
+  onTimedDuration?: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
   onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
   onSpanMove?: (task: TaskSnapshot, target: SpanMoveTarget) => void;
   onSpanBoundary?: (task: TaskSnapshot, target: InteractiveSpanBoundaryTarget) => void;

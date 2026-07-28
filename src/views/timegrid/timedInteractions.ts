@@ -1,18 +1,20 @@
+import { formatDurationFromMinutes } from '../../parser/TaskParser';
 import {
   localTime,
   shiftLocalDate,
   durationMinutes as validatedDurationMinutes,
   type TaskSnapshot,
 } from '../../tasks';
+import { populateCalendarPreview } from './calendarPreview';
 import {
   resolveBoundaryTarget,
   resolveTimedDragTarget,
-  resolveTimedDurationTarget,
+  resolveTimedVerticalResizeTarget,
   type DragDateColumn,
   type SpanBoundaryTarget,
   type TimedDragColumn,
   type TimedDragTarget,
-  type TimedDurationTarget,
+  type TimedVerticalResizeTarget,
 } from './dragGeometry';
 import {
   MIN_BLOCK_HEIGHT_PX,
@@ -28,6 +30,11 @@ export type TimedBoundaryTarget =
       readonly date: SpanBoundaryTarget['date'];
       readonly dayDelta: number;
     };
+
+type TimedPreviewTarget =
+  | Readonly<TimedDragTarget>
+  | Readonly<TimedVerticalResizeTarget>
+  | Readonly<TimedBoundaryTarget>;
 
 export interface TimedInteractionOwner {
   begin(dispose: () => void): void;
@@ -55,6 +62,7 @@ export function createTimedInteractionOwner(): TimedInteractionOwner {
 
 export interface TimedInteractionBinding {
   readonly source: HTMLElement;
+  readonly startHandle: HTMLElement;
   readonly durationHandle: HTMLElement;
   readonly boundaryHandles: readonly {
     readonly element: HTMLElement;
@@ -71,7 +79,7 @@ export interface TimedInteractionBinding {
     date: string,
   ) => PositionedBlock | undefined;
   readonly onMove: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  readonly onDuration: (task: TaskSnapshot, target: TimedDurationTarget) => void;
+  readonly onDuration: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
   readonly onBoundary: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
 }
 
@@ -128,6 +136,11 @@ function previewElement(
   source: HTMLElement,
   target: object,
   className: 'tc-tg-drag-preview' | 'tc-tg-boundary-preview',
+  content: {
+    readonly title: string;
+    readonly time?: string;
+    readonly phase: 'ghost' | 'terminal';
+  },
   copyLaneGeometry = true,
 ): HTMLElement {
   const preview = source.ownerDocument.createElement('div');
@@ -137,8 +150,10 @@ function previewElement(
     preview.style.left = source.style.left;
     preview.style.width = source.style.width;
   }
-  const tagColor = source.style.getPropertyValue('--tc-tag-color');
-  if (tagColor) preview.style.setProperty('--tc-tag-color', tagColor);
+  populateCalendarPreview(preview, source, {
+    ...content,
+    density: 'regular',
+  });
   return preview;
 }
 
@@ -162,7 +177,7 @@ function shiftedPlanning(task: TaskSnapshot, days: number): TaskSnapshot['planni
 
 function prospectivePlanning(
   task: TaskSnapshot,
-  target: Readonly<TimedDragTarget> | Readonly<TimedDurationTarget> | Readonly<TimedBoundaryTarget>,
+  target: TimedPreviewTarget,
 ): TaskSnapshot['planning'] | undefined {
   if ('destination' in target) {
     const shifted = shiftedPlanning(task, target.dayDelta);
@@ -174,6 +189,7 @@ function prospectivePlanning(
   if ('durationMinutes' in target) {
     return {
       ...task.planning,
+      time: localTime(minutesToTimeString(target.startMinutes)),
       duration: validatedDurationMinutes(target.durationMinutes),
     };
   }
@@ -186,7 +202,7 @@ function prospectivePlanning(
 function applyPreviewPacking(
   preview: HTMLElement,
   binding: TimedInteractionBinding,
-  target: Readonly<TimedDragTarget> | Readonly<TimedDurationTarget> | Readonly<TimedBoundaryTarget>,
+  target: TimedPreviewTarget,
   date: string,
 ): void {
   const planning = prospectivePlanning(binding.task, target);
@@ -195,6 +211,21 @@ function applyPreviewPacking(
   const width = 100 / positioned.columns;
   preview.style.left = `${positioned.column * width}%`;
   preview.style.width = `${width}%`;
+}
+
+function previewPhase(
+  binding: TimedInteractionBinding,
+  target: TimedPreviewTarget,
+  date: string,
+): 'ghost' | 'terminal' {
+  const planning = prospectivePlanning(binding.task, target);
+  return !planning?.due || String(planning.due) === date ? 'terminal' : 'ghost';
+}
+
+function timedPreviewText(startMinutes: number, durationMinutes: number): string {
+  return `${minutesToTimeString(startMinutes)}–${minutesToTimeString(
+    startMinutes + durationMinutes,
+  )} (${formatDurationFromMinutes(durationMinutes)})`;
 }
 
 function minimumPreviewHeight(source: HTMLElement): number {
@@ -223,6 +254,7 @@ function release(element: HTMLElement, pointerId: number): void {
 export function attachTimedInteractions(binding: TimedInteractionBinding): void {
   const {
     source,
+    startHandle,
     durationHandle,
     boundaryHandles,
     task,
@@ -237,7 +269,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
 
   const startSession = (
     event: PointerEvent,
-    kind: 'move' | 'duration' | 'start' | 'due' | 'create-span',
+    kind: 'move' | 'start-time' | 'duration' | 'start' | 'due' | 'create-span',
   ): void => {
     if (event.button !== 0) return;
     if (
@@ -269,7 +301,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     let preview: HTMLElement | undefined;
     let latest:
       | Readonly<TimedDragTarget>
-      | Readonly<TimedDurationTarget>
+      | Readonly<TimedVerticalResizeTarget>
       | Readonly<TimedBoundaryTarget>
       | undefined;
     let disposed = false;
@@ -288,6 +320,14 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
         source,
         target,
         'tc-tg-drag-preview',
+        {
+          title: task.title,
+          time:
+            target.destination === 'time-grid'
+              ? timedPreviewText(target.startMinutes, durationMinutes)
+              : undefined,
+          phase: previewPhase(binding, target, target.date),
+        },
         target.destination === 'time-grid',
       );
       if (target.destination === 'time-grid') {
@@ -300,11 +340,15 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       host.appendChild(preview);
     };
 
-    const renderDurationPreview = (target: Readonly<TimedDurationTarget>): void => {
+    const renderDurationPreview = (target: Readonly<TimedVerticalResizeTarget>): void => {
       clearPreview();
-      preview = previewElement(source, target, 'tc-tg-drag-preview');
+      preview = previewElement(source, target, 'tc-tg-drag-preview', {
+        title: task.title,
+        time: timedPreviewText(target.startMinutes, target.durationMinutes),
+        phase: previewPhase(binding, target, segmentDate),
+      });
       applyPreviewPacking(preview, binding, target, segmentDate);
-      preview.style.top = source.style.top;
+      preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
       preview.style.height = `${Math.max(
         minutesToPixels(target.durationMinutes),
         minimumPreviewHeight(source),
@@ -316,7 +360,11 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       clearPreview();
       const column = columns.find((candidate) => candidate.date === target.date);
       if (!column) return;
-      preview = previewElement(source, target, 'tc-tg-boundary-preview');
+      preview = previewElement(source, target, 'tc-tg-boundary-preview', {
+        title: task.title,
+        time: timedPreviewText(startMinutes, durationMinutes),
+        phase: previewPhase(binding, target, target.date),
+      });
       applyPreviewPacking(preview, binding, target, target.date);
       preview.style.top = source.style.top;
       preview.style.height = `${sourceRect.height}px`;
@@ -338,17 +386,26 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
         );
         return target ? frozen(target) : undefined;
       }
-      if (kind === 'duration') {
-        const target = resolveTimedDurationTarget(
-          {
-            startMinutes,
-            durationMinutes,
-            grabClientY: event.clientY,
-            pixelsPerMinute,
-          },
-          pointer,
-        );
-        return target ? frozen(target) : undefined;
+      if (kind === 'duration' || kind === 'start-time') {
+        let target: TimedVerticalResizeTarget;
+        try {
+          target = resolveTimedVerticalResizeTarget(
+            {
+              edge: kind === 'start-time' ? 'start' : 'end',
+              startMinutes,
+              durationMinutes,
+              grabClientY: event.clientY,
+              pixelsPerMinute,
+            },
+            pointer,
+          );
+        } catch {
+          return undefined;
+        }
+        if (target.startMinutes === startMinutes && target.durationMinutes === durationMinutes) {
+          return undefined;
+        }
+        return frozen(target);
       }
       const start = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
       const due = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
@@ -378,8 +435,8 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
         return;
       }
       if (kind === 'move') renderMovePreview(target as Readonly<TimedDragTarget>);
-      else if (kind === 'duration') {
-        renderDurationPreview(target as Readonly<TimedDurationTarget>);
+      else if (kind === 'duration' || kind === 'start-time') {
+        renderDurationPreview(target as Readonly<TimedVerticalResizeTarget>);
       } else {
         renderBoundaryPreview(target as Readonly<TimedBoundaryTarget>);
       }
@@ -390,7 +447,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       disposed = true;
       clearPreview();
       source.classList.remove('is-picked-up');
-      source.classList.remove('is-edge-resizing');
+      delete source.dataset['activeResize'];
       ownerWindow.removeEventListener('pointermove', onPointerMove);
       ownerWindow.removeEventListener('pointerup', onPointerUp);
       ownerWindow.removeEventListener('pointercancel', onCancel);
@@ -411,8 +468,8 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       dispose();
       if (!committed) return;
       if (kind === 'move') binding.onMove(task, committed as TimedDragTarget);
-      else if (kind === 'duration') {
-        binding.onDuration(task, committed as TimedDurationTarget);
+      else if (kind === 'duration' || kind === 'start-time') {
+        binding.onDuration(task, committed as TimedVerticalResizeTarget);
       } else {
         binding.onBoundary(task, committed as TimedBoundaryTarget);
       }
@@ -421,7 +478,10 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
 
     owner.begin(dispose);
     source.classList.toggle('is-picked-up', kind === 'move');
-    source.classList.toggle('is-edge-resizing', kind !== 'move' && kind !== 'duration');
+    if (kind === 'start-time') source.dataset['activeResize'] = 'start-time';
+    else if (kind === 'duration') source.dataset['activeResize'] = 'duration';
+    else if (kind === 'start') source.dataset['activeResize'] = 'start-date';
+    else if (kind !== 'move') source.dataset['activeResize'] = 'due-date';
     capture(capturedElement, pointerId);
     ownerWindow.addEventListener('pointermove', onPointerMove);
     ownerWindow.addEventListener('pointerup', onPointerUp);
@@ -431,6 +491,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
   };
 
   source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
+  startHandle.addEventListener('pointerdown', (event) => startSession(event, 'start-time'));
   durationHandle.addEventListener('pointerdown', (event) => startSession(event, 'duration'));
   for (const handle of boundaryHandles) {
     handle.element.addEventListener('pointerdown', (event) => startSession(event, handle.boundary));

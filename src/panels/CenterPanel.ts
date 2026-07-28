@@ -58,7 +58,7 @@ import {
   groupTasksByStatus,
   groupTasksByTag,
 } from '../views/taskGrouping';
-import type { TimedDragTarget, TimedDurationTarget } from '../views/timegrid/dragGeometry';
+import type { TimedDragTarget, TimedVerticalResizeTarget } from '../views/timegrid/dragGeometry';
 import {
   minutesToPixels,
   minutesToTimeString,
@@ -600,7 +600,7 @@ export class CenterPanel {
     const handleTimedMove = (t: TaskSnapshot, target: TimedDragTarget): void => {
       void this.commitTimedMove(t, target);
     };
-    const handleTimedDuration = (t: TaskSnapshot, target: TimedDurationTarget): void => {
+    const handleTimedDuration = (t: TaskSnapshot, target: TimedVerticalResizeTarget): void => {
       void this.commitTimedDuration(t, target);
     };
     const handleTimedBoundary = (t: TaskSnapshot, target: TimedBoundaryTarget): void => {
@@ -2680,7 +2680,7 @@ export class CenterPanel {
 
   private async commitTimedDuration(
     task: TaskSnapshot,
-    target: TimedDurationTarget,
+    target: TimedVerticalResizeTarget,
   ): Promise<void> {
     if (!this.tasks) return;
     try {
@@ -2688,7 +2688,13 @@ export class CenterPanel {
         await this.tasks.execute({
           type: 'patch',
           target: { type: 'task', ref: task.ref },
-          patch: { duration: { type: 'set', value: durationMinutes(target.durationMinutes) } },
+          patch: {
+            time: {
+              type: 'set',
+              value: localTime(minutesToTimeString(target.startMinutes)),
+            },
+            duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
+          },
         }),
       );
     } catch {

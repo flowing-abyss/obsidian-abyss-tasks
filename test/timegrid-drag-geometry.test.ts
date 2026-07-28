@@ -3,12 +3,12 @@ import { localDate } from '../src/tasks/domain/validation';
 import {
   resolveBoundaryTarget,
   resolveTimedDragTarget,
-  resolveTimedDurationTarget,
+  resolveTimedVerticalResizeTarget,
   type DragDateColumn,
   type SpanBoundaryOrigin,
   type TimedDragColumn,
   type TimedDragOrigin,
-  type TimedDurationOrigin,
+  type TimedVerticalResizeOrigin,
 } from '../src/views/timegrid/dragGeometry';
 
 const origin: TimedDragOrigin = {
@@ -159,16 +159,50 @@ describe('resolveTimedDragTarget', () => {
   });
 });
 
-describe('resolveTimedDurationTarget', () => {
-  const durationOrigin: TimedDurationOrigin = {
+describe('resolveTimedVerticalResizeTarget', () => {
+  const endOrigin: TimedVerticalResizeOrigin = {
+    edge: 'end',
     startMinutes: 9 * 60,
     durationMinutes: 60,
     grabClientY: 100,
     pixelsPerMinute: 0.8,
   };
 
-  it('snaps duration to 15 minutes and returns the exact end', () => {
-    expect(resolveTimedDurationTarget(durationOrigin, { clientY: 111 })).toEqual({
+  it('moves the start edge earlier while preserving the original end', () => {
+    expect(
+      resolveTimedVerticalResizeTarget(
+        { ...endOrigin, edge: 'start' },
+        { clientY: 100 - 30 * 0.8 },
+      ),
+    ).toEqual({
+      edge: 'start',
+      startMinutes: 510,
+      durationMinutes: 90,
+      endMinutes: 600,
+    });
+  });
+
+  it.each([
+    [100 + 60 * 0.8, 585],
+    [100 + 300 * 0.8, 585],
+  ])(
+    'clamps a start-edge pointer at y=%i to the minimum duration without moving the end',
+    (clientY, startMinutes) => {
+      expect(
+        resolveTimedVerticalResizeTarget({ ...endOrigin, edge: 'start' }, { clientY }),
+      ).toEqual({
+        edge: 'start',
+        startMinutes,
+        durationMinutes: 15,
+        endMinutes: 600,
+      });
+    },
+  );
+
+  it('snaps the end edge while preserving the original start', () => {
+    expect(resolveTimedVerticalResizeTarget(endOrigin, { clientY: 111 })).toEqual({
+      edge: 'end',
+      startMinutes: 540,
       durationMinutes: 75,
       endMinutes: 615,
     });
@@ -176,34 +210,23 @@ describe('resolveTimedDurationTarget', () => {
 
   it.each([
     [-100, 15, 555],
-    [2_000, 1_440, 1_980],
+    [2_000, 900, 1_440],
   ])('clamps pointer y=%i to a %i-minute duration', (clientY, durationMinutes, endMinutes) => {
-    expect(resolveTimedDurationTarget(durationOrigin, { clientY })).toEqual({
+    expect(resolveTimedVerticalResizeTarget(endOrigin, { clientY })).toEqual({
+      edge: 'end',
+      startMinutes: 540,
       durationMinutes,
       endMinutes,
     });
   });
 
-  it('returns undefined for a no-op and invalid geometry', () => {
-    expect(resolveTimedDurationTarget(durationOrigin, { clientY: 100 })).toBeUndefined();
-    expect(
-      resolveTimedDurationTarget({ ...durationOrigin, pixelsPerMinute: 0 }, { clientY: 120 }),
-    ).toBeUndefined();
-    expect(
-      resolveTimedDurationTarget({ ...durationOrigin, startMinutes: 1_440 }, { clientY: 120 }),
-    ).toBeUndefined();
-  });
-
-  it('preserves an off-grid duration on release and accepts an end after midnight', () => {
-    expect(
-      resolveTimedDurationTarget(
-        { ...durationOrigin, durationMinutes: 10 },
-        { clientY: durationOrigin.grabClientY },
-      ),
-    ).toBeUndefined();
-    expect(
-      resolveTimedDurationTarget({ ...durationOrigin, startMinutes: 1439 }, { clientY: 111 }),
-    ).toEqual({ durationMinutes: 75, endMinutes: 1514 });
+  it('returns the unchanged edge-specific target for a no-op pointer', () => {
+    expect(resolveTimedVerticalResizeTarget(endOrigin, { clientY: 100 })).toEqual({
+      edge: 'end',
+      startMinutes: 540,
+      durationMinutes: 60,
+      endMinutes: 600,
+    });
   });
 });
 

@@ -39,18 +39,21 @@ export interface TimedDragTarget {
   readonly destination: 'time-grid' | 'all-day';
 }
 
-export interface TimedDurationOrigin {
+export interface TimedDurationPointer {
+  readonly clientY: number;
+}
+
+export interface TimedVerticalResizeOrigin {
+  readonly edge: 'start' | 'end';
   readonly startMinutes: number;
   readonly durationMinutes: number;
   readonly grabClientY: number;
   readonly pixelsPerMinute: number;
 }
 
-export interface TimedDurationPointer {
-  readonly clientY: number;
-}
-
-export interface TimedDurationTarget {
+export interface TimedVerticalResizeTarget {
+  readonly edge: 'start' | 'end';
+  readonly startMinutes: number;
   readonly durationMinutes: number;
   readonly endMinutes: number;
 }
@@ -172,34 +175,60 @@ export function resolveTimedDragTarget(
   return { date: column.date, startMinutes, dayDelta, destination: 'time-grid' };
 }
 
-export function resolveTimedDurationTarget(
-  origin: TimedDurationOrigin,
+export function resolveTimedVerticalResizeTarget(
+  origin: TimedVerticalResizeOrigin,
   pointer: TimedDurationPointer,
-): TimedDurationTarget | undefined {
+): TimedVerticalResizeTarget {
+  const originEndMinutes = origin.startMinutes + origin.durationMinutes;
   if (
+    (origin.edge !== 'start' && origin.edge !== 'end') ||
     !Number.isInteger(origin.startMinutes) ||
     origin.startMinutes < 0 ||
     origin.startMinutes >= MINUTES_PER_DAY ||
     !Number.isInteger(origin.durationMinutes) ||
     origin.durationMinutes <= 0 ||
-    origin.durationMinutes > MINUTES_PER_DAY ||
+    originEndMinutes > MINUTES_PER_DAY ||
     !Number.isFinite(origin.grabClientY) ||
     !Number.isFinite(origin.pixelsPerMinute) ||
     origin.pixelsPerMinute <= 0 ||
     !Number.isFinite(pointer.clientY)
   ) {
-    return undefined;
+    throw new RangeError('Invalid timed vertical resize geometry');
   }
 
   const deltaMinutes = (pointer.clientY - origin.grabClientY) / origin.pixelsPerMinute;
   const snappedDelta = Math.round(deltaMinutes / SNAP_MINUTES) * SNAP_MINUTES;
-  if (snappedDelta === 0) return undefined;
-  const durationMinutes = Math.min(
-    Math.max(origin.durationMinutes + snappedDelta, SNAP_MINUTES),
+  if (snappedDelta === 0) {
+    return {
+      edge: origin.edge,
+      startMinutes: origin.startMinutes,
+      durationMinutes: origin.durationMinutes,
+      endMinutes: originEndMinutes,
+    };
+  }
+  if (origin.edge === 'start') {
+    const startMinutes = Math.min(
+      Math.max(origin.startMinutes + snappedDelta, 0),
+      originEndMinutes - SNAP_MINUTES,
+    );
+    return {
+      edge: 'start',
+      startMinutes,
+      durationMinutes: originEndMinutes - startMinutes,
+      endMinutes: originEndMinutes,
+    };
+  }
+
+  const endMinutes = Math.min(
+    Math.max(originEndMinutes + snappedDelta, origin.startMinutes + SNAP_MINUTES),
     MINUTES_PER_DAY,
   );
-  if (durationMinutes === origin.durationMinutes) return undefined;
-  return { durationMinutes, endMinutes: origin.startMinutes + durationMinutes };
+  return {
+    edge: 'end',
+    startMinutes: origin.startMinutes,
+    durationMinutes: endMinutes - origin.startMinutes,
+    endMinutes,
+  };
 }
 
 export function resolveBoundaryTarget(

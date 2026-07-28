@@ -16,6 +16,14 @@ const columns = [
   { date: '2026-07-08', left: 300, right: 400 },
 ] as const;
 
+function expectInertPreview(preview: HTMLElement, title: string): void {
+  expect(preview.getAttribute('aria-hidden')).toBe('true');
+  expect(preview.textContent).toContain(title);
+  expect(preview.querySelector('.tc-status-marker')).toBeNull();
+  expect(preview.querySelector('a')).toBeNull();
+  expect(preview.getAttribute('tabindex')).toBeNull();
+}
+
 describe('span interaction geometry', () => {
   it.each([
     [100, '2026-07-06'],
@@ -228,6 +236,9 @@ describe('span interaction geometry', () => {
           target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
         },
       ]);
+      for (const preview of root.querySelectorAll<HTMLElement>('.tc-span-move-preview')) {
+        expectInertPreview(preview, snapshot.title);
+      }
       expect(layoutComputations).toBe(1);
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
       expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);

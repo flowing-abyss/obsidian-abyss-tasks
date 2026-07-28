@@ -6,6 +6,7 @@ import {
   type TaskSnapshot,
 } from '../tasks';
 import type { VisibleSpanLayout } from './spanLayout';
+import { populateCalendarPreview } from './timegrid/calendarPreview';
 import { resolveBoundaryTarget, type SpanBoundaryTarget } from './timegrid/dragGeometry';
 import { taskLayoutIdentity } from './timegrid/layout';
 
@@ -226,12 +227,23 @@ function release(element: HTMLElement, pointerId: number): void {
   }
 }
 
-function createPreview(source: HTMLElement, className: string, target: object): HTMLElement {
+function createPreview(
+  source: HTMLElement,
+  className: string,
+  target: object,
+  task: TaskSnapshot,
+  phase: 'ghost' | 'terminal',
+  subtitle: string,
+): HTMLElement {
   const preview = source.ownerDocument.createElement('div');
   preview.className = className;
   preview.dataset['target'] = JSON.stringify(target);
-  const color = source.style.getPropertyValue('--tc-tag-color');
-  if (color) preview.style.setProperty('--tc-tag-color', color);
+  populateCalendarPreview(preview, source, {
+    title: task.title,
+    subtitle,
+    density: 'regular',
+    phase,
+  });
   return preview;
 }
 
@@ -334,7 +346,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         if (visible.length === 0) continue;
         for (const column of visible) {
           const index = candidates.indexOf(column);
-          const preview = createPreview(source, 'tc-span-move-preview', target);
+          const preview = createPreview(
+            source,
+            'tc-span-move-preview',
+            target,
+            task,
+            column.date === shiftedEnd ? 'terminal' : 'ghost',
+            `${shiftedStart}–${shiftedEnd}`,
+          );
           preview.style.gridColumn = `${index + 1} / ${index + 2}`;
           preview.style.gridRow = previewRow(column, layout);
           column.layer.appendChild(preview);
@@ -374,7 +393,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         if (visible.length === 0) continue;
         for (const column of visible) {
           const index = candidates.indexOf(column);
-          const preview = createPreview(source, 'tc-span-boundary-preview', target);
+          const preview = createPreview(
+            source,
+            'tc-span-boundary-preview',
+            target,
+            task,
+            column.date === prospectiveDue ? 'terminal' : 'ghost',
+            `${prospectiveStart}–${prospectiveDue}`,
+          );
           preview.style.gridColumn = `${index + 1} / ${index + 2}`;
           preview.style.gridRow = previewRow(column, layout);
           column.layer.appendChild(preview);
@@ -424,7 +450,8 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       if (disposed) return;
       disposed = true;
       clearPreview();
-      source.classList.remove('is-picked-up', 'is-edge-resizing');
+      source.classList.remove('is-picked-up');
+      delete source.dataset['activeResize'];
       if (kind !== 'move') {
         if (originalDraggable === null) source.removeAttribute('draggable');
         else source.setAttribute('draggable', originalDraggable);
@@ -454,7 +481,8 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
 
     owner.begin(dispose);
     source.classList.toggle('is-picked-up', kind === 'move');
-    source.classList.toggle('is-edge-resizing', kind !== 'move');
+    if (kind === 'start') source.dataset['activeResize'] = 'start-date';
+    else if (kind !== 'move') source.dataset['activeResize'] = 'due-date';
     if (kind !== 'move') source.setAttribute('draggable', 'false');
     capture(capturedElement, pointerId);
     ownerWindow.addEventListener('pointermove', onPointerMove);
@@ -468,6 +496,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     source.addEventListener('pointerdown', (event) => startSession(event, 'move'));
   }
   for (const handle of binding.boundaryHandles) {
+    handle.element.dataset['resizeEdge'] = handle.boundary === 'start' ? 'start-date' : 'due-date';
     handle.element.setAttribute('draggable', 'false');
     handle.element.addEventListener('pointerdown', (event) => startSession(event, handle.boundary));
   }

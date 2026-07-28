@@ -314,6 +314,7 @@ describe('MonthGridView', () => {
 
     measureMonthCells(container);
     const due = requiredElement(container, '[data-boundary="due"]');
+    expect(due.getAttribute('data-resize-edge')).toBe('due-date');
     due.dispatchEvent(
       new PointerEvent('pointerdown', {
         bubbles: true,
@@ -331,6 +332,12 @@ describe('MonthGridView', () => {
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['2 / 3', '3 / 4', '4 / 5', '5 / 6']);
+    const preview = requiredElement(container, '.tc-span-boundary-preview');
+    expect(preview.getAttribute('aria-hidden')).toBe('true');
+    expect(preview.textContent).toContain(t.title);
+    expect(preview.querySelector('.tc-status-marker')).toBeNull();
+    expect(preview.querySelector('a')).toBeNull();
+    expect(preview.getAttribute('tabindex')).toBeNull();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 450, clientY: 250, pointerId: 40 }),
     );

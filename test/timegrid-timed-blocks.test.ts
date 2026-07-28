@@ -40,6 +40,14 @@ function declarationsForRuleContaining(...selectors: string[]): string {
   return '';
 }
 
+function expectInertPreview(preview: HTMLElement, title: string): void {
+  expect(preview.getAttribute('aria-hidden')).toBe('true');
+  expect(preview.textContent).toContain(title);
+  expect(preview.querySelector('.tc-status-marker')).toBeNull();
+  expect(preview.querySelector('a')).toBeNull();
+  expect(preview.getAttribute('tabindex')).toBeNull();
+}
+
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const fakeApp = {} as App;
 
@@ -256,6 +264,8 @@ describe('Task 2 unified timed interaction contract', () => {
 
     expect(onTimedDuration).toHaveBeenCalledOnce();
     expect(onTimedDuration).toHaveBeenCalledWith(t, {
+      edge: 'end',
+      startMinutes: 540,
       durationMinutes: 20,
       endMinutes: 560,
     });
@@ -497,7 +507,8 @@ describe('Task 2 unified timed interaction contract', () => {
     source.style.width = '100%';
     source.getBoundingClientRect = () => rect(0, 532, 100, 48);
     const durationHandle = foreignDocument.createElement('div');
-    source.append(durationHandle);
+    const startHandle = foreignDocument.createElement('div');
+    source.append(durationHandle, startHandle);
     hour.append(source);
     day.append(hour);
     root.append(allDay, day);
@@ -505,6 +516,7 @@ describe('Task 2 unified timed interaction contract', () => {
     const onMove = vi.fn();
     attachTimedInteractions({
       source,
+      startHandle,
       durationHandle,
       boundaryHandles: [],
       task: task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } }),
@@ -564,6 +576,8 @@ describe('Task 2 unified timed interaction contract', () => {
     );
     const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    block.style.setProperty('--tc-tag-color', '#123456');
+    block.style.setProperty('--tc-tag-text-color', '#fefefe');
     const originalTop = block.style.top;
     const originalHeight = block.style.height;
 
@@ -576,6 +590,9 @@ describe('Task 2 unified timed interaction contract', () => {
 
     const preview = columns[1].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
     expect(preview).not.toBeNull();
+    expectInertPreview(preview, t.title);
+    expect(preview.style.getPropertyValue('--tc-tag-color')).toBe('#123456');
+    expect(preview.style.getPropertyValue('--tc-tag-text-color')).toBe('#fefefe');
     expect(preview.style.top).toBe('480px');
     expect(preview.style.height).toBe('48px');
     expect(block.style.top).toBe(originalTop);
@@ -640,24 +657,78 @@ describe('Task 2 unified timed interaction contract', () => {
       { date: '2026-07-06', terminal: true },
     );
     const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
-    const handle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    const handle = block.querySelector('[data-resize-edge="duration"]') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     const originalHeight = block.style.height;
     handle.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 580, pointerId: 3 }),
     );
     window.dispatchEvent(
-      new PointerEvent('pointermove', { clientX: 50, clientY: 628, pointerId: 3 }),
+      new PointerEvent('pointermove', { clientX: 50, clientY: 604, pointerId: 3 }),
     );
     const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
-    expect(preview.style.height).toBe('96px');
+    expect(preview.style.height).toBe('72px');
+    expectInertPreview(preview, t.title);
+    expect(preview.textContent).toContain('09:00–10:30 (1h30m)');
     expect(block.style.height).toBe(originalHeight);
     window.dispatchEvent(
-      new PointerEvent('pointerup', { clientX: 50, clientY: 628, pointerId: 3 }),
+      new PointerEvent('pointerup', { clientX: 50, clientY: 604, pointerId: 3 }),
     );
     const [, target] = onTimedDuration.mock.calls[0] as [unknown, Record<string, unknown>];
-    expect(target).toEqual({ durationMinutes: 120, endMinutes: 660 });
+    expect(target).toEqual({
+      edge: 'end',
+      startMinutes: 540,
+      durationMinutes: 90,
+      endMinutes: 630,
+    });
     expect(preview.dataset['target']).toBe(JSON.stringify(target));
+  });
+
+  it('uses the top handle to preserve the end, preview the target range, and beat body move', () => {
+    const { owner, columns } = timedGestureGrid();
+    const onTimedMove = vi.fn();
+    const onTimedDuration = vi.fn();
+    const t = task({
+      title: 'Resize start',
+      planning: { due: '2026-07-06', time: '09:00', duration: 60 },
+    });
+    renderTimedBlocksForDay(
+      columns[0].hour,
+      [t],
+      { ...callbacks(), onTimedMove, onTimedDuration, interactionOwner: owner },
+      [],
+      { date: '2026-07-06', terminal: true },
+    );
+    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const handle = block.querySelector('[data-resize-edge="start-time"]') as HTMLElement;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+
+    handle.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 532, pointerId: 4 }),
+    );
+    expect(block.dataset['activeResize']).toBe('start-time');
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 50, clientY: 508, pointerId: 4 }),
+    );
+
+    const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    expectInertPreview(preview, t.title);
+    expect(preview.textContent).toContain('08:30–10:00 (1h30m)');
+    expect(preview.style.top).toBe('408px');
+    expect(preview.style.height).toBe('72px');
+    expect(onTimedMove).not.toHaveBeenCalled();
+
+    window.dispatchEvent(
+      new PointerEvent('pointerup', { clientX: 50, clientY: 508, pointerId: 4 }),
+    );
+    expect(onTimedDuration).toHaveBeenCalledWith(t, {
+      edge: 'start',
+      startMinutes: 510,
+      durationMinutes: 90,
+      endMinutes: 600,
+    });
+    expect(onTimedMove).not.toHaveBeenCalled();
+    expect(block.dataset['activeResize']).toBeUndefined();
   });
 
   it('renders a block-sized boundary preview and commits that same frozen boundary target', () => {
@@ -683,6 +754,7 @@ describe('Task 2 unified timed interaction contract', () => {
       new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 8 }),
     );
     const preview = columns[1].hour.querySelector('.tc-tg-boundary-preview') as HTMLElement;
+    expectInertPreview(preview, t.title);
     expect(preview.style.top).toBe('432px');
     expect(preview.style.height).toBe('48px');
     expect(columns.every((column) => !column.day.classList.contains('is-drag-over'))).toBe(true);
@@ -736,33 +808,91 @@ describe('Task 2 unified timed interaction contract', () => {
 
   it('owner disposal is the patch/destroy cleanup boundary', () => {
     const { owner, columns } = timedGestureGrid();
-    const onTimedMove = vi.fn();
+    const onTimedDuration = vi.fn();
     const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(
       columns[0].hour,
       [t],
-      { ...callbacks(), onTimedMove, interactionOwner: owner },
+      { ...callbacks(), onTimedDuration, interactionOwner: owner },
       [],
       { date: '2026-07-06', terminal: true },
     );
     const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
-    block.dispatchEvent(
+    handle.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 5 }),
     );
+    expect(block.dataset['activeResize']).toBe('duration');
     window.dispatchEvent(
-      new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 5 }),
+      new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 5 }),
     );
     owner.disposeActive();
     expect(columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview')).toBeNull();
+    expect(block.dataset['activeResize']).toBeUndefined();
     window.dispatchEvent(
-      new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 5 }),
+      new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 5 }),
     );
-    expect(onTimedMove).not.toHaveBeenCalled();
+    expect(onTimedDuration).not.toHaveBeenCalled();
   });
+
+  it.each(['pointercancel', 'lostpointercapture', 'blur'] as const)(
+    '%s clears edge-specific timed resize state without committing',
+    (eventType) => {
+      const { owner, columns } = timedGestureGrid();
+      const onTimedDuration = vi.fn();
+      const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+      renderTimedBlocksForDay(
+        columns[0].hour,
+        [t],
+        { ...callbacks(), onTimedDuration, interactionOwner: owner },
+        [],
+        { date: '2026-07-06', terminal: true },
+      );
+      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
+      block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', { bubbles: true, clientY: 580, pointerId: 6 }),
+      );
+      window.dispatchEvent(new PointerEvent('pointermove', { clientY: 628, pointerId: 6 }));
+      expect(block.dataset['activeResize']).toBe('duration');
+      expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+
+      if (eventType === 'blur') window.dispatchEvent(new Event('blur'));
+      else if (eventType === 'pointercancel') {
+        window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 6 }));
+      } else {
+        handle.dispatchEvent(new Event('lostpointercapture'));
+      }
+
+      expect(block.dataset['activeResize']).toBeUndefined();
+      expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).toBeNull();
+      window.dispatchEvent(new PointerEvent('pointerup', { clientY: 628, pointerId: 6 }));
+      expect(onTimedDuration).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('renderTimedBlocksForDay', () => {
+  it('renders explicit 10px top and bottom resize handles with 2px visible grips', () => {
+    const container = freshContainer();
+    renderTimedBlocksForDay(
+      container,
+      [task({ planning: { time: '09:00', duration: 60 } })],
+      callbacks(),
+    );
+
+    expect(
+      container.querySelector('.tc-tg-resize-handle--start-time')?.getAttribute('data-resize-edge'),
+    ).toBe('start-time');
+    expect(
+      container.querySelector('.tc-tg-resize-handle--duration')?.getAttribute('data-resize-edge'),
+    ).toBe('duration');
+    expect(declarationsFor('.tc-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+    expect(declarationsFor('.tc-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
+  });
+
   it('does not set data-priority on the block (calendar blocks no longer render a priority border)', () => {
     const container = freshContainer();
     const t = task({ priority: 'A', planning: { time: '09:00' } });
@@ -2013,7 +2143,7 @@ describe('renderTimedBlocksForDay', () => {
       container.remove();
     });
 
-    it('.tc-tg-block.is-selected is a distinct, styled rule from .is-picked-up/.is-dragging/.is-edge-resizing (no shared selector) and can coexist with is-picked-up without dropping either class', () => {
+    it('.tc-tg-block.is-selected is a distinct rule from transient drag and edge-specific resize state and can coexist with is-picked-up', () => {
       const rule = declarationsFor('.tc-tg-block.is-selected');
       expect(rule).not.toBe('');
       // Distinct rule bodies: is-selected must not just be an alias reusing is-picked-up's

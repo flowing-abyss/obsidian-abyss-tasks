@@ -1649,9 +1649,37 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   left: 25%;
   right: 25%;
-  bottom: 0;
   height: 10px;
+  z-index: 3;
   cursor: ns-resize;
+}
+
+.tc-tg-resize-handle--start-time {
+  top: 0;
+}
+
+.tc-tg-resize-handle--duration {
+  bottom: 0;
+}
+
+.tc-tg-resize-handle::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--tc-tag-text-color, var(--text-normal));
+  opacity: 0;
+}
+
+.tc-tg-resize-handle:hover::after,
+.tc-tg-resize-handle:focus::after,
+.tc-tg-resize-handle:active::after,
+.tc-tg-block[data-active-resize='start-time'] > .tc-tg-resize-handle--start-time::after,
+.tc-tg-block[data-active-resize='duration'] > .tc-tg-resize-handle--duration::after {
+  opacity: 1;
 }
 
 /* Task 21: checkbox + title share one flex row so they render on the same line
@@ -1758,6 +1786,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   top: 0;
   bottom: 0;
+  z-index: 3;
   width: 10px;
   cursor: ew-resize;
 }
@@ -1852,6 +1881,28 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
     var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
     var(--background-primary)
   );
+}
+
+.tc-calendar-preview-title,
+.tc-calendar-preview-subtitle,
+.tc-calendar-preview-time {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tc-tag-text-color, var(--text-normal));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tc-calendar-preview-title {
+  font-size: var(--tc-calendar-item-font-size);
+  font-weight: 600;
+}
+
+.tc-calendar-preview-subtitle,
+.tc-calendar-preview-time {
+  font-size: calc(var(--tc-calendar-item-font-size) * 0.9);
+  color: var(--tc-tag-text-color, var(--text-muted));
 }
 
 .tc-tg-drag-preview.is-all-day {
@@ -1981,8 +2032,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
     );
 }
 
-/* Edge resize stays fully opaque and signals the in-progress gesture with the same dashed
-   tag-aware language as continuation rails. */
+/* Edge-specific resize state stays fully opaque and names the exact active handle. */
+.tc-tg-body[data-active-resize],
+.tc-tg-block[data-active-resize] {
+  outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+  outline-offset: 1px;
+}
+
+/* Retained only for the legacy no-owner all-day seam. View-owned interactions use
+   data-active-resize above so their state identifies the exact edge. */
 .tc-tg-body.is-edge-resizing {
   outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
   outline-offset: 1px;

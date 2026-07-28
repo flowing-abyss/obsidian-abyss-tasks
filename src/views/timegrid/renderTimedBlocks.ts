@@ -10,7 +10,7 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
-import type { TimedDragTarget, TimedDurationTarget } from './dragGeometry';
+import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
   capContinuationMinHeightsPx,
   layoutTimedDay,
@@ -57,7 +57,7 @@ export interface TimedBlockCallbacks {
   onStartChange: (task: TaskSnapshot, newStart: string) => void;
   onDueChange?: (task: TaskSnapshot, newDue: string) => void;
   onTimedMove?: (task: TaskSnapshot, target: TimedDragTarget) => void;
-  onTimedDuration?: (task: TaskSnapshot, target: TimedDurationTarget) => void;
+  onTimedDuration?: (task: TaskSnapshot, target: TimedVerticalResizeTarget) => void;
   onTimedBoundary?: (task: TaskSnapshot, target: TimedBoundaryTarget) => void;
   interactionOwner?: TimedInteractionOwner;
   onToggle: (task: TaskSnapshot) => void;
@@ -274,8 +274,16 @@ function attachTimedBlockControls(
   callbacks: TimedBlockCallbacks,
   options?: TimedDayRenderOptions,
 ): void {
-  const handle = block.createDiv({ cls: 'tc-tg-resize-handle' });
-  handle.setAttribute('draggable', 'false');
+  const durationHandle = block.createDiv({
+    cls: 'tc-tg-resize-handle tc-tg-resize-handle--duration',
+  });
+  durationHandle.dataset['resizeEdge'] = 'duration';
+  durationHandle.setAttribute('draggable', 'false');
+  const startHandle = block.createDiv({
+    cls: 'tc-tg-resize-handle tc-tg-resize-handle--start-time',
+  });
+  startHandle.dataset['resizeEdge'] = 'start-time';
+  startHandle.setAttribute('draggable', 'false');
   const boundaryHandles: BoundaryHandleBinding[] = [];
 
   if (options) {
@@ -310,7 +318,8 @@ function attachTimedBlockControls(
   if (options) {
     attachOwnedInteractions(
       block,
-      handle,
+      startHandle,
+      durationHandle,
       boundaryHandles,
       task,
       startMinutes,
@@ -319,7 +328,7 @@ function attachTimedBlockControls(
       options,
     );
   } else {
-    attachDrag(block, handle, startMinutes, durationMinutes, callbacks, task);
+    attachDrag(block, durationHandle, startMinutes, durationMinutes, callbacks, task);
   }
   attachKeyboardHandling(block, callbacks, task);
   attachSelectedState(block);
@@ -332,6 +341,7 @@ function createBoundaryHandle(
 ): HTMLElement {
   const edge = block.createDiv({ cls: `tc-tg-span-edge tc-tg-span-edge--${side}` });
   edge.dataset['boundary'] = boundary;
+  edge.dataset['resizeEdge'] = boundary === 'start' ? 'start-date' : 'due-date';
   edge.setAttribute('draggable', 'false');
   return edge;
 }
@@ -363,7 +373,8 @@ function attachLegacyBoundaryHandles(
 
 function attachOwnedInteractions(
   block: HTMLElement,
-  handle: HTMLElement,
+  startHandle: HTMLElement,
+  durationHandle: HTMLElement,
   boundaryHandles: BoundaryHandleBinding[],
   task: TaskSnapshot,
   startMinutes: number,
@@ -374,7 +385,8 @@ function attachOwnedInteractions(
   const owner = callbacks.interactionOwner ?? createTimedInteractionOwner();
   attachTimedInteractions({
     source: block,
-    durationHandle: handle,
+    startHandle,
+    durationHandle,
     boundaryHandles,
     task,
     segmentDate: options.date,
