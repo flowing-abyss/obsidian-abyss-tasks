@@ -2979,6 +2979,7 @@ export class CenterPanel {
     cleanup = showDatePickerPopover({
       owner: this.el,
       anchor,
+      boundary: this.el,
       ...(initialValue !== undefined && { initialValue }),
       onPick: (inputValue) => {
         try {

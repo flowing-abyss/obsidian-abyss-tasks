@@ -70,6 +70,16 @@ describe('Shared popover styles', () => {
     expect(priorityOptionCheck).not.toContain('margin-left: auto');
   });
 
+  it('keeps the add-date chooser content-sized without inheriting context-menu alignment or width', () => {
+    const compact = declarationsFor('.tc-add-date-menu--compact');
+    const context = declarationsFor('.tc-context-menu');
+
+    expect(compact).toContain('right: auto');
+    expect(compact).toContain('min-width: 0');
+    expect(compact).toContain('inline-size: max-content');
+    expect(context).toContain('min-width: 140px');
+  });
+
   it('date and time popovers use the shared compact anchored surface', () => {
     const dateTimePopover = declarationsFor('.tc-date-popover,\n.tc-time-popover');
     const inputRow = declarationsFor('.tc-popover-input-row');
@@ -119,5 +129,16 @@ describe('Shared popover styles', () => {
     expect(tomorrowDate).toContain('color: var(--tc-date-tomorrow)');
     expect(overdueDate).not.toContain('var(--tc-priority-b)');
     expect(tomorrowDate).not.toContain('var(--tc-priority-c)');
+  });
+});
+
+describe('Panel hierarchy styles', () => {
+  it('uses section spacing without decorative divider rules', () => {
+    const adjacentRightSections = declarationsFor('.tc-right-section + .tc-right-section');
+
+    expect(css).not.toContain('.tc-left-divider');
+    expect(css).not.toContain('.tc-right-divider');
+    expect(adjacentRightSections).toContain('margin-top: 8px');
+    expect(adjacentRightSections).not.toContain('border');
   });
 });

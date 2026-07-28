@@ -27,6 +27,7 @@ import {
   type TaskSnapshot,
   type TaskTextTarget,
 } from '../tasks';
+import { anchoredPlacement } from '../ui/anchoredPlacement';
 import {
   enableAttachmentDrop,
   enableAttachmentPaste,
@@ -90,6 +91,7 @@ export class RightPanel {
   private draggingSub: SubtaskSnapshot | null = null;
   private md = new Component();
   private onSuccessfulMutation?: (ref?: TaskRef) => void;
+  private anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
 
   constructor(
     private state: AppState,
@@ -111,6 +113,7 @@ export class RightPanel {
 
   destroy(): void {
     this.off?.();
+    this.clearAnchoredSurfaces();
     this.el?.empty();
     this.md.unload();
   }
@@ -119,6 +122,7 @@ export class RightPanel {
     this.md.unload();
     this.md = new Component();
     this.md.load();
+    this.clearAnchoredSurfaces();
     this.el.empty();
     const stack = this.state.get('taskStack');
     if (stack.length === 0) {
@@ -381,9 +385,6 @@ export class RightPanel {
         );
       });
     }
-
-    // Divider
-    this.el.createDiv({ cls: 'tc-right-divider' });
 
     // Description
     const descSection = this.el.createDiv({ cls: 'tc-right-section' });
@@ -827,15 +828,21 @@ export class RightPanel {
     task: TaskLike,
     options: Array<{ field: 'start' | 'scheduled'; label: string }>,
   ): void {
-    const existing = anchor.querySelector('.tc-add-date-menu');
+    const existing = this.el.querySelector('.tc-add-date-menu');
     if (existing) {
-      existing.remove();
+      this.removeAnchoredSurface(existing as HTMLElement);
       return;
     }
-    this.el.querySelectorAll('.tc-add-date-menu').forEach((el) => el.remove());
-    this.el.querySelectorAll('.tc-context-menu').forEach((el) => el.remove());
+    this.el
+      .querySelectorAll<HTMLElement>('.tc-add-date-menu')
+      .forEach((element) => this.removeAnchoredSurface(element));
+    this.el
+      .querySelectorAll<HTMLElement>('.tc-context-menu')
+      .forEach((element) => this.removeAnchoredSurface(element));
 
-    const menu = anchor.createDiv({ cls: 'tc-context-menu tc-add-date-menu' });
+    const menu = this.el.createDiv({
+      cls: 'tc-context-menu tc-add-date-menu tc-add-date-menu--compact tc-popover-anchored',
+    });
     for (const opt of options) {
       const item = menu.createDiv({
         cls: 'tc-context-item tc-add-date-menu-item',
@@ -843,11 +850,12 @@ export class RightPanel {
       });
       item.addEventListener('click', (e) => {
         e.stopPropagation();
-        menu.remove();
+        this.removeAnchoredSurface(menu);
         this.showDatePopover(anchor, task, opt.field);
       });
     }
 
+    this.positionAnchoredSurface(menu, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(menu, anchor);
   }
 
@@ -889,7 +897,22 @@ export class RightPanel {
   }
 
   private clearPopovers(): void {
-    this.el.querySelectorAll('.tc-popover').forEach((el) => el.remove());
+    this.el
+      .querySelectorAll<HTMLElement>('.tc-popover')
+      .forEach((element) => this.removeAnchoredSurface(element));
+  }
+
+  private removeAnchoredSurface(surface: HTMLElement): void {
+    this.anchoredSurfaceCleanups.get(surface)?.();
+    surface.remove();
+  }
+
+  private clearAnchoredSurfaces(): void {
+    for (const [surface, cleanup] of this.anchoredSurfaceCleanups) {
+      cleanup();
+      surface.remove();
+    }
+    this.anchoredSurfaceCleanups.clear();
   }
 
   /**
@@ -922,10 +945,12 @@ export class RightPanel {
       if (field === 'due') void this.updateDue(task, input.value);
       else if (field === 'scheduled') void this.updateScheduled(task, input.value);
       else void this.updateStart(task, input.value);
-      pop.remove();
+      this.removeAnchoredSurface(pop);
     });
-    input.addEventListener('blur', () => window.setTimeout(() => pop.remove(), 200));
-    window.setTimeout(() => input.focus(), 0);
+    input.addEventListener('blur', () =>
+      this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
+    );
+    this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
 
     const clearBtn = inputRow.createEl('button', {
       cls: 'tc-popover-clear-icon-btn',
@@ -937,9 +962,9 @@ export class RightPanel {
       if (field === 'due') void this.clearDate(task);
       else if (field === 'scheduled') void this.clearScheduled(task);
       else void this.clearStart(task);
-      pop.remove();
+      this.removeAnchoredSurface(pop);
     });
-    this.positionAnchoredPopover(pop, anchor);
+    this.positionAnchoredSurface(pop, anchor, 'below-start');
   }
 
   private showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
@@ -982,42 +1007,71 @@ export class RightPanel {
         anchor.textContent = chipLabels[opt.value] ?? 'Priority';
         anchor.setAttribute('data-priority', opt.value);
         anchor.className = `tc-chip tc-priority-chip tc-priority-chip--${opt.value}${opt.value === 'D' ? ' tc-chip-empty' : ''}`;
-        pop.remove();
+        this.removeAnchoredSurface(pop);
         void this.updatePriority(task, opt.value);
       });
     }
-    this.positionAnchoredPopover(pop, anchor);
-    window.setTimeout(() => {
-      this.el.addEventListener('click', () => pop.remove(), { once: true });
+    this.positionAnchoredSurface(pop, anchor, 'below-start');
+    this.el.ownerDocument.defaultView?.setTimeout(() => {
+      this.el.addEventListener('click', () => this.removeAnchoredSurface(pop), { once: true });
     }, 0);
   }
 
-  private positionAnchoredPopover(popover: HTMLElement, anchor: HTMLElement): void {
-    const panelWidth = this.el.getBoundingClientRect().width || this.el.clientWidth;
-    const minWidth = parseFloat(getComputedStyle(popover).minWidth);
-    const popoverWidth =
-      popover.offsetWidth ||
-      popover.getBoundingClientRect().width ||
-      (Number.isFinite(minWidth) ? minWidth : 160);
-    const edgeGap = this.cssLengthToPx(
-      getComputedStyle(popover).getPropertyValue('--tc-popover-edge-gap'),
-      popover,
-      8,
-    );
-    const anchorGap = this.cssLengthToPx(
-      getComputedStyle(popover).getPropertyValue('--tc-popover-anchor-gap'),
-      popover,
-      4,
-    );
-    const maxLeft =
-      panelWidth > 0 ? Math.max(edgeGap, panelWidth - popoverWidth - edgeGap) : anchor.offsetLeft;
-    const left = Math.min(Math.max(anchor.offsetLeft, edgeGap), maxLeft);
-
-    popover.style.setProperty(
-      '--tc-pop-top',
-      `${anchor.offsetTop + anchor.offsetHeight + anchorGap}px`,
-    );
-    popover.style.setProperty('--tc-pop-left', `${left}px`);
+  private positionAnchoredSurface(
+    popover: HTMLElement,
+    anchor: HTMLElement,
+    preferred: 'below-start' | 'below-end',
+  ): void {
+    this.anchoredSurfaceCleanups.get(popover)?.();
+    const ownerDocument = this.el.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    const position = (): void => {
+      const boundary = this.el.getBoundingClientRect();
+      const floatingRect = popover.getBoundingClientRect();
+      const computed = ownerWindow?.getComputedStyle(popover);
+      const minWidth = parseFloat(computed?.minWidth ?? '');
+      const floatingWidth =
+        floatingRect.width || popover.offsetWidth || (Number.isFinite(minWidth) ? minWidth : 160);
+      const floatingHeight = floatingRect.height || popover.offsetHeight;
+      const edgeGap = this.cssLengthToPx(
+        computed?.getPropertyValue('--tc-popover-edge-gap') ?? '',
+        popover,
+        8,
+      );
+      const anchorGap = this.cssLengthToPx(
+        computed?.getPropertyValue('--tc-popover-anchor-gap') ?? '',
+        popover,
+        4,
+      );
+      const placement = anchoredPlacement({
+        anchor: anchor.getBoundingClientRect(),
+        floating: { width: floatingWidth, height: floatingHeight },
+        boundary,
+        gap: anchorGap,
+        edgeGap,
+        preferred,
+      });
+      popover.style.setProperty(
+        '--tc-pop-top',
+        `${placement.top - boundary.top + this.el.scrollTop}px`,
+      );
+      popover.style.setProperty(
+        '--tc-pop-left',
+        `${placement.left - boundary.left + this.el.scrollLeft}px`,
+      );
+      popover.dataset['side'] = placement.side;
+    };
+    position();
+    ownerWindow?.addEventListener('resize', position);
+    ownerDocument.addEventListener('scroll', position, true);
+    const cleanup = (): void => {
+      ownerWindow?.removeEventListener('resize', position);
+      ownerDocument.removeEventListener('scroll', position, true);
+      if (this.anchoredSurfaceCleanups.get(popover) === cleanup) {
+        this.anchoredSurfaceCleanups.delete(popover);
+      }
+    };
+    this.anchoredSurfaceCleanups.set(popover, cleanup);
   }
 
   private cssLengthToPx(value: string, relativeTo: HTMLElement, fallback: number): number {
@@ -1026,11 +1080,18 @@ export class RightPanel {
     if (trimmed.endsWith('px')) return parseFloat(trimmed);
     if (trimmed.endsWith('rem')) {
       const rootFontSize =
-        parseFloat(getComputedStyle(activeDocument.documentElement).fontSize) || 16;
+        parseFloat(
+          relativeTo.ownerDocument.defaultView?.getComputedStyle(
+            relativeTo.ownerDocument.documentElement,
+          ).fontSize ?? '',
+        ) || 16;
       return parseFloat(trimmed) * rootFontSize;
     }
     if (trimmed.endsWith('em')) {
-      const fontSize = parseFloat(getComputedStyle(relativeTo).fontSize) || 16;
+      const fontSize =
+        parseFloat(
+          relativeTo.ownerDocument.defaultView?.getComputedStyle(relativeTo).fontSize ?? '',
+        ) || 16;
       return parseFloat(trimmed) * fontSize;
     }
     const numeric = parseFloat(trimmed);
@@ -1293,11 +1354,13 @@ export class RightPanel {
       cls: 'tc-time-input',
       attr: { type: 'time', value: task.planning.time ?? '' },
     });
-    window.setTimeout(() => input.focus(), 0);
+    this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
     input.addEventListener('change', () => {
-      void this.updateTime(task, input.value).then(() => pop.remove());
+      void this.updateTime(task, input.value).then(() => this.removeAnchoredSurface(pop));
     });
-    input.addEventListener('blur', () => window.setTimeout(() => pop.remove(), 200));
+    input.addEventListener('blur', () =>
+      this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
+    );
 
     const clearBtn = inputRow.createEl('button', {
       cls: 'tc-popover-clear-icon-btn',
@@ -1306,7 +1369,7 @@ export class RightPanel {
     setIcon(clearBtn, 'x');
     clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
     clearBtn.addEventListener('click', () => {
-      void this.updateTime(task, '').then(() => pop.remove());
+      void this.updateTime(task, '').then(() => this.removeAnchoredSurface(pop));
     });
 
     // Duration only applies to top-level TaskSnapshot (SubtaskSnapshot has no duration field) —
@@ -1325,9 +1388,11 @@ export class RightPanel {
       durationInput.addEventListener('change', () => {
         const minutes = parseDurationToMinutes(durationInput.value);
         const done = minutes ? this.updateDuration(task, minutes) : this.clearDuration(task);
-        void done.then(() => pop.remove());
+        void done.then(() => this.removeAnchoredSurface(pop));
       });
-      durationInput.addEventListener('blur', () => window.setTimeout(() => pop.remove(), 200));
+      durationInput.addEventListener('blur', () =>
+        this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
+      );
 
       const clearDurationBtn = durationRow.createEl('button', {
         cls: 'tc-popover-clear-icon-btn',
@@ -1336,11 +1401,11 @@ export class RightPanel {
       setIcon(clearDurationBtn, 'x');
       clearDurationBtn.addEventListener('mousedown', (e) => e.preventDefault());
       clearDurationBtn.addEventListener('click', () => {
-        void this.clearDuration(task).then(() => pop.remove());
+        void this.clearDuration(task).then(() => this.removeAnchoredSurface(pop));
       });
     }
 
-    this.positionAnchoredPopover(pop, anchor);
+    this.positionAnchoredSurface(pop, anchor, 'below-start');
   }
 
   private async updateTime(task: TaskLike, time: string): Promise<void> {
@@ -1354,23 +1419,26 @@ export class RightPanel {
   }
 
   private renderContextMenu(task: TaskLike, anchor: HTMLElement): void {
-    // Toggle: if a menu is already open inside this anchor, close it
-    const existing = anchor.querySelector('.tc-context-menu');
+    const existing = this.el.querySelector<HTMLElement>('.tc-task-context-menu');
     if (existing) {
-      existing.remove();
+      this.removeAnchoredSurface(existing);
       return;
     }
     // Close any other open context menus
-    this.el.querySelectorAll('.tc-context-menu').forEach((el) => el.remove());
+    this.el
+      .querySelectorAll<HTMLElement>('.tc-context-menu')
+      .forEach((element) => this.removeAnchoredSurface(element));
 
-    const menu = anchor.createDiv({ cls: 'tc-context-menu' });
+    const menu = this.el.createDiv({
+      cls: 'tc-context-menu tc-task-context-menu tc-popover-anchored',
+    });
 
     const deleteItem = menu.createDiv({
       cls: 'tc-context-item tc-context-danger',
       text: this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
     });
     deleteItem.addEventListener('click', () => {
-      menu.remove();
+      this.removeAnchoredSurface(menu);
       void this.deleteTask(task);
     });
 
@@ -1379,25 +1447,40 @@ export class RightPanel {
       text: 'Open in file',
     });
     openItem.addEventListener('click', () => {
-      menu.remove();
+      this.removeAnchoredSurface(menu);
       const root = this.state.get('taskStack')[0];
       if (root && 'source' in root) void openInFile(this.app, root, taskNodeLine(root, task));
     });
 
+    this.positionAnchoredSurface(menu, anchor, 'below-end');
     this.dismissMenuOnOutsideClick(menu, anchor);
   }
 
   /** Shared outside-click dismissal for small anchored menus (context menu, add-date menu). */
   private dismissMenuOnOutsideClick(menu: HTMLElement, anchor: HTMLElement): void {
-    window.setTimeout(() => {
-      const dismiss = (e: MouseEvent): void => {
-        if (!menu.contains(e.target as Node) && e.target !== anchor) {
-          menu.remove();
-          activeDocument.removeEventListener('click', dismiss, true);
-        }
-      };
-      activeDocument.addEventListener('click', dismiss, true);
+    const ownerDocument = this.el.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    const placementCleanup = this.anchoredSurfaceCleanups.get(menu);
+    let listening = false;
+    const dismiss = (e: MouseEvent): void => {
+      if (!menu.contains(e.target as Node) && e.target !== anchor) {
+        this.removeAnchoredSurface(menu);
+      }
+    };
+    let registrationTimer = ownerWindow?.setTimeout(() => {
+      registrationTimer = undefined;
+      ownerDocument.addEventListener('click', dismiss, true);
+      listening = true;
     }, 0);
+    const cleanup = (): void => {
+      placementCleanup?.();
+      if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
+      if (listening) ownerDocument.removeEventListener('click', dismiss, true);
+      if (this.anchoredSurfaceCleanups.get(menu) === cleanup) {
+        this.anchoredSurfaceCleanups.delete(menu);
+      }
+    };
+    this.anchoredSurfaceCleanups.set(menu, cleanup);
   }
 
   private async deleteTask(task: TaskLike): Promise<void> {

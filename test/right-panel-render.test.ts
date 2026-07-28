@@ -1,5 +1,5 @@
 import { TFile, type App } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -29,6 +29,10 @@ import {
 
 useRealMoment();
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 /** Read a markdown file's current content via the vault. */
 async function readMd(app: App, path: string): Promise<string> {
   const f = app.vault.getAbstractFileByPath(path);
@@ -44,6 +48,10 @@ function tick(ms = 5): Promise<void> {
 /** Dispatch a click event on an element. */
 function click(el: HTMLElement): void {
   el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+}
+
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
 }
 
 /** Read the textContent of the first element matching `sel` inside `el`, or '' if absent. */
@@ -184,6 +192,18 @@ describe('RightPanel render lifecycle', () => {
 });
 
 describe('RightPanel.renderTask', () => {
+  it('keeps semantic section headings without a decorative divider element', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'Task' })]);
+    const headings = Array.from(
+      el.querySelectorAll<HTMLElement>('.tc-right-section-label'),
+      (element) => element.textContent,
+    );
+
+    expect(headings).toEqual(['Description', 'Sub-tasks', 'Comments']);
+    expect(el.querySelector('.tc-right-divider')).toBeNull();
+  });
+
   it.each(['root', 'subtask'] as const)(
     'renders one shared %s header status control and rebases its successful commands',
     async (selection) => {
@@ -842,23 +862,48 @@ describe('RightPanel popovers', () => {
     expect(active?.querySelector('.tc-priority-option-check')).not.toBeNull();
   });
 
-  it('priority popover is shifted left when it would overflow the right panel', async () => {
-    const { panel, el } = await makePanel();
-    const anchor = document.createElement('button');
-    const popover = document.createElement('div');
+  it('priority popover measures viewport geometry and converts it to panel-local coordinates', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
+    const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(100, 50, 300, 240),
+    });
+    Object.defineProperty(chip, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(370, 80, 20, 20),
+    });
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('tc-priority-popover')) return rect(0, 0, 120, 80);
+        return real.call(this);
+      });
 
-    Object.defineProperty(el, 'clientWidth', { configurable: true, value: 320 });
-    Object.defineProperty(anchor, 'offsetLeft', { configurable: true, value: 173 });
-    Object.defineProperty(anchor, 'offsetTop', { configurable: true, value: 57 });
-    Object.defineProperty(anchor, 'offsetHeight', { configurable: true, value: 24 });
-    Object.defineProperty(popover, 'offsetWidth', { configurable: true, value: 180 });
-    popover.style.setProperty('--tc-popover-anchor-gap', '0.25rem');
-    popover.style.setProperty('--tc-popover-edge-gap', '1rem');
+    click(chip);
 
-    call<void>(panel, 'positionAnchoredPopover', popover, anchor);
+    const popover = el.querySelector<HTMLElement>('.tc-priority-popover')!;
+    expect(popover.parentElement).toBe(el);
+    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('172px');
+    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('54px');
+    measure.mockRestore();
+  });
 
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('85px');
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('124px');
+  it('removes anchored-surface resize and scroll listeners when the panel is destroyed', async () => {
+    const { panel, state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
+    const ownerDocument = el.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView!;
+    const removeWindowListener = vi.spyOn(ownerWindow, 'removeEventListener');
+    const removeDocumentListener = vi.spyOn(ownerDocument, 'removeEventListener');
+
+    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    panel.destroy();
+
+    expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
+    expect(removeDocumentListener).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });
 
   it('outside click dismisses the priority popover', async () => {
@@ -929,6 +974,41 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     expect(menu).not.toBeNull();
     expect(menu?.textContent).toContain('Start');
     expect(menu?.textContent).toContain('Plan');
+  });
+
+  it('keeps a wrapped left-edge "+ date" chooser inside a narrow panel as a compact child surface', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [
+      task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
+    ]);
+    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(100, 40, 180, 280),
+    });
+    Object.defineProperty(addBtn, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(96, 120, 50, 24),
+    });
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.classList.contains('tc-add-date-menu')) return rect(0, 0, 90, 72);
+        return real.call(this);
+      });
+
+    click(addBtn);
+
+    const menu = el.querySelector<HTMLElement>('.tc-add-date-menu')!;
+    expect(menu.parentElement).toBe(el);
+    expect(addBtn.contains(menu)).toBe(false);
+    expect(menu.classList.contains('tc-add-date-menu--compact')).toBe(true);
+    expect(menu.style.getPropertyValue('--tc-pop-left')).toBe('8px');
+    expect(
+      Array.from(menu.querySelectorAll('.tc-add-date-menu-item')).map((item) => item.textContent),
+    ).toEqual(['🛫 Start', '⏳ Plan']);
+    measure.mockRestore();
   });
 
   it('the "+" control\'s menu offers only the currently-unset field when the other is already set', async () => {

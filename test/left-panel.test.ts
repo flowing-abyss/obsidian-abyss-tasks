@@ -59,9 +59,10 @@ function today(): string {
 }
 
 describe('LeftPanel smart lists', () => {
-  it('renders Lists section header', () => {
+  it('does not add a redundant Lists heading above the smart-list rows', () => {
     const { el } = makePanel();
-    expect(el.querySelector('.tc-left-section-header')?.textContent).toBe('Lists');
+    expect(el.textContent).not.toContain('Lists');
+    expect(el.querySelector('.tc-left-divider')).toBeNull();
   });
 
   it('renders Inbox/Today/Upcoming rows', () => {
@@ -871,6 +872,20 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     const chevron = el.querySelector('.tc-left-section--tags .tc-left-section-chevron');
     expect(chevron).toBeTruthy();
     expect(chevron?.textContent).toBe('');
+  });
+
+  it('keeps Pinned, Projects, and Tags hierarchy without decorative divider elements', () => {
+    const { el } = makeFull({
+      settings: { pinnedTags: ['#focus'] },
+      projects: [{ path: 'Projects/A.md', name: 'A' }],
+    });
+    const headings = Array.from(
+      el.querySelectorAll<HTMLElement>('.tc-left-section-title'),
+      (element) => element.textContent,
+    );
+
+    expect(headings).toEqual(['Pinned', 'Projects', 'Tags']);
+    expect(el.querySelector('.tc-left-divider')).toBeNull();
   });
 
   it('persists section collapse via onSaveSettings', () => {

@@ -102,6 +102,7 @@
   flex-direction: column;
   background: var(--background-primary);
   overflow: hidden;
+  position: relative;
 }
 
 /* Right panel */
@@ -2475,11 +2476,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .tc-left-section {
   padding: 4px 0;
 }
-.tc-left-divider {
-  height: 1px;
-  background: var(--background-modifier-border);
-  margin: 4px 12px;
-}
 .tc-left-item {
   display: flex;
   align-items: center;
@@ -3966,16 +3962,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Right panel body */
-.tc-right-divider {
-  height: 1px;
-  background: var(--background-modifier-border);
-  margin: 0 16px;
-}
 .tc-right-section {
   padding: 16px 16px 0;
 }
 .tc-right-section + .tc-right-section {
-  border-top: 1px solid var(--background-modifier-border);
   margin-top: 8px;
 }
 .tc-right-section-header {
@@ -4332,6 +4322,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   min-width: 140px;
   overflow: hidden;
 }
+.tc-add-date-menu--compact {
+  right: auto;
+  min-width: 0;
+  inline-size: max-content;
+  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+}
 .tc-context-item {
   padding: 8px 14px;
   cursor: pointer;
@@ -4360,6 +4356,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: absolute;
   top: var(--tc-pop-top, 100%);
   left: var(--tc-pop-left, 0);
+  right: auto;
   z-index: 10;
 }
 
@@ -4399,6 +4396,7 @@ body.tc-modal-open .popover.hover-popover {
 /* Modal body reuses tc-right panel styles — no extra CSS needed */
 .tc-modal-body {
   width: 100%;
+  position: relative;
 }
 
 /* ── Drag-and-drop states ────────────────────────────────── */

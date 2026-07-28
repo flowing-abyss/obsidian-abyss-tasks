@@ -84,7 +84,6 @@ export class LeftPanel {
     const today = window.moment().format('YYYY-MM-DD');
 
     this.el.createDiv({ cls: 'tc-left-section' }, (section) => {
-      section.createEl('div', { cls: 'tc-left-section-header', text: 'Lists' });
       this.renderSmartList(section, 'inbox', 'Inbox', 'inbox', this.countInbox(allTasks));
       this.renderSmartList(section, 'today', 'Today', 'calendar', this.countToday(allTasks, today));
       this.renderSmartList(
@@ -152,7 +151,6 @@ export class LeftPanel {
     body: (bodyEl: HTMLElement) => void,
   ): void {
     const collapsed = this.settings.sectionCollapse[key];
-    this.el.createDiv({ cls: 'tc-left-divider' });
     const section = this.el.createDiv({ cls: `tc-left-section tc-left-section--${key}` });
 
     const header = section.createDiv({

@@ -81,6 +81,10 @@ function openMenu(card: HTMLElement): void {
   card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
+}
+
 function relevantDateTitles(items: readonly CapturedMenuItem[]): string[] {
   return items
     .map((item) => item.title__)
@@ -347,6 +351,34 @@ describe('CenterPanel task date context menus', () => {
     openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
+  });
+
+  it('uses the center panel as the explicit boundary for custom-date placement', () => {
+    const items = captureMenu();
+    const { el } = makeCenter([first]);
+    const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+    Object.defineProperty(el, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(100, 50, 300, 200),
+    });
+    Object.defineProperty(card, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(390, 70, 20, 20),
+    });
+    const real = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('tc-date-picker-popover')) return rect(0, 0, 120, 40);
+      return real.call(this);
+    });
+
+    openMenu(card);
+    items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+
+    const popover = el.querySelector<HTMLElement>('.tc-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('172px');
+    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('44px');
   });
 
   it('sets and clears Tomorrow from the single menu', async () => {
