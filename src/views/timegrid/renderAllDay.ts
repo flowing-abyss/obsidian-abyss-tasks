@@ -15,7 +15,7 @@ import {
   type SpanInteractionOwner,
   type SpanMoveTarget,
 } from '../spanInteractions';
-import type { VisibleSpanLayout, VisibleSpanRow } from '../spanLayout';
+import type { VisibleSpanLayout, VisibleSpanRow, VisibleSpanSegment } from '../spanLayout';
 import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
 
 export interface AllDayCallbacks {
@@ -238,6 +238,13 @@ function renderAllDayBody(
 }
 
 /** Render one row's semantic spans as continuous grid pieces above the persistent day cells. */
+function spanColumnIndex(
+  segment: VisibleSpanSegment,
+  indexByDate: ReadonlyMap<string, number>,
+): number | undefined {
+  return indexByDate.get(segment.date);
+}
+
 export function renderAllDaySpanLayer(
   layerEl: HTMLElement,
   row: VisibleSpanRow,
@@ -254,7 +261,7 @@ export function renderAllDaySpanLayer(
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
 
   for (const segment of row.segments) {
-    const index = indexByDate.get(segment.date);
+    const index = spanColumnIndex(segment, indexByDate);
     if (index === undefined) continue;
     const classes = [
       segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
