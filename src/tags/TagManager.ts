@@ -1,6 +1,7 @@
 // src/tags/TagManager.ts
 import type { App } from 'obsidian';
 import type { CalendarSettings } from '../settings/types';
+import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
 
 export type VaultTagRenameResult =
   | {
@@ -13,34 +14,20 @@ export type VaultTagRenameResult =
       readonly failedFiles: readonly string[];
     }
   | {
+      readonly type: 'settings-error';
+      readonly changedFiles: readonly string[];
+      readonly failedFiles: readonly string[];
+    }
+  | {
       readonly type: 'invalid';
       readonly reason: 'invalid-tag' | 'same-tag';
     };
-
-type RenameScope = 'exact' | 'prefix';
-
-const VALID_TAG = /^#[\w-]+(?:\/[\w-]+)*$/u;
-
-function normalizeTag(value: string): string | null {
-  const trimmed = value.trim();
-  const tag = trimmed.startsWith('#') ? trimmed : `#${trimmed}`;
-  return VALID_TAG.test(tag) ? tag : null;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-}
-
-function replacementPattern(tag: string, scope: RenameScope): RegExp {
-  const suffix = scope === 'exact' ? '(?![\\w/-])' : '(?=/|[^\\w/-]|$)';
-  return new RegExp(`(?<!#)${escapeRegExp(tag)}${suffix}`, 'gu');
-}
 
 function replaceSettingTag(
   value: string,
   oldTag: string,
   newTag: string,
-  scope: RenameScope,
+  scope: TagRenameScope,
 ): string {
   if (value === oldTag) return newTag;
   if (scope === 'prefix' && value.startsWith(`${oldTag}/`)) {
@@ -58,6 +45,8 @@ function sameValues(left: readonly string[], right: readonly string[]): boolean 
 }
 
 export class TagManager {
+  private renameQueue: Promise<void> = Promise.resolve();
+
   constructor(
     private app: App,
     private settings: CalendarSettings,
@@ -116,17 +105,28 @@ export class TagManager {
   }
 
   async renameTagExact(oldTag: string, newTag: string): Promise<VaultTagRenameResult> {
-    return this.renameAcrossVault(oldTag, newTag, 'exact');
+    return this.enqueueRename(() => this.renameAcrossVault(oldTag, newTag, 'exact'));
   }
 
   async renameTagPrefix(oldPrefix: string, newPrefix: string): Promise<VaultTagRenameResult> {
-    return this.renameAcrossVault(oldPrefix, newPrefix, 'prefix');
+    return this.enqueueRename(() => this.renameAcrossVault(oldPrefix, newPrefix, 'prefix'));
+  }
+
+  private enqueueRename(
+    operation: () => Promise<VaultTagRenameResult>,
+  ): Promise<VaultTagRenameResult> {
+    const result = this.renameQueue.then(operation, operation);
+    this.renameQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async renameAcrossVault(
     oldValue: string,
     newValue: string,
-    scope: RenameScope,
+    scope: TagRenameScope,
   ): Promise<VaultTagRenameResult> {
     const oldTag = normalizeTag(oldValue);
     const newTag = normalizeTag(newValue);
@@ -134,7 +134,6 @@ export class TagManager {
     if (oldTag === newTag) return { type: 'invalid', reason: 'same-tag' };
 
     const files = this.app.vault.getMarkdownFiles();
-    const pattern = replacementPattern(oldTag, scope);
     const prepared: Array<{
       readonly file: (typeof files)[number];
       readonly transform: (content: string) => string;
@@ -144,7 +143,8 @@ export class TagManager {
     for (const file of files) {
       try {
         const content = await this.app.vault.cachedRead(file);
-        const transform = (latest: string): string => latest.replace(pattern, newTag);
+        const transform = (latest: string): string =>
+          transformMarkdownTags(latest, oldTag, newTag, scope);
         if (transform(content) !== content) prepared.push({ file, transform });
       } catch {
         failedFiles.push(file.path);
@@ -168,6 +168,14 @@ export class TagManager {
 
     const replaceReference = (value: string): string =>
       replaceSettingTag(value, oldTag, newTag, scope);
+    const settingsSnapshot = {
+      pinnedTags: [...this.settings.pinnedTags],
+      archivedTags: [...this.settings.archivedTags],
+      tagGroups: this.settings.tagGroups.map((group) => ({
+        ...group,
+        tags: group.tags ? [...group.tags] : undefined,
+      })),
+    };
     let settingsChanged = false;
     const pinnedTags = uniqueInOrder(this.settings.pinnedTags.map(replaceReference));
     if (!sameValues(pinnedTags, this.settings.pinnedTags)) {
@@ -196,7 +204,16 @@ export class TagManager {
       }
     }
 
-    if (settingsChanged) await this.saveSettings();
+    if (settingsChanged) {
+      try {
+        await this.saveSettings();
+      } catch {
+        this.settings.pinnedTags = settingsSnapshot.pinnedTags;
+        this.settings.archivedTags = settingsSnapshot.archivedTags;
+        this.settings.tagGroups = settingsSnapshot.tagGroups;
+        return { type: 'settings-error', changedFiles, failedFiles };
+      }
+    }
 
     return failedFiles.length > 0
       ? { type: 'partial', changedFiles, failedFiles }

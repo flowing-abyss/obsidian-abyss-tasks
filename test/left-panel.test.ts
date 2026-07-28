@@ -725,6 +725,32 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(renamePrefix).not.toHaveBeenCalled();
   });
 
+  it('rolls back appearance and reports a rejected settings save', async () => {
+    renderOpenedModalsInDocument();
+    const items = captureMenu();
+    const { el, merged, save } = makePanel([], {
+      tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
+    });
+    save.mockRejectedValueOnce(new Error('settings storage unavailable'));
+
+    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    items.find((item) => item.title === 'Rename display name…')!.click();
+    const nameInput = activeDocument.querySelector<HTMLInputElement>(
+      '.tc-tag-group-appearance-modal input[type="text"]',
+    )!;
+    nameInput.value = 'Focused work';
+    nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .click();
+    await flushMicrotasks();
+
+    expect(merged.tagGroups[0]?.name).toBe('Work');
+    expect(merged.tagGroups[0]?.color).toBe('#ff0000');
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
+  });
+
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {
     renderOpenedModalsInDocument();
     const items = captureMenu();
@@ -783,6 +809,31 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('1 file');
   });
 
+  it('settings persistence failure warns without claiming rename success', async () => {
+    renderOpenedModalsInDocument();
+    const { tm } = makePanel();
+    vi.spyOn(tm, 'renameTagExact').mockResolvedValue({
+      type: 'settings-error',
+      changedFiles: ['a.md'],
+      failedFiles: [],
+    });
+    const onRenamed = vi.fn();
+    const modal = new RenameTagModal(null as never, tm, '#work', onRenamed);
+    modal.open();
+    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    input.value = '#focus';
+    Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent === 'Rename across vault')!
+      .click();
+    await flushMicrotasks();
+
+    expect(onRenamed).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledOnce();
+    const notice = String(vi.mocked(Notice).mock.calls[0]?.[0]);
+    expect(notice).toContain('settings were not saved');
+    expect(notice).not.toContain('Tag renamed across');
+  });
+
   it('invalid vault rename shows validation and keeps the modal open for correction', async () => {
     renderOpenedModalsInDocument();
     const { tm } = makePanel();
@@ -803,6 +854,41 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(onRenamed).not.toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledTimes(1);
     expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('trailing slash');
+    expect(modal.contentEl.querySelector('input')).not.toBeNull();
+  });
+
+  it('disables rename controls while pending and ignores duplicate submission', async () => {
+    renderOpenedModalsInDocument();
+    const { tm } = makePanel();
+    let resolveRename!: (result: {
+      readonly type: 'invalid';
+      readonly reason: 'invalid-tag';
+    }) => void;
+    const pending = new Promise<{ readonly type: 'invalid'; readonly reason: 'invalid-tag' }>(
+      (resolve) => {
+        resolveRename = resolve;
+      },
+    );
+    vi.spyOn(tm, 'renameTagExact').mockReturnValue(pending);
+    const modal = new RenameTagModal(null as never, tm, '#work', vi.fn());
+    modal.open();
+    const input = modal.contentEl.querySelector<HTMLInputElement>('input')!;
+    const buttons = Array.from(modal.contentEl.querySelectorAll<HTMLButtonElement>('button'));
+    const renameButton = buttons.find((button) => button.textContent === 'Rename across vault')!;
+
+    renameButton.click();
+    renameButton.click();
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    expect(input.disabled).toBe(true);
+    expect(buttons.every((button) => button.disabled)).toBe(true);
+    expect(tm.renameTagExact).toHaveBeenCalledOnce();
+
+    resolveRename({ type: 'invalid', reason: 'invalid-tag' });
+    await flushMicrotasks();
+
+    expect(input.disabled).toBe(false);
+    expect(buttons.every((button) => !button.disabled)).toBe(true);
     expect(modal.contentEl.querySelector('input')).not.toBeNull();
   });
 

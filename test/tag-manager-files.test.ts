@@ -55,9 +55,117 @@ describe('TagManager exact and prefix vault rename', () => {
     expect(await read(app, 'notes/untouched.md')).toBe('- [ ] #personal\n');
   });
 
+  it('renames Unicode and emoji tags without matching adjacent Unicode or emoji tags', async () => {
+    const { tm, app } = await makeManager({
+      'notes/tasks.md': '#работа #работа/срочно #работает\n#work #work/dev #worké #work🚀\n',
+    });
+
+    const exact = await tm.renameTagExact('#работа', '#фокус');
+    const prefix = await tm.renameTagPrefix('#work', '#focus');
+
+    expect(exact).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(prefix).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(await read(app, 'notes/tasks.md')).toBe(
+      '#фокус #работа/срочно #работает\n#focus #focus/dev #worké #work🚀\n',
+    );
+  });
+
+  it('accepts emoji inside old and new tag names', async () => {
+    const { tm, app } = await makeManager({
+      'notes/tasks.md': '#work🚀 #work🚀/next #work🚀er\n',
+    });
+
+    const result = await tm.renameTagPrefix('#work🚀', '#фокус✨');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/tasks.md'] });
+    expect(await read(app, 'notes/tasks.md')).toBe('#фокус✨ #фокус✨/next #work🚀er\n');
+  });
+
+  it('exact rename updates semantic body and frontmatter tags while preserving literal examples', async () => {
+    const original = [
+      '---',
+      'title: "#work remains literal"',
+      'tags:',
+      '  - work',
+      '  - work/dev',
+      '  - "work"',
+      '  - other',
+      'aliases: [work]',
+      '---',
+      'Prose #work and descendant #work/dev.',
+      'Inline `#work` and escaped \\#work remain literal.',
+      '```md',
+      '#work',
+      '```',
+      '~~~',
+      '#work',
+      '~~~',
+      '',
+    ].join('\n');
+    const expected = original
+      .replace('  - work\n', '  - focus\n')
+      .replace('  - "work"\n', '  - "focus"\n')
+      .replace('Prose #work and descendant', 'Prose #focus and descendant');
+    const { tm, app } = await makeManager({ 'notes/block.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/block.md'] });
+    expect(await read(app, 'notes/block.md')).toBe(expected);
+  });
+
+  it('prefix rename updates block and flow frontmatter tag subtrees without touching other YAML', async () => {
+    const blockOriginal = [
+      '---',
+      'tags:',
+      '  - work',
+      '  - work/dev',
+      '  - workplace',
+      'category: work',
+      '---',
+      'Non-task prose: #work #work/dev #workplace.',
+      '',
+    ].join('\n');
+    const flowOriginal = [
+      '---',
+      'tags: [work, work/dev, "work/ops", workplace, other] # keep spacing',
+      'aliases: [work/dev]',
+      '---',
+      'Text `#work/dev` and #work/dev.',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({
+      'notes/block.md': blockOriginal,
+      'notes/flow.md': flowOriginal,
+    });
+
+    const result = await tm.renameTagPrefix('work', 'focus');
+
+    expect(result).toEqual({
+      type: 'ok',
+      changedFiles: ['notes/block.md', 'notes/flow.md'],
+    });
+    expect(await read(app, 'notes/block.md')).toBe(
+      blockOriginal
+        .replace('  - work\n', '  - focus\n')
+        .replace('  - work/dev\n', '  - focus/dev\n')
+        .replace('#work #work/dev #workplace', '#focus #focus/dev #workplace'),
+    );
+    expect(await read(app, 'notes/flow.md')).toBe(
+      flowOriginal
+        .replace(
+          '[work, work/dev, "work/ops", workplace, other]',
+          '[focus, focus/dev, "focus/ops", workplace, other]',
+        )
+        .replace('and #work/dev.', 'and #focus/dev.'),
+    );
+  });
+
   it.each([
     ['', '#new'],
     ['#', '#new'],
+    ['#1984', '#new'],
+    ['#work', '#1984'],
     ['#work/', '#new'],
     ['#work//dev', '#new'],
     ['#work dev', '#new'],
@@ -133,6 +241,35 @@ describe('TagManager exact and prefix vault rename', () => {
     expect(settings.tagGroups[1]?.tags).toEqual(['#focus', '#focus/dev', '#workplace']);
   });
 
+  it('returns a settings failure and rolls back in-memory references when persistence rejects', async () => {
+    const { tm, app, settings, save } = await makeManager({
+      'tasks.md': '- [ ] #work\n',
+    });
+    settings.pinnedTags = ['#work'];
+    settings.archivedTags = ['#work/dev'];
+    settings.tagGroups = [
+      { id: 'prefix', name: 'Work', mode: 'prefix', prefix: 'work' },
+      { id: 'manual', name: 'Manual', mode: 'manual', tags: ['#work', '#work/dev'] },
+    ];
+    save.mockRejectedValueOnce(new Error('settings storage unavailable'));
+
+    const result = await tm.renameTagPrefix('#work', '#focus');
+
+    expect(result).toEqual({
+      type: 'settings-error',
+      changedFiles: ['tasks.md'],
+      failedFiles: [],
+    });
+    expect(await read(app, 'tasks.md')).toBe('- [ ] #focus\n');
+    expect(settings.pinnedTags).toEqual(['#work']);
+    expect(settings.archivedTags).toEqual(['#work/dev']);
+    expect(settings.tagGroups).toEqual([
+      { id: 'prefix', name: 'Work', mode: 'prefix', prefix: 'work' },
+      { id: 'manual', name: 'Manual', mode: 'manual', tags: ['#work', '#work/dev'] },
+    ]);
+    expect(save).toHaveBeenCalledOnce();
+  });
+
   it('prepares every changed file before performing sequential writes', async () => {
     const { tm, app } = await makeManager({
       'a.md': '- [ ] #work\n',
@@ -172,6 +309,49 @@ describe('TagManager exact and prefix vault rename', () => {
     await tm.renameTagExact('#work', '#focus');
 
     expect(written).toBe('unrelated edit\n- [ ] #focus\n');
+  });
+
+  it('serializes concurrent rename requests for the same vault', async () => {
+    const { tm, app } = await makeManager({ 'a.md': '#one #two\n' });
+    const cachedRead = app.vault.cachedRead.bind(app.vault);
+    let releaseFirst!: () => void;
+    const firstRead = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let readCount = 0;
+    vi.spyOn(app.vault, 'cachedRead').mockImplementation(async (file) => {
+      readCount++;
+      if (readCount === 1) await firstRead;
+      return cachedRead(file);
+    });
+
+    const first = tm.renameTagExact('#one', '#first');
+    const second = tm.renameTagExact('#two', '#second');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(readCount).toBe(1);
+    releaseFirst();
+    await expect(first).resolves.toEqual({ type: 'ok', changedFiles: ['a.md'] });
+    await expect(second).resolves.toEqual({ type: 'ok', changedFiles: ['a.md'] });
+    expect(await read(app, 'a.md')).toBe('#first #second\n');
+  });
+
+  it('releases the rename queue after an unexpected operation error', async () => {
+    const { tm, app } = await makeManager({ 'a.md': '#two\n' });
+    const getMarkdownFiles = app.vault.getMarkdownFiles.bind(app.vault);
+    vi.spyOn(app.vault, 'getMarkdownFiles')
+      .mockImplementationOnce(() => {
+        throw new Error('vault unavailable');
+      })
+      .mockImplementation(() => getMarkdownFiles());
+
+    const first = tm.renameTagExact('#one', '#first');
+    const second = tm.renameTagExact('#two', '#second');
+
+    await expect(first).rejects.toThrow('vault unavailable');
+    await expect(second).resolves.toEqual({ type: 'ok', changedFiles: ['a.md'] });
+    expect(await read(app, 'a.md')).toBe('#second\n');
   });
 
   it('returns partial and continues sequentially when a later file write fails', async () => {

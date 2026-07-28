@@ -1,4 +1,4 @@
-import { Menu, setIcon, TFile, type App } from 'obsidian';
+import { Menu, Notice, setIcon, TFile, type App } from 'obsidian';
 import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
@@ -704,12 +704,21 @@ export class LeftPanel {
 
   private applyTagGroupAppearance(group: TagGroup, result: TagGroupAppearanceResult): void {
     if (result.name === undefined && result.color === undefined) return;
+    const previous = { name: group.name, color: group.color };
     if (result.name !== undefined) group.name = result.name;
     if (result.color !== undefined) {
       if (result.color === null) delete group.color;
       else group.color = result.color;
     }
-    void this.onSaveSettings().then(() => this.render());
+    void this.onSaveSettings()
+      .then(() => this.render())
+      .catch(() => {
+        group.name = previous.name;
+        if (previous.color === undefined) delete group.color;
+        else group.color = previous.color;
+        new Notice('Tag group appearance was not saved. Your changes were rolled back.');
+        this.render();
+      });
   }
 
   private makeTagOp(op: () => Promise<void>): () => void {
