@@ -102,7 +102,6 @@ describe('tagFillTextVariant', () => {
     ['navy', '#00004d'],
     ['pale green', '#d8f3dc'],
     ['red', '#d32f2f'],
-    ['untagged', undefined],
   ])('keeps %s at WCAG 4.5:1 against the committed fill in both themes', (_name, tagColor) => {
     const lightBackground = '#ffffff';
     const darkBackground = '#1e1e1e';
@@ -116,10 +115,19 @@ describe('tagFillTextVariant', () => {
     expect(contrastRatio(lightFill, '#161616')).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(darkFill, '#f5f5f5')).toBeGreaterThanOrEqual(4.5);
   });
+
+  it('keeps an untagged task readable against the actual interactive-accent mix and text-normal fallback in both themes', () => {
+    const interactiveAccent = '#7f6df2';
+    const lightFill = rgbToHex(mixHexColors(interactiveAccent, '#ffffff', 11)!);
+    const darkFill = rgbToHex(mixHexColors(interactiveAccent, '#1e1e1e', 14)!);
+
+    expect(contrastRatio(lightFill, '#2e3338')).toBeGreaterThanOrEqual(4.5);
+    expect(contrastRatio(darkFill, '#dadada')).toBeGreaterThanOrEqual(4.5);
+  });
 });
 
 describe('tagFillTextColorVar', () => {
-  it('resolves event and ghost strength from the rendered element owner document in both themes', () => {
+  it('resolves the shared committed fill strength from the rendered element owner document in both themes', () => {
     const frame = document.createElement('iframe');
     document.body.appendChild(frame);
     const ownerDocument = frame.contentDocument!;
@@ -130,13 +138,13 @@ describe('tagFillTextColorVar', () => {
     ownerDocument.body.append(event, ghost);
 
     try {
-      expect(tagFillTextColorVar(event, '#ffffff', 'event')).toBe('var(--tc-tag-text-light)');
-      expect(tagFillTextColorVar(ghost, '#ffffff', 'ghost')).toBe('var(--tc-tag-text-light)');
+      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--tc-tag-text-light)');
+      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--tc-tag-text-light)');
 
       ownerDocument.body.classList.remove('theme-dark');
       ownerDocument.body.style.setProperty('--background-primary', '#ffffff');
-      expect(tagFillTextColorVar(event, '#ffffff', 'event')).toBe('var(--tc-tag-text-dark)');
-      expect(tagFillTextColorVar(ghost, '#ffffff', 'ghost')).toBe('var(--tc-tag-text-dark)');
+      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--tc-tag-text-dark)');
+      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--tc-tag-text-dark)');
     } finally {
       frame.remove();
     }

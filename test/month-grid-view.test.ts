@@ -1554,11 +1554,14 @@ describe('MonthGridView', () => {
   describe('calendar surface style contract', () => {
     it('keeps Month at the shared item scale while allowing vertical grid scrolling', () => {
       const monthGrid = declarationsFor('.tc-mg-grid');
+      const monthRow = declarationsFor('.tc-mg-row');
       const monthItems = declarationsFor('.tc-mg-cell-items');
       const monthItem = declarationsFor('.tc-mg-deadline-marker');
       const monthGhost = declarationsFor('.tc-mg-span-continuation');
 
       expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);
+      expect(monthRow).toMatch(/flex\s*:\s*0 0 auto/u);
+      expect(monthRow).toMatch(/min-height\s*:\s*calc\(var\(--tc-calendar-track-height\) \* 4\)/u);
       expect(monthItems).toMatch(
         /margin-top\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
       );
@@ -1568,6 +1571,7 @@ describe('MonthGridView', () => {
       expect(monthGhost).toMatch(
         /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u,
       );
+      expect(declarationsFor('.tc-mg-item-title')).toMatch(/line-height\s*:\s*1\.4/u);
       expect(css).not.toMatch(
         /\.tc-mg-(?:plain|block-dot|span-segment|deadline-marker)[^{]*\{[^}]*font-size\s*:\s*0\.72em/u,
       );

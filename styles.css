@@ -1511,6 +1511,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 .tc-tg-block-title {
   font-weight: 600;
+  line-height: 1.4;
   /* Task 40 (Round 4): --tc-tag-text-color is set per-block in JS (tagFillContrast.ts) from the
      ACTUAL contrast-winning variant against this block's own tag-colored fill — falls back to
      the pre-existing var(--text-normal) when the block has no tag color at all (nothing was set)
@@ -1743,6 +1744,16 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 1px var(--background-modifier-hover);
 }
 
+.tc-span-piece:focus-visible,
+.tc-span-piece:focus-visible:hover {
+  box-shadow: inset 0 0 0 2px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
+}
+
 .tc-tg-span-edge {
   position: absolute;
   top: 0;
@@ -1850,12 +1861,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 .tc-tg-block-continuation-title {
   /* Same --tc-tag-text-color fallback pattern as .tc-tg-block-title, resolved against this
-     continuation segment's restrained ghost fill. */
+     continuation segment's shared committed fill. */
   color: var(--tc-tag-text-color, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
+  line-height: 1.4;
   /* Task 36: never shrinks — see `.tc-tg-block-continuation`'s own comment on this segment's
      flex-column "collapse the subtitle row first" behavior. */
   flex-shrink: 0;
@@ -1949,17 +1961,10 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 5;
 }
 
-/* Task 39 (superseded by Task 49, see .is-selected below): originally the ONLY visual indicator
-   of which block keyboard arrow-key nudging targets, scoped to `:focus-visible` so a mouse click
-   that focuses the block didn't show it. Task 49's ask reverses that scoping decision on
-   purpose — a deliberate mouse CLICK is now also meant to read as "this task is now selected",
-   not just Tab-focus — so the outline itself moved to the unconditional `.is-selected` class
-   below; this bare `:focus-visible` rule is kept only as a belt-and-suspenders fallback for the
-   (currently theoretical) case where some future host fails to fire `focus`/`blur` the way this
-   file's `attachSelectedState` expects, and is intentionally IDENTICAL in strength to the old
-   rule (not the strengthened `.is-selected` treatment) so it never doubles up with it. */
+/* Keyboard focus and click selection both need a visibly stronger tag-aware inset than the
+   resting terminal outline, without replacing the committed fill. */
 .tc-tg-block:focus-visible {
-  box-shadow: inset 0 0 0 1px
+  box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
       var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
@@ -1968,7 +1973,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-block.is-selected {
-  box-shadow: inset 0 0 0 1px
+  box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
       var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
@@ -2050,7 +2055,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-mg-row {
   position: relative;
   display: flex;
-  flex: 1;
+  flex: 0 0 auto;
+  min-height: calc(var(--tc-calendar-track-height) * 4);
 }
 
 .tc-mg-span-layer {

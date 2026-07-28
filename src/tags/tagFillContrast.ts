@@ -118,9 +118,7 @@ function currentBackgroundPrimaryHex(referenceEl: HTMLElement): string {
   return win.getComputedStyle(doc.body).getPropertyValue('--background-primary').trim();
 }
 
-type TagFillKind = 'event' | 'ghost';
-
-function currentTagFillPercent(referenceEl: HTMLElement, _kind: TagFillKind): number {
+function currentTagFillPercent(referenceEl: HTMLElement): number {
   const doc = referenceEl.ownerDocument;
   const dark =
     doc.body.classList.contains('theme-dark') ||
@@ -139,12 +137,11 @@ function currentTagFillPercent(referenceEl: HTMLElement, _kind: TagFillKind): nu
 export function tagFillTextColorVar(
   el: HTMLElement,
   tagHex: string | undefined,
-  kind: TagFillKind = 'event',
 ): string | undefined {
   const variant = tagFillTextVariant(
     tagHex,
     currentBackgroundPrimaryHex(el),
-    currentTagFillPercent(el, kind),
+    currentTagFillPercent(el),
   );
   return variant ? `var(--tc-tag-text-${variant})` : undefined;
 }

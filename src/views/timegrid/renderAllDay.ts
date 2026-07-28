@@ -215,10 +215,9 @@ function renderAllDayBody(
     // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
     // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
     // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-    // Continuations use the restrained ghost token while terminal/plain bodies use the event
-    // token; tagFillTextColorVar resolves each token's light/dark percentage from this element's
-    // owner document so popouts and live theme changes choose against the fill actually rendered.
-    const textColorVar = tagFillTextColorVar(el, tagColor, interactive ? 'event' : 'ghost');
+    // All committed calendar bodies use the shared event fill, so this resolves against the
+    // same light/dark percentage in terminals and continuations.
+    const textColorVar = tagFillTextColorVar(el, tagColor);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
   if (nativeDraggable) {

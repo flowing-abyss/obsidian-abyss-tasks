@@ -1827,8 +1827,13 @@ describe('renderTimedBlocksForDay', () => {
 
     it('.tc-tg-block:focus-visible gets a distinct tag-aware inset outline so a keyboard user can see which block arrow keys will nudge', () => {
       const rule = declarationsFor('.tc-tg-block:focus-visible');
-      expect(rule).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+      expect(rule).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
       expect(rule).toMatch(/--tc-event-outline-strength/u);
+    });
+
+    it('keeps terminal and continuation titles at the all-day/Month 1.4 line-height', () => {
+      expect(declarationsFor('.tc-tg-block-title')).toMatch(/line-height\s*:\s*1\.4/u);
+      expect(declarationsFor('.tc-tg-block-continuation-title')).toMatch(/line-height\s*:\s*1\.4/u);
     });
   });
 

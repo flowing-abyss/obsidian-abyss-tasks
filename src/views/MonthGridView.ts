@@ -400,7 +400,7 @@ export class MonthGridView extends BaseView {
       // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
       // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
       // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
-      const textColorVar = tagFillTextColorVar(el, tagColor, 'event');
+      const textColorVar = tagFillTextColorVar(el, tagColor);
       if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
     }
   }

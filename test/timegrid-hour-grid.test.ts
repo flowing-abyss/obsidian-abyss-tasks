@@ -65,8 +65,10 @@ describe('renderHourGrid', () => {
     expect(hover).toMatch(/box-shadow\s*:.*var\(--background-modifier-hover\)/u);
 
     const selected = declarationsFor('.tc-tg-block.is-selected');
+    const resting = fills;
     expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
-    expect(selected).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+    expect(resting).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+    expect(selected).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
     expect(selected).toMatch(/--tc-event-outline-strength/u);
 
     const dragging = declarationsForRuleContaining(

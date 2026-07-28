@@ -1180,5 +1180,15 @@ describe('renderAllDayCell', () => {
       expect(item).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
       expect(item).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
     });
+
+    it('keeps a focused span above the later hover shadow in the cascade', () => {
+      const focusRule = declarationsFor('.tc-span-piece:focus-visible:hover');
+      const hoverIndex = css.indexOf('.tc-tg-block:hover');
+      const focusIndex = css.indexOf('.tc-span-piece:focus-visible:hover');
+
+      expect(focusRule).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
+      expect(focusRule).toMatch(/--tc-event-outline-strength/u);
+      expect(focusIndex).toBeGreaterThan(hoverIndex);
+    });
   });
 });
