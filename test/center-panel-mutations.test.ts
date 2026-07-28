@@ -141,6 +141,8 @@ describe('CenterPanel planning API delegation', () => {
     await callPrivate(panel, 'toggleDueToday', current);
     await callPrivate(panel, 'updateTaskStart', current, '2026-07-18');
     await callPrivate(panel, 'rescheduleTaskDue', current, '2026-07-22');
+    await callPrivate(panel, 'setTaskDue', current, '2026-07-23');
+    await callPrivate(panel, 'setTaskDue', current, null);
 
     expect(execute).toHaveBeenNthCalledWith(1, {
       type: 'reschedule',
@@ -163,6 +165,16 @@ describe('CenterPanel planning API delegation', () => {
       ref,
       boundary: 'due',
       date: '2026-07-22',
+    });
+    expect(execute).toHaveBeenNthCalledWith(5, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { due: { type: 'set', value: '2026-07-23' } },
+    });
+    expect(execute).toHaveBeenNthCalledWith(6, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { due: { type: 'clear' } },
     });
     expect(process).not.toHaveBeenCalled();
   });

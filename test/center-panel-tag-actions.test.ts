@@ -1,11 +1,12 @@
 import { Menu } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
 import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import {
+  flushMicrotasks,
   freshContainer,
   makeCenterPanelForTest,
   makeStubStore,
@@ -14,6 +15,73 @@ import {
 } from './helpers';
 
 useRealMoment();
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  activeDocument.querySelectorAll('.tc-date-picker-popover').forEach((element) => element.remove());
+});
+
+interface CapturedMenuItem {
+  checked__: boolean | null;
+  onClick__: ((event: MouseEvent) => unknown) | null;
+  title__: string;
+}
+
+function captureMenu(): CapturedMenuItem[] {
+  const items: CapturedMenuItem[] = [];
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+    const item = {
+      checked__: null as boolean | null,
+      dom: document.createElement('div'),
+      onClick__: null as ((event: MouseEvent) => unknown) | null,
+      title__: '',
+      onClick(value: (event: MouseEvent) => unknown) {
+        this.onClick__ = value;
+        return this;
+      },
+      setChecked(value: boolean | null) {
+        this.checked__ = value;
+        return this;
+      },
+      setDisabled() {
+        return this;
+      },
+      setIcon() {
+        return this;
+      },
+      setSection() {
+        return this;
+      },
+      setSubmenu() {
+        return new Menu();
+      },
+      setTitle(value: string) {
+        this.title__ = value;
+        return this;
+      },
+      setWarning() {
+        return this;
+      },
+    };
+    callback(item as never);
+    items.push(item);
+    return this;
+  });
+  vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+    return this;
+  });
+  return items;
+}
+
+function openMenu(card: HTMLElement): void {
+  card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+}
+
+function relevantDateTitles(items: readonly CapturedMenuItem[]): string[] {
+  return items
+    .map((item) => item.title__)
+    .filter((title) => ['Today', 'Tomorrow', 'Set date…', 'Set tag…'].includes(title));
+}
 
 function makeCenter(
   tasks: TaskSnapshot[] = [],
@@ -243,6 +311,206 @@ describe('CenterPanel pinned-tag context menu', () => {
     });
     addItem.mockRestore();
     show.mockRestore();
+  });
+});
+
+describe('CenterPanel task date context menus', () => {
+  const first = task({
+    status: 'open',
+    tags: ['#task/inbox'],
+    source: {
+      filePath: 'a.md',
+      line: 0,
+      originalMarkdown: '- [ ] first #task/inbox',
+      originalBlock: '- [ ] first #task/inbox',
+    },
+  });
+  const second = task({
+    status: 'open',
+    tags: ['#task/inbox'],
+    source: {
+      filePath: 'a.md',
+      line: 1,
+      originalMarkdown: '- [ ] second #task/inbox',
+      originalBlock: '- [ ] second #task/inbox',
+    },
+  });
+
+  it('orders Today, Tomorrow, Set date…, and Set tag… in the single menu', () => {
+    const items = captureMenu();
+    const { el } = makeCenter([first]);
+
+    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+
+    expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
+  });
+
+  it('sets and clears Tomorrow from the single menu', async () => {
+    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+    const items = captureMenu();
+    const { el, execute } = makeCenter([first]);
+    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+
+    items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
+    await flushMicrotasks();
+    expect(execute).toHaveBeenLastCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: first.ref },
+      patch: { due: { type: 'set', value: tomorrow } },
+    });
+
+    vi.restoreAllMocks();
+    const tomorrowTask = { ...first, planning: { due: tomorrow as never } };
+    const clearItems = captureMenu();
+    const clearCenter = makeCenter([tomorrowTask]);
+    openMenu(clearCenter.el.querySelector<HTMLElement>('.tc-task-card')!);
+    clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
+    await flushMicrotasks();
+    expect(clearCenter.execute).toHaveBeenLastCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: tomorrowTask.ref },
+      patch: { due: { type: 'clear' } },
+    });
+  });
+
+  it('orders Today, Tomorrow, Set date…, and Set tag… in the bulk menu', () => {
+    const items = captureMenu();
+    const { el } = makeCenter([first, second]);
+    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+
+    openMenu(cards[0]!);
+
+    expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
+  });
+
+  it('sets a mixed bulk preset and clears an all-matching preset in visible order', async () => {
+    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+    const mixedSecond = { ...second, planning: { due: tomorrow as never } };
+    const items = captureMenu();
+    const mixedCenter = makeCenter([first, mixedSecond]);
+    const mixedCards = Array.from(mixedCenter.el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    for (const card of mixedCards) {
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    }
+    const mixedFirstCard = mixedCards.find((card) => card.dataset['line'] === '0')!;
+    const mixedSecondCard = mixedCards.find((card) => card.dataset['line'] === '1')!;
+    mixedFirstCard.parentElement!.append(mixedFirstCard, mixedSecondCard);
+    openMenu(mixedFirstCard);
+
+    items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
+    await flushMicrotasks();
+    expect(mixedCenter.execute.mock.calls.map(([command]) => command)).toEqual([
+      {
+        type: 'patch',
+        target: { type: 'task', ref: first.ref },
+        patch: { due: { type: 'set', value: tomorrow } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref: mixedSecond.ref },
+        patch: { due: { type: 'set', value: tomorrow } },
+      },
+    ]);
+
+    vi.restoreAllMocks();
+    const matchingFirst = { ...first, planning: { due: tomorrow as never } };
+    const matchingSecond = { ...second, planning: { due: tomorrow as never } };
+    const clearItems = captureMenu();
+    const matchingCenter = makeCenter([matchingFirst, matchingSecond]);
+    const matchingCards = Array.from(
+      matchingCenter.el.querySelectorAll<HTMLElement>('.tc-task-card'),
+    );
+    for (const card of matchingCards) {
+      card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    }
+    const matchingFirstCard = matchingCards.find((card) => card.dataset['line'] === '0')!;
+    const matchingSecondCard = matchingCards.find((card) => card.dataset['line'] === '1')!;
+    matchingFirstCard.parentElement!.append(matchingFirstCard, matchingSecondCard);
+    openMenu(matchingFirstCard);
+
+    clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
+    await flushMicrotasks();
+    expect(matchingCenter.execute.mock.calls.map(([command]) => command)).toEqual([
+      {
+        type: 'patch',
+        target: { type: 'task', ref: matchingFirst.ref },
+        patch: { due: { type: 'clear' } },
+      },
+      {
+        type: 'patch',
+        target: { type: 'task', ref: matchingSecond.ref },
+        patch: { due: { type: 'clear' } },
+      },
+    ]);
+  });
+
+  it('opens mixed bulk dates empty and applies a custom due date sequentially in visible order', async () => {
+    const datedSecond = { ...second, planning: { due: '2026-07-30' as never } };
+    const items = captureMenu();
+    const { el, execute } = makeCenter([first, datedSecond]);
+    let resolveFirst:
+      | ((result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void)
+      | undefined;
+    execute.mockReset();
+    execute
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({
+        type: 'io-error',
+        cause: 'test',
+        contentState: 'unchanged',
+      });
+    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    const firstCard = Array.from(cards).find((card) => card.dataset['line'] === '0')!;
+    const secondCard = Array.from(cards).find((card) => card.dataset['line'] === '1')!;
+    firstCard.parentElement!.append(firstCard, secondCard);
+    openMenu(firstCard);
+
+    items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]');
+    expect(input?.value).toBe('');
+    input!.value = '2026-08-02';
+    input!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenNthCalledWith(1, {
+      type: 'patch',
+      target: { type: 'task', ref: first.ref },
+      patch: { due: { type: 'set', value: '2026-08-02' } },
+    });
+
+    resolveFirst?.({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    await flushMicrotasks();
+    expect(execute).toHaveBeenNthCalledWith(2, {
+      type: 'patch',
+      target: { type: 'task', ref: datedSecond.ref },
+      patch: { due: { type: 'set', value: '2026-08-02' } },
+    });
+  });
+
+  it('rejects an invalid custom date before executing a command', () => {
+    const items = captureMenu();
+    const { el, execute } = makeCenter([first]);
+    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+    items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]')!;
+
+    input.value = 'not-a-date';
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

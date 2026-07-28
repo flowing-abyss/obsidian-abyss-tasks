@@ -36,6 +36,7 @@ import {
   type TaskSnapshot,
   type TaskStatusType,
 } from '../tasks';
+import { showDatePickerPopover } from '../ui/DatePickerPopover';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
@@ -143,7 +144,8 @@ export class CenterPanel {
   private calendarRenderGeneration = 0;
   private taskModal: TaskModal | null = null;
   private selectedTaskKeys = new Set<string>();
-  private lastClickedTaskKey: string | null = null;
+  private selectionAnchorKey: string | null = null;
+  private selectionFocusKey: string | null = null;
   private currentListKey: string = 'today';
   private filterDebounce = 0;
   private refocusSearch = false;
@@ -238,7 +240,8 @@ export class CenterPanel {
         this.state.set('centerFilter', '');
 
         this.selectedTaskKeys.clear();
-        this.lastClickedTaskKey = null;
+        this.selectionAnchorKey = null;
+        this.selectionFocusKey = null;
       }),
       this.state.on('centerListViewState', () => this.render()),
       this.state.on('mode', () => {
@@ -264,32 +267,79 @@ export class CenterPanel {
     this.render();
     this.el.setAttribute('tabindex', '0');
     const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && this.selectedTaskKeys.size > 0) {
+      if (
+        e.key === 'Escape' &&
+        (this.selectedTaskKeys.size > 0 ||
+          this.selectionAnchorKey !== null ||
+          this.selectionFocusKey !== null)
+      ) {
         this.selectedTaskKeys.clear();
-        this.lastClickedTaskKey = null;
+        this.selectionAnchorKey = null;
+        this.selectionFocusKey = null;
         this.updateSelectionVisuals();
         return;
       }
 
-      if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.shiftKey) {
-        e.preventDefault();
-        const allCards = Array.from(this.el.querySelectorAll<HTMLElement>('.tc-task-card'));
-        const keys = allCards.map(
-          (c) => `${c.dataset['filePath'] ?? ''}:${c.dataset['line'] ?? ''}`,
-        );
-        const anchorIdx = this.lastClickedTaskKey ? keys.indexOf(this.lastClickedTaskKey) : -1;
-        if (anchorIdx === -1) return;
-
-        const delta = e.key === 'ArrowDown' ? 1 : -1;
-        const nextIdx = Math.max(0, Math.min(keys.length - 1, anchorIdx + delta));
-        const nextKey = keys[nextIdx];
-        if (!nextKey) return;
-
-        this.selectedTaskKeys.add(this.lastClickedTaskKey!);
-        this.selectedTaskKeys.add(nextKey);
-        this.lastClickedTaskKey = nextKey;
-        this.updateSelectionVisuals();
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      if (this.state.get('mode') !== 'tasks') return;
+      const target = e.target;
+      if (
+        isRealmHTMLElement(target) &&
+        target.closest(
+          'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .tc-status-marker, .tc-popover',
+        )
+      ) {
+        return;
       }
+
+      const keys = this.visibleTaskKeys();
+      if (keys.length === 0) return;
+      e.preventDefault();
+
+      const targetCard = isRealmHTMLElement(target)
+        ? target.closest<HTMLElement>('.tc-task-card')
+        : null;
+      const targetKey =
+        targetCard && this.el.contains(targetCard)
+          ? `${targetCard.dataset['filePath'] ?? ''}:${targetCard.dataset['line'] ?? ''}`
+          : null;
+      const detailCard = this.visibleTaskCards().find((card) =>
+        card.classList.contains('is-selected'),
+      );
+      const detailKey = detailCard
+        ? `${detailCard.dataset['filePath'] ?? ''}:${detailCard.dataset['line'] ?? ''}`
+        : null;
+      const currentKey = [this.selectionFocusKey, targetKey, detailKey].find(
+        (candidate): candidate is string => candidate !== null && keys.includes(candidate),
+      );
+      const delta = e.key === 'ArrowDown' ? 1 : -1;
+      const currentIndex = currentKey ? keys.indexOf(currentKey) : -1;
+      let nextIndex: number;
+      if (currentIndex === -1) {
+        nextIndex = e.key === 'ArrowDown' ? 0 : keys.length - 1;
+      } else {
+        nextIndex = Math.max(0, Math.min(keys.length - 1, currentIndex + delta));
+      }
+      const nextKey = keys[nextIndex];
+      if (!nextKey) return;
+
+      if (e.shiftKey) {
+        const anchor =
+          this.selectionAnchorKey && keys.includes(this.selectionAnchorKey)
+            ? this.selectionAnchorKey
+            : currentKey;
+        this.selectionAnchorKey = anchor ?? nextKey;
+        this.selectionFocusKey = nextKey;
+        this.replaceRangeSelection(this.selectionAnchorKey, nextKey, keys);
+      } else {
+        this.selectedTaskKeys.clear();
+        this.selectionAnchorKey = nextKey;
+        this.selectionFocusKey = nextKey;
+        this.updateSelectionVisuals();
+        const task = this.taskForKey(nextKey);
+        if (task) this.state.set('taskStack', [task]);
+      }
+      this.focusTaskKey(nextKey);
     };
     this.el.addEventListener('keydown', onKeyDown);
     this.offs.push(() => this.el.removeEventListener('keydown', onKeyDown));
@@ -523,6 +573,7 @@ export class CenterPanel {
     }
 
     this.renderAddTaskBar();
+    this.reconcileTaskSelection(this.visibleTaskKeys());
     this.updateSelectionVisuals();
   }
 
@@ -1315,6 +1366,7 @@ export class CenterPanel {
 
     const card = container.createDiv({
       cls: `tc-task-card${isSelected ? ' is-selected' : ''}`,
+      attr: { tabindex: '-1' },
     });
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
@@ -1481,36 +1533,33 @@ export class CenterPanel {
           this.selectedTaskKeys.delete(key);
         } else {
           this.selectedTaskKeys.add(key);
-          this.lastClickedTaskKey = key;
         }
+        this.selectionAnchorKey = key;
+        this.selectionFocusKey = key;
         this.updateSelectionVisuals();
+        this.focusTaskKey(key);
         return;
       }
 
-      if (e.shiftKey && this.lastClickedTaskKey) {
-        // Shift+Click: range select from anchor to this card
-        const allCards = Array.from(this.el.querySelectorAll<HTMLElement>('.tc-task-card'));
-        const keys = allCards.map(
-          (c) => `${c.dataset['filePath'] ?? ''}:${c.dataset['line'] ?? ''}`,
-        );
-        const anchorIdx = keys.indexOf(this.lastClickedTaskKey);
-        const thisIdx = keys.indexOf(key);
-        if (anchorIdx !== -1) {
-          const from = Math.min(anchorIdx, thisIdx);
-          const to = Math.max(anchorIdx, thisIdx);
-          for (let i = from; i <= to; i++) {
-            const k = keys[i];
-            if (k) this.selectedTaskKeys.add(k);
-          }
-          this.updateSelectionVisuals();
-          return;
-        }
+      if (e.shiftKey) {
+        const keys = this.visibleTaskKeys();
+        const anchor =
+          this.selectionAnchorKey && keys.includes(this.selectionAnchorKey)
+            ? this.selectionAnchorKey
+            : key;
+        this.selectionAnchorKey = anchor;
+        this.selectionFocusKey = key;
+        this.replaceRangeSelection(anchor, key, keys);
+        this.focusTaskKey(key);
+        return;
       }
 
       // Plain click: clear selection, open in RightPanel
       this.selectedTaskKeys.clear();
-      this.lastClickedTaskKey = key;
+      this.selectionAnchorKey = key;
+      this.selectionFocusKey = key;
       this.updateSelectionVisuals();
+      this.focusTaskKey(key);
       this.state.set('taskStack', [task]);
     });
 
@@ -1579,7 +1628,8 @@ export class CenterPanel {
       // If right-clicking an unselected card while others are selected → clear and show single menu
       if (this.selectedTaskKeys.size > 0 && !this.selectedTaskKeys.has(key)) {
         this.selectedTaskKeys.clear();
-        this.lastClickedTaskKey = null;
+        this.selectionAnchorKey = null;
+        this.selectionFocusKey = null;
         this.updateSelectionVisuals();
       }
 
@@ -1591,6 +1641,7 @@ export class CenterPanel {
 
       // ── SINGLE TASK MENU ─────────────────────────────────
       const today = localDate(window.moment().format('YYYY-MM-DD'));
+      const tomorrow = shiftLocalDate(today, 1);
       const isToday = task.planning.due === today;
       const menu = new Menu();
 
@@ -1601,8 +1652,19 @@ export class CenterPanel {
           .setIcon('calendar')
           .setSection('today')
           .setChecked(isToday)
-          .onClick(() => void this.toggleDueToday(task)),
+          .onClick(() => void this.toggleTaskDuePreset(task, today)),
       );
+
+      if (tomorrow) {
+        menu.addItem((item) =>
+          item
+            .setTitle('Tomorrow')
+            .setIcon('calendar-plus')
+            .setSection('today')
+            .setChecked(task.planning.due === tomorrow)
+            .onClick(() => void this.toggleTaskDuePreset(task, tomorrow)),
+        );
+      }
 
       // ── Pinned tags ────────────────────────────────────────
       if (this.settings.pinnedTags.length > 0) {
@@ -1657,6 +1719,14 @@ export class CenterPanel {
       );
 
       // ── Set tag… ───────────────────────────────────────────
+      menu.addItem((item) =>
+        item
+          .setTitle('Set date…')
+          .setIcon('calendar-cog')
+          .setSection('actions')
+          .onClick(() => this.openTaskDatePicker(card, [task])),
+      );
+
       menu.addItem((item) =>
         item
           .setTitle('Set tag…')
@@ -1723,7 +1793,8 @@ export class CenterPanel {
     const sorted = [...selectedTasks].sort((a, b) => b.source.line - a.source.line);
     for (const t of sorted) await this.deleteTask(t);
     this.selectedTaskKeys.clear();
-    this.lastClickedTaskKey = null;
+    this.selectionAnchorKey = null;
+    this.selectionFocusKey = null;
     this.updateSelectionVisuals();
   }
 
@@ -1814,7 +1885,7 @@ export class CenterPanel {
   }
 
   private showBulkContextMenu(e: MouseEvent, _card: HTMLElement): void {
-    const selectedKeys = Array.from(this.selectedTaskKeys);
+    const selectedKeys = this.visibleTaskKeys().filter((key) => this.selectedTaskKeys.has(key));
     const allTasks = [...this.queries.list()];
     const selectedTasks = selectedKeys
       .map((k) => {
@@ -1827,6 +1898,7 @@ export class CenterPanel {
 
     const menu = new Menu();
     const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const tomorrow = shiftLocalDate(today, 1);
     const allHaveToday = selectedTasks.every((t) => t.planning.due === today);
 
     // Header (non-interactive label)
@@ -1840,11 +1912,24 @@ export class CenterPanel {
     // Today toggle
     menu.addItem((item) =>
       item
-        .setTitle(allHaveToday ? '✓ Today (remove all)' : 'Set Today')
+        .setTitle('Today')
         .setIcon('calendar')
         .setSection('today')
-        .onClick(() => void Promise.all(selectedTasks.map((t) => this.toggleDueToday(t)))),
+        .setChecked(allHaveToday)
+        .onClick(() => void this.applyBulkDuePreset(selectedTasks, today)),
     );
+
+    if (tomorrow) {
+      const allHaveTomorrow = selectedTasks.every((task) => task.planning.due === tomorrow);
+      menu.addItem((item) =>
+        item
+          .setTitle('Tomorrow')
+          .setIcon('calendar-plus')
+          .setSection('today')
+          .setChecked(allHaveTomorrow)
+          .onClick(() => void this.applyBulkDuePreset(selectedTasks, tomorrow)),
+      );
+    }
 
     // Pinned tags
     for (const pinnedTag of this.settings.pinnedTags) {
@@ -1866,6 +1951,14 @@ export class CenterPanel {
         void Promise.all(selectedTasks.map((t) => this.setTaskStatus(t, c)));
       });
     });
+
+    menu.addItem((item) =>
+      item
+        .setTitle('Set date…')
+        .setIcon('calendar-cog')
+        .setSection('actions')
+        .onClick(() => this.openTaskDatePicker(_card, selectedTasks)),
+    );
 
     // Set tag…
     menu.addItem((item) =>
@@ -2837,6 +2930,14 @@ export class CenterPanel {
 
   private async toggleDueToday(task: TaskSnapshot): Promise<void> {
     const today = localDate(window.moment().format('YYYY-MM-DD'));
+    await this.toggleTaskDuePreset(task, today);
+  }
+
+  private async toggleTaskDuePreset(task: TaskSnapshot, value: LocalDate): Promise<void> {
+    await this.setTaskDue(task, task.planning.due === value ? null : value);
+  }
+
+  private async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<void> {
     const ref = task.ref;
     if (!ref || !this.tasks) return;
     presentTaskCommandResult(
@@ -2844,14 +2945,114 @@ export class CenterPanel {
         type: 'patch',
         target: { type: 'task', ref },
         patch: {
-          due: task.planning.due === today ? { type: 'clear' } : { type: 'set', value: today },
+          due: value === null ? { type: 'clear' } : { type: 'set', value },
         },
       }),
     );
   }
 
+  private async applyDueInOrder(tasks: readonly TaskSnapshot[], value: LocalDate): Promise<void> {
+    for (const task of tasks) await this.setTaskDue(task, value);
+  }
+
+  private async applyBulkDuePreset(
+    tasks: readonly TaskSnapshot[],
+    value: LocalDate,
+  ): Promise<void> {
+    const shouldClear = tasks.every((task) => task.planning.due === value);
+    if (!shouldClear) {
+      await this.applyDueInOrder(tasks, value);
+      return;
+    }
+    for (const task of tasks) await this.setTaskDue(task, null);
+  }
+
+  private openTaskDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void {
+    const firstDue = tasks[0]?.planning.due;
+    const initialValue =
+      firstDue && tasks.every((task) => task.planning.due === firstDue) ? firstDue : undefined;
+    showDatePickerPopover({
+      owner: this.el,
+      anchor,
+      ...(initialValue !== undefined && { initialValue }),
+      onPick: (inputValue) => {
+        try {
+          const value = localDate(inputValue);
+          if (tasks.length === 1) void this.setTaskDue(tasks[0]!, value);
+          else void this.applyDueInOrder(tasks, value);
+        } catch {
+          // Native date inputs are normally valid; malformed programmatic values remain a no-op.
+        }
+      },
+    });
+  }
+
   private taskKey(task: TaskSnapshot): string {
     return `${task.source.filePath}:${task.source.line}`;
+  }
+
+  private visibleTaskCards(): HTMLElement[] {
+    if (this.state.get('mode') !== 'tasks') return [];
+    const scroll = Array.from(this.el.children).find((child) =>
+      child.classList.contains('tc-center-scroll'),
+    );
+    return scroll ? Array.from(scroll.querySelectorAll<HTMLElement>('.tc-task-card')) : [];
+  }
+
+  private visibleTaskKeys(): string[] {
+    return this.visibleTaskCards().map(
+      (card) => `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`,
+    );
+  }
+
+  private replaceRangeSelection(anchor: string, focus: string, keys: readonly string[]): void {
+    const anchorIndex = keys.indexOf(anchor);
+    const focusIndex = keys.indexOf(focus);
+    this.selectedTaskKeys.clear();
+    if (anchorIndex !== -1 && focusIndex !== -1) {
+      const from = Math.min(anchorIndex, focusIndex);
+      const to = Math.max(anchorIndex, focusIndex);
+      for (const key of keys.slice(from, to + 1)) this.selectedTaskKeys.add(key);
+    }
+    this.updateSelectionVisuals();
+  }
+
+  private reconcileTaskSelection(keys: readonly string[]): void {
+    const visible = new Set(keys);
+    for (const key of this.selectedTaskKeys) {
+      if (!visible.has(key)) this.selectedTaskKeys.delete(key);
+    }
+    const firstSelected = keys.find((key) => this.selectedTaskKeys.has(key)) ?? null;
+    if (firstSelected === null) {
+      this.selectionAnchorKey = null;
+      this.selectionFocusKey = null;
+      return;
+    }
+    if (!this.selectionAnchorKey || !visible.has(this.selectionAnchorKey)) {
+      this.selectionAnchorKey = firstSelected;
+    }
+    if (!this.selectionFocusKey || !visible.has(this.selectionFocusKey)) {
+      this.selectionFocusKey = firstSelected;
+    }
+  }
+
+  private focusTaskKey(key: string): void {
+    const index = this.visibleTaskKeys().indexOf(key);
+    const card = index === -1 ? undefined : this.visibleTaskCards()[index];
+    if (!card) return;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView?.({ block: 'nearest' });
+  }
+
+  private taskForKey(key: string): TaskSnapshot | undefined {
+    const separator = key.lastIndexOf(':');
+    if (separator === -1) return undefined;
+    const filePath = key.slice(0, separator);
+    const line = Number(key.slice(separator + 1));
+    if (!Number.isInteger(line)) return undefined;
+    return this.queries
+      .list()
+      .find((task) => task.source.filePath === filePath && task.source.line === line);
   }
 
   private updateSelectionVisuals(): void {
