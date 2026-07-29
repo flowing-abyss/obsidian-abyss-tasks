@@ -1753,6 +1753,17 @@ describe('MonthGridView', () => {
   });
 
   describe('calendar surface style contract', () => {
+    it('aligns the Month span layer origin with the day-label line box', () => {
+      let monthSpanLayer = '';
+      for (const match of css.matchAll(/^\.tc-mg-span-layer[ \t]*\{([^}]*)\}/gmu)) {
+        monthSpanLayer = match[1] ?? '';
+      }
+      const monthDayLabel = declarationsFor('.tc-mg-day-label');
+
+      expect(monthDayLabel).toMatch(/font-size\s*:\s*0\.75em/u);
+      expect(monthSpanLayer).toMatch(/top\s*:\s*calc\(3px\s*\+\s*0\.75lh\)/u);
+    });
+
     it('keeps Month at the shared item scale while allowing vertical grid scrolling', () => {
       const monthGrid = declarationsFor('.tc-mg-grid');
       const monthRow = declarationsFor('.tc-mg-row');

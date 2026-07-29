@@ -2151,7 +2151,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-mg-span-layer {
-  top: 1.45em;
+  top: calc(3px + 0.75lh);
   right: 0;
   left: 22px;
 }
