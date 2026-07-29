@@ -498,11 +498,22 @@ function linkTitleEnd(source: string, from: number): number | null {
   const opener = source[from] ?? '';
   const closer = opener === '(' ? ')' : opener;
   if (opener !== '"' && opener !== "'" && opener !== '(') return null;
+  let lineHasContent = true;
   for (let cursor = from + 1; cursor < source.length; cursor++) {
     if (source[cursor] === '\\') {
       cursor++;
+      lineHasContent = true;
       continue;
     }
+    if (source[cursor] === '\n') {
+      if (!lineHasContent) return null;
+      lineHasContent = false;
+      continue;
+    }
+    if (source[cursor] !== ' ' && source[cursor] !== '\t' && source[cursor] !== '\r') {
+      lineHasContent = true;
+    }
+    if (opener === '(' && source[cursor] === '(') return null;
     if (source[cursor] === closer) return cursor + 1;
   }
   return null;
@@ -522,7 +533,7 @@ function bareLinkDestinationEnd(source: string, from: number): number | null {
     } else if (character === ')') {
       if (depth === 0) return cursor;
       depth--;
-    } else if (/\s/u.test(character) || character.charCodeAt(0) < 32) {
+    } else if (character.charCodeAt(0) <= 32 || character.charCodeAt(0) === 127) {
       return cursor;
     }
     cursor++;
@@ -654,17 +665,32 @@ function quotedAngleEnd(source: string, from: number): number | null {
   return null;
 }
 
-function angleLiteralEnd(source: string, from: number): number | null {
+interface SemanticScanState {
+  htmlCommentFailed: boolean;
+  processingInstructionFailed: boolean;
+  cdataFailed: boolean;
+  declarationFailed: boolean;
+}
+
+function angleLiteralEnd(source: string, from: number, state: SemanticScanState): number | null {
   if (source[from] !== '<' || isEscaped(source, from)) return null;
 
-  const terminatedLiteral = (delimiter: string): number | null => {
+  const terminatedLiteral = (
+    delimiter: string,
+    failure: keyof Omit<SemanticScanState, 'htmlCommentFailed'>,
+  ): number | null => {
+    if (state[failure]) return null;
     const close = source.indexOf(delimiter, from + 2);
-    return close < 0 ? null : close + delimiter.length;
+    if (close >= 0) return close + delimiter.length;
+    state[failure] = true;
+    return null;
   };
-  if (source.startsWith('<?', from)) return terminatedLiteral('?>');
-  if (source.startsWith('<![CDATA[', from)) return terminatedLiteral(']]>');
+  if (source.startsWith('<?', from)) {
+    return terminatedLiteral('?>', 'processingInstructionFailed');
+  }
+  if (source.startsWith('<![CDATA[', from)) return terminatedLiteral(']]>', 'cdataFailed');
   if (source.startsWith('<!', from)) {
-    const to = terminatedLiteral('>');
+    const to = terminatedLiteral('>', 'declarationFailed');
     if (to === null) return null;
     return ASCII_LETTER.test(source[from + 2] ?? '') ? to : null;
   }
@@ -800,14 +826,28 @@ interface SemanticLiteralMatch {
   readonly scanTo: number;
 }
 
-function commentLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+function isHtmlBlockStart(source: string, from: number): boolean {
+  let spaces = 0;
+  for (let cursor = from - 1; cursor >= 0 && source[cursor] !== '\n'; cursor--) {
+    if (source[cursor] !== ' ' || ++spaces > 3) return false;
+  }
+  return true;
+}
+
+function commentLiteralAt(
+  source: string,
+  from: number,
+  state: SemanticScanState,
+): SemanticLiteralMatch | null {
   if (source.startsWith('<!--', from) && !isEscaped(source, from)) {
     let to: number | null = null;
     if (source.startsWith('<!-->', from)) to = from + 5;
     else if (source.startsWith('<!--->', from)) to = from + 6;
-    else {
+    else if (!state.htmlCommentFailed) {
       const close = source.indexOf('-->', from + 4);
       if (close >= 0) to = close + 3;
+      else if (isHtmlBlockStart(source, from)) to = source.length;
+      else state.htmlCommentFailed = true;
     }
     if (to === null) return null;
     return { range: { from, to }, scanTo: to };
@@ -826,17 +866,21 @@ function mathLiteralAt(source: string, from: number): SemanticLiteralMatch | nul
   return to === null ? null : { range: { from, to }, scanTo: to };
 }
 
-function semanticLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+function semanticLiteralAt(
+  source: string,
+  from: number,
+  state: SemanticScanState,
+): SemanticLiteralMatch | null {
   const definitionEnd = referenceDefinitionEnd(source, from);
   if (definitionEnd !== null) {
     return { range: { from, to: definitionEnd }, scanTo: definitionEnd };
   }
 
-  const comment = commentLiteralAt(source, from);
+  const comment = commentLiteralAt(source, from, state);
   if (comment) return comment;
 
   if (source[from] === '<') {
-    const to = angleLiteralEnd(source, from);
+    const to = angleLiteralEnd(source, from, state);
     if (to !== null) return { range: { from, to }, scanTo: to };
   }
 
@@ -904,6 +948,12 @@ function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
   const codeRanges = excludedCodeRanges(source);
   const ranges: SourceRange[] = [...codeRanges];
   const opaqueRanges: SourceRange[] = [...codeRanges];
+  const semanticState: SemanticScanState = {
+    htmlCommentFailed: false,
+    processingInstructionFailed: false,
+    cdataFailed: false,
+    declarationFailed: false,
+  };
   const wikiState: WikiScanState = { from: -1, pipe: -1 };
   let codeIndex = 0;
   let cursor = 0;
@@ -918,6 +968,17 @@ function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
       continue;
     }
 
+    const literal = semanticLiteralAt(source, cursor, semanticState);
+    if (literal) {
+      ranges.push(literal.range);
+      opaqueRanges.push({ from: cursor, to: literal.scanTo });
+      if (wikiState.from >= 0 && source.slice(cursor, literal.scanTo).includes('\n')) {
+        resetWikiScan(wikiState);
+      }
+      cursor = literal.scanTo;
+      continue;
+    }
+
     const wiki = wikiScanAt(source, cursor, wikiState);
     if (wiki) {
       if (wiki.target && wiki.opaque) {
@@ -925,14 +986,6 @@ function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
         opaqueRanges.push(wiki.opaque);
       }
       cursor = wiki.to;
-      continue;
-    }
-
-    const literal = semanticLiteralAt(source, cursor);
-    if (literal) {
-      ranges.push(literal.range);
-      opaqueRanges.push({ from: cursor, to: literal.scanTo });
-      cursor = literal.scanTo;
       continue;
     }
 

@@ -1,4 +1,5 @@
 // test/tag-manager-files.test.ts
+import { performance } from 'node:perf_hooks';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -29,17 +30,41 @@ async function read(app: Awaited<ReturnType<typeof createAppWithFiles>>, path: s
 function countedString(value: string): {
   readonly source: string;
   readonly indexedReads: () => number;
+  readonly nativeSearchWork: () => number;
 } {
   let indexedReads = 0;
+  let nativeSearchWork = 0;
   const target = Object(value);
   const source = new Proxy(target, {
     get(candidate, property) {
       if (typeof property === 'string' && /^(?:0|[1-9]\d*)$/u.test(property)) indexedReads++;
+      if (property === 'indexOf') {
+        return (search: string, position = 0): number => {
+          nativeSearchWork += Math.max(0, value.length - Math.max(0, position));
+          return String.prototype.indexOf.call(candidate, search, position);
+        };
+      }
+      if (property === 'lastIndexOf') {
+        return (search: string, position = value.length): number => {
+          nativeSearchWork += Math.min(value.length, Math.max(0, position + 1));
+          return String.prototype.lastIndexOf.call(candidate, search, position);
+        };
+      }
+      if (property === 'startsWith') {
+        return (search: string, position = 0): boolean => {
+          nativeSearchWork += search.length;
+          return String.prototype.startsWith.call(candidate, search, position);
+        };
+      }
       const member = Reflect.get(candidate, property, candidate) as unknown;
       return typeof member === 'function' ? member.bind(candidate) : member;
     },
   }) as unknown as string;
-  return { source, indexedReads: () => indexedReads };
+  return {
+    source,
+    indexedReads: () => indexedReads,
+    nativeSearchWork: () => nativeSearchWork,
+  };
 }
 
 describe('TagManager exact and prefix vault rename', () => {
@@ -357,6 +382,18 @@ describe('TagManager exact and prefix vault rename', () => {
     );
   });
 
+  it('keeps an NBSP inside a valid bare link destination byte-identical', async () => {
+    const original = '[label](url\u00a0#work) outside #work\n';
+    const { tm, app } = await makeManager({ 'notes/nbsp-destination.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/nbsp-destination.md'] });
+    expect(await read(app, 'notes/nbsp-destination.md')).toBe(
+      '[label](url\u00a0#work) outside #focus\n',
+    );
+  });
+
   it.each([
     {
       name: 'a forbidden nested link',
@@ -373,6 +410,16 @@ describe('TagManager exact and prefix vault rename', () => {
       original: 'Opening [ prose\n\nclosing ](#work)\n',
       expected: 'Opening [ prose\n\nclosing ](#focus)\n',
     },
+    {
+      name: 'a blank line inside a quoted title',
+      original: '[label](url "title\n\n#work") outside #work\n',
+      expected: '[label](url "title\n\n#focus") outside #focus\n',
+    },
+    {
+      name: 'an unescaped opening parenthesis inside a parenthesized title',
+      original: '[label](url (title ( #work)) outside #work\n',
+      expected: '[label](url (title ( #focus)) outside #focus\n',
+    },
   ])('renames visible destination-shaped prose after $name', async ({ original, expected }) => {
     const { tm, app } = await makeManager({ 'notes/invalid-links.md': original });
 
@@ -380,6 +427,26 @@ describe('TagManager exact and prefix vault rename', () => {
 
     expect(result).toEqual({ type: 'ok', changedFiles: ['notes/invalid-links.md'] });
     expect(await read(app, 'notes/invalid-links.md')).toBe(expected);
+  });
+
+  it('keeps comments and math semantic after an unmatched wiki opener', async () => {
+    const original = [
+      'Unmatched [[ prose <!-- #work --> outside #work',
+      'Unmatched [[ prose $#work$ outside #work',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({ 'notes/wiki-literals.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/wiki-literals.md'] });
+    expect(await read(app, 'notes/wiki-literals.md')).toBe(
+      [
+        'Unmatched [[ prose <!-- #work --> outside #focus',
+        'Unmatched [[ prose $#work$ outside #focus',
+        '',
+      ].join('\n'),
+    );
   });
 
   it('keeps unmatched label scanning within a linear indexed-read budget', () => {
@@ -431,6 +498,42 @@ describe('TagManager exact and prefix vault rename', () => {
     expect(result).toEqual({ type: 'ok', changedFiles: ['notes/raw-html.md'] });
     expect(await read(app, 'notes/raw-html.md')).toBe(expected);
   });
+
+  it('keeps an unterminated block HTML comment opaque through end of file', () => {
+    const original = '<!--\n#work\noutside #work\n';
+
+    expect(transformMarkdownTags(original, '#work', '#focus', 'exact')).toBe(original);
+  });
+
+  it.each(['<?', '<!--'])(
+    'keeps repeated malformed %s scanning within deterministic native-search bounds',
+    (candidate) => {
+      const scan = (
+        count: number,
+      ): { readonly searchWork: number; readonly length: number; readonly elapsedMs: number } => {
+        const original = `${candidate.repeat(count)} trailing #work`;
+        const counted = countedString(original);
+        const started = performance.now();
+        const transformed = transformMarkdownTags(counted.source, '#work', '#focus', 'exact');
+        const elapsedMs = performance.now() - started;
+        const expected =
+          candidate === '<!--' ? original : `${candidate.repeat(count)} trailing #focus`;
+        expect(transformed).toBe(expected);
+        return {
+          searchWork: counted.nativeSearchWork(),
+          length: original.length,
+          elapsedMs,
+        };
+      };
+
+      const small = scan(1_000);
+      const large = scan(2_000);
+
+      expect(large.searchWork).toBeLessThanOrEqual(large.length * 20);
+      expect(large.searchWork).toBeLessThanOrEqual(small.searchWork * 3);
+      expect(large.elapsedMs).toBeLessThan(1_000);
+    },
+  );
 
   it('exact rename handles indentless and commented block tags while preserving quoted fences', async () => {
     const original = [
