@@ -1667,7 +1667,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-span-edge:hover::after,
 .tc-tg-resize-handle:active::after,
 .tc-tg-span-edge:active::after,
-.tc-tg-block:focus-within > .tc-tg-resize-handle::after,
 .tc-tg-block:focus-within > .tc-tg-span-edge::after,
 .tc-span-piece:focus-within > .tc-tg-span-edge::after,
 [data-active-resize='start-time'] > [data-resize-edge='start-time']::after,

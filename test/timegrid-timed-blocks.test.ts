@@ -934,11 +934,13 @@ describe('renderTimedBlocksForDay', () => {
     expect(declarationsFor('.tc-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
   });
 
-  it('reveals edge-local grips on handle hover, source focus-within, and only the matching active edge', () => {
+  it('reveals edge-local grips on handle hover, active press, and only the matching active edge', () => {
     const revealed = declarationsForRuleContaining(
       '.tc-tg-resize-handle:hover::after',
       '.tc-tg-span-edge:hover::after',
-      '.tc-tg-block:focus-within > .tc-tg-resize-handle::after',
+      '.tc-tg-resize-handle:active::after',
+      '.tc-tg-span-edge:active::after',
+      '.tc-tg-block:focus-within > .tc-tg-span-edge::after',
       '.tc-span-piece:focus-within > .tc-tg-span-edge::after',
       "[data-active-resize='start-time'] > [data-resize-edge='start-time']::after",
       "[data-active-resize='duration'] > [data-resize-edge='duration']::after",
@@ -947,6 +949,7 @@ describe('renderTimedBlocksForDay', () => {
     );
 
     expect(revealed).toMatch(/opacity\s*:\s*1/u);
+    expect(css).not.toContain('.tc-tg-block:focus-within > .tc-tg-resize-handle::after');
     expect(css).not.toMatch(/\[data-active-resize\](?!\s*=)/u);
     expect(
       declarationsForRuleContaining(
