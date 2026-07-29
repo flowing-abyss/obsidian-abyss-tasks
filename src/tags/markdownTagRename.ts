@@ -501,8 +501,8 @@ function linkTitleEnd(source: string, from: number): number | null {
   let lineHasContent = true;
   for (let cursor = from + 1; cursor < source.length; cursor++) {
     if (source[cursor] === '\\') {
-      cursor++;
       lineHasContent = true;
+      if (source[cursor + 1] !== '\n' && source[cursor + 1] !== '\r') cursor++;
       continue;
     }
     if (source[cursor] === '\n') {
@@ -843,7 +843,9 @@ function commentLiteralAt(
     let to: number | null = null;
     if (source.startsWith('<!-->', from)) to = from + 5;
     else if (source.startsWith('<!--->', from)) to = from + 6;
-    else if (!state.htmlCommentFailed) {
+    else if (state.htmlCommentFailed) {
+      if (isHtmlBlockStart(source, from)) to = source.length;
+    } else {
       const close = source.indexOf('-->', from + 4);
       if (close >= 0) to = close + 3;
       else if (isHtmlBlockStart(source, from)) to = source.length;

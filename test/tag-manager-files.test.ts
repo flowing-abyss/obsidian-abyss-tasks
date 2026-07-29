@@ -416,6 +416,11 @@ describe('TagManager exact and prefix vault rename', () => {
       expected: '[label](url "title\n\n#focus") outside #focus\n',
     },
     {
+      name: 'a backslash before a blank line inside a quoted title',
+      original: '[label](url "title\\\n\n#work") outside #work\n',
+      expected: '[label](url "title\\\n\n#focus") outside #focus\n',
+    },
+    {
       name: 'an unescaped opening parenthesis inside a parenthesized title',
       original: '[label](url (title ( #work)) outside #work\n',
       expected: '[label](url (title ( #focus)) outside #focus\n',
@@ -503,6 +508,14 @@ describe('TagManager exact and prefix vault rename', () => {
     const original = '<!--\n#work\noutside #work\n';
 
     expect(transformMarkdownTags(original, '#work', '#focus', 'exact')).toBe(original);
+  });
+
+  it('recognizes a block HTML comment after a failed inline comment candidate', () => {
+    const original = 'Inline malformed <!-- visible #work\n<!--\nblock #work\n';
+
+    expect(transformMarkdownTags(original, '#work', '#focus', 'exact')).toBe(
+      'Inline malformed <!-- visible #focus\n<!--\nblock #work\n',
+    );
   });
 
   it.each(['<?', '<!--'])(
