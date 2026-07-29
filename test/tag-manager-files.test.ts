@@ -193,9 +193,10 @@ describe('TagManager exact and prefix vault rename', () => {
         'tags: [focus, work/dev]',
         '---',
         'Visible #focus and #work/dev.',
-        '[visible #focus](https://host/#work) and <https://host/#work>.',
+        '[visible #focus](https://host/#work), ![alt](image#work), <https://host/#work>, and <user#work@example.com>.',
+        '[escaped \\] label #focus](https://host/#work) and [nested [label] #focus](https://host/#work).',
         'Wiki [[Note#work|visible #focus]] and target-only [[Note#work]].',
-        '<span data-tag="#work" title="#work">Visible #focus</span>',
+        '<span data-tag="#work" title="#work">Visible #focus</span> <meta data-tag="#work" />',
         '<!-- #work and #work/dev stay comments -->',
         'Reference [docs][work-ref].',
         '[work-ref]: https://host/page#work "literal #work"',
@@ -217,9 +218,10 @@ describe('TagManager exact and prefix vault rename', () => {
         'tags: [focus, focus/dev]',
         '---',
         'Visible #focus and #focus/dev.',
-        '[visible #focus](https://host/#work) and <https://host/#work>.',
+        '[visible #focus](https://host/#work), ![alt](image#work), <https://host/#work>, and <user#work@example.com>.',
+        '[escaped \\] label #focus](https://host/#work) and [nested [label] #focus](https://host/#work).',
         'Wiki [[Note#work|visible #focus]] and target-only [[Note#work]].',
-        '<span data-tag="#work" title="#work">Visible #focus</span>',
+        '<span data-tag="#work" title="#work">Visible #focus</span> <meta data-tag="#work" />',
         '<!-- #work and #work/dev stay comments -->',
         'Reference [docs][work-ref].',
         '[work-ref]: https://host/page#work "literal #work"',
@@ -242,9 +244,10 @@ describe('TagManager exact and prefix vault rename', () => {
         'tags: [work, work/dev]',
         '---',
         'Visible #work and #work/dev.',
-        '[visible #work](https://host/#work) and <https://host/#work>.',
+        '[visible #work](https://host/#work), ![alt](image#work), <https://host/#work>, and <user#work@example.com>.',
+        '[escaped \\] label #work](https://host/#work) and [nested [label] #work](https://host/#work).',
         'Wiki [[Note#work|visible #work]] and target-only [[Note#work]].',
-        '<span data-tag="#work" title="#work">Visible #work</span>',
+        '<span data-tag="#work" title="#work">Visible #work</span> <meta data-tag="#work" />',
         '<!-- #work and #work/dev stay comments -->',
         'Reference [docs][work-ref].',
         '[work-ref]: https://host/page#work "literal #work"',
@@ -269,6 +272,36 @@ describe('TagManager exact and prefix vault rename', () => {
       expect(await read(app, 'notes/semantic-ranges.md')).toBe(expected);
     },
   );
+
+  it.each([
+    {
+      name: 'an unmatched Markdown destination delimiter',
+      original: 'Delimiter-shaped prose ](#work) remains visible.\n',
+      expected: 'Delimiter-shaped prose ](#focus) remains visible.\n',
+    },
+    {
+      name: 'an escaped Markdown label opener',
+      original: 'Escaped opener \\[label](#work) remains visible.\n',
+      expected: 'Escaped opener \\[label](#focus) remains visible.\n',
+    },
+    {
+      name: 'comparison operators',
+      original: 'Comparison prose 1 < 2 #work > 0 remains visible.\n',
+      expected: 'Comparison prose 1 < 2 #focus > 0 remains visible.\n',
+    },
+    {
+      name: 'malformed HTML-like markup',
+      original: 'Malformed markup <span #work> remains visible.\n',
+      expected: 'Malformed markup <span #focus> remains visible.\n',
+    },
+  ])('exact rename changes visible tags inside $name', async ({ original, expected }) => {
+    const { tm, app } = await makeManager({ 'notes/delimiter-prose.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/delimiter-prose.md'] });
+    expect(await read(app, 'notes/delimiter-prose.md')).toBe(expected);
+  });
 
   it('exact rename handles indentless and commented block tags while preserving quoted fences', async () => {
     const original = [

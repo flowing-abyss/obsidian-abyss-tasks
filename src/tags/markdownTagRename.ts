@@ -509,20 +509,143 @@ function markdownLinkDestinationEnd(source: string, from: number): number | null
   return null;
 }
 
-function angleLiteralEnd(source: string, from: number): number | null {
-  if (source[from] !== '<') return null;
+function markdownLinkDestinationRange(
+  source: string,
+  from: number,
+): { readonly destination: SourceRange; readonly to: number } | null {
+  if (source[from] !== '[' || isEscaped(source, from)) return null;
+  let depth = 1;
+  for (let cursor = from + 1; cursor < source.length; cursor++) {
+    const character = source[cursor] ?? '';
+    if (character === '\\') {
+      cursor++;
+      continue;
+    }
+    if (character === '[') {
+      depth++;
+      continue;
+    }
+    if (character !== ']' || --depth !== 0) continue;
+    const to = markdownLinkDestinationEnd(source, cursor);
+    return to === null ? null : { destination: { from: cursor + 1, to }, to };
+  }
+  return null;
+}
+
+const ASCII_LETTER = /^[A-Za-z]$/u;
+const ASCII_ALPHANUMERIC = /^[A-Za-z0-9]$/u;
+const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]{1,31}$/u;
+const EMAIL_LOCAL = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u;
+const EMAIL_DOMAIN_LABEL = /^[A-Za-z0-9-]+$/u;
+const HTML_TAG_NAME = /[A-Za-z][A-Za-z0-9-]*/uy;
+const HTML_WHITESPACE = /[ \t\r\n]+/uy;
+const HTML_ATTRIBUTE_NAME = /[A-Za-z_:][A-Za-z0-9_.:-]*/uy;
+const HTML_ATTRIBUTE_VALUE = /(?:[^ "'=<>`]+|'[^']*'|"[^"]*")/uy;
+
+function isUriAutolink(source: string): boolean {
+  const colon = source.indexOf(':');
+  if (colon < 2 || colon > 32 || !URI_SCHEME.test(source.slice(0, colon))) return false;
+  for (const character of source.slice(colon + 1)) {
+    const code = character.charCodeAt(0);
+    if (code <= 32 || code === 127 || character === '<' || character === '>') return false;
+  }
+  return true;
+}
+
+function isEmailAutolink(source: string): boolean {
+  const at = source.indexOf('@');
+  if (at <= 0 || at !== source.lastIndexOf('@') || at === source.length - 1) return false;
+  if (!EMAIL_LOCAL.test(source.slice(0, at))) return false;
+  return source
+    .slice(at + 1)
+    .split('.')
+    .every(
+      (label) =>
+        label.length >= 1 &&
+        label.length <= 63 &&
+        ASCII_ALPHANUMERIC.test(label[0] ?? '') &&
+        ASCII_ALPHANUMERIC.test(label[label.length - 1] ?? '') &&
+        EMAIL_DOMAIN_LABEL.test(label),
+    );
+}
+
+function tokenEnd(pattern: RegExp, source: string, from: number): number | null {
+  pattern.lastIndex = from;
+  return pattern.exec(source) ? pattern.lastIndex : null;
+}
+
+function isHtmlTag(source: string): boolean {
+  const body = source.slice(1, -1);
+  let cursor = 0;
+  const closing = body[cursor] === '/';
+  if (closing) cursor++;
+  const nameEnd = tokenEnd(HTML_TAG_NAME, body, cursor);
+  if (nameEnd === null) return false;
+  cursor = nameEnd;
+
+  if (closing) {
+    return (tokenEnd(HTML_WHITESPACE, body, cursor) ?? cursor) === body.length;
+  }
+
+  while (cursor < body.length) {
+    const attributeFrom = tokenEnd(HTML_WHITESPACE, body, cursor);
+    if (attributeFrom === null) return body.slice(cursor) === '/';
+    if (attributeFrom === body.length) return true;
+    if (body[attributeFrom] === '/') return attributeFrom + 1 === body.length;
+    const attributeEnd = tokenEnd(HTML_ATTRIBUTE_NAME, body, attributeFrom);
+    if (attributeEnd === null) return false;
+    cursor = tokenEnd(HTML_WHITESPACE, body, attributeEnd) ?? attributeEnd;
+    if (body[cursor] !== '=') {
+      cursor = attributeEnd;
+      continue;
+    }
+    cursor = tokenEnd(HTML_WHITESPACE, body, cursor + 1) ?? cursor + 1;
+    const valueEnd = tokenEnd(HTML_ATTRIBUTE_VALUE, body, cursor);
+    if (valueEnd === null) return false;
+    cursor = valueEnd;
+  }
+  return true;
+}
+
+function quotedAngleEnd(source: string, from: number): number | null {
   let quote = '';
   for (let cursor = from + 1; cursor < source.length; cursor++) {
     const character = source[cursor] ?? '';
     if (quote) {
-      if (character === '\\') cursor++;
-      else if (character === quote) quote = '';
+      if (character === quote) quote = '';
       continue;
     }
     if (character === '"' || character === "'") quote = character;
     else if (character === '>') return cursor + 1;
   }
   return null;
+}
+
+function angleLiteralEnd(source: string, from: number): number | null {
+  if (source[from] !== '<' || isEscaped(source, from)) return null;
+
+  const terminatedLiteral = (delimiter: string): number | null => {
+    const close = source.indexOf(delimiter, from + 2);
+    return close < 0 ? null : close + delimiter.length;
+  };
+  if (source.startsWith('<?', from)) return terminatedLiteral('?>');
+  if (source.startsWith('<![CDATA[', from)) return terminatedLiteral(']]>');
+  if (source.startsWith('<!', from)) {
+    const to = terminatedLiteral('>');
+    if (to === null) return null;
+    return ASCII_LETTER.test(source[from + 2] ?? '') ? to : null;
+  }
+
+  const autolinkClose = source.indexOf('>', from + 1);
+  if (autolinkClose >= 0) {
+    const content = source.slice(from + 1, autolinkClose);
+    if (isUriAutolink(content) || isEmailAutolink(content)) return autolinkClose + 1;
+  }
+
+  const htmlClose = quotedAngleEnd(source, from);
+  if (htmlClose === null) return null;
+  const candidate = source.slice(from, htmlClose);
+  return isHtmlTag(candidate) ? htmlClose : null;
 }
 
 function wikiLinkTargetRange(
@@ -621,9 +744,9 @@ function semanticLiteralAt(source: string, from: number): SemanticLiteralMatch |
   const wiki = wikiLinkTargetRange(source, from);
   if (wiki) return { range: wiki.target, scanTo: wiki.to };
 
-  const destinationEnd = markdownLinkDestinationEnd(source, from);
-  if (destinationEnd !== null) {
-    return { range: { from: from + 1, to: destinationEnd }, scanTo: destinationEnd };
+  const destination = markdownLinkDestinationRange(source, from);
+  if (destination) {
+    return { range: destination.destination, scanTo: destination.to };
   }
 
   if (source[from] === '<') {
