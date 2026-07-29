@@ -112,6 +112,14 @@ function declarationsFor(selector: string): string {
     .join('\n');
 }
 
+function supplementalTopPaddingPx(selector: string): number {
+  const declaration = declarationsFor(selector);
+  const prefix = 'padding-top: calc(';
+  const valueStart = declaration.indexOf(prefix) + prefix.length;
+  const valueEnd = declaration.indexOf('px', valueStart);
+  return Number(declaration.slice(valueStart, valueEnd));
+}
+
 describe('Panel shell top rhythm', () => {
   it('defines one responsive inset and one subtle theme-derived root edge', () => {
     const panel = declarationsFor('.tc-panel-view');
@@ -130,18 +138,33 @@ describe('Panel shell top rhythm', () => {
 
   it.each([
     ['.tc-layout > .tc-rail', '8px'],
-    ['.tc-layout > .tc-left > .tc-left-section:first-child', '4px'],
+    ['.tc-layout > .tc-left > .tc-left-section:first-child', '12px'],
     [
       '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
       '12px',
     ],
     ['.tc-layout--calendar > .tc-center > .tc-cal-nav', '8px'],
     ['.tc-layout--projects > .tc-center .tc-projects-toolbar', '12px'],
-    ['.tc-layout > .tc-right > .tc-right-header', '12px'],
+    ['.tc-layout > .tc-right > .tc-right-header:first-child', '12px'],
+    ['.tc-layout > .tc-right > .tc-breadcrumb:first-child', '18px'],
   ])('adds the inset to the approved top-level surface %s', (selector, existingTopPadding) => {
     expect(declarationsFor(selector)).toContain(
       `padding-top: calc(${existingTopPadding} + var(--tc-shell-top-inset))`,
     );
+  });
+
+  it('calibrates the first task-mode controls to the same 26px plus inset centerline', () => {
+    // Existing geometry after each supplemental top padding:
+    // rail half-button 18; left row margin 1 + padding 5 + half-icon 8; filter half-height 14.
+    const centerlines = [
+      supplementalTopPaddingPx('.tc-layout > .tc-rail') + 18,
+      supplementalTopPaddingPx('.tc-layout > .tc-left > .tc-left-section:first-child') + 1 + 5 + 8,
+      supplementalTopPaddingPx(
+        '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
+      ) + 14,
+    ];
+
+    expect(centerlines).toEqual([26, 26, 26]);
   });
 
   it('does not add the inset to content, grid, empty, section, or modal surfaces', () => {
@@ -155,7 +178,8 @@ describe('Panel shell top rhythm', () => {
       '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
       '.tc-layout--calendar > .tc-center > .tc-cal-nav',
       '.tc-layout--projects > .tc-center .tc-projects-toolbar',
-      '.tc-layout > .tc-right > .tc-right-header',
+      '.tc-layout > .tc-right > .tc-right-header:first-child',
+      '.tc-layout > .tc-right > .tc-breadcrumb:first-child',
     ]);
 
     for (const selector of [
@@ -165,6 +189,7 @@ describe('Panel shell top rhythm', () => {
       '.tc-center-empty',
       '.tc-modal-body',
       '.tc-modal .tc-right-header',
+      '.tc-layout > .tc-right > .tc-right-header',
     ]) {
       expect(declarationsFor(selector)).not.toContain('var(--tc-shell-top-inset)');
     }

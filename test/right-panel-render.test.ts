@@ -333,11 +333,19 @@ describe('RightPanel.renderTask', () => {
     },
   );
 
-  it('breadcrumb renders only when stack.length > 1', async () => {
+  it('renders the root header first and the nested breadcrumb immediately before its header', async () => {
     const { state, el } = await makePanel();
-    state.set('taskStack', [task({ title: 'Parent' }), task({ title: 'Child' })]);
-    const breadcrumb = el.querySelector('.tc-breadcrumb');
-    expect(breadcrumb).not.toBeNull();
+    const child = subtask({ title: 'Child' });
+    const parent = task({ title: 'Parent', subtasks: [child] });
+
+    state.set('taskStack', [parent]);
+    expect(el.firstElementChild?.classList.contains('tc-right-header')).toBe(true);
+    expect(el.querySelector('.tc-breadcrumb')).toBeNull();
+
+    state.set('taskStack', [parent, child]);
+    const breadcrumb = el.firstElementChild;
+    expect(breadcrumb?.classList.contains('tc-breadcrumb')).toBe(true);
+    expect(breadcrumb?.nextElementSibling?.classList.contains('tc-right-header')).toBe(true);
     // Crumb text renders via MarkdownRenderer (mocked as a noop in tests), so we
     // assert on the crumb item element's presence rather than its textContent.
     expect(breadcrumb?.querySelector('.tc-breadcrumb-item')).not.toBeNull();

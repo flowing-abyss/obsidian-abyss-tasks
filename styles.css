@@ -5215,7 +5215,7 @@ body.tc-modal-open .popover.hover-popover {
 }
 
 .tc-layout > .tc-left > .tc-left-section:first-child {
-  padding-top: calc(4px + var(--tc-shell-top-inset));
+  padding-top: calc(12px + var(--tc-shell-top-inset));
 }
 
 .tc-layout--tasks > .tc-center > .tc-center-header,
@@ -5231,6 +5231,10 @@ body.tc-modal-open .popover.hover-popover {
   padding-top: calc(12px + var(--tc-shell-top-inset));
 }
 
-.tc-layout > .tc-right > .tc-right-header {
+.tc-layout > .tc-right > .tc-right-header:first-child {
   padding-top: calc(12px + var(--tc-shell-top-inset));
+}
+
+.tc-layout > .tc-right > .tc-breadcrumb:first-child {
+  padding-top: calc(18px + var(--tc-shell-top-inset));
 }
