@@ -107,18 +107,24 @@ describe('ListView', () => {
     });
 
     it('other date → label formatted ddd, D MMM', () => {
-      const { view } = makeView();
-      const c = freshContainer();
-      // Pick a future date within the current month that isn't today/yesterday.
-      // ListView only renders the current month, and past dates go to the Overdue
-      // section (which uses the "Overdue" label, not the ddd, D MMM format).
-      const m = window.moment().add(2, 'days');
-      if (m.format('YYYY-MM-DD') === today()) m.add(1, 'day');
-      const d = m.format('YYYY-MM-DD');
-      view.render(c, [task({ status: 'open', planning: { due: d } })], resolvedConfig());
-      const labels = c.querySelectorAll('.tc-list-date-label');
-      const label = Array.from(labels).find((l) => l.textContent !== 'Overdue');
-      expect(label?.textContent ?? '').toMatch(/^[A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2}$/);
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-07-15T12:00:00Z'));
+      try {
+        const { view } = makeView();
+        const c = freshContainer();
+        // Pick a future date within the current month that isn't today/yesterday.
+        // ListView only renders the current month, and past dates go to the Overdue
+        // section (which uses the "Overdue" label, not the ddd, D MMM format).
+        const m = window.moment().add(2, 'days');
+        if (m.format('YYYY-MM-DD') === today()) m.add(1, 'day');
+        const d = m.format('YYYY-MM-DD');
+        view.render(c, [task({ status: 'open', planning: { due: d } })], resolvedConfig());
+        const labels = c.querySelectorAll('.tc-list-date-label');
+        const label = Array.from(labels).find((l) => l.textContent !== 'Overdue');
+        expect(label?.textContent ?? '').toMatch(/^[A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2}$/);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('dedup: task in multiple groups renders once', () => {
