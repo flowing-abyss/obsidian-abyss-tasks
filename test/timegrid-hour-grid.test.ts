@@ -33,7 +33,7 @@ describe('renderHourGrid', () => {
     expect(light).toMatch(/--tc-calendar-item-radius\s*:\s*6px/u);
     expect(light).toMatch(/--tc-calendar-item-pad-inline\s*:\s*6px/u);
     expect(light).toMatch(/--tc-calendar-item-rail\s*:\s*3px/u);
-    expect(light).toMatch(/--tc-calendar-ghost-rail\s*:\s*2px/u);
+    expect(light).toMatch(/--tc-calendar-ghost-rail\s*:\s*var\(--tc-calendar-item-rail\)/u);
     expect(light).toMatch(/--tc-event-fill-strength\s*:\s*11%/u);
     expect(light).toMatch(/--tc-event-outline-strength\s*:\s*24%/u);
     expect(light).toMatch(/--tc-event-focus-tag-strength\s*:\s*55%/u);
@@ -210,7 +210,7 @@ describe('renderHourGrid', () => {
     expect(container.querySelectorAll('.tc-tg-day-column')).toHaveLength(1);
   });
 
-  it("renders the now-line only in today's hour column, positioned by current time", () => {
+  it('renders the now-line across the full time grid, positioned by current time', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
@@ -218,14 +218,15 @@ describe('renderHourGrid', () => {
     const nowLines = container.querySelectorAll('.tc-tg-now-line');
     expect(nowLines).toHaveLength(1);
     const nowLine = nowLines[0] as HTMLElement;
-    expect(nowLine.parentElement).toBe(handles.days[0]?.hourColumnEl);
-    expect(nowLine.closest('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(today);
+    expect(nowLine.parentElement).toBe(handles.gridRowEl);
+    expect(nowLine.closest('.tc-tg-day-column')).toBeNull();
+    expect(handles.days[0]?.hourColumnEl.querySelector('.tc-tg-now-line')).toBeNull();
     expect(handles.days[1]?.hourColumnEl.querySelector('.tc-tg-now-line')).toBeNull();
     const top = parseFloat(nowLine.style.top);
     expect(top).toBeGreaterThanOrEqual(0);
   });
 
-  it("keeps the now-line dot at the inline start of today's column", () => {
+  it("centers the now-line dot in today's column across the full grid", () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const yesterday = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
@@ -233,29 +234,57 @@ describe('renderHourGrid', () => {
     const handles = renderHourGrid(container, [yesterday, today, tomorrow]);
     const dot = handles.nowLineEl?.querySelector('.tc-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
-    expect(dot.style.left).toBe('');
-    expect(declarationsFor('.tc-tg-now-line-dot')).toMatch(/left\s*:\s*0/u);
+    expect(dot.style.left).toBe('50%');
   });
 
-  it('single-date (Day view) render still shows a now-line at the column inline start', () => {
+  it('single-date (Day view) centers the now-line dot in its only column', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today]);
     const dot = handles.nowLineEl?.querySelector('.tc-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
-    expect(dot.style.left).toBe('');
+    expect(dot.style.left).toBe('50%');
   });
 
-  it('keeps the one-pixel now-line track beneath timed task blocks', () => {
+  it('keeps the full-width now-line beneath timed task blocks', () => {
     const nowLine = declarationsFor('.tc-tg-now-line');
     const taskBlock = declarationsFor('.tc-tg-block');
     const continuation = declarationsFor('.tc-tg-block-continuation');
-    expect(nowLine).toMatch(/left\s*:\s*0/u);
+    expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
     expect(nowLine).toMatch(/height\s*:\s*1px/u);
-    expect(nowLine).toMatch(/z-index\s*:\s*1/u);
+    expect(nowLine).toMatch(/z-index\s*:\s*0/u);
+    expect(nowLine).toMatch(/opacity\s*:\s*0\.48/u);
     expect(taskBlock).toMatch(/z-index\s*:\s*2/u);
     expect(continuation).toMatch(/z-index\s*:\s*2/u);
+  });
+
+  it('gives ghost span pieces the same track-fitting surface geometry as committed calendar items', () => {
+    const sharedSurface = declarationsForRuleContaining(
+      '.tc-tg-span',
+      '.tc-tg-span-continuation',
+      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
+      '.tc-mg-span-continuation',
+    );
+    const allDayBody = declarationsFor('.tc-tg-body');
+    const ghostTimegrid = declarationsFor('.tc-tg-span-continuation');
+    const ghostMonth = declarationsFor('.tc-mg-span-continuation');
+
+    expect(sharedSurface).toMatch(/box-sizing\s*:\s*border-box/u);
+    expect(sharedSurface).toMatch(
+      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid/u,
+    );
+    expect(sharedSurface).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
+    expect(allDayBody).toMatch(/box-sizing\s*:\s*border-box/u);
+    expect(allDayBody).not.toMatch(/block-size\s*:\s*100%/u);
+    expect(allDayBody).toMatch(/min-block-size\s*:\s*0/u);
+    expect(allDayBody).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+    expect(allDayBody).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+    expect(allDayBody).toMatch(/align-items\s*:\s*center/u);
+    expect(allDayBody).toMatch(/line-height\s*:\s*1\.4/u);
+    for (const ghost of [ghostTimegrid, ghostMonth]) {
+      expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u);
+    }
   });
 
   it('no now-line dot is rendered when today is not among the rendered dates', () => {

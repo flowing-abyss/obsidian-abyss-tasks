@@ -25,16 +25,17 @@ type MonthCandidate =
   | {
       readonly kind: 'span';
       readonly task: TaskSnapshot;
-      readonly segment: VisibleSpanSegment;
+      readonly segments: VisibleSpanSegment[];
     }
   | {
       readonly kind: MonthCompactKind;
       readonly task: TaskSnapshot;
+      readonly date: string;
     };
 
 function candidateGroup(candidate: MonthCandidate): number {
   if (candidate.kind === 'deadline') return 2;
-  return candidate.task.planning.time ? 1 : 0;
+  return candidate.task.planning.time ? 0 : 1;
 }
 
 function compareCandidates(left: MonthCandidate, right: MonthCandidate): number {
@@ -46,7 +47,19 @@ function compareCandidates(left: MonthCandidate, right: MonthCandidate): number 
   if (time !== 0) return time;
 
   const identity = taskLayoutIdentity(left.task).localeCompare(taskLayoutIdentity(right.task));
-  return identity !== 0 ? identity : left.kind.localeCompare(right.kind);
+  if (identity !== 0) return identity;
+
+  const kind = left.kind.localeCompare(right.kind);
+  if (kind !== 0) return kind;
+  const leftDate = left.kind === 'span' ? left.segments[0]?.date : left.date;
+  const rightDate = right.kind === 'span' ? right.segments[0]?.date : right.date;
+  return String(leftDate).localeCompare(String(rightDate));
+}
+
+function candidateDates(candidate: MonthCandidate): readonly string[] {
+  return candidate.kind === 'span'
+    ? candidate.segments.map((segment) => segment.date)
+    : [candidate.date];
 }
 
 export function layoutVisibleMonth(
@@ -59,30 +72,52 @@ export function layoutVisibleMonth(
     rows: sharedRows.map((sharedRow, rowIndex) => {
       const rowDates = dates.slice(rowIndex * 7, rowIndex * 7 + 7);
       const segments: VisibleSpanSegment[] = [];
-      const compactByDate = new Map<string, readonly MonthCompactSlot[]>();
+      const compactByDate = new Map<string, MonthCompactSlot[]>(rowDates.map((date) => [date, []]));
+      const spanByIdentity = new Map<string, Extract<MonthCandidate, { kind: 'span' }>>();
+      for (const segment of sharedRow.segments) {
+        const existing = spanByIdentity.get(segment.identity);
+        if (existing) {
+          existing.segments.push(segment);
+        } else {
+          spanByIdentity.set(segment.identity, {
+            kind: 'span',
+            task: segment.task,
+            segments: [segment],
+          });
+        }
+      }
+      const candidates: MonthCandidate[] = [...spanByIdentity.values()];
       let slotCount = 0;
 
       for (const date of rowDates) {
         const { timed, plain, deadlines } = bucketTasksForDate([...tasks], date);
-        const candidates: MonthCandidate[] = [
-          ...sharedRow.segments
-            .filter((segment) => segment.date === date)
-            .map((segment): MonthCandidate => ({ kind: 'span', task: segment.task, segment })),
-          ...plain.map((task): MonthCandidate => ({ kind: 'plain', task })),
-          ...timed.map((task): MonthCandidate => ({ kind: 'timed', task })),
-          ...deadlines.map((task): MonthCandidate => ({ kind: 'deadline', task })),
-        ].sort(compareCandidates);
-        const compactSlots: MonthCompactSlot[] = [];
+        candidates.push(
+          ...plain.map((task): MonthCandidate => ({ kind: 'plain', task, date })),
+          ...timed.map((task): MonthCandidate => ({ kind: 'timed', task, date })),
+          ...deadlines.map((task): MonthCandidate => ({ kind: 'deadline', task, date })),
+        );
+      }
 
-        for (const [slot, candidate] of candidates.entries()) {
-          if (candidate.kind === 'span') {
-            segments.push({ ...candidate.segment, lane: slot });
-          } else {
-            compactSlots.push({ task: candidate.task, kind: candidate.kind, slot });
-          }
+      // Candidates use one row-wide ordering. A candidate is placed below every earlier candidate
+      // with which it shares a date; a span therefore reserves that same lane on all of its days.
+      // The intentional holes on quieter days are what prevent a local item from making a span
+      // jump vertically midway through the week row.
+      const occupiedByDate = new Map<string, number[]>(rowDates.map((date) => [date, []]));
+      candidates.sort(compareCandidates);
+      for (const candidate of candidates) {
+        const candidateRowDates = candidateDates(candidate);
+        const occupied = candidateRowDates.flatMap((date) => occupiedByDate.get(date) ?? []);
+        const slot = Math.max(-1, ...occupied) + 1;
+        for (const date of candidateRowDates) occupiedByDate.get(date)?.push(slot);
+        slotCount = Math.max(slotCount, slot + 1);
+
+        if (candidate.kind === 'span') {
+          segments.push(...candidate.segments.map((segment) => ({ ...segment, lane: slot })));
+        } else {
+          compactByDate
+            .get(candidate.date)
+            ?.push({ task: candidate.task, kind: candidate.kind, slot });
         }
-        compactByDate.set(date, compactSlots);
-        slotCount = Math.max(slotCount, candidates.length);
       }
 
       return {

@@ -124,7 +124,7 @@ describe('Panel shell top rhythm', () => {
   it('defines one responsive inset and one subtle theme-derived root edge', () => {
     const panel = declarationsFor('.tc-panel-view');
 
-    expect(panel).toContain('--tc-shell-top-inset: clamp(4px, 0.5vw, 6px)');
+    expect(panel).toContain('--tc-shell-top-inset: clamp(3px, 0.4vw, 5px)');
     expect(panel).toContain('border-top: 1px solid var(--background-modifier-border)');
     expect(withoutWhitespace(panel)).toContain(
       'border-top-color:color-mix(insrgb,var(--background-modifier-border)60%,transparent)',

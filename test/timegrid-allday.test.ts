@@ -114,12 +114,39 @@ describe('renderAllDayCell', () => {
       { column: '3 / 4', date: '2026-07-16', before: 'true', after: 'false', title: 'Trip' },
     ]);
     expect(layer.querySelectorAll('.tc-status-marker')).toHaveLength(1);
-    expect(
-      layer.querySelector('[data-span-date="2026-07-14"] [data-boundary="start"]'),
-    ).not.toBeNull();
-    expect(
-      layer.querySelector('[data-span-date="2026-07-16"] [data-boundary="due"]'),
-    ).not.toBeNull();
+    for (const segment of segments.filter(
+      (candidate) => candidate.dataset['spanKind'] === 'ghost',
+    )) {
+      expect(segment.querySelector('[data-boundary="start"]')).not.toBeNull();
+      expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
+    }
+    const terminal = segments.find((candidate) => candidate.dataset['spanKind'] === 'terminal')!;
+    expect(terminal.querySelector('[data-boundary="start"]')).toBeNull();
+    expect(terminal.querySelector('[data-boundary="due"]')).not.toBeNull();
+  });
+
+  it('does not expose unusable clipped boundary proxies in a single-day time grid', () => {
+    const container = freshContainer();
+    const dates = ['2026-07-14'];
+    const layer = container.createDiv({ cls: 'tc-tg-span-layer' });
+    const clipped = task({
+      title: 'Clipped',
+      planning: { start: '2026-07-01', due: '2026-07-20' },
+    });
+    const row = layoutVisibleSpans([clipped], dates).rows[0]!;
+
+    renderAllDaySpanLayer(
+      layer,
+      row,
+      dates,
+      callbacks(),
+      [],
+      createSpanInteractionOwner(),
+      'timegrid',
+    );
+
+    expect(layer.querySelector('[data-span-kind="ghost"]')).not.toBeNull();
+    expect(layer.querySelectorAll('[data-boundary]')).toHaveLength(0);
   });
 
   it('never sets data-priority on a plain chip or span, even for a prioritized task (calendar body no longer renders a priority border)', () => {
@@ -297,11 +324,12 @@ describe('renderAllDayCell', () => {
 
   it('styles span continuations as opaque, restrained tag-aware committed tiles', () => {
     const declarations = declarationsFor('.tc-tg-span-continuation');
+    const sharedSurface = declarationsForRuleContaining('.tc-tg-span', '.tc-tg-span-continuation');
     expect(declarations).not.toMatch(/opacity\s*:/u);
     expect(declarations).toMatch(
       /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
-    expect(declarations).toMatch(
+    expect(sharedSurface).toMatch(
       /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
     );
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);

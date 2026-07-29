@@ -2,7 +2,7 @@
    Task Calendar — CSS custom properties
    ============================================================ */
 .tc-panel-view {
-  --tc-shell-top-inset: clamp(4px, 0.5vw, 6px);
+  --tc-shell-top-inset: clamp(3px, 0.4vw, 5px);
   --tc-priority-a: var(--color-red);
   --tc-priority-b: var(--color-orange);
   --tc-priority-c: var(--color-yellow);
@@ -15,7 +15,7 @@
   --tc-calendar-item-radius: 6px;
   --tc-calendar-item-pad-inline: 6px;
   --tc-calendar-item-rail: 3px;
-  --tc-calendar-ghost-rail: 2px;
+  --tc-calendar-ghost-rail: var(--tc-calendar-item-rail);
   --tc-event-fill-strength: 11%;
   --tc-event-outline-strength: 24%;
   --tc-event-focus-tag-strength: 55%;
@@ -1414,21 +1414,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-now-line {
-  /* A one-pixel track within today's hour column, behind task blocks so it cannot cover text. */
+  /* A one-pixel track across all rendered day columns, behind their interactive task layers. */
   position: absolute;
-  left: 0;
+  left: 3.5em;
   right: 0;
   height: 1px;
   background: var(--text-error);
-  z-index: 1;
+  z-index: 0;
   opacity: 0.48;
   pointer-events: none;
 }
 
 .tc-tg-now-line-dot {
-  /* Crisp marker at today's column inline start. */
+  /* Marks today's column on the otherwise full-width track. */
   position: absolute;
-  left: 0;
   top: 50%;
   width: 8px;
   height: 8px;
@@ -1683,9 +1682,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    without a flex (or grid) parent the title that follows always wrapped onto its
    own line below it. */
 .tc-tg-body {
+  box-sizing: border-box;
+  min-block-size: 0;
   border-radius: var(--tc-calendar-item-radius);
   padding: 2px var(--tc-calendar-item-pad-inline);
   font-size: var(--tc-calendar-item-font-size);
+  line-height: 1.4;
   cursor: grab;
   position: relative;
   display: flex;
@@ -1720,11 +1722,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   cursor: grab;
   border-inline-start: var(--tc-calendar-ghost-rail) dashed
     var(--tc-tag-color, var(--interactive-accent));
-  background: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
-    var(--background-primary)
-  );
 }
 
 .tc-tg-plain {
@@ -1735,9 +1732,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    is the inline-start rail; priority stays exclusively on the crisp status marker. */
 .tc-tg-block,
 .tc-tg-span,
+.tc-tg-span-continuation,
 .tc-tg-plain,
 .tc-mg-block-dot,
 .tc-mg-span-segment:not(.tc-mg-span-continuation),
+.tc-mg-span-continuation,
 .tc-mg-plain,
 .tc-mg-deadline-marker {
   box-sizing: border-box;
@@ -2300,6 +2299,17 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 0;
 }
 
+.tc-mg-span-segment {
+  margin-inline: 5px;
+}
+
+.tc-mg-cell-items > .tc-mg-plain,
+.tc-mg-cell-items > .tc-mg-block-dot,
+.tc-mg-cell-items > .tc-mg-deadline-marker {
+  block-size: calc(100% - 2px);
+  margin-block: 1px;
+}
+
 .tc-mg-item-title {
   flex: 1;
   min-width: 0;
@@ -2317,6 +2327,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   flex-shrink: 0;
 }
 
+.tc-tg-span-continuation,
 .tc-mg-span-continuation {
   cursor: grab;
   border-inline-start: var(--tc-calendar-ghost-rail) dashed

@@ -266,6 +266,8 @@ export interface SpanInteractionBinding {
   readonly enableMove?: boolean;
 }
 
+const POINTER_DRAG_THRESHOLD_PX = 3;
+
 export function attachSpanInteractions(binding: SpanInteractionBinding): void {
   const { source, task, owner } = binding;
   const ownerDocument = source.ownerDocument;
@@ -302,10 +304,12 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
 
     if (kind === 'move') source.focus();
     const pointerId = event.pointerId;
+    const pointerOrigin = { x: event.clientX, y: event.clientY };
     const capturedElement = event.currentTarget as HTMLElement;
     const originalDraggable = source.getAttribute('draggable');
     let previews: HTMLElement[] = [];
     let latest: Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget> | undefined;
+    let dragStarted = false;
     let disposed = false;
 
     const clearPreview = (): void => {
@@ -466,11 +470,22 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     };
     const onPointerMove = (pointer: PointerEvent): void => {
       pointer.preventDefault();
+      if (!dragStarted) {
+        const x = pointer.clientX - pointerOrigin.x;
+        const y = pointer.clientY - pointerOrigin.y;
+        if (Math.hypot(x, y) < POINTER_DRAG_THRESHOLD_PX) return;
+        dragStarted = true;
+      }
       update(pointer);
     };
     const onPointerUp = (pointer: PointerEvent): void => {
       if (pointer.pointerId !== pointerId) return;
-      update(pointer);
+      if (!dragStarted) {
+        const x = pointer.clientX - pointerOrigin.x;
+        const y = pointer.clientY - pointerOrigin.y;
+        dragStarted = Math.hypot(x, y) >= POINTER_DRAG_THRESHOLD_PX;
+      }
+      if (dragStarted) update(pointer);
       const target = latest;
       dispose();
       if (!target) return;

@@ -96,7 +96,8 @@ describe('TodayView', () => {
       expect(container.querySelector('.tc-tg-day-column')).toBe(dayColumn);
       expect(container.querySelector('.tc-tg-allday-cell')).toBe(allDayCell);
       expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
-      expect(nowLine?.parentElement).toBe(todayHourColumn);
+      expect(nowLine?.parentElement).toBe(gridRow);
+      expect(nowLine?.querySelector<HTMLElement>('.tc-tg-now-line-dot')?.style.left).toBe('50%');
       expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(321);
       expect(container.textContent).not.toContain('Initial task');

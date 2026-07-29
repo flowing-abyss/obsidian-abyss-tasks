@@ -81,7 +81,6 @@ describe('WeekTimeGridView', () => {
       const dayColumn = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-day-column');
       const allDayCell = container.querySelector('[data-tg-date="2026-07-08"].tc-tg-allday-cell');
       const nowLine = container.querySelector('.tc-tg-now-line');
-      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.tc-tg-hour-column');
       const quickAdd = (dayColumn as HTMLElement)
         .querySelector<HTMLElement>('.tc-tg-hour-column')!
         .createDiv({ cls: 'tc-tg-quick-add' });
@@ -111,7 +110,7 @@ describe('WeekTimeGridView', () => {
         allDayCell,
       );
       expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
-      expect(nowLine?.parentElement).toBe(todayHourColumn);
+      expect(nowLine?.parentElement).toBe(gridRow);
       expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(412);
       expect(container.textContent).not.toContain('Initial week task');
@@ -184,7 +183,7 @@ describe('WeekTimeGridView', () => {
     ).toEqual(['2 / 3', '3 / 4', '4 / 5']);
   });
 
-  it('puts actual boundary handles on their visible pieces and no false handles on a fully clipped ghost', () => {
+  it('exposes both semantic range boundaries from every visible span piece', () => {
     const container = freshContainer();
     const view = new WeekTimeGridView(callbacks());
     const visible = task({
@@ -205,12 +204,122 @@ describe('WeekTimeGridView', () => {
     );
 
     const visiblePieces = container.querySelectorAll<HTMLElement>('[data-task-line="1"]');
-    expect(visiblePieces[0]?.querySelector('[data-boundary="start"]')).not.toBeNull();
-    expect(visiblePieces[0]?.querySelector('[data-boundary="due"]')).toBeNull();
+    expect(visiblePieces).toHaveLength(3);
+    for (const piece of Array.from(visiblePieces).slice(0, -1)) {
+      expect(piece.querySelector('[data-boundary="start"]')).not.toBeNull();
+      expect(piece.querySelector('[data-boundary="due"]')).not.toBeNull();
+    }
+    expect(visiblePieces[2]?.querySelector('[data-boundary="start"]')).toBeNull();
     expect(visiblePieces[2]?.querySelector('[data-boundary="due"]')).not.toBeNull();
-    const clippedGhost = container.querySelector<HTMLElement>('[data-task-line="2"]');
-    expect(clippedGhost?.getAttribute('tabindex')).toBe('0');
-    expect(clippedGhost?.querySelectorAll('[data-boundary]')).toHaveLength(0);
+    const clippedGhosts = container.querySelectorAll<HTMLElement>('[data-task-line="2"]');
+    expect(clippedGhosts).toHaveLength(7);
+    for (const ghost of clippedGhosts) {
+      expect(ghost.getAttribute('tabindex')).toBe('0');
+      expect(ghost.querySelector('[data-boundary="start"]')).not.toBeNull();
+      expect(ghost.querySelector('[data-boundary="due"]')).not.toBeNull();
+    }
+  });
+
+  it('routes a clipped ghost left edge to start-boundary resize instead of whole-span move', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const clipped = task({
+      title: 'Clipped',
+      planning: { start: '2026-07-01', due: '2026-07-20' },
+      source: { filePath: 'clipped.md', line: 2 },
+    });
+
+    view.render(
+      container,
+      [clipped],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+    const restoreElementFromPoint = measureAllDayCells(container);
+    try {
+      const ghost = container.querySelector<HTMLElement>(
+        '[data-task-path="clipped.md"][data-span-date="2026-07-06"]',
+      )!;
+      const handle = ghost.querySelector<HTMLElement>('[data-boundary="start"]')!;
+
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 50,
+          clientY: 50,
+          pointerId: 61,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 150,
+          clientY: 50,
+          pointerId: 61,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 150,
+          clientY: 50,
+          pointerId: 61,
+        }),
+      );
+
+      expect(cbs.onSpanMove).not.toHaveBeenCalled();
+      expect(cbs.onSpanBoundary).toHaveBeenCalledOnce();
+      expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
+        clipped,
+        expect.objectContaining({ boundary: 'start', date: '2026-07-07' }),
+      );
+    } finally {
+      restoreElementFromPoint();
+    }
+  });
+
+  it('keeps a clipped ghost edge click without pointer movement as a no-op', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const clipped = task({
+      title: 'Clipped',
+      planning: { start: '2026-07-01', due: '2026-07-20' },
+      source: { filePath: 'clipped.md', line: 2 },
+    });
+
+    view.render(
+      container,
+      [clipped],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+    const restoreElementFromPoint = measureAllDayCells(container);
+    try {
+      const handle = container.querySelector<HTMLElement>(
+        '[data-task-path="clipped.md"][data-span-date="2026-07-06"] [data-boundary="start"]',
+      )!;
+
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 50,
+          clientY: 50,
+          pointerId: 62,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 50,
+          clientY: 50,
+          pointerId: 62,
+        }),
+      );
+
+      expect(cbs.onSpanMove).not.toHaveBeenCalled();
+      expect(cbs.onSpanBoundary).not.toHaveBeenCalled();
+    } finally {
+      restoreElementFromPoint();
+    }
   });
 
   it('keeps single-day items below equal reserved span lanes while day cells remain click/drop targets', () => {

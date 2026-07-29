@@ -299,17 +299,22 @@ function renderAllDaySpanSegment(
     element: HTMLElement;
     boundary: 'start' | 'due';
   }[] = [];
-  if (segment.ownsStartBoundary) {
-    const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-    handle.setAttribute('data-boundary', 'start');
-    handle.setAttribute('data-resize-edge', 'start-date');
-    boundaryHandles.push({ element: handle, boundary: 'start' });
+  // Every Week/Month ghost is an interaction proxy for the same semantic range. Limiting handles
+  // to the literal start/due dates made clipped spans start a whole-task move when the user grabbed
+  // a visible edge. Do not add proxies to a one-day Today surface (it has no adjacent target date),
+  // or to a checkbox-bearing terminal piece: those retain only their literal boundary ownership.
+  const exposesRangeProxy = indexByDate.size > 1 && segment.kind === 'ghost';
+  if (segment.ownsStartBoundary || exposesRangeProxy) {
+    const leftHandle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+    leftHandle.setAttribute('data-boundary', 'start');
+    leftHandle.setAttribute('data-resize-edge', 'start-date');
+    boundaryHandles.push({ element: leftHandle, boundary: 'start' });
   }
-  if (segment.ownsDueBoundary) {
-    const handle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    handle.setAttribute('data-boundary', 'due');
-    handle.setAttribute('data-resize-edge', 'due-date');
-    boundaryHandles.push({ element: handle, boundary: 'due' });
+  if (segment.ownsDueBoundary || exposesRangeProxy) {
+    const rightHandle = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+    rightHandle.setAttribute('data-boundary', 'due');
+    rightHandle.setAttribute('data-resize-edge', 'due-date');
+    boundaryHandles.push({ element: rightHandle, boundary: 'due' });
   }
   attachSpanInteractions({
     source: body,

@@ -144,11 +144,14 @@ export function renderHourGrid(
     return { date, hourColumnEl, allDayCellEl: alldayCells[i]! };
   });
 
-  // Now-line: attach the track to today's task layer so it appears only in that day column and
-  // remains behind its timed task blocks. The dot stays at the column's inline start in CSS.
+  // Now-line: a single overlay from the end of the hour gutter through every rendered day column.
+  // The dot is positioned at today's column center rather than at a grid boundary, and the CSS
+  // layer stays underneath each day column's interactive task layer.
   if (todayIndex !== -1) {
-    nowLineEl = days[todayIndex]!.hourColumnEl.createDiv({ cls: 'tc-tg-now-line' });
+    nowLineEl = gridRow.createDiv({ cls: 'tc-tg-now-line' });
     nowLineEl.createDiv({ cls: 'tc-tg-now-line-dot' });
+    const dot = nowLineEl.querySelector<HTMLElement>('.tc-tg-now-line-dot');
+    if (dot) dot.style.left = `${((todayIndex + 0.5) / dates.length) * 100}%`;
     repositionNowLine(nowLineEl);
   }
 

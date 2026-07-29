@@ -74,15 +74,15 @@ function dayEntries(
 }
 
 const expectedEntries: [kind: string, title: string, slot: number][] = [
-  ['span', 'Untimed span', 0],
-  ['span', '09 span', 1],
-  ['span', '15 span', 2],
-  ['timed', '20 compact', 3],
+  ['span', '09 span', 0],
+  ['span', '15 span', 1],
+  ['timed', '20 compact', 2],
+  ['span', 'Untimed span', 3],
   ['deadline', 'Deadline marker', 4],
 ];
 
 describe('layoutVisibleMonth', () => {
-  it('assigns dense chronological day slots across span and compact items independent of input order', () => {
+  it('places chronological timed items before untimed items and deadline markers independent of input order', () => {
     const scrambled = fixture();
     const sharedLayout = layoutVisibleSpans(scrambled, dates);
     const sharedBefore = sharedLayout.rows.map((row) => ({
@@ -96,8 +96,8 @@ describe('layoutVisibleMonth', () => {
       expectedEntries,
     );
     expect(dayEntries(layout, '2026-07-31')).toEqual([
-      ['span', 'Untimed span', 0],
       ['span', '15 span', 1],
+      ['span', 'Untimed span', 3],
     ]);
     expect(layout.rows[0]?.slotCount).toBe(5);
     expect(layout.rows[0]?.spanRow.laneCount).toBe(5);
@@ -118,6 +118,30 @@ describe('layoutVisibleMonth', () => {
     ).toEqual(sharedBefore);
   });
 
+  it('keeps a multi-day task in one row lane when an earlier local task exists on only one day', () => {
+    const tasks = [
+      task({
+        title: 'Conference talk',
+        planning: { start: '2026-07-29', due: '2026-07-31', time: '15:00' },
+        source: { filePath: 'conference.md', line: 10 },
+      }),
+      task({
+        title: 'Local morning task',
+        planning: { scheduled: '2026-07-30', time: '09:00' },
+        source: { filePath: 'local.md', line: 20 },
+      }),
+    ];
+
+    const layout = layoutVisibleMonth(tasks, dates);
+
+    expect(dayEntries(layout, '2026-07-29')).toEqual([['span', 'Conference talk', 1]]);
+    expect(dayEntries(layout, '2026-07-30')).toEqual([
+      ['timed', 'Local morning task', 0],
+      ['span', 'Conference talk', 1],
+    ]);
+    expect(dayEntries(layout, '2026-07-31')).toEqual([['span', 'Conference talk', 1]]);
+  });
+
   it('uses the same Month slot allocator for replacement previews', () => {
     const tasks = fixture();
     const source = tasks.find((candidate) => candidate.title === '20 compact')!;
@@ -127,10 +151,10 @@ describe('layoutVisibleMonth', () => {
     });
 
     expect(dayEntries(layout, '2026-07-30')).toEqual([
-      ['span', 'Untimed span', 0],
-      ['timed', '20 compact', 1],
-      ['span', '09 span', 2],
-      ['span', '15 span', 3],
+      ['timed', '20 compact', 0],
+      ['span', '09 span', 1],
+      ['span', '15 span', 2],
+      ['span', 'Untimed span', 3],
       ['deadline', 'Deadline marker', 4],
     ]);
     expect(source.planning.time).toBe('20:00');

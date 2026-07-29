@@ -168,19 +168,47 @@ function monthGridRowFor(container: HTMLElement, date: string, title: string): n
 }
 
 describe('MonthGridView', () => {
-  it('renders span and compact items in shared chronological rows independent of input order', () => {
+  it('renders timed span and compact items before untimed items independent of input order', () => {
     const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
     const tasks = monthChronologyTasks();
     const renderRows = (orderedTasks: ReturnType<typeof monthChronologyTasks>): number[] => {
       const container = freshContainer();
       new MonthGridView(callbacks()).render(container, orderedTasks, config);
-      return ['Untimed span', '09 span', '15 span', '20 compact'].map((title) =>
+      return ['09 span', '15 span', '20 compact', 'Untimed span'].map((title) =>
         monthGridRowFor(container, '2026-07-30', title),
       );
     };
 
     expect(renderRows(tasks)).toEqual([1, 2, 3, 4]);
     expect(renderRows([...tasks].reverse())).toEqual([1, 2, 3, 4]);
+  });
+
+  it('keeps a multi-day task in one grid row when an earlier local task exists on one day', () => {
+    const container = freshContainer();
+    const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
+    new MonthGridView(callbacks()).render(
+      container,
+      [
+        task({
+          title: 'Conference talk',
+          planning: { start: '2026-07-29', due: '2026-07-31', time: '15:00' },
+          source: { filePath: 'conference.md', line: 10 },
+        }),
+        task({
+          title: 'Local morning task',
+          planning: { scheduled: '2026-07-30', time: '09:00' },
+          source: { filePath: 'local.md', line: 20 },
+        }),
+      ],
+      config,
+    );
+
+    expect(
+      ['2026-07-29', '2026-07-30', '2026-07-31'].map((date) =>
+        monthGridRowFor(container, date, 'Conference talk'),
+      ),
+    ).toEqual([2, 2, 2]);
+    expect(monthGridRowFor(container, '2026-07-30', 'Local morning task')).toBe(1);
   });
 
   it('patch recomputes chronological rows without replacing the Month skeleton', () => {
@@ -202,7 +230,7 @@ describe('MonthGridView', () => {
     expect(cell.closest('.tc-mg-row')).toBe(row);
     expect(row?.querySelector('.tc-mg-span-layer')).toBe(spanLayer);
     expect(
-      ['Untimed span', '15 span', '20 compact', '09 span'].map((title) =>
+      ['15 span', '20 compact', '09 span', 'Untimed span'].map((title) =>
         monthGridRowFor(container, '2026-07-30', title),
       ),
     ).toEqual([1, 2, 3, 4]);
@@ -390,10 +418,13 @@ describe('MonthGridView', () => {
       [...row.querySelectorAll('[data-span-kind] .tc-mg-item-title')].map((el) => el.textContent),
     ).toEqual(['Trip', 'Trip', 'Trip']);
     expect(row.querySelectorAll('[data-span-kind] .tc-status-marker')).toHaveLength(1);
-    expect(
-      row.querySelector('[data-span-date="2026-07-14"] [data-boundary="start"]'),
-    ).not.toBeNull();
-    expect(row.querySelector('[data-span-date="2026-07-16"] [data-boundary="due"]')).not.toBeNull();
+    for (const segment of row.querySelectorAll<HTMLElement>('[data-span-kind="ghost"]')) {
+      expect(segment.querySelector('[data-boundary="start"]')).not.toBeNull();
+      expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
+    }
+    const terminal = row.querySelector<HTMLElement>('[data-span-kind="terminal"]')!;
+    expect(terminal.querySelector('[data-boundary="start"]')).toBeNull();
+    expect(terminal.querySelector('[data-boundary="due"]')).not.toBeNull();
     expect(
       Array.from(row.querySelectorAll<HTMLElement>('[data-span-kind]')).map(
         (segment) => segment.style.gridColumn,
@@ -1620,11 +1651,16 @@ describe('MonthGridView', () => {
     it('styles span continuations as opaque restrained committed tiles through their shared root', () => {
       const monthDeclarations = declarationsFor('.tc-mg-span-continuation');
       const ghostDeclarations = declarationsFor('.tc-tg-span-continuation');
+      const sharedSurface = declarationsForRuleContaining(
+        '.tc-tg-span',
+        '.tc-tg-span-continuation',
+        '.tc-mg-span-continuation',
+      );
       expect(monthDeclarations).not.toMatch(/opacity\s*:/u);
       expect(ghostDeclarations).toMatch(
         /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
       );
-      expect(ghostDeclarations).toMatch(
+      expect(sharedSurface).toMatch(
         /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
       );
       expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
@@ -1648,6 +1684,7 @@ describe('MonthGridView', () => {
       expect(winningCssDeclaration(terminal, 'background')).toContain(
         'var(--tc-event-fill-strength)',
       );
+      expect(winningCssDeclaration(ghost, 'border-inline-start')).toContain('dashed');
     });
 
     it('uses committed fill strength when choosing readable title text', () => {
@@ -1775,6 +1812,12 @@ describe('MonthGridView', () => {
         '.tc-mg-deadline-marker',
       );
       const monthGhost = declarationsFor('.tc-mg-span-continuation');
+      const monthSpanGeometry = declarationsFor('.tc-mg-span-segment');
+      const compactGeometry = declarationsForRuleContaining(
+        '.tc-mg-cell-items > .tc-mg-plain',
+        '.tc-mg-cell-items > .tc-mg-block-dot',
+        '.tc-mg-cell-items > .tc-mg-deadline-marker',
+      );
 
       expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);
       expect(monthRow).toMatch(/flex\s*:\s*0 0 auto/u);
@@ -1787,6 +1830,9 @@ describe('MonthGridView', () => {
       expect(monthItem).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
       expect(monthItem).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
       expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+      expect(monthSpanGeometry).toMatch(/margin-inline\s*:\s*5px/u);
+      expect(compactGeometry).toMatch(/block-size\s*:\s*calc\(100% - 2px\)/u);
+      expect(compactGeometry).toMatch(/margin-block\s*:\s*1px/u);
       expect(monthGhost).toMatch(
         /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u,
       );
