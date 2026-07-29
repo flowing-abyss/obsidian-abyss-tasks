@@ -314,10 +314,8 @@ describe('renderAllDayCell', () => {
     expect(declarationsFor('.theme-dark .tc-panel-view')).toMatch(
       /--tc-preview-border-tag-strength\s*:\s*55%/u,
     );
-    expect(
-      declarationsForRuleContaining('.tc-span-move-preview', '.tc-span-boundary-preview'),
-    ).toMatch(
-      /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-preview-border-tag-strength\),\s*var\(--text-normal\)\s*\)/u,
+    expect(declarationsFor('.tc-calendar-preview-target-outline')).toMatch(
+      /outline\s*:[^;]*dashed\s+color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-preview-border-tag-strength\),\s*var\(--text-normal\)\s*\)/u,
     );
     const tagColors = ['#1a1a40', '#ffee58', '#d5f5e3', '#d64343'];
     for (const tagColor of tagColors) {
@@ -1187,7 +1185,8 @@ describe('renderAllDayCell', () => {
       const focusIndex = css.indexOf('.tc-span-piece:focus-visible:hover');
 
       expect(focusRule).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
-      expect(focusRule).toMatch(/--tc-event-outline-strength/u);
+      expect(focusRule).toMatch(/--tc-event-focus-tag-strength/u);
+      expect(focusRule).toMatch(/--text-normal/u);
       expect(focusIndex).toBeGreaterThan(hoverIndex);
     });
   });

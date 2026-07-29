@@ -43,6 +43,14 @@ function declarationsForRuleContaining(...selectors: string[]): string {
 function expectInertPreview(preview: HTMLElement, title: string): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
   expect(preview.textContent).toContain(title);
+  expect(preview.classList.contains('tc-calendar-preview')).toBe(true);
+  expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')?.textContent).toBe(
+    '',
+  );
+  expect(
+    preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+      ?.textContent,
+  ).toBe(title);
   expect(preview.querySelector('.tc-status-marker')).toBeNull();
   expect(preview.querySelector('a')).toBeNull();
   expect(preview.getAttribute('tabindex')).toBeNull();
@@ -547,16 +555,37 @@ describe('Task 2 unified timed interaction contract', () => {
     iframe.remove();
   });
 
-  it('styles exact previews as segment-sized dashed overlays and has no timed whole-day highlight', () => {
+  it('styles exact previews as a shared event shell plus a separate dashed target outline', () => {
     for (const selector of ['.tc-tg-drag-preview', '.tc-tg-boundary-preview']) {
       const declarations = declarationsFor(selector);
       expect(declarations).toMatch(/position\s*:\s*absolute/u);
-      expect(declarations).toMatch(/border\s*:[^;]*dashed/u);
-      expect(declarations).toMatch(
-        /border\s*:[^;]*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-preview-border-tag-strength\),\s*var\(--text-normal\)\s*\)/u,
-      );
       expect(declarations).toMatch(/pointer-events\s*:\s*none/u);
+      expect(declarations).not.toMatch(/(?:border|background)\s*:/u);
     }
+    const shell = declarationsFor(
+      ".tc-calendar-preview[data-density='regular'] > .tc-calendar-preview-shell",
+    );
+    expect(shell).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+    expect(shell).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+    expect(shell).toMatch(/padding\s*:\s*2px var\(--tc-calendar-item-pad-inline\)/u);
+    expect(shell).toMatch(/--tc-event-fill-strength/u);
+    expect(declarationsFor('.tc-calendar-preview-title')).toMatch(/font-size\s*:\s*inherit/u);
+    expect(css).toMatch(
+      /(?:^|\})\s*\.tc-calendar-preview-subtitle,\s*\.tc-calendar-preview-time\s*\{[^}]*font-size\s*:\s*0\.9em/u,
+    );
+    expect(
+      declarationsFor(".tc-calendar-preview[data-phase='terminal'] > .tc-calendar-preview-shell"),
+    ).toMatch(
+      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+    );
+    expect(
+      declarationsFor(".tc-calendar-preview[data-phase='ghost'] > .tc-calendar-preview-shell"),
+    ).toMatch(
+      /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+    );
+    expect(declarationsFor('.tc-calendar-preview-target-outline')).toMatch(
+      /outline\s*:\s*2px dashed[\s\S]*--tc-preview-border-tag-strength/u,
+    );
     expect(declarationsFor('.tc-tg-day-column.is-drag-over')).toBe('');
     expect(declarationsFor('.tc-tg-block-continuation')).not.toMatch(/opacity\s*:/u);
   });
@@ -875,22 +904,56 @@ describe('Task 2 unified timed interaction contract', () => {
 });
 
 describe('renderTimedBlocksForDay', () => {
-  it('renders explicit 10px top and bottom resize handles with 2px visible grips', () => {
+  it('renders all four explicit resize edges with 10px targets and 2px local grips', () => {
     const container = freshContainer();
     renderTimedBlocksForDay(
       container,
-      [task({ planning: { time: '09:00', duration: 60 } })],
+      [
+        task({
+          planning: {
+            start: '2026-07-10',
+            due: '2026-07-10',
+            time: '09:00',
+            duration: 60,
+          },
+        }),
+      ],
       callbacks(),
+      [],
+      { date: '2026-07-10' },
     );
 
     expect(
-      container.querySelector('.tc-tg-resize-handle--start-time')?.getAttribute('data-resize-edge'),
-    ).toBe('start-time');
-    expect(
-      container.querySelector('.tc-tg-resize-handle--duration')?.getAttribute('data-resize-edge'),
-    ).toBe('duration');
+      Array.from(container.querySelectorAll<HTMLElement>('[data-resize-edge]'))
+        .map((handle) => handle.dataset['resizeEdge'])
+        .sort(),
+    ).toEqual(['due-date', 'duration', 'start-date', 'start-time']);
     expect(declarationsFor('.tc-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
     expect(declarationsFor('.tc-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
+    expect(declarationsFor('.tc-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
+    expect(declarationsFor('.tc-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
+  });
+
+  it('reveals edge-local grips on handle hover, source focus-within, and only the matching active edge', () => {
+    const revealed = declarationsForRuleContaining(
+      '.tc-tg-resize-handle:hover::after',
+      '.tc-tg-span-edge:hover::after',
+      '.tc-tg-block:focus-within > .tc-tg-resize-handle::after',
+      '.tc-span-piece:focus-within > .tc-tg-span-edge::after',
+      "[data-active-resize='start-time'] > [data-resize-edge='start-time']::after",
+      "[data-active-resize='duration'] > [data-resize-edge='duration']::after",
+      "[data-active-resize='start-date'] > [data-resize-edge='start-date']::after",
+      "[data-active-resize='due-date'] > [data-resize-edge='due-date']::after",
+    );
+
+    expect(revealed).toMatch(/opacity\s*:\s*1/u);
+    expect(css).not.toMatch(/\[data-active-resize\](?!\s*=)/u);
+    expect(
+      declarationsForRuleContaining(
+        '.tc-tg-body[data-active-resize]',
+        '.tc-tg-block[data-active-resize]',
+      ),
+    ).not.toMatch(/outline\s*:/u);
   });
 
   it('does not set data-priority on the block (calendar blocks no longer render a priority border)', () => {
@@ -1958,7 +2021,8 @@ describe('renderTimedBlocksForDay', () => {
     it('.tc-tg-block:focus-visible gets a distinct tag-aware inset outline so a keyboard user can see which block arrow keys will nudge', () => {
       const rule = declarationsFor('.tc-tg-block:focus-visible');
       expect(rule).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
-      expect(rule).toMatch(/--tc-event-outline-strength/u);
+      expect(rule).toMatch(/--tc-event-focus-tag-strength/u);
+      expect(rule).toMatch(/--text-normal/u);
     });
 
     it('keeps terminal and continuation titles at the all-day/Month 1.4 line-height', () => {

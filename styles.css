@@ -17,6 +17,7 @@
   --tc-calendar-ghost-rail: 2px;
   --tc-event-fill-strength: 11%;
   --tc-event-outline-strength: 24%;
+  --tc-event-focus-tag-strength: 55%;
   --tc-preview-fill-strength: 7%;
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
@@ -1336,8 +1337,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 1px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
-      var(--background-primary)
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--text-normal)
     );
 }
 
@@ -1348,20 +1349,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-span-move-preview,
 .tc-span-boundary-preview {
   z-index: 8;
+  position: relative;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed
-    color-mix(
-      in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
-      var(--text-normal)
-    );
-  border-radius: 4px;
-  background: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
-    var(--background-primary)
-  );
 }
 
 .tc-tg-grid-row {
@@ -1666,13 +1656,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 1px;
   background: var(--tc-tag-text-color, var(--text-normal));
   opacity: 0;
+  pointer-events: none;
 }
 
 .tc-tg-resize-handle:hover::after,
-.tc-tg-resize-handle:focus::after,
+.tc-tg-span-edge:hover::after,
 .tc-tg-resize-handle:active::after,
-.tc-tg-block[data-active-resize='start-time'] > .tc-tg-resize-handle--start-time::after,
-.tc-tg-block[data-active-resize='duration'] > .tc-tg-resize-handle--duration::after {
+.tc-tg-span-edge:active::after,
+.tc-tg-block:focus-within > .tc-tg-resize-handle::after,
+.tc-tg-block:focus-within > .tc-tg-span-edge::after,
+.tc-span-piece:focus-within > .tc-tg-span-edge::after,
+[data-active-resize='start-time'] > [data-resize-edge='start-time']::after,
+[data-active-resize='duration'] > [data-resize-edge='duration']::after,
+[data-active-resize='start-date'] > [data-resize-edge='start-date']::after,
+[data-active-resize='due-date'] > [data-resize-edge='due-date']::after {
   opacity: 1;
 }
 
@@ -1738,7 +1735,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-plain,
 .tc-mg-block-dot,
 .tc-mg-span-segment:not(.tc-mg-span-continuation),
-.tc-mg-plain {
+.tc-mg-plain,
+.tc-mg-deadline-marker {
   box-sizing: border-box;
   background: color-mix(
     in srgb,
@@ -1762,7 +1760,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-span-continuation:hover,
 .tc-mg-block-dot:hover,
 .tc-mg-span-segment:hover,
-.tc-mg-plain:hover {
+.tc-mg-plain:hover,
+.tc-mg-deadline-marker:hover {
   box-shadow: inset 0 0 0 1px var(--background-modifier-hover);
 }
 
@@ -1771,8 +1770,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
-      var(--background-primary)
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--text-normal)
     );
 }
 
@@ -1783,6 +1782,18 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 3;
   width: 10px;
   cursor: ew-resize;
+}
+.tc-tg-span-edge::after {
+  content: '';
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--tc-tag-text-color, var(--text-normal));
+  opacity: 0;
+  pointer-events: none;
 }
 .tc-tg-span-edge--left {
   left: -5px;
@@ -1844,18 +1855,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed
-    color-mix(
-      in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
-      var(--text-normal)
-    );
-  border-radius: 4px;
-  background: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
-    var(--background-primary)
-  );
 }
 
 .tc-tg-boundary-preview {
@@ -1863,18 +1862,62 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
-  border: 2px dashed
+}
+
+.tc-calendar-preview {
+  overflow: visible;
+}
+
+.tc-calendar-preview-target-outline {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  border-radius: var(--tc-calendar-item-radius);
+  outline: 2px dashed
     color-mix(
       in srgb,
       var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
       var(--text-normal)
     );
-  border-radius: 4px;
+  outline-offset: 1px;
+  pointer-events: none;
+}
+
+.tc-calendar-preview[data-density='regular'] > .tc-calendar-preview-shell {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: inherit;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: var(--tc-calendar-item-radius);
+  padding: 2px var(--tc-calendar-item-pad-inline);
+  font-size: var(--tc-calendar-item-font-size);
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-fill-strength),
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
     var(--background-primary)
   );
+  box-shadow: inset 0 0 0 1px
+    color-mix(
+      in srgb,
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--background-primary)
+    );
+}
+
+.tc-calendar-preview[data-phase='terminal'] > .tc-calendar-preview-shell {
+  border-inline-start: var(--tc-calendar-item-rail) solid
+    var(--tc-tag-color, var(--interactive-accent));
+}
+
+.tc-calendar-preview[data-phase='ghost'] > .tc-calendar-preview-shell {
+  border-inline-start: var(--tc-calendar-ghost-rail) dashed
+    var(--tc-tag-color, var(--interactive-accent));
 }
 
 .tc-calendar-preview-title,
@@ -1889,13 +1932,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-calendar-preview-title {
-  font-size: var(--tc-calendar-item-font-size);
+  font-size: inherit;
   font-weight: 600;
 }
 
 .tc-calendar-preview-subtitle,
 .tc-calendar-preview-time {
-  font-size: calc(var(--tc-calendar-item-font-size) * 0.9);
+  font-size: 0.9em;
   color: var(--tc-tag-text-color, var(--text-muted));
 }
 
@@ -2012,8 +2055,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
-      var(--background-primary)
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--text-normal)
     );
 }
 
@@ -2021,20 +2064,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
-      var(--background-primary)
+      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--text-normal)
     );
 }
 
-/* Edge-specific resize state stays fully opaque and names the exact active handle. */
-.tc-tg-body[data-active-resize],
-.tc-tg-block[data-active-resize] {
-  outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
-  outline-offset: 1px;
-}
-
 /* Retained only for the legacy no-owner all-day seam. View-owned interactions use
-   data-active-resize above so their state identifies the exact edge. */
+   data-active-resize so the matching two-pixel edge grip identifies the exact boundary. */
 .tc-tg-body.is-edge-resizing {
   outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
   outline-offset: 1px;
@@ -2267,12 +2303,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.4;
-  /* Task 40 (Round 4): Month view's compact items (.tc-mg-block-dot/.tc-mg-span-segment/
-     .tc-mg-plain) share the same tag-colored fill (MonthGridView.ts's applyTagFill), so their
-     title needs the same contrast-driven override — see tagFillContrast.ts's own doc comment.
-     .tc-mg-deadline-marker never gets a tag-colored fill (priority-colored border instead, see
-     this file's own comment on it), so its title correctly keeps the var(--text-normal) fallback
-     unconditionally. */
+  /* Task 40 (Round 4): Month view's compact items share the same tag-colored fill
+     (MonthGridView.ts's applyTagFill), so their title needs the same contrast-driven override —
+     see tagFillContrast.ts's own doc comment. */
   color: var(--tc-tag-text-color, var(--text-normal));
 }
 
@@ -2291,35 +2324,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-height: 0;
 }
 
-/* .tc-mg-plain / .tc-mg-block-dot / .tc-mg-span-segment tag-colored fill is set by the
-   shared fill rule above (grouped with the tc-tg-* equivalents); no priority border. */
-
-/* Deadline markers: shape (compact pill) signals "deadline", not color — priority-driven,
-   matching .tc-tg-deadline-marker. Neutral/muted when no priority is set. */
-.tc-mg-deadline-marker {
-  border: 1px solid var(--background-modifier-border);
-  color: var(--text-muted);
-}
-.tc-mg-deadline-marker[data-priority='A'] {
-  border-color: var(--tc-priority-a);
-  color: var(--tc-priority-a);
-}
-.tc-mg-deadline-marker[data-priority='B'] {
-  border-color: var(--tc-priority-b);
-  color: var(--tc-priority-b);
-}
-.tc-mg-deadline-marker[data-priority='C'] {
-  border-color: var(--tc-priority-c);
-  color: var(--tc-priority-c);
-}
-.tc-mg-deadline-marker[data-priority='E'] {
-  border-color: var(--tc-priority-e);
-  color: var(--tc-priority-e);
-}
-.tc-mg-deadline-marker[data-priority='F'] {
-  border-color: var(--tc-priority-f);
-  color: var(--tc-priority-f);
-}
+/* Month task bodies, including compact deadline pills, derive identity from the shared fill
+   rule above. Priority remains confined to each task's internal status marker. */
 
 /* ===== Calendar redesign: Planning chips =====
    Value-bearing only — an unset Start/Plan chip carries .tc-chip-empty instead (same

@@ -341,6 +341,11 @@ describe('WeekTimeGridView', () => {
     const preview = previews[0]!;
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     expect(preview.textContent).toContain(t.title);
+    expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')).not.toBeNull();
+    expect(
+      preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+        ?.textContent,
+    ).toBe(t.title);
     expect(preview.querySelector('.tc-status-marker')).toBeNull();
     expect(preview.querySelector('a')).toBeNull();
     expect(preview.getAttribute('tabindex')).toBeNull();

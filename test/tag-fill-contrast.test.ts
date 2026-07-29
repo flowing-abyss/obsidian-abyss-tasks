@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   mixHexColors,
@@ -5,6 +7,8 @@ import {
   tagFillTextColorVar,
   tagFillTextVariant,
 } from '../src/tags/tagFillContrast';
+
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
 function rgbToHex([red, green, blue]: readonly [number, number, number]): string {
   return `#${[red, green, blue].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
@@ -17,6 +21,17 @@ function contrastRatio(left: string, right: string): number {
     (Math.max(leftLuminance, rightLuminance) + 0.05) /
     (Math.min(leftLuminance, rightLuminance) + 0.05)
   );
+}
+
+function cssPercent(variable: string): number | null {
+  const escaped = variable.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const value = new RegExp(`${escaped}\\s*:\\s*(\\d+(?:\\.\\d+)?)%`, 'u').exec(css)?.[1];
+  return value === undefined ? null : Number(value);
+}
+
+function declarationsFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
+  return new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css)?.groups?.['body'] ?? '';
 }
 
 describe('relativeLuminanceOfHex', () => {
@@ -149,4 +164,46 @@ describe('tagFillTextColorVar', () => {
       frame.remove();
     }
   });
+});
+
+describe('calendar focus and selection contrast', () => {
+  it('mixes every span/timed focus outline toward text-normal while keeping task color primary', () => {
+    const focusRules = [
+      declarationsFor('.tc-span-piece:focus-visible:hover'),
+      declarationsFor('.tc-tg-block:focus-visible'),
+      declarationsFor('.tc-tg-block.is-selected'),
+    ];
+
+    expect(cssPercent('--tc-event-focus-tag-strength')).toBe(55);
+    for (const rule of focusRules) {
+      expect(rule).toContain(
+        'var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength)',
+      );
+      expect(rule).toContain('var(--text-normal)');
+      expect(rule).not.toContain('var(--background-primary)');
+    }
+  });
+
+  it.each([
+    ['yellow', '#ffee58'],
+    ['navy', '#00004d'],
+    ['pale green', '#d8f3dc'],
+    ['red', '#d32f2f'],
+    ['untagged fallback', '#7f6df2'],
+  ])(
+    'keeps the %s focus outline at 3:1 against its adjacent fill in light and dark themes',
+    (_name, taskColor) => {
+      const focusTagStrength = cssPercent('--tc-event-focus-tag-strength');
+      expect(focusTagStrength).not.toBeNull();
+      if (focusTagStrength === null) return;
+
+      const lightFill = rgbToHex(mixHexColors(taskColor, '#ffffff', 11)!);
+      const darkFill = rgbToHex(mixHexColors(taskColor, '#1e1e1e', 14)!);
+      const lightFocus = rgbToHex(mixHexColors(taskColor, '#161616', focusTagStrength)!);
+      const darkFocus = rgbToHex(mixHexColors(taskColor, '#f5f5f5', focusTagStrength)!);
+
+      expect(contrastRatio(lightFocus, lightFill)).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(darkFocus, darkFill)).toBeGreaterThanOrEqual(3);
+    },
+  );
 });

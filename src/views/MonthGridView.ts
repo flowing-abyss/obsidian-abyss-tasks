@@ -313,9 +313,7 @@ export class MonthGridView extends BaseView {
     }
     for (const t of deadlines) {
       const marker = cell.createDiv({ cls: 'tc-mg-deadline-marker' });
-      // Priority-colored border (color = priority convention); no tag fill — deadline
-      // markers stay a compact pill, not a filled colored body (structural distinction).
-      if (t.priority !== 'D') marker.setAttribute('data-priority', t.priority);
+      this.applyTagFill(marker, t, tagGroups);
       this.renderMarker(marker, t);
       marker.createSpan({ text: '📅 ' });
       this.renderTitle(marker, t);

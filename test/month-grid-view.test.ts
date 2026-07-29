@@ -30,6 +30,17 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function declarationsForRuleContaining(...selectors: string[]): string {
+  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    const roots = (match[1] ?? '')
+      .replace(/\/\*[\s\S]*?\*\//gu, '')
+      .split(',')
+      .map((selector) => selector.trim());
+    if (selectors.every((selector) => roots.includes(selector))) return match[2] ?? '';
+  }
+  return '';
+}
+
 function winningCssDeclaration(element: Element, property: string): string {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//gu, '');
   let winner = '';
@@ -335,6 +346,11 @@ describe('MonthGridView', () => {
     const preview = requiredElement(container, '.tc-span-boundary-preview');
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     expect(preview.textContent).toContain(t.title);
+    expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')).not.toBeNull();
+    expect(
+      preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+        ?.textContent,
+    ).toBe(t.title);
     expect(preview.querySelector('.tc-status-marker')).toBeNull();
     expect(preview.querySelector('a')).toBeNull();
     expect(preview.getAttribute('tabindex')).toBeNull();
@@ -602,6 +618,58 @@ describe('MonthGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
     expect(row.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+  });
+
+  it('keeps a prioritized deadline rooted in tag identity and priority only on its marker', () => {
+    const container = freshContainer();
+    const view = new MonthGridView({
+      ...callbacks(),
+      tagGroups: [
+        { id: '1', name: 'Work', mode: 'prefix' as const, prefix: 'work', color: '#3498db' },
+      ],
+    });
+    const t = task({
+      title: 'Deadline',
+      tags: ['#work'],
+      priority: 'A',
+      planning: { scheduled: '2026-07-10', due: '2026-07-15' },
+    });
+
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+    const root = container.querySelector(
+      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+    ) as HTMLElement;
+    expect(root.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    expect(root.hasAttribute('data-priority')).toBe(false);
+    expect(root.querySelector('.tc-status-marker')?.getAttribute('data-priority')).toBe('A');
+  });
+
+  it('uses the shared interactive-accent fallback for an untagged deadline root', () => {
+    const container = freshContainer();
+    const view = new MonthGridView(callbacks());
+    const t = task({
+      title: 'Deadline',
+      planning: { scheduled: '2026-07-10', due: '2026-07-15' },
+    });
+
+    view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
+
+    const root = container.querySelector(
+      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+    ) as HTMLElement;
+    const identityRule = declarationsForRuleContaining(
+      '.tc-tg-block',
+      '.tc-mg-plain',
+      '.tc-mg-deadline-marker',
+    );
+    expect(root.style.getPropertyValue('--tc-tag-color')).toBe('');
+    expect(root.hasAttribute('data-priority')).toBe(false);
+    expect(identityRule).toMatch(
+      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+    );
+    expect(identityRule).toMatch(/--tc-event-fill-strength/u);
+    expect(css).not.toMatch(/\.tc-mg-deadline-marker\[data-priority=/u);
   });
 
   it('uses event contrast for both native Month drag origins', () => {
@@ -1563,7 +1631,12 @@ describe('MonthGridView', () => {
       const monthGrid = declarationsFor('.tc-mg-grid');
       const monthRow = declarationsFor('.tc-mg-row');
       const monthItems = declarationsFor('.tc-mg-cell-items');
-      const monthItem = declarationsFor('.tc-mg-deadline-marker');
+      const monthItem = declarationsForRuleContaining(
+        '.tc-mg-plain',
+        '.tc-mg-block-dot',
+        '.tc-mg-span-segment',
+        '.tc-mg-deadline-marker',
+      );
       const monthGhost = declarationsFor('.tc-mg-span-continuation');
 
       expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);

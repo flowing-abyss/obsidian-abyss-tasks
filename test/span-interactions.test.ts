@@ -19,6 +19,14 @@ const columns = [
 function expectInertPreview(preview: HTMLElement, title: string): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
   expect(preview.textContent).toContain(title);
+  expect(preview.classList.contains('tc-calendar-preview')).toBe(true);
+  expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')?.textContent).toBe(
+    '',
+  );
+  expect(
+    preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+      ?.textContent,
+  ).toBe(title);
   expect(preview.querySelector('.tc-status-marker')).toBeNull();
   expect(preview.querySelector('a')).toBeNull();
   expect(preview.getAttribute('tabindex')).toBeNull();

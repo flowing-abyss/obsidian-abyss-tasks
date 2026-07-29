@@ -36,6 +36,7 @@ describe('renderHourGrid', () => {
     expect(light).toMatch(/--tc-calendar-ghost-rail\s*:\s*2px/u);
     expect(light).toMatch(/--tc-event-fill-strength\s*:\s*11%/u);
     expect(light).toMatch(/--tc-event-outline-strength\s*:\s*24%/u);
+    expect(light).toMatch(/--tc-event-focus-tag-strength\s*:\s*55%/u);
     expect(dark).toMatch(/--tc-event-fill-strength\s*:\s*14%/u);
     expect(dark).toMatch(/--tc-event-outline-strength\s*:\s*32%/u);
   });
@@ -69,7 +70,8 @@ describe('renderHourGrid', () => {
     expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
     expect(resting).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
     expect(selected).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
-    expect(selected).toMatch(/--tc-event-outline-strength/u);
+    expect(selected).toMatch(/--tc-event-focus-tag-strength/u);
+    expect(selected).toMatch(/--text-normal/u);
 
     const dragging = declarationsForRuleContaining(
       '.tc-tg-block.is-dragging',

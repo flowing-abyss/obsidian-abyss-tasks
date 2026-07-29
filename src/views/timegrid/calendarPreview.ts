@@ -14,6 +14,7 @@ export function populateCalendarPreview(
   content: CalendarPreviewContent,
 ): void {
   preview.replaceChildren();
+  preview.classList.add('tc-calendar-preview');
   preview.setAttribute('aria-hidden', 'true');
   preview.removeAttribute('tabindex');
   preview.removeAttribute('draggable');
@@ -28,22 +29,30 @@ export function populateCalendarPreview(
     else preview.style.removeProperty(property);
   }
 
+  const targetOutline = preview.ownerDocument.createElement('div');
+  targetOutline.className = 'tc-calendar-preview-target-outline';
+  preview.appendChild(targetOutline);
+
+  const shell = preview.ownerDocument.createElement('div');
+  shell.className = 'tc-calendar-preview-shell';
+  preview.appendChild(shell);
+
   const title = preview.ownerDocument.createElement('span');
   title.className = 'tc-calendar-preview-title';
   title.textContent = content.title;
-  preview.appendChild(title);
+  shell.appendChild(title);
 
   if (content.subtitle) {
     const subtitle = preview.ownerDocument.createElement('span');
     subtitle.className = 'tc-calendar-preview-subtitle';
     subtitle.textContent = content.subtitle;
-    preview.appendChild(subtitle);
+    shell.appendChild(subtitle);
   }
 
   if (content.time) {
     const time = preview.ownerDocument.createElement('span');
     time.className = 'tc-calendar-preview-time';
     time.textContent = content.time;
-    preview.appendChild(time);
+    shell.appendChild(time);
   }
 }
