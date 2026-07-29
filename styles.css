@@ -2,6 +2,7 @@
    Task Calendar — CSS custom properties
    ============================================================ */
 .tc-panel-view {
+  --tc-shell-top-inset: clamp(4px, 0.5vw, 6px);
   --tc-priority-a: var(--color-red);
   --tc-priority-b: var(--color-orange);
   --tc-priority-c: var(--color-yellow);
@@ -49,6 +50,9 @@
   overflow: hidden !important;
   display: flex;
   flex-direction: column;
+  box-sizing: border-box;
+  border-top: 1px solid var(--background-modifier-border);
+  border-top-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
 }
 
 .tc-layout {
@@ -5203,4 +5207,30 @@ body.tc-modal-open .popover.hover-popover {
 }
 .tc-status-preview-title {
   color: var(--text-muted);
+}
+
+/* Seat only the first navigation/control surfaces below the shell edge. */
+.tc-layout > .tc-rail {
+  padding-top: calc(8px + var(--tc-shell-top-inset));
+}
+
+.tc-layout > .tc-left > .tc-left-section:first-child {
+  padding-top: calc(4px + var(--tc-shell-top-inset));
+}
+
+.tc-layout--tasks > .tc-center > .tc-center-header,
+.tc-layout--search > .tc-center > .tc-center-header {
+  padding-top: calc(12px + var(--tc-shell-top-inset));
+}
+
+.tc-layout--calendar > .tc-center > .tc-cal-nav {
+  padding-top: calc(8px + var(--tc-shell-top-inset));
+}
+
+.tc-layout--projects > .tc-center .tc-projects-toolbar {
+  padding-top: calc(12px + var(--tc-shell-top-inset));
+}
+
+.tc-layout > .tc-right > .tc-right-header {
+  padding-top: calc(12px + var(--tc-shell-top-inset));
 }
