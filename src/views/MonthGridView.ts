@@ -11,13 +11,24 @@ import { showStatusMenuAt } from '../ui/statusMenu';
 import { statusTitleClass } from '../ui/statusTitleClass';
 import { BaseView } from './BaseView';
 import {
+  layoutVisibleMonth,
+  layoutVisibleMonthWithReplacement,
+  type MonthCompactKind,
+  type MonthCompactSlot,
+  type MonthVisibleRow,
+} from './monthLayout';
+import {
   createSpanInteractionOwner,
   type InteractiveSpanBoundaryTarget,
   type SpanMoveTarget,
 } from './spanInteractions';
-import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from './spanLayout';
 import { renderAllDaySpanLayer, type AllDayCallbacks } from './timegrid/renderAllDay';
-import { bucketTasksForDate } from './TodayView';
+
+function monthCompactClass(kind: MonthCompactKind): string {
+  if (kind === 'timed') return 'tc-mg-block-dot';
+  if (kind === 'plain') return 'tc-mg-plain';
+  return 'tc-mg-deadline-marker';
+}
 
 export interface MonthGridViewCallbacks {
   app: App;
@@ -80,14 +91,15 @@ export class MonthGridView extends BaseView {
         .format('YYYY-MM-DD'),
     );
     this.visibleDates = visibleDates;
-    const spanRows = layoutVisibleSpans(tasks, visibleDates).rows;
+    const monthRows = layoutVisibleMonth(tasks, visibleDates).rows;
     const spanCallbacks = this.buildSpanCallbacks(tasks);
 
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
       const row = grid.createDiv({ cls: 'tc-mg-row' });
       const rowDates = visibleDates.slice(w * 7, w * 7 + 7);
-      const spanRow = spanRows[w]!;
+      const monthRow: MonthVisibleRow = monthRows[w]!;
+      const spanRow = monthRow.spanRow;
 
       // Week-number column: clicking it drills into the Week view for that ISO week
       // (mirrors legacy MonthView.ts's wrapperButton pattern exactly).
@@ -145,15 +157,9 @@ export class MonthGridView extends BaseView {
           this.callbacks.onCreateAtDate(currentDate);
         });
 
-        this.renderCompactCell(cell, tasks, currentDate);
-        cell.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
         const items = cell.createDiv({ cls: 'tc-mg-cell-items' });
-        for (const item of Array.from(
-          cell.querySelectorAll<HTMLElement>(
-            ':scope > .tc-mg-plain, :scope > .tc-mg-block-dot, :scope > .tc-mg-deadline-marker',
-          ),
-        ))
-          items.appendChild(item);
+        this.renderCompactCell(items, monthRow.compactByDate.get(currentDate) ?? []);
+        cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
 
         if (inCurrentMonth) {
           cell.addEventListener('click', (e) => {
@@ -208,20 +214,21 @@ export class MonthGridView extends BaseView {
     this.md = new Component();
     this.md.load();
 
-    const spanRows = layoutVisibleSpans(tasks, this.visibleDates).rows;
+    const monthRows = layoutVisibleMonth(tasks, this.visibleDates).rows;
     const spanCallbacks = this.buildSpanCallbacks(tasks);
     const rows = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-row'));
     for (const [rowIndex, row] of rows.entries()) {
-      const spanRow = spanRows[rowIndex];
-      if (!spanRow) continue;
+      const monthRow: MonthVisibleRow | undefined = monthRows[rowIndex];
+      if (!monthRow) continue;
+      const spanRow = monthRow.spanRow;
       const rowDates = this.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
       for (const date of rowDates) {
         const cell = row.querySelector<HTMLElement>(`.tc-mg-cell[data-mg-date="${date}"]`);
         const items = cell?.querySelector<HTMLElement>(':scope > .tc-mg-cell-items');
         if (!cell || !items) continue;
         items.empty();
-        this.renderCompactCell(items, tasks, date);
-        cell.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+        this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? []);
+        cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
       }
       const layer = row.querySelector<HTMLElement>(':scope > .tc-mg-span-layer');
       if (!layer) continue;
@@ -273,8 +280,10 @@ export class MonthGridView extends BaseView {
       onSpanMove: this.callbacks.onSpanMove,
       onSpanBoundary: this.callbacks.onSpanBoundary,
       spanInteractionOwner: this.spanInteractions,
-      spanPreviewLayoutFor: (task, planning) =>
-        layoutVisibleSpansWithReplacement(tasks, this.visibleDates, task, planning),
+      spanPreviewLayoutFor: (task, planning) => {
+        const layout = layoutVisibleMonthWithReplacement(tasks, this.visibleDates, task, planning);
+        return { rows: layout.rows.map((row) => row.spanRow) };
+      },
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
@@ -282,46 +291,24 @@ export class MonthGridView extends BaseView {
     };
   }
 
-  private renderCompactCell(cell: HTMLElement, tasks: TaskSnapshot[], date: string): void {
-    const { timed, plain, deadlines } = bucketTasksForDate(tasks, date);
+  private renderCompactCell(cell: HTMLElement, entries: readonly MonthCompactSlot[]): void {
     const tagGroups = this.callbacks.tagGroups ?? [];
 
-    for (const t of timed) {
-      const dot = cell.createDiv({ cls: 'tc-mg-block-dot' });
-      this.applyTagFill(dot, t, tagGroups);
-      this.renderMarker(dot, t);
-      dot.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
-      this.renderTitle(dot, t);
-      dot.addEventListener('contextmenu', (e) => {
+    for (const { task: t, kind, slot } of entries) {
+      const item = cell.createDiv({ cls: monthCompactClass(kind) });
+      item.style.gridRow = String(slot + 1);
+      this.applyTagFill(item, t, tagGroups);
+      this.renderMarker(item, t);
+      if (kind === 'timed')
+        item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
+      if (kind === 'deadline') item.createSpan({ text: '📅 ' });
+      this.renderTitle(item, t);
+      item.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         e.stopPropagation();
         this.callbacks.onTaskClick(t);
       });
-      this.makeDraggable(dot, t);
-    }
-    for (const t of plain) {
-      const row = cell.createDiv({ cls: 'tc-mg-plain' });
-      this.applyTagFill(row, t, tagGroups);
-      this.renderMarker(row, t);
-      this.renderTitle(row, t);
-      row.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.callbacks.onTaskClick(t);
-      });
-      this.makeDraggable(row, t);
-    }
-    for (const t of deadlines) {
-      const marker = cell.createDiv({ cls: 'tc-mg-deadline-marker' });
-      this.applyTagFill(marker, t, tagGroups);
-      this.renderMarker(marker, t);
-      marker.createSpan({ text: '📅 ' });
-      this.renderTitle(marker, t);
-      marker.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.callbacks.onTaskClick(t);
-      });
+      if (kind !== 'deadline') this.makeDraggable(item, t);
     }
   }
 

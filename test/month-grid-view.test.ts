@@ -114,7 +114,100 @@ function measureMonthCells(container: HTMLElement): void {
   });
 }
 
+function monthChronologyTasks(
+  times: { early: string; late: string; compact: string } = {
+    early: '09:00',
+    late: '15:00',
+    compact: '20:00',
+  },
+) {
+  return [
+    task({
+      title: '15 span',
+      planning: { start: '2026-07-30', due: '2026-07-31', time: times.late },
+      source: { filePath: '15.md', line: 15 },
+    }),
+    task({
+      title: 'Deadline marker',
+      planning: { scheduled: '2026-07-29', due: '2026-07-30' },
+      source: { filePath: 'deadline.md', line: 5 },
+    }),
+    task({
+      title: 'Untimed span',
+      planning: { start: '2026-07-30', due: '2026-07-31' },
+      source: { filePath: 'untimed.md', line: 1 },
+    }),
+    task({
+      title: '20 compact',
+      planning: { scheduled: '2026-07-30', time: times.compact },
+      source: { filePath: 'compact.md', line: 20 },
+    }),
+    task({
+      title: '09 span',
+      planning: { start: '2026-07-29', due: '2026-07-30', time: times.early },
+      source: { filePath: '09.md', line: 9 },
+    }),
+  ];
+}
+
+function monthGridRowFor(container: HTMLElement, date: string, title: string): number {
+  const cell = requiredElement(container, `[data-mg-date="${date}"]`);
+  const row = cell.closest<HTMLElement>('.tc-mg-row');
+  if (!row) throw new Error(`Expected Month row containing ${date}`);
+  const candidates = [
+    ...row.querySelectorAll<HTMLElement>(`[data-span-date="${date}"]`),
+    ...cell.querySelectorAll<HTMLElement>(
+      '.tc-mg-cell-items > .tc-mg-plain, .tc-mg-cell-items > .tc-mg-block-dot, .tc-mg-cell-items > .tc-mg-deadline-marker',
+    ),
+  ];
+  const element = candidates.find(
+    (candidate) => candidate.querySelector('.tc-mg-item-title')?.textContent === title,
+  );
+  if (!element) throw new Error(`Expected Month item "${title}" on ${date}`);
+  return Number(element.style.gridRow);
+}
+
 describe('MonthGridView', () => {
+  it('renders span and compact items in shared chronological rows independent of input order', () => {
+    const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
+    const tasks = monthChronologyTasks();
+    const renderRows = (orderedTasks: ReturnType<typeof monthChronologyTasks>): number[] => {
+      const container = freshContainer();
+      new MonthGridView(callbacks()).render(container, orderedTasks, config);
+      return ['Untimed span', '09 span', '15 span', '20 compact'].map((title) =>
+        monthGridRowFor(container, '2026-07-30', title),
+      );
+    };
+
+    expect(renderRows(tasks)).toEqual([1, 2, 3, 4]);
+    expect(renderRows([...tasks].reverse())).toEqual([1, 2, 3, 4]);
+  });
+
+  it('patch recomputes chronological rows without replacing the Month skeleton', () => {
+    const container = freshContainer();
+    const view = new MonthGridView(callbacks());
+    const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
+    view.render(container, monthChronologyTasks(), config);
+    const cell = requiredElement(container, '[data-mg-date="2026-07-30"]');
+    const row = cell.closest('.tc-mg-row');
+    const spanLayer = row?.querySelector('.tc-mg-span-layer');
+
+    view.patch(
+      container,
+      monthChronologyTasks({ early: '18:00', late: '07:00', compact: '12:00' }),
+      config,
+    );
+
+    expect(requiredElement(container, '[data-mg-date="2026-07-30"]')).toBe(cell);
+    expect(cell.closest('.tc-mg-row')).toBe(row);
+    expect(row?.querySelector('.tc-mg-span-layer')).toBe(spanLayer);
+    expect(
+      ['Untimed span', '15 span', '20 compact', '09 span'].map((title) =>
+        monthGridRowFor(container, '2026-07-30', title),
+      ),
+    ).toEqual([1, 2, 3, 4]);
+  });
+
   it('patches only task layers while retaining month headers, rows, day cells, and static listeners', () => {
     const container = freshContainer();
     const cbs = callbacks();
@@ -311,9 +404,42 @@ describe('MonthGridView', () => {
     ).not.toBeNull();
     expect(
       Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell')).every(
-        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '1',
+        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '2',
       ),
     ).toBe(true);
+  });
+
+  it('reserves the full shared row height when the highest occupied slots are spans', () => {
+    const container = freshContainer();
+    const view = new MonthGridView(callbacks());
+    const spans = Array.from({ length: 5 }, (_, index) =>
+      task({
+        title: `Span ${index}`,
+        planning: {
+          start: '2026-07-30',
+          due: '2026-07-31',
+          time: `0${index + 8}:00`,
+        },
+        source: { filePath: `span-${index}.md`, line: index },
+      }),
+    );
+
+    view.render(container, spans, resolvedConfig({ startPosition: '2026-07' }));
+
+    const row = requiredElement(container, '[data-mg-date="2026-07-30"]').closest('.tc-mg-row')!;
+    expect(
+      Array.from(row.querySelectorAll<HTMLElement>('[data-span-date="2026-07-30"]')).map(
+        (segment) => segment.style.gridRow,
+      ),
+    ).toEqual(['1', '2', '3', '4', '5']);
+    expect(
+      Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell')).every(
+        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '5',
+      ),
+    ).toBe(true);
+    expect(declarationsFor('.tc-mg-cell-items')).toMatch(
+      /min-height\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
+    );
   });
 
   it('wires Month actual start and due handles to the shared atomic boundary callback', () => {
@@ -1642,9 +1768,11 @@ describe('MonthGridView', () => {
       expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);
       expect(monthRow).toMatch(/flex\s*:\s*0 0 auto/u);
       expect(monthRow).toMatch(/min-height\s*:\s*calc\(var\(--tc-calendar-track-height\) \* 4\)/u);
-      expect(monthItems).toMatch(
-        /margin-top\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
-      );
+      expect(monthItems).toMatch(/display\s*:\s*grid/u);
+      expect(monthItems).toMatch(/grid-auto-rows\s*:\s*var\(--tc-calendar-track-height\)/u);
+      expect(monthItems).toMatch(/gap\s*:\s*0/u);
+      expect(monthItems).toMatch(/margin-top\s*:\s*0/u);
+      expect(monthItems).not.toMatch(/margin-top\s*:[^;]*--tc-span-lane-count/u);
       expect(monthItem).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
       expect(monthItem).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
       expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);

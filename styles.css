@@ -2203,10 +2203,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-mg-cell-items {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+  display: grid;
+  grid-auto-rows: var(--tc-calendar-track-height);
+  gap: 0;
+  margin-top: 0;
+  min-height: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
 }
 
 /* Hover-visible "+" affordance for click-to-create (kept off plain click, which already
