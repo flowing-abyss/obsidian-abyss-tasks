@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
+import { transformMarkdownTags } from '../src/tags/markdownTagRename';
 import { TagManager } from '../src/tags/TagManager';
 import { createAppWithFiles } from './helpers';
 
@@ -23,6 +24,22 @@ async function makeManager(files: Record<string, string> = {}) {
 
 async function read(app: Awaited<ReturnType<typeof createAppWithFiles>>, path: string) {
   return app.vault.read(app.vault.getAbstractFileByPath(path) as never);
+}
+
+function countedString(value: string): {
+  readonly source: string;
+  readonly indexedReads: () => number;
+} {
+  let indexedReads = 0;
+  const target = Object(value);
+  const source = new Proxy(target, {
+    get(candidate, property) {
+      if (typeof property === 'string' && /^(?:0|[1-9]\d*)$/u.test(property)) indexedReads++;
+      const member = Reflect.get(candidate, property, candidate) as unknown;
+      return typeof member === 'function' ? member.bind(candidate) : member;
+    },
+  }) as unknown as string;
+  return { source, indexedReads: () => indexedReads };
 }
 
 describe('TagManager exact and prefix vault rename', () => {
@@ -301,6 +318,118 @@ describe('TagManager exact and prefix vault rename', () => {
 
     expect(result).toEqual({ type: 'ok', changedFiles: ['notes/delimiter-prose.md'] });
     expect(await read(app, 'notes/delimiter-prose.md')).toBe(expected);
+  });
+
+  it('preserves nested semantic targets while renaming visible content inside link labels', async () => {
+    const original = [
+      '[![alt](image#work)](outer#work) outside #work',
+      '[wiki [[Note#work|visible #work]]](outer#work) outside #work',
+      '[html <span data-tag="#work">visible #work</span>](outer#work) outside #work',
+      '[comment <!-- #work --> visible #work](dest#work) outside #work',
+      '[math $#work$ visible #work](dest#work) outside #work',
+      '',
+    ].join('\n');
+    const expected = [
+      '[![alt](image#work)](outer#work) outside #focus',
+      '[wiki [[Note#work|visible #focus]]](outer#work) outside #focus',
+      '[html <span data-tag="#work">visible #focus</span>](outer#work) outside #focus',
+      '[comment <!-- #work --> visible #focus](dest#work) outside #focus',
+      '[math $#work$ visible #focus](dest#work) outside #focus',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({ 'notes/nested-labels.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/nested-labels.md'] });
+    expect(await read(app, 'notes/nested-labels.md')).toBe(expected);
+  });
+
+  it('recovers from an unmatched wiki opener before a later valid wiki link', async () => {
+    const original = 'Unmatched [[ prose #work\nLater [[Note#work|visible #work]] outside #work\n';
+    const { tm, app } = await makeManager({ 'notes/wiki-recovery.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/wiki-recovery.md'] });
+    expect(await read(app, 'notes/wiki-recovery.md')).toBe(
+      'Unmatched [[ prose #focus\nLater [[Note#work|visible #focus]] outside #focus\n',
+    );
+  });
+
+  it.each([
+    {
+      name: 'a forbidden nested link',
+      original: '[outer [inner](url) text](#work)\n',
+      expected: '[outer [inner](url) text](#focus)\n',
+    },
+    {
+      name: 'spaces in a bare destination',
+      original: '[label](/my #work)\n',
+      expected: '[label](/my #focus)\n',
+    },
+    {
+      name: 'a blank line crossing the label',
+      original: 'Opening [ prose\n\nclosing ](#work)\n',
+      expected: 'Opening [ prose\n\nclosing ](#focus)\n',
+    },
+  ])('renames visible destination-shaped prose after $name', async ({ original, expected }) => {
+    const { tm, app } = await makeManager({ 'notes/invalid-links.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/invalid-links.md'] });
+    expect(await read(app, 'notes/invalid-links.md')).toBe(expected);
+  });
+
+  it('keeps unmatched label scanning within a linear indexed-read budget', () => {
+    const readsFor = (
+      bracketCount: number,
+    ): { readonly reads: number; readonly length: number } => {
+      const original = `${'['.repeat(bracketCount)} visible #work`;
+      const counted = countedString(original);
+      expect(transformMarkdownTags(counted.source, '#work', '#focus', 'exact')).toBe(
+        `${'['.repeat(bracketCount)} visible #focus`,
+      );
+      return { reads: counted.indexedReads(), length: original.length };
+    };
+
+    const small = readsFor(1_000);
+    const large = readsFor(2_000);
+
+    expect(large.reads).toBeLessThanOrEqual(large.length * 20);
+    expect(large.reads).toBeLessThanOrEqual(small.reads * 3);
+  });
+
+  it('applies CommonMark comment endings and raw-tag line-ending limits', async () => {
+    const original = [
+      '<!--> outside #work',
+      '<!---> outside #work',
+      '\\<!-- #work --> outside #work',
+      '<span',
+      ' data-tag="#work"> outside #work',
+      '<span',
+      '',
+      ' data-tag="#work"> outside #work',
+      '',
+    ].join('\n');
+    const expected = [
+      '<!--> outside #focus',
+      '<!---> outside #focus',
+      '\\<!-- #focus --> outside #focus',
+      '<span',
+      ' data-tag="#work"> outside #focus',
+      '<span',
+      '',
+      ' data-tag="#focus"> outside #focus',
+      '',
+    ].join('\n');
+    const { tm, app } = await makeManager({ 'notes/raw-html.md': original });
+
+    const result = await tm.renameTagExact('#work', '#focus');
+
+    expect(result).toEqual({ type: 'ok', changedFiles: ['notes/raw-html.md'] });
+    expect(await read(app, 'notes/raw-html.md')).toBe(expected);
   });
 
   it('exact rename handles indentless and commented block tags while preserving quoted fences', async () => {

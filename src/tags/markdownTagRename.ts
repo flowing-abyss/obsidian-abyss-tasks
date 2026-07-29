@@ -485,51 +485,85 @@ function closingDelimiter(source: string, from: number, delimiter: string): numb
   return null;
 }
 
-function markdownLinkDestinationEnd(source: string, from: number): number | null {
-  if (source[from] !== ']' || source[from + 1] !== '(' || isEscaped(source, from)) return null;
-  let depth = 1;
-  let quote = '';
-  for (let cursor = from + 2; cursor < source.length; cursor++) {
-    const character = source[cursor] ?? '';
-    if (character === '\\') {
+function singleLineWhitespaceEnd(source: string, from: number): number {
+  let cursor = from;
+  while (source[cursor] === ' ' || source[cursor] === '\t') cursor++;
+  if (source[cursor] === '\r' && source[cursor + 1] === '\n') cursor += 2;
+  else if (source[cursor] === '\n') cursor++;
+  while (source[cursor] === ' ' || source[cursor] === '\t') cursor++;
+  return cursor;
+}
+
+function linkTitleEnd(source: string, from: number): number | null {
+  const opener = source[from] ?? '';
+  const closer = opener === '(' ? ')' : opener;
+  if (opener !== '"' && opener !== "'" && opener !== '(') return null;
+  for (let cursor = from + 1; cursor < source.length; cursor++) {
+    if (source[cursor] === '\\') {
       cursor++;
       continue;
     }
-    if (quote) {
-      if (character === quote) quote = '';
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      continue;
-    }
-    if (character === '(') depth++;
-    else if (character === ')' && --depth === 0) return cursor + 1;
+    if (source[cursor] === closer) return cursor + 1;
   }
   return null;
 }
 
-function markdownLinkDestinationRange(
-  source: string,
-  from: number,
-): { readonly destination: SourceRange; readonly to: number } | null {
-  if (source[from] !== '[' || isEscaped(source, from)) return null;
-  let depth = 1;
+function bareLinkDestinationEnd(source: string, from: number): number | null {
+  let cursor = from;
+  let depth = 0;
+  while (cursor < source.length) {
+    const character = source[cursor] ?? '';
+    if (character === '\\') {
+      cursor += 2;
+      continue;
+    }
+    if (character === '(') {
+      if (++depth > 32) return null;
+    } else if (character === ')') {
+      if (depth === 0) return cursor;
+      depth--;
+    } else if (/\s/u.test(character) || character.charCodeAt(0) < 32) {
+      return cursor;
+    }
+    cursor++;
+  }
+  return null;
+}
+
+function angleLinkDestinationEnd(source: string, from: number): number | null {
   for (let cursor = from + 1; cursor < source.length; cursor++) {
     const character = source[cursor] ?? '';
     if (character === '\\') {
       cursor++;
       continue;
     }
-    if (character === '[') {
-      depth++;
-      continue;
-    }
-    if (character !== ']' || --depth !== 0) continue;
-    const to = markdownLinkDestinationEnd(source, cursor);
-    return to === null ? null : { destination: { from: cursor + 1, to }, to };
+    if (character === '>') return cursor + 1;
+    if (character === '<' || character === '\n' || character === '\r') return null;
   }
   return null;
+}
+
+function markdownLinkDestinationEnd(source: string, closeBracket: number): number | null {
+  if (source[closeBracket + 1] !== '(') return null;
+  let cursor = singleLineWhitespaceEnd(source, closeBracket + 2);
+  if (source[cursor] === '<') {
+    const destinationEnd = angleLinkDestinationEnd(source, cursor);
+    if (destinationEnd === null) return null;
+    cursor = destinationEnd;
+  } else {
+    const destinationEnd = bareLinkDestinationEnd(source, cursor);
+    if (destinationEnd === null) return null;
+    cursor = destinationEnd;
+  }
+
+  if (source[cursor] === ')') return cursor + 1;
+  const titleFrom = singleLineWhitespaceEnd(source, cursor);
+  if (titleFrom === cursor) return null;
+  if (source[titleFrom] === ')') return titleFrom + 1;
+  const titleEnd = linkTitleEnd(source, titleFrom);
+  if (titleEnd === null) return null;
+  const close = singleLineWhitespaceEnd(source, titleEnd);
+  return source[close] === ')' ? close + 1 : null;
 }
 
 const ASCII_LETTER = /^[A-Za-z]$/u;
@@ -538,7 +572,6 @@ const URI_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]{1,31}$/u;
 const EMAIL_LOCAL = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/u;
 const EMAIL_DOMAIN_LABEL = /^[A-Za-z0-9-]+$/u;
 const HTML_TAG_NAME = /[A-Za-z][A-Za-z0-9-]*/uy;
-const HTML_WHITESPACE = /[ \t\r\n]+/uy;
 const HTML_ATTRIBUTE_NAME = /[A-Za-z_:][A-Za-z0-9_.:-]*/uy;
 const HTML_ATTRIBUTE_VALUE = /(?:[^ "'=<>`]+|'[^']*'|"[^"]*")/uy;
 
@@ -584,22 +617,22 @@ function isHtmlTag(source: string): boolean {
   cursor = nameEnd;
 
   if (closing) {
-    return (tokenEnd(HTML_WHITESPACE, body, cursor) ?? cursor) === body.length;
+    return singleLineWhitespaceEnd(body, cursor) === body.length;
   }
 
   while (cursor < body.length) {
-    const attributeFrom = tokenEnd(HTML_WHITESPACE, body, cursor);
-    if (attributeFrom === null) return body.slice(cursor) === '/';
+    const attributeFrom = singleLineWhitespaceEnd(body, cursor);
+    if (attributeFrom === cursor) return body.slice(cursor) === '/';
     if (attributeFrom === body.length) return true;
     if (body[attributeFrom] === '/') return attributeFrom + 1 === body.length;
     const attributeEnd = tokenEnd(HTML_ATTRIBUTE_NAME, body, attributeFrom);
     if (attributeEnd === null) return false;
-    cursor = tokenEnd(HTML_WHITESPACE, body, attributeEnd) ?? attributeEnd;
+    cursor = singleLineWhitespaceEnd(body, attributeEnd);
     if (body[cursor] !== '=') {
       cursor = attributeEnd;
       continue;
     }
-    cursor = tokenEnd(HTML_WHITESPACE, body, cursor + 1) ?? cursor + 1;
+    cursor = singleLineWhitespaceEnd(body, cursor + 1);
     const valueEnd = tokenEnd(HTML_ATTRIBUTE_VALUE, body, cursor);
     if (valueEnd === null) return false;
     cursor = valueEnd;
@@ -648,28 +681,6 @@ function angleLiteralEnd(source: string, from: number): number | null {
   return isHtmlTag(candidate) ? htmlClose : null;
 }
 
-function wikiLinkTargetRange(
-  source: string,
-  from: number,
-): { readonly target: SourceRange; readonly to: number } | null {
-  if (!source.startsWith('[[', from) || isEscaped(source, from)) return null;
-  let pipe = -1;
-  for (let cursor = from + 2; cursor < source.length - 1; cursor++) {
-    if (source[cursor] === '\\') {
-      cursor++;
-      continue;
-    }
-    if (source[cursor] === '|' && pipe < 0) pipe = cursor;
-    if (source[cursor] === ']' && source[cursor + 1] === ']') {
-      return {
-        target: { from: from + 2, to: pipe >= 0 ? pipe : cursor },
-        to: cursor + 2,
-      };
-    }
-  }
-  return null;
-}
-
 function referenceDefinitionEnd(source: string, from: number): number | null {
   if (from > 0 && source[from - 1] !== '\n') return null;
   const newline = source.indexOf('\n', from);
@@ -707,15 +718,98 @@ function mergeSourceRanges(ranges: readonly SourceRange[]): readonly SourceRange
   return merged;
 }
 
+function blankLineCounts(source: string): Uint32Array {
+  const counts = new Uint32Array(source.length + 1);
+  let count = 0;
+  let lineHasContent = false;
+  for (let cursor = 0; cursor < source.length; cursor++) {
+    const character = source[cursor] ?? '';
+    if (character === '\n') {
+      if (!lineHasContent) count++;
+      lineHasContent = false;
+    } else if (character !== ' ' && character !== '\t' && character !== '\r') {
+      lineHasContent = true;
+    }
+    counts[cursor + 1] = count;
+  }
+  return counts;
+}
+
+interface LinkLabelState {
+  readonly image: boolean;
+  readonly linkEpoch: number;
+  readonly blankLines: number;
+}
+
+function inlineLinkDestinationRanges(
+  source: string,
+  opaqueRanges: readonly SourceRange[],
+): readonly SourceRange[] {
+  const blankLines = blankLineCounts(source);
+  const labels: LinkLabelState[] = [];
+  const destinations: SourceRange[] = [];
+  let linkEpoch = 0;
+  let opaqueIndex = 0;
+  let cursor = 0;
+  while (cursor < source.length) {
+    while (opaqueRanges[opaqueIndex] && opaqueRanges[opaqueIndex]!.to <= cursor) opaqueIndex++;
+    const opaque = opaqueRanges[opaqueIndex];
+    if (opaque && opaque.from <= cursor) {
+      cursor = opaque.to;
+      continue;
+    }
+
+    const character = source[cursor] ?? '';
+    if (character === '\\') {
+      cursor += 2;
+      continue;
+    }
+    if (character === '[') {
+      labels.push({
+        image: source[cursor - 1] === '!' && !isEscaped(source, cursor - 1),
+        linkEpoch,
+        blankLines: blankLines[cursor] ?? 0,
+      });
+      cursor++;
+      continue;
+    }
+    if (character !== ']') {
+      cursor++;
+      continue;
+    }
+
+    const label = labels.pop();
+    const destinationEnd = label ? markdownLinkDestinationEnd(source, cursor) : null;
+    const labelIsValid =
+      label &&
+      label.blankLines === blankLines[cursor] &&
+      (label.image || label.linkEpoch === linkEpoch);
+    if (!labelIsValid || destinationEnd === null) {
+      cursor++;
+      continue;
+    }
+    destinations.push({ from: cursor + 1, to: destinationEnd });
+    if (!label.image) linkEpoch++;
+    cursor = destinationEnd;
+  }
+  return destinations;
+}
+
 interface SemanticLiteralMatch {
   readonly range: SourceRange;
   readonly scanTo: number;
 }
 
 function commentLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
-  if (source.startsWith('<!--', from)) {
-    const close = source.indexOf('-->', from + 4);
-    const to = close < 0 ? source.length : close + 3;
+  if (source.startsWith('<!--', from) && !isEscaped(source, from)) {
+    let to: number | null = null;
+    if (source.startsWith('<!-->', from)) to = from + 5;
+    else if (source.startsWith('<!--->', from)) to = from + 6;
+    else {
+      const close = source.indexOf('-->', from + 4);
+      if (close >= 0) to = close + 3;
+    }
+    if (to === null) return null;
     return { range: { from, to }, scanTo: to };
   }
   if (!source.startsWith('%%', from) || isEscaped(source, from)) return null;
@@ -741,20 +835,64 @@ function semanticLiteralAt(source: string, from: number): SemanticLiteralMatch |
   const comment = commentLiteralAt(source, from);
   if (comment) return comment;
 
-  const wiki = wikiLinkTargetRange(source, from);
-  if (wiki) return { range: wiki.target, scanTo: wiki.to };
-
-  const destination = markdownLinkDestinationRange(source, from);
-  if (destination) {
-    return { range: destination.destination, scanTo: destination.to };
-  }
-
   if (source[from] === '<') {
     const to = angleLiteralEnd(source, from);
     if (to !== null) return { range: { from, to }, scanTo: to };
   }
 
   return mathLiteralAt(source, from);
+}
+
+interface WikiScanState {
+  from: number;
+  pipe: number;
+}
+
+interface WikiScanResult {
+  readonly to: number;
+  readonly target?: SourceRange;
+  readonly opaque?: SourceRange;
+}
+
+function resetWikiScan(state: WikiScanState): void {
+  state.from = -1;
+  state.pipe = -1;
+}
+
+function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiScanResult | null {
+  const opener = source.startsWith('[[', cursor) && !isEscaped(source, cursor);
+  if (state.from < 0) {
+    if (!opener) return null;
+    state.from = cursor;
+    state.pipe = -1;
+    return { to: cursor + 2 };
+  }
+  if (source[cursor] === '\n') {
+    resetWikiScan(state);
+    return { to: cursor + 1 };
+  }
+  if (opener) {
+    state.from = cursor;
+    state.pipe = -1;
+    return { to: cursor + 2 };
+  }
+  if (source[cursor] === '|' && state.pipe < 0 && !isEscaped(source, cursor)) {
+    state.pipe = cursor;
+    return { to: cursor + 1 };
+  }
+  if (!source.startsWith(']]', cursor) || isEscaped(source, cursor)) {
+    return { to: cursor + 1 };
+  }
+
+  const to = cursor + 2;
+  const from = state.from;
+  const pipe = state.pipe;
+  resetWikiScan(state);
+  return {
+    to,
+    target: { from: from + 2, to: pipe >= 0 ? pipe : cursor },
+    opaque: { from, to },
+  };
 }
 
 /**
@@ -765,25 +903,42 @@ function semanticLiteralAt(source: string, from: number): SemanticLiteralMatch |
 function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
   const codeRanges = excludedCodeRanges(source);
   const ranges: SourceRange[] = [...codeRanges];
+  const opaqueRanges: SourceRange[] = [...codeRanges];
+  const wikiState: WikiScanState = { from: -1, pipe: -1 };
   let codeIndex = 0;
   let cursor = 0;
   while (cursor < source.length) {
     while (codeRanges[codeIndex] && codeRanges[codeIndex]!.to <= cursor) codeIndex++;
     const code = codeRanges[codeIndex];
     if (code && code.from <= cursor) {
+      if (wikiState.from >= 0 && source.slice(cursor, code.to).includes('\n')) {
+        resetWikiScan(wikiState);
+      }
       cursor = code.to;
+      continue;
+    }
+
+    const wiki = wikiScanAt(source, cursor, wikiState);
+    if (wiki) {
+      if (wiki.target && wiki.opaque) {
+        ranges.push(wiki.target);
+        opaqueRanges.push(wiki.opaque);
+      }
+      cursor = wiki.to;
       continue;
     }
 
     const literal = semanticLiteralAt(source, cursor);
     if (literal) {
       ranges.push(literal.range);
+      opaqueRanges.push({ from: cursor, to: literal.scanTo });
       cursor = literal.scanTo;
       continue;
     }
 
     cursor++;
   }
+  ranges.push(...inlineLinkDestinationRanges(source, mergeSourceRanges(opaqueRanges)));
   return mergeSourceRanges(ranges);
 }
 
