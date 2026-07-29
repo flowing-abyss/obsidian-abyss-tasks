@@ -675,9 +675,9 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(items.map((item) => item.title)).toEqual([
       'Rename display name…',
       'Change color…',
+      'Rename #next across vault…',
       'Pin',
       'Archive',
-      'Rename #next across vault…',
     ]);
     expect(state.get('selectedList')).toEqual(selectedBefore);
     expect(state.get('draggingTag')).toBeNull();
@@ -749,6 +749,7 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
     expect(Notice).toHaveBeenCalledOnce();
     expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('rolled back');
   });
 
   it('does not let an older rejected appearance save overwrite a newer saved appearance', async () => {
@@ -790,6 +791,8 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(group.color).toBe('#00ff00');
     expect(save).toHaveBeenCalledTimes(2);
     expect(Notice).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('Newer changes were kept');
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).not.toContain('rolled back');
   });
 
   it('prefix vault rename confirmation shows both scopes and reports the changed-file count', async () => {

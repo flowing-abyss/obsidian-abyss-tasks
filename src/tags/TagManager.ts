@@ -1,5 +1,6 @@
 // src/tags/TagManager.ts
 import type { App } from 'obsidian';
+import type { ListSelection } from '../app/AppState';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings } from '../settings/types';
 import { normalizeTag, transformMarkdownTags, type TagRenameScope } from './markdownTagRename';
@@ -48,6 +49,11 @@ function sameValues(left: readonly string[], right: readonly string[]): boolean 
 interface SettingsRenameUpdate {
   readonly changed: boolean;
   readonly rollback: () => void;
+}
+
+export interface SelectedListState {
+  readonly getSelectedList: () => ListSelection;
+  readonly setSelectedList: (selection: ListSelection) => void;
 }
 
 function updateTagSettings(
@@ -112,12 +118,20 @@ function updateTagSettings(
 
 export class TagManager {
   private renameQueue: Promise<void> = Promise.resolve();
+  private selectedListStates = new Set<SelectedListState>();
 
   constructor(
     private app: App,
     private settings: CalendarSettings,
     private saveSettings: () => Promise<void>,
   ) {}
+
+  registerSelectedListState(state: SelectedListState): () => void {
+    this.selectedListStates.add(state);
+    return () => {
+      this.selectedListStates.delete(state);
+    };
+  }
 
   /**
    * Zero-friction manual tag: creates a manual TagGroup holding one tag derived
@@ -253,8 +267,19 @@ export class TagManager {
       }
     }
 
+    this.rebaseSelectedLists(oldTag, newTag, scope);
+
     return failedFiles.length > 0
       ? { type: 'partial', changedFiles, failedFiles }
       : { type: 'ok', changedFiles };
+  }
+
+  private rebaseSelectedLists(oldTag: string, newTag: string, scope: TagRenameScope): void {
+    for (const state of this.selectedListStates) {
+      const selected = state.getSelectedList();
+      if (typeof selected !== 'object' || selected.type !== 'tag') continue;
+      const tag = replaceSettingTag(selected.tag, oldTag, newTag, scope);
+      if (tag !== selected.tag) state.setSelectedList({ type: 'tag', tag });
+    }
   }
 }

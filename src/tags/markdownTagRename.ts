@@ -470,6 +470,200 @@ function excludedCodeRanges(source: string): readonly SourceRange[] {
   return ranges.sort((left, right) => left.from - right.from);
 }
 
+function closingDelimiter(source: string, from: number, delimiter: string): number | null {
+  let close = source.indexOf(delimiter, from);
+  while (close >= 0) {
+    if (
+      !isEscaped(source, close) &&
+      source[close - 1] !== delimiter[0] &&
+      source[close + delimiter.length] !== delimiter[0]
+    ) {
+      return close + delimiter.length;
+    }
+    close = source.indexOf(delimiter, close + 1);
+  }
+  return null;
+}
+
+function markdownLinkDestinationEnd(source: string, from: number): number | null {
+  if (source[from] !== ']' || source[from + 1] !== '(' || isEscaped(source, from)) return null;
+  let depth = 1;
+  let quote = '';
+  for (let cursor = from + 2; cursor < source.length; cursor++) {
+    const character = source[cursor] ?? '';
+    if (character === '\\') {
+      cursor++;
+      continue;
+    }
+    if (quote) {
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === '(') depth++;
+    else if (character === ')' && --depth === 0) return cursor + 1;
+  }
+  return null;
+}
+
+function angleLiteralEnd(source: string, from: number): number | null {
+  if (source[from] !== '<') return null;
+  let quote = '';
+  for (let cursor = from + 1; cursor < source.length; cursor++) {
+    const character = source[cursor] ?? '';
+    if (quote) {
+      if (character === '\\') cursor++;
+      else if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === '>') return cursor + 1;
+  }
+  return null;
+}
+
+function wikiLinkTargetRange(
+  source: string,
+  from: number,
+): { readonly target: SourceRange; readonly to: number } | null {
+  if (!source.startsWith('[[', from) || isEscaped(source, from)) return null;
+  let pipe = -1;
+  for (let cursor = from + 2; cursor < source.length - 1; cursor++) {
+    if (source[cursor] === '\\') {
+      cursor++;
+      continue;
+    }
+    if (source[cursor] === '|' && pipe < 0) pipe = cursor;
+    if (source[cursor] === ']' && source[cursor + 1] === ']') {
+      return {
+        target: { from: from + 2, to: pipe >= 0 ? pipe : cursor },
+        to: cursor + 2,
+      };
+    }
+  }
+  return null;
+}
+
+function referenceDefinitionEnd(source: string, from: number): number | null {
+  if (from > 0 && source[from - 1] !== '\n') return null;
+  const newline = source.indexOf('\n', from);
+  const to = newline < 0 ? source.length : newline + 1;
+  const line = source.slice(from, newline < 0 ? to : newline).replace(/\r$/u, '');
+  let cursor = 0;
+  while (cursor < 3 && line[cursor] === ' ') cursor++;
+  if (line[cursor] !== '[') return null;
+  cursor++;
+  while (cursor < line.length) {
+    if (line[cursor] === '\\') {
+      cursor += 2;
+      continue;
+    }
+    if (line[cursor] === ']') break;
+    cursor++;
+  }
+  if (line[cursor] !== ']' || line[cursor + 1] !== ':') return null;
+  return to;
+}
+
+function mergeSourceRanges(ranges: readonly SourceRange[]): readonly SourceRange[] {
+  const ordered = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
+  const merged: SourceRange[] = [];
+  for (const range of ordered) {
+    const previous = merged[merged.length - 1];
+    if (!previous || previous.to < range.from) {
+      merged.push(range);
+      continue;
+    }
+    if (range.to > previous.to) {
+      merged[merged.length - 1] = { from: previous.from, to: range.to };
+    }
+  }
+  return merged;
+}
+
+interface SemanticLiteralMatch {
+  readonly range: SourceRange;
+  readonly scanTo: number;
+}
+
+function commentLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+  if (source.startsWith('<!--', from)) {
+    const close = source.indexOf('-->', from + 4);
+    const to = close < 0 ? source.length : close + 3;
+    return { range: { from, to }, scanTo: to };
+  }
+  if (!source.startsWith('%%', from) || isEscaped(source, from)) return null;
+  const to = closingDelimiter(source, from + 2, '%%');
+  return to === null ? null : { range: { from, to }, scanTo: to };
+}
+
+function mathLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+  if (source[from] !== '$' || isEscaped(source, from)) return null;
+  let length = 1;
+  while (source[from + length] === '$') length++;
+  const delimiter = '$'.repeat(length);
+  const to = closingDelimiter(source, from + length, delimiter);
+  return to === null ? null : { range: { from, to }, scanTo: to };
+}
+
+function semanticLiteralAt(source: string, from: number): SemanticLiteralMatch | null {
+  const definitionEnd = referenceDefinitionEnd(source, from);
+  if (definitionEnd !== null) {
+    return { range: { from, to: definitionEnd }, scanTo: definitionEnd };
+  }
+
+  const comment = commentLiteralAt(source, from);
+  if (comment) return comment;
+
+  const wiki = wikiLinkTargetRange(source, from);
+  if (wiki) return { range: wiki.target, scanTo: wiki.to };
+
+  const destinationEnd = markdownLinkDestinationEnd(source, from);
+  if (destinationEnd !== null) {
+    return { range: { from: from + 1, to: destinationEnd }, scanTo: destinationEnd };
+  }
+
+  if (source[from] === '<') {
+    const to = angleLiteralEnd(source, from);
+    if (to !== null) return { range: { from, to }, scanTo: to };
+  }
+
+  return mathLiteralAt(source, from);
+}
+
+/**
+ * Locates Markdown regions whose bytes are syntax or literal content rather than visible prose.
+ * The rename pass consumes this one ordered range set, so destinations, raw markup, comments,
+ * code, and math all share the same lossless boundary contract.
+ */
+function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
+  const codeRanges = excludedCodeRanges(source);
+  const ranges: SourceRange[] = [...codeRanges];
+  let codeIndex = 0;
+  let cursor = 0;
+  while (cursor < source.length) {
+    while (codeRanges[codeIndex] && codeRanges[codeIndex]!.to <= cursor) codeIndex++;
+    const code = codeRanges[codeIndex];
+    if (code && code.from <= cursor) {
+      cursor = code.to;
+      continue;
+    }
+
+    const literal = semanticLiteralAt(source, cursor);
+    if (literal) {
+      ranges.push(literal.range);
+      cursor = literal.scanTo;
+      continue;
+    }
+
+    cursor++;
+  }
+  return mergeSourceRanges(ranges);
+}
+
 function isEscaped(source: string, at: number): boolean {
   let slashes = 0;
   for (let index = at - 1; index >= 0 && source[index] === '\\'; index--) slashes++;
@@ -482,7 +676,7 @@ function transformBodyTags(
   newTag: string,
   scope: TagRenameScope,
 ): string {
-  const excluded = excludedCodeRanges(source);
+  const excluded = markdownSemanticLiteralRanges(source);
   let rangeIndex = 0;
   return source.replace(replacementPattern(oldTag, scope), (match, offset: number) => {
     while (excluded[rangeIndex] && (excluded[rangeIndex]?.to ?? 0) <= offset) rangeIndex++;

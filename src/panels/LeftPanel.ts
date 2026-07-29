@@ -640,28 +640,6 @@ export class LeftPanel {
         .onClick(() => this.openTagGroupAppearance(group, 'color')),
     );
 
-    if (flattenedTag) {
-      const isPinned = this.settings.pinnedTags.includes(flattenedTag);
-      menu.addItem((item) =>
-        item
-          .setTitle(isPinned ? 'Unpin' : 'Pin')
-          .setIcon(isPinned ? 'pin-off' : 'pin')
-          .onClick(
-            this.makeTagOp(() =>
-              isPinned
-                ? this.tagManager.unpinTag(flattenedTag)
-                : this.tagManager.pinTag(flattenedTag),
-            ),
-          ),
-      );
-      menu.addItem((item) =>
-        item
-          .setTitle('Archive')
-          .setIcon('archive')
-          .onClick(this.makeTagOp(() => this.tagManager.archiveTag(flattenedTag))),
-      );
-    }
-
     if (group.mode === 'prefix' && group.prefix) {
       const prefix = `#${group.prefix}`;
       menu.addItem((item) =>
@@ -691,6 +669,28 @@ export class LeftPanel {
         );
       }
     }
+
+    if (flattenedTag) {
+      const isPinned = this.settings.pinnedTags.includes(flattenedTag);
+      menu.addItem((item) =>
+        item
+          .setTitle(isPinned ? 'Unpin' : 'Pin')
+          .setIcon(isPinned ? 'pin-off' : 'pin')
+          .onClick(
+            this.makeTagOp(() =>
+              isPinned
+                ? this.tagManager.unpinTag(flattenedTag)
+                : this.tagManager.pinTag(flattenedTag),
+            ),
+          ),
+      );
+      menu.addItem((item) =>
+        item
+          .setTitle('Archive')
+          .setIcon('archive')
+          .onClick(this.makeTagOp(() => this.tagManager.archiveTag(flattenedTag))),
+      );
+    }
     menu.showAtMouseEvent(e);
   }
 
@@ -718,14 +718,20 @@ export class LeftPanel {
     void save
       .then(() => this.render())
       .catch(() => {
+        let rolledBack = false;
         if (latestSettingsSaveRevision(this.settings) === saveRevision) {
           if (group.name === applied.name) group.name = previous.name;
           if (group.color === applied.color) {
             if (previous.color === undefined) delete group.color;
             else group.color = previous.color;
           }
+          rolledBack = true;
         }
-        new Notice('Tag group appearance was not saved. Your changes were rolled back.');
+        new Notice(
+          rolledBack
+            ? 'Tag group appearance was not saved. Your changes were rolled back.'
+            : 'An earlier tag group appearance change was not saved. Newer changes were kept.',
+        );
         this.render();
       });
   }

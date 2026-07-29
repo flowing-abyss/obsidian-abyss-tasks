@@ -185,6 +185,91 @@ describe('TagManager exact and prefix vault rename', () => {
     );
   });
 
+  it.each([
+    {
+      scope: 'exact',
+      expected: [
+        '---',
+        'tags: [focus, work/dev]',
+        '---',
+        'Visible #focus and #work/dev.',
+        '[visible #focus](https://host/#work) and <https://host/#work>.',
+        'Wiki [[Note#work|visible #focus]] and target-only [[Note#work]].',
+        '<span data-tag="#work" title="#work">Visible #focus</span>',
+        '<!-- #work and #work/dev stay comments -->',
+        'Reference [docs][work-ref].',
+        '[work-ref]: https://host/page#work "literal #work"',
+        'Inline `#work` and math $#work + 1$ stay literal.',
+        '$$',
+        '#work/dev',
+        '$$',
+        'Obsidian comment %% #work and #work/dev %%.',
+        '```md',
+        '#work #work/dev',
+        '```',
+        '',
+      ].join('\n'),
+    },
+    {
+      scope: 'prefix',
+      expected: [
+        '---',
+        'tags: [focus, focus/dev]',
+        '---',
+        'Visible #focus and #focus/dev.',
+        '[visible #focus](https://host/#work) and <https://host/#work>.',
+        'Wiki [[Note#work|visible #focus]] and target-only [[Note#work]].',
+        '<span data-tag="#work" title="#work">Visible #focus</span>',
+        '<!-- #work and #work/dev stay comments -->',
+        'Reference [docs][work-ref].',
+        '[work-ref]: https://host/page#work "literal #work"',
+        'Inline `#work` and math $#work + 1$ stay literal.',
+        '$$',
+        '#work/dev',
+        '$$',
+        'Obsidian comment %% #work and #work/dev %%.',
+        '```md',
+        '#work #work/dev',
+        '```',
+        '',
+      ].join('\n'),
+    },
+  ] as const)(
+    '$scope rename changes visible prose/frontmatter while preserving semantic literal ranges',
+    async ({ scope, expected }) => {
+      const original = [
+        '---',
+        'tags: [work, work/dev]',
+        '---',
+        'Visible #work and #work/dev.',
+        '[visible #work](https://host/#work) and <https://host/#work>.',
+        'Wiki [[Note#work|visible #work]] and target-only [[Note#work]].',
+        '<span data-tag="#work" title="#work">Visible #work</span>',
+        '<!-- #work and #work/dev stay comments -->',
+        'Reference [docs][work-ref].',
+        '[work-ref]: https://host/page#work "literal #work"',
+        'Inline `#work` and math $#work + 1$ stay literal.',
+        '$$',
+        '#work/dev',
+        '$$',
+        'Obsidian comment %% #work and #work/dev %%.',
+        '```md',
+        '#work #work/dev',
+        '```',
+        '',
+      ].join('\n');
+      const { tm, app } = await makeManager({ 'notes/semantic-ranges.md': original });
+
+      const result =
+        scope === 'exact'
+          ? await tm.renameTagExact('#work', '#focus')
+          : await tm.renameTagPrefix('#work', '#focus');
+
+      expect(result).toEqual({ type: 'ok', changedFiles: ['notes/semantic-ranges.md'] });
+      expect(await read(app, 'notes/semantic-ranges.md')).toBe(expected);
+    },
+  );
+
   it('exact rename handles indentless and commented block tags while preserving quoted fences', async () => {
     const original = [
       '---',

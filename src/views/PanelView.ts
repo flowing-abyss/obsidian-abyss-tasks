@@ -68,6 +68,7 @@ export class PanelView extends ItemView {
   private queryUnsub?: () => void;
   private modeUnsub?: () => void;
   private selectionUnsub?: () => void;
+  private selectedListRenameUnsub?: () => void;
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
   private ownedWriteRef: TaskRef | undefined = undefined;
@@ -100,6 +101,10 @@ export class PanelView extends ItemView {
     this.contentEl.addClass('tc-panel-view');
 
     this.state = new AppState();
+    this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
+      getSelectedList: () => this.state.get('selectedList'),
+      setSelectedList: (selection) => this.state.set('selectedList', selection),
+    });
     const selectionTasks: TaskApplicationApi = {
       queries: this.tasks.queries,
       execute: async (command) => {
@@ -236,6 +241,7 @@ export class PanelView extends ItemView {
   async onClose(): Promise<void> {
     this.modeUnsub?.();
     this.selectionUnsub?.();
+    this.selectedListRenameUnsub?.();
     this.queryUnsub?.();
     this.projectStoreUnsub?.();
     this.projectStore?.destroy();

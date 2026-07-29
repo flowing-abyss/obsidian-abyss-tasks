@@ -15,9 +15,9 @@ import {
   useRealMoment,
 } from './helpers';
 
-function makeTagManager(): TagManager {
+function makeTagManager(app: App): TagManager {
   const save = vi.fn().mockResolvedValue(undefined);
-  return new TagManager(null as never, DEFAULT_SETTINGS, save);
+  return new TagManager(app, DEFAULT_SETTINGS, save);
 }
 
 useRealMoment();
@@ -37,6 +37,7 @@ describe('PanelView', () => {
     let taskApplication: TaskApplication;
     let leaf: WorkspaceLeaf;
     let view: PanelView;
+    let tagManager: TagManager;
 
     beforeEach(async () => {
       app = await createAppWithFiles({});
@@ -44,10 +45,11 @@ describe('PanelView', () => {
       await taskApplication.index.initialize();
       await flushMicrotasks();
       leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+      tagManager = makeTagManager(app);
       view = new PanelView(
         leaf,
         DEFAULT_SETTINGS,
-        makeTagManager(),
+        tagManager,
         taskApplication.index,
         taskApplication.tasks,
         taskApplication.statusRegistry,
@@ -94,6 +96,53 @@ describe('PanelView', () => {
       state.set('mode', 'calendar');
       expect(layout.className).not.toBe(before);
       expect(layout.className).toContain('tc-layout--calendar');
+    });
+
+    it.each([
+      {
+        scope: 'exact',
+        selected: '#work',
+        expected: '#focus',
+      },
+      {
+        scope: 'prefix',
+        selected: '#work/deep/child',
+        expected: '#focus/deep/child',
+      },
+    ] as const)(
+      'rebases the active $scope tag list after a vault identity rename',
+      async ({ scope, selected, expected }) => {
+        const state = (view as unknown as { state: AppState }).state;
+        state.set('selectedList', { type: 'tag', tag: selected });
+
+        if (scope === 'exact') {
+          await tagManager.renameTagExact('#work', '#focus');
+        } else {
+          await tagManager.renameTagPrefix('#work', '#focus');
+        }
+
+        expect(state.get('selectedList')).toEqual({ type: 'tag', tag: expected });
+      },
+    );
+
+    it('does not change an active group selection during a prefix rename', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const selection = { type: 'group', groupId: 'work-group' } as const;
+      state.set('selectedList', selection);
+
+      await tagManager.renameTagPrefix('#work', '#focus');
+
+      expect(state.get('selectedList')).toBe(selection);
+    });
+
+    it('detaches the selected-list rename boundary when the panel closes', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      await view.onClose();
+      state.set('selectedList', { type: 'tag', tag: '#work/deep' });
+
+      await tagManager.renameTagPrefix('#work', '#focus');
+
+      expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#work/deep' });
     });
 
     it('query update with empty taskStack → no error', () => {
@@ -193,7 +242,7 @@ describe('PanelView', () => {
       view = new PanelView(
         leaf,
         DEFAULT_SETTINGS,
-        makeTagManager(),
+        makeTagManager(app),
         taskApplication.index,
         taskApplication.tasks,
         taskApplication.statusRegistry,
@@ -433,7 +482,7 @@ describe('PanelView', () => {
       view = new PanelView(
         leaf,
         DEFAULT_SETTINGS,
-        makeTagManager(),
+        makeTagManager(app),
         taskApplication.index,
         taskApplication.tasks,
         taskApplication.statusRegistry,
