@@ -1218,9 +1218,14 @@ describe('renderAllDayCell', () => {
       expect(deadlineTitle).toMatch(/text-overflow\s*:\s*ellipsis/u);
       expect(deadlineTitle).toMatch(/white-space\s*:\s*nowrap/u);
       expect(weekLayer).toMatch(/inset\s*:\s*2px 0 auto/u);
-      expect(css).toMatch(
-        /\.tc-tg-root--week \.tc-tg-span-layer \.tc-span-piece,\s*\.tc-tg-root--week \.tc-tg-span-layer > \.tc-span-move-preview,\s*\.tc-tg-root--week \.tc-tg-span-layer > \.tc-span-boundary-preview\s*\{[^}]*margin\s*:\s*1px 4px 1px 5px/u,
+      const weekSpanGeometry = declarationsFor(
+        '.tc-tg-root--week .tc-tg-span-layer .tc-span-piece,\n' +
+          '.tc-tg-root--week .tc-tg-span-layer > .tc-span-move-preview,\n' +
+          '.tc-tg-root--week .tc-tg-span-layer > .tc-span-boundary-preview',
       );
+      expect(weekSpanGeometry).toMatch(/margin-block\s*:\s*1px/u);
+      expect(weekSpanGeometry).toMatch(/margin-inline\s*:\s*5px 4px/u);
+      expect(weekSpanGeometry).not.toMatch(/(?:^|;)\s*margin\s*:/u);
       expect(css).not.toMatch(/\.tc-tg-span\s*\{[^}]*--interactive-accent/u);
       expect(host).toMatch(/height\s*:\s*100%/u);
       expect(host).toMatch(/min-height\s*:\s*0/u);

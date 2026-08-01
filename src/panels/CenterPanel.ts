@@ -374,6 +374,14 @@ export class CenterPanel {
   }
 
   refresh(): void {
+    if (
+      this.state.get('mode') === 'search' &&
+      this.searchInputEl?.isConnected &&
+      this.searchResultsEl?.isConnected
+    ) {
+      this.scheduleSearchResults(this.state.get('searchQuery'));
+      return;
+    }
     this.render();
   }
 

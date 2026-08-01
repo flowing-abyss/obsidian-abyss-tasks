@@ -1361,7 +1361,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-tg-root--week .tc-tg-span-layer .tc-span-piece,
 .tc-tg-root--week .tc-tg-span-layer > .tc-span-move-preview,
 .tc-tg-root--week .tc-tg-span-layer > .tc-span-boundary-preview {
-  margin: 1px 4px 1px 5px;
+  margin-block: 1px;
+  margin-inline: 5px 4px;
 }
 
 .tc-span-piece:focus-visible {
@@ -1824,7 +1825,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   position: absolute;
   top: 25%;
   bottom: 25%;
-  left: 4px;
+  inset-inline-start: 4px;
   width: 2px;
   border-radius: 1px;
   background: var(--tc-tag-text-color, var(--text-normal));
@@ -1838,30 +1839,37 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   width: 16px;
 }
 .tc-tg-span-edge--proxy::after {
-  left: calc(50% - 1px);
+  inset-inline-start: calc(50% - 1px);
 }
 .tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left {
-  left: calc(-1 * var(--tc-calendar-ghost-rail));
+  inset-inline-start: calc(-1 * var(--tc-calendar-ghost-rail));
+  inset-inline-end: auto;
 }
 .tc-tg-span-edge--left {
-  left: -5px;
+  inset-inline-start: -5px;
+  inset-inline-end: auto;
 }
 .tc-tg-span-edge--right {
-  right: -5px;
+  inset-inline-start: auto;
+  inset-inline-end: -5px;
 }
 /* Clipping roots keep the complete 10px target inside their box. */
 .tc-tg-block > .tc-tg-span-edge--right {
-  right: 0;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
 }
 /* Task 34: left edge gets the same overflow-hidden-clipping fix as the right edge above. */
 .tc-tg-block > .tc-tg-span-edge--left {
-  left: 0;
+  inset-inline-start: 0;
+  inset-inline-end: auto;
 }
 .tc-tg-body > .tc-tg-span-edge--right {
-  right: 0;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
 }
 .tc-tg-body > .tc-tg-span-edge--left {
-  left: 0;
+  inset-inline-start: 0;
+  inset-inline-end: auto;
 }
 
 /* Terminal status controls deliberately stack above literal resize handles. */

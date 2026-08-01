@@ -33,6 +33,12 @@ function declarationsFor(selector: string): string {
   return match?.groups?.['body'] ?? '';
 }
 
+function declarationsForExactRule(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
+  const match = new RegExp(`(?:^|\\})\\s*${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
+  return match?.groups?.['body'] ?? '';
+}
+
 function declarationsForRuleContaining(...selectors: string[]): string {
   for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
     if (selectors.every((selector) => (match[1] ?? '').includes(selector))) return match[2] ?? '';
@@ -3171,20 +3177,100 @@ describe('calendar surface style contract', () => {
 
   it('makes ghost proxy rails discoverable without enlarging literal terminal handles', () => {
     const literal = declarationsFor('.tc-tg-span-edge');
+    const literalRailPosition = declarationsForExactRule('.tc-tg-span-edge::after');
     const proxy = declarationsFor('.tc-tg-span-edge--proxy');
     const leftProxy = declarationsFor(
       '.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left',
     );
+    const startHandle = declarationsForExactRule('.tc-tg-span-edge--left');
+    const dueHandle = declarationsForExactRule('.tc-tg-span-edge--right');
     const proxyRail = declarationsFor('.tc-span-piece:hover > .tc-tg-span-edge--proxy::after');
+    const proxyRailPosition = declarationsForExactRule('.tc-tg-span-edge--proxy::after');
     const marker = declarationsFor('.tc-tg-body > .tc-status-marker');
 
     expect(literal).toMatch(/width\s*:\s*10px/u);
     expect(proxy).toMatch(/width\s*:\s*16px/u);
-    expect(leftProxy).toMatch(/left\s*:\s*calc\(-1 \* var\(--tc-calendar-ghost-rail\)\)/u);
-    expect(proxyRail).toMatch(/opacity\s*:\s*1/u);
-    expect(css).toMatch(
-      /(?:^|\})\s*\.tc-tg-span-edge--proxy::after\s*\{[^}]*left\s*:\s*calc\(50% - 1px\)/u,
+    expect(leftProxy).toMatch(
+      /inset-inline-start\s*:\s*calc\(-1 \* var\(--tc-calendar-ghost-rail\)\)/u,
     );
+    expect(leftProxy).toMatch(/inset-inline-end\s*:\s*auto/u);
+    expect(leftProxy).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
+    expect(startHandle).toMatch(/inset-inline-start\s*:\s*-5px/u);
+    expect(startHandle).toMatch(/inset-inline-end\s*:\s*auto/u);
+    expect(dueHandle).toMatch(/inset-inline-start\s*:\s*auto/u);
+    expect(dueHandle).toMatch(/inset-inline-end\s*:\s*-5px/u);
+    for (const declarations of [
+      literalRailPosition,
+      startHandle,
+      dueHandle,
+      declarationsFor('.tc-tg-block > .tc-tg-span-edge--right'),
+      declarationsFor('.tc-tg-block > .tc-tg-span-edge--left'),
+      declarationsFor('.tc-tg-body > .tc-tg-span-edge--right'),
+      declarationsFor('.tc-tg-body > .tc-tg-span-edge--left'),
+    ]) {
+      expect(declarations).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
+    }
+    expect(literalRailPosition).toMatch(/inset-inline-start\s*:\s*4px/u);
+    expect(proxyRail).toMatch(/opacity\s*:\s*1/u);
+    expect(proxyRailPosition).toMatch(/inset-inline-start\s*:\s*calc\(50% - 1px\)/u);
+    expect(proxyRailPosition).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
     expect(marker).toMatch(/z-index\s*:\s*4/u);
+  });
+
+  it('maps start and due handles to logical edges in both LTR and RTL', () => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .tc-tg-span-edge { ${declarationsFor('.tc-tg-span-edge')} }
+      .tc-tg-span-edge::after { ${declarationsForExactRule('.tc-tg-span-edge::after')} }
+      .tc-tg-span-edge--proxy { ${declarationsFor('.tc-tg-span-edge--proxy')} }
+      .tc-tg-span-edge--proxy::after { ${declarationsForExactRule(
+        '.tc-tg-span-edge--proxy::after',
+      )} }
+      .tc-tg-span-edge--left { ${declarationsForExactRule('.tc-tg-span-edge--left')} }
+      .tc-tg-span-edge--right { ${declarationsForExactRule('.tc-tg-span-edge--right')} }
+      .tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left {
+        ${declarationsFor(
+          '.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left',
+        )}
+      }
+    `;
+    document.head.append(style);
+
+    const computedFor = (direction: 'ltr' | 'rtl') => {
+      const body = document.createElement('div');
+      body.className = 'tc-tg-span-continuation';
+      body.dir = direction;
+      body.style.setProperty('--tc-calendar-ghost-rail', '3px');
+      const start = body.createDiv({
+        cls: 'tc-tg-span-edge tc-tg-span-edge--left tc-tg-span-edge--proxy',
+      });
+      const due = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      document.body.append(body);
+      const result = {
+        body,
+        start: getComputedStyle(start),
+        due: getComputedStyle(due),
+      };
+      return result;
+    };
+
+    const ltr = computedFor('ltr');
+    const rtl = computedFor('rtl');
+    try {
+      expect(ltr.start.direction).toBe('ltr');
+      expect(rtl.start.direction).toBe('rtl');
+      for (const computed of [ltr.start, rtl.start]) {
+        expect(computed.insetInlineStart).toBe('calc(-1 * var(--tc-calendar-ghost-rail))');
+        expect(computed.insetInlineEnd).toBe('auto');
+      }
+      for (const computed of [ltr.due, rtl.due]) {
+        expect(computed.insetInlineStart).toBe('auto');
+        expect(computed.insetInlineEnd).toBe('-5px');
+      }
+    } finally {
+      ltr.body.remove();
+      rtl.body.remove();
+      style.remove();
+    }
   });
 });

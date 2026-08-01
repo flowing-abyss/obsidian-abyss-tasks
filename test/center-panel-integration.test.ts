@@ -602,6 +602,59 @@ describe('CenterPanel.renderSearch', () => {
     container.remove();
   });
 
+  it('preserves the live search shell and coalesces task-index refreshes into one frame', () => {
+    const tasks = [
+      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
+      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
+    ];
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'milk');
+    const panel = makeStaticPanel(state, tasks);
+    const container = freshContainer();
+    document.body.append(container);
+    panel.mount(container);
+    const originalInput = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    originalInput.focus();
+    originalInput.setSelectionRange(1, 3);
+    const renderFlatSpy = vi.spyOn(
+      panel as unknown as { renderFlat: (host: HTMLElement, tasks: TaskSnapshot[]) => void },
+      'renderFlat',
+    );
+
+    tasks.splice(
+      0,
+      tasks.length,
+      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
+      task({ title: 'milk delivery', source: { filePath: 'c.md', line: 0 } }),
+    );
+
+    withQueuedAnimationFrames((flush, callbacks) => {
+      panel.refresh();
+      panel.refresh();
+
+      expect(callbacks).toHaveLength(1);
+      expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
+      expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+        'a.md',
+      );
+      flush();
+    });
+
+    expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
+    expect(document.activeElement).toBe(originalInput);
+    expect(originalInput.value).toBe('milk');
+    expect(originalInput.selectionStart).toBe(1);
+    expect(originalInput.selectionEnd).toBe(3);
+    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
+    expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+      'c.md',
+    );
+    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
+    panel.destroy();
+    container.remove();
+  });
+
   it('leaves a queued search refresh inert after changing modes', () => {
     const state = new AppState();
     state.set('mode', 'search');
