@@ -127,6 +127,15 @@ describe('parseRecurrenceRule', () => {
     ['every day trailing', 'unparseable-rule'],
     ['every week on Funday', 'unparseable-rule'],
     ['every day on Monday', 'unparseable-rule'],
+    ['every day the', 'unparseable-rule'],
+    ['every week the', 'unparseable-rule'],
+    ['every month on the 1nd Tuesday', 'unparseable-rule'],
+    ['every month on the 2st Tuesday', 'unparseable-rule'],
+    ['every month on the 11st Tuesday', 'unparseable-rule'],
+    ['every week on Tuesday and and Friday', 'unparseable-rule'],
+    ['every week on Tuesday,, Friday', 'unparseable-rule'],
+    ['every week on Tuesday and, Friday', 'unparseable-rule'],
+    ['every month on the 1st and and 15th', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });

@@ -64,12 +64,12 @@ function normalizedRuleText(value: string): string {
   return value.trim().replace(/\s+/gu, ' ');
 }
 
-const WORD_ORDINALS: Readonly<Record<string, string>> = {
-  first: '1',
-  second: '2',
-  third: '3',
-  fourth: '4',
-  fifth: '5',
+const WORD_ORDINALS: Readonly<Record<string, number>> = {
+  first: 1,
+  second: 2,
+  third: 3,
+  fourth: 4,
+  fifth: 5,
 };
 
 const PARSER_WORD_ORDINALS: Readonly<Record<string, string>> = {
@@ -87,23 +87,169 @@ function parserGrammarText(value: string): string {
   );
 }
 
-function normalizedGrammarText(value: string): string {
-  const normalized = value
-    .trim()
-    .toLowerCase()
-    .replace(/\b(first|second|third|fourth|fifth)\b/gu, (word) => WORD_ORDINALS[word]!)
-    .replace(/\b([1-9]\d*)(?:st|nd|rd|th)\b/gu, '$1')
-    .replace(/\bthe\b/gu, ' ')
-    .replace(/,/gu, ' , ')
-    .replace(/\band\b/gu, ' , ')
-    .replace(/\b(weekdays?|days?|weeks?|months?|years?)\b/gu, (unit) =>
-      unit.endsWith('s') ? unit.slice(0, -1) : unit,
-    )
-    .replace(/^every 1 (?=(?:weekday|day|week|month|year)\b)/u, 'every ')
-    .replace(/\s+/gu, ' ')
-    .trim();
-  const tokens = normalized.split(' ');
-  return tokens.filter((token, index) => token !== ',' || tokens[index - 1] !== ',').join(' ');
+const WEEKDAYS = new Map([
+  ['monday', 'mo'],
+  ['tuesday', 'tu'],
+  ['wednesday', 'we'],
+  ['thursday', 'th'],
+  ['friday', 'fr'],
+  ['saturday', 'sa'],
+  ['sunday', 'su'],
+]);
+
+const MONTHS = new Map([
+  ['january', 1],
+  ['february', 2],
+  ['march', 3],
+  ['april', 4],
+  ['may', 5],
+  ['june', 6],
+  ['july', 7],
+  ['august', 8],
+  ['september', 9],
+  ['october', 10],
+  ['november', 11],
+  ['december', 12],
+]);
+
+function ordinalSuffix(value: number): 'st' | 'nd' | 'rd' | 'th' {
+  const lastTwoDigits = value % 100;
+  if (lastTwoDigits >= 11 && lastTwoDigits <= 13) return 'th';
+  if (value % 10 === 1) return 'st';
+  if (value % 10 === 2) return 'nd';
+  if (value % 10 === 3) return 'rd';
+  return 'th';
+}
+
+function grammarOrdinal(value: string, maximum: number): number | undefined {
+  const wordOrdinal = WORD_ORDINALS[value];
+  if (wordOrdinal !== undefined) return wordOrdinal <= maximum ? wordOrdinal : undefined;
+
+  const numericOrdinal = /^(\d+)(st|nd|rd|th)$/u.exec(value);
+  if (numericOrdinal === null) return undefined;
+  const ordinal = Number(numericOrdinal[1]);
+  if (
+    !Number.isSafeInteger(ordinal) ||
+    ordinal < 1 ||
+    ordinal > maximum ||
+    numericOrdinal[2] !== ordinalSuffix(ordinal)
+  ) {
+    return undefined;
+  }
+  return ordinal;
+}
+
+function grammarList<T>(
+  value: string,
+  parseItem: (item: string) => T | undefined,
+): readonly T[] | undefined {
+  const conjunctions = [...value.matchAll(/\band\b/gu)];
+  if (conjunctions.length > 1) return undefined;
+
+  let items: string[];
+  if (conjunctions.length === 0) {
+    items = value.split(',');
+  } else {
+    const conjunction = conjunctions[0]!;
+    const conjunctionIndex = conjunction.index;
+    let before = value.slice(0, conjunctionIndex).trimEnd();
+    const after = value.slice(conjunctionIndex + 'and'.length).trimStart();
+    if (before.endsWith(',')) before = before.slice(0, -1).trimEnd();
+    items = [...before.split(','), after];
+    if (items.length < 2) return undefined;
+  }
+
+  const parsed: T[] = [];
+  for (const item of items) {
+    const trimmed = item.trim();
+    if (trimmed.length === 0) return undefined;
+    const parsedItem = parseItem(trimmed);
+    if (parsedItem === undefined) return undefined;
+    parsed.push(parsedItem);
+  }
+  return parsed;
+}
+
+function optionalLeadingThe(value: string): string | undefined {
+  if (!value.startsWith('the ')) return value;
+  const withoutThe = value.slice('the '.length);
+  return withoutThe.startsWith('the ') ? undefined : withoutThe;
+}
+
+function monthlyClauseKey(value: string): string | undefined {
+  const clause = optionalLeadingThe(value);
+  if (clause === undefined) return undefined;
+
+  const tokens = clause.split(' ');
+  const weekday = WEEKDAYS.get(tokens[tokens.length - 1] ?? '');
+  if (weekday !== undefined) {
+    if (tokens.length === 2 && tokens[0] === 'last') return `weekday:-1:${weekday}`;
+    if (tokens.length === 2) {
+      const ordinal = grammarOrdinal(tokens[0]!, 5);
+      return ordinal === undefined ? undefined : `weekday:${ordinal}:${weekday}`;
+    }
+    if (tokens.length === 3 && tokens[1] === 'last') {
+      const ordinal = grammarOrdinal(tokens[0]!, 5);
+      return ordinal === undefined ? undefined : `weekday:-${ordinal}:${weekday}`;
+    }
+    return undefined;
+  }
+
+  const dates = grammarList(clause, (item) => grammarOrdinal(item, 31));
+  return dates === undefined ? undefined : `dates:${dates.join(',')}`;
+}
+
+function intervalKey(
+  rawInterval: string | undefined,
+  unit: string,
+  singular: string,
+): number | undefined {
+  const interval = rawInterval === undefined ? 1 : Number(rawInterval);
+  if (!Number.isSafeInteger(interval) || interval < 1) return undefined;
+  const expectedUnit = interval === 1 ? singular : `${singular}s`;
+  if (unit !== expectedUnit && !(interval === 1 && unit === `${singular}s`)) return undefined;
+  return interval;
+}
+
+function supportedGrammarKey(value: string): string | undefined {
+  const text = normalizedRuleText(value).toLowerCase();
+  if (!text.startsWith('every ')) return undefined;
+  const body = text.slice('every '.length);
+
+  const namedMonth = /^(\w+) on (.+)$/u.exec(body);
+  if (namedMonth !== null) {
+    const month = MONTHS.get(namedMonth[1]!);
+    if (month !== undefined) {
+      const clause = optionalLeadingThe(namedMonth[2]!);
+      const date = clause === undefined ? undefined : grammarOrdinal(clause, 31);
+      return date === undefined ? undefined : `annual:${month}:${date}`;
+    }
+  }
+
+  const unitRule =
+    /^(?:(\d+) )?(day|days|weekday|weekdays|week|weeks|month|months|year|years)(?: on (.+))?$/u.exec(
+      body,
+    );
+  if (unitRule === null) return undefined;
+  const [, rawInterval, unit, clause] = unitRule;
+  const singular = unit!.endsWith('s') ? unit!.slice(0, -1) : unit!;
+  const interval = intervalKey(rawInterval, unit!, singular);
+  if (interval === undefined) return undefined;
+
+  if (singular === 'day' || singular === 'weekday' || singular === 'year') {
+    return clause === undefined ? `${singular}:${interval}` : undefined;
+  }
+  if (singular === 'week') {
+    if (clause === undefined) return `week:${interval}`;
+    const weekdays = grammarList(clause, (item) => WEEKDAYS.get(item));
+    return weekdays === undefined ? undefined : `week:${interval}:${weekdays.join(',')}`;
+  }
+  if (singular === 'month') {
+    if (clause === undefined) return `month:${interval}`;
+    const monthlyClause = monthlyClauseKey(clause);
+    return monthlyClause === undefined ? undefined : `month:${interval}:${monthlyClause}`;
+  }
+  return undefined;
 }
 
 function hasOnlySupportedOptions(options: Partial<Options>): boolean {
@@ -148,6 +294,10 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   const ruleText = whenDone
     ? normalized.slice(0, normalized.length - ' when done'.length)
     : normalized;
+  const inputGrammar = supportedGrammarKey(ruleText);
+  if (inputGrammar === undefined) {
+    return { type: 'invalid', code: 'unparseable-rule' };
+  }
 
   try {
     const options = RRule.parseText(parserGrammarText(ruleText));
@@ -156,7 +306,7 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
     }
     const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
     const canonical = compiled.toText();
-    if (normalizedGrammarText(ruleText) !== normalizedGrammarText(canonical)) {
+    if (supportedGrammarKey(canonical) !== inputGrammar) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
     compiledRules.set(canonical, compiled);
