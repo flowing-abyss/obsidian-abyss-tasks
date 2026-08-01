@@ -1,4 +1,4 @@
-import { RRule } from 'rrule';
+import { RRule, type Options } from 'rrule';
 import { daysBetweenLocalDates, shiftLocalDate } from './localDateMath';
 import type { LocalDate, TaskPlanning } from './types';
 import { localDate } from './validation';
@@ -64,6 +64,25 @@ function normalizedRuleText(value: string): string {
   return value.trim().replace(/\s+/gu, ' ');
 }
 
+function hasOnlySupportedOptions(options: Partial<Options>): boolean {
+  const common = ['freq', 'interval'] as const satisfies readonly (keyof Options)[];
+  let allowed: ReadonlySet<keyof Options>;
+  if (options.freq === RRule.DAILY) {
+    allowed = new Set(common);
+  } else if (options.freq === RRule.WEEKLY) {
+    allowed = new Set([...common, 'byweekday']);
+  } else if (options.freq === RRule.MONTHLY) {
+    allowed = new Set([...common, 'bymonthday', 'byweekday']);
+  } else if (options.freq === RRule.YEARLY) {
+    allowed = new Set([...common, 'bymonth', 'bymonthday', 'byweekday']);
+  } else {
+    return false;
+  }
+  return Object.entries(options).every(
+    ([key, value]) => value == null || allowed.has(key as keyof Options),
+  );
+}
+
 export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   const normalized = normalizedRuleText(raw);
   if (!/^every\b/iu.test(normalized)) {
@@ -90,11 +109,11 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
 
   try {
     const options = RRule.parseText(ruleText);
-    const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
-    const canonical = compiled.toText();
-    if (canonical.toLowerCase() !== ruleText.toLowerCase()) {
+    if (!hasOnlySupportedOptions(options)) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
+    const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
+    const canonical = compiled.toText();
     compiledRules.set(canonical, compiled);
     return { type: 'valid', raw, canonical, whenDone };
   } catch {
@@ -104,8 +123,9 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
 
 function recurrenceReference(
   planning: TaskPlanning,
-  _policy: RecurrencePolicy,
+  policy: RecurrencePolicy,
 ): LocalDate | undefined {
+  if (policy.removeScheduledDate) return planning.due ?? planning.start ?? planning.scheduled;
   return planning.due ?? planning.scheduled ?? planning.start;
 }
 
@@ -284,6 +304,7 @@ function sequentialExpansion(
       }
       dates.push(next);
     }
+    if (next === visible.to) return { type: 'expanded', dates };
     current = next;
   }
   return { type: 'limited', dates, phase: 'sequential-seek', limit: maxSequentialSteps };

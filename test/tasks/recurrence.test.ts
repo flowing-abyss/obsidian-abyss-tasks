@@ -51,10 +51,25 @@ describe('parseRecurrenceRule', () => {
   });
 
   it.each([
+    ['every week on Tuesday and Friday', 'every week on Tuesday, Friday'],
+    ['every month on the second Tuesday', 'every month on the 2nd Tuesday'],
+    ['every 1 day', 'every day'],
+  ] as const)('canonicalizes %s without replacing raw input', (raw, canonical) => {
+    expect(parseRecurrenceRule(raw)).toEqual({
+      type: 'valid',
+      raw,
+      canonical,
+      whenDone: false,
+    });
+  });
+
+  it.each([
     ['weekly', 'must-start-with-every'],
     ['every day for 4 times', 'unsupported-recurrence-count'],
     ['every day until 2026-09-01', 'unsupported-recurrence-until'],
     ['every day when done trailing', 'invalid-when-done'],
+    ['every hour when done', 'unparseable-rule'],
+    ['every 2 months in January', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });
@@ -175,6 +190,24 @@ describe('nextOccurrencePlanning', () => {
     });
   });
 
+  it('uses start before scheduled as the reference when scheduled is removed', () => {
+    expect(
+      nextOccurrencePlanning({
+        rule: 'every week on Tuesday',
+        planning: {
+          start: localDate('2026-08-01'),
+          scheduled: localDate('2026-08-03'),
+        },
+        completedOn: localDate('2026-08-03'),
+        policy: { removeScheduledDate: true },
+      }),
+    ).toEqual({
+      type: 'next',
+      planning: { start: '2026-08-04' },
+      dayDelta: 3,
+    });
+  });
+
   it('returns a structured invalid result for an invalid rule', () => {
     expect(next('weekly', { due: localDate('2026-08-03') })).toEqual({
       type: 'invalid',
@@ -227,7 +260,14 @@ describe('expandRecurrenceReferences', () => {
     expect(result.type === 'limited' ? result.dates : []).toHaveLength(512);
   });
 
-  it('reports the sequential seek cap instead of silently truncating', () => {
+  it('expands when the 4096th sequential step reaches the visible endpoint', () => {
+    expect(expandResult('every month', '1000-01-31', '1341-05-28', '1341-05-28')).toEqual({
+      type: 'expanded',
+      dates: ['1341-05-28'],
+    });
+  });
+
+  it('still reports the sequential seek cap when the range is unreachable', () => {
     expect(expandResult('every month', '1000-01-31', '1400-01-01', '1400-12-31')).toEqual({
       type: 'limited',
       dates: [],
