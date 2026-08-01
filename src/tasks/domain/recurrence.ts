@@ -160,14 +160,23 @@ function grammarList<T>(
   }
 
   const parsed: T[] = [];
+  const seen = new Set<T>();
   for (const item of items) {
     const trimmed = item.trim();
     if (trimmed.length === 0) return undefined;
     const parsedItem = parseItem(trimmed);
-    if (parsedItem === undefined) return undefined;
+    if (parsedItem === undefined || seen.has(parsedItem)) return undefined;
+    seen.add(parsedItem);
     parsed.push(parsedItem);
   }
   return parsed;
+}
+
+function unorderedListKey(values: readonly (number | string)[]): string {
+  return values
+    .map(String)
+    .sort((left, right) => left.localeCompare(right))
+    .join(',');
 }
 
 function optionalLeadingThe(value: string): string | undefined {
@@ -196,7 +205,7 @@ function monthlyClauseKey(value: string): string | undefined {
   }
 
   const dates = grammarList(clause, (item) => grammarOrdinal(item, 31));
-  return dates === undefined ? undefined : `dates:${dates.join(',')}`;
+  return dates === undefined ? undefined : `dates:${unorderedListKey(dates)}`;
 }
 
 function intervalKey(
@@ -242,7 +251,7 @@ function supportedGrammarKey(value: string): string | undefined {
   if (singular === 'week') {
     if (clause === undefined) return `week:${interval}`;
     const weekdays = grammarList(clause, (item) => WEEKDAYS.get(item));
-    return weekdays === undefined ? undefined : `week:${interval}:${weekdays.join(',')}`;
+    return weekdays === undefined ? undefined : `week:${interval}:${unorderedListKey(weekdays)}`;
   }
   if (singular === 'month') {
     if (clause === undefined) return `month:${interval}`;

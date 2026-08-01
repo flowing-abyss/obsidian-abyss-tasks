@@ -64,6 +64,20 @@ describe('parseRecurrenceRule', () => {
   });
 
   it.each([
+    ['every week on Friday, Tuesday', 'every week on Tuesday, Friday'],
+    ['every week on Friday, Monday, Wednesday', 'every week on Monday, Wednesday, Friday'],
+    ['every month on the 15th and 1st', 'every month on the 1st and 15th'],
+    ['every month on the 31st, 1st and 15th', 'every month on the 1st, 15th and 31st'],
+  ] as const)('canonicalizes unordered recurrence list %s', (raw, canonical) => {
+    expect(parseRecurrenceRule(raw)).toEqual({
+      type: 'valid',
+      raw,
+      canonical,
+      whenDone: false,
+    });
+  });
+
+  it.each([
     ['case and whitespace', '  EVERY   WEEK  ', 'every week'],
     ['optional the', 'every month on last Friday', 'every month on the last Friday'],
     ['Oxford list', 'every week on Tuesday, and Friday', 'every week on Tuesday, Friday'],
@@ -135,7 +149,9 @@ describe('parseRecurrenceRule', () => {
     ['every week on Tuesday and and Friday', 'unparseable-rule'],
     ['every week on Tuesday,, Friday', 'unparseable-rule'],
     ['every week on Tuesday and, Friday', 'unparseable-rule'],
+    ['every week on Tuesday and Tuesday', 'unparseable-rule'],
     ['every month on the 1st and and 15th', 'unparseable-rule'],
+    ['every month on the 1st and 1st', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });
