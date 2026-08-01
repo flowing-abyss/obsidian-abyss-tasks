@@ -346,13 +346,13 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       return segment ? String(segment.lane + 1) : source.style.gridRow;
     };
 
-    const renderMovePreview = (target: SpanMoveTarget): void => {
+    const renderMovePreview = (target: SpanMoveTarget): boolean => {
       clearPreview();
       const actualStart = task.planning.start ?? localDate(binding.segmentStart);
       const actualDue = task.planning.due ?? localDate(binding.segmentEnd);
       const shiftedStart = shiftLocalDate(actualStart, target.days);
       const shiftedEnd = shiftLocalDate(actualDue, target.days);
-      if (!shiftedStart || !shiftedEnd) return;
+      if (!shiftedStart || !shiftedEnd) return false;
       const planning = { ...task.planning, start: shiftedStart, due: shiftedEnd };
       const layout = binding.previewLayoutFor?.(task, planning);
       const rows = new Set(columns.map((column) => column.row));
@@ -378,9 +378,10 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           previews.push(preview);
         }
       }
+      return previews.length > 0;
     };
 
-    const renderBoundaryPreview = (target: InteractiveSpanBoundaryTarget): void => {
+    const renderBoundaryPreview = (target: InteractiveSpanBoundaryTarget): boolean => {
       clearPreview();
       const actualStart =
         task.planning.start ??
@@ -392,7 +393,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         task.planning.scheduled ??
         task.planning.start ??
         parsedDate(binding.segmentEnd);
-      if (!actualStart || !actualDue) return;
+      if (!actualStart || !actualDue) return false;
       const prospectiveStart = target.boundary === 'start' ? target.date : actualStart;
       const prospectiveDue = target.boundary === 'start' ? actualDue : target.date;
       const planning = {
@@ -425,6 +426,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           previews.push(preview);
         }
       }
+      return previews.length > 0;
     };
 
     const resolve = (pointer: PointerEvent): typeof latest => {
@@ -462,9 +464,11 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       }
       const targetKey = semanticTargetKey(kind, latest);
       if (targetKey === renderedTargetKey) return;
-      if (kind === 'move') renderMovePreview(latest as SpanMoveTarget);
-      else renderBoundaryPreview(latest as InteractiveSpanBoundaryTarget);
-      renderedTargetKey = targetKey;
+      const built =
+        kind === 'move'
+          ? renderMovePreview(latest as SpanMoveTarget)
+          : renderBoundaryPreview(latest as InteractiveSpanBoundaryTarget);
+      if (built) renderedTargetKey = targetKey;
     };
 
     const dispose = (): void => {

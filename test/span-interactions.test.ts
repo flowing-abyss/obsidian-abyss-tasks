@@ -332,4 +332,79 @@ describe('span interaction geometry', () => {
       root.remove();
     }
   });
+
+  it('does not cache a move target when its preview cannot be built', () => {
+    const root = document.createElement('div');
+    root.className = 'tc-tg-root';
+    const row = root.createDiv({ cls: 'tc-tg-allday-days' });
+    const layer = row.createDiv({ cls: 'tc-tg-span-layer' });
+    for (const [index, date] of ['2026-07-06', '2026-07-07', '2026-07-08'].entries()) {
+      const cell = row.createDiv({ cls: 'tc-tg-allday-cell' });
+      cell.dataset['tgDate'] = date;
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(index * 100, 0, 100, 100),
+      );
+    }
+    document.body.appendChild(root);
+    const source = layer.createDiv();
+    source.style.gridRow = '1';
+    const snapshot = task({ planning: { start: '0000-01-01', due: '2026-07-08' } });
+    let layoutComputations = 0;
+
+    attachSpanInteractions({
+      source,
+      task: snapshot,
+      segmentStart: '2026-07-07',
+      segmentEnd: '2026-07-07',
+      owner: createSpanInteractionOwner(),
+      previewLayoutFor: (candidate, planning) => {
+        layoutComputations++;
+        return layoutVisibleSpans(
+          [{ ...candidate, planning }],
+          ['2026-07-06', '2026-07-07', '2026-07-08'],
+        );
+      },
+      boundaryHandles: [],
+      onMove: vi.fn(),
+      onBoundary: vi.fn(),
+    });
+
+    try {
+      source.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 150,
+          clientY: 50,
+          pointerId: 5,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 5 }),
+      );
+      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
+      expect(layoutComputations).toBe(0);
+
+      const mutablePlanning = snapshot.planning as { start?: string; due?: string };
+      mutablePlanning.start = '2026-07-20';
+      mutablePlanning.due = '2026-07-21';
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 5 }),
+      );
+      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
+      expect(layoutComputations).toBe(1);
+
+      mutablePlanning.start = '2026-07-07';
+      mutablePlanning.due = '2026-07-08';
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 5 }),
+      );
+
+      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(2);
+      expect(layoutComputations).toBe(2);
+    } finally {
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 5 }));
+      root.remove();
+    }
+  });
 });
