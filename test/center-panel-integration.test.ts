@@ -2315,7 +2315,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       dayThreeDate,
     );
     expect(patch).toHaveBeenCalledTimes(2);
-    expect(activeDocument.activeElement).toBe(timedBlock(h.el));
+    await vi.waitFor(() => expect(activeDocument.activeElement).toBe(timedBlock(h.el)));
     patch.mockRestore();
   });
 

@@ -638,7 +638,16 @@ function insertionPoint(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
       }
       return true;
     });
-    if (later) return later.from;
+    const carrierAt =
+      kind === 'recurrence' || kind === 'on-completion'
+        ? Math.min(
+            parsed.occurrences.get('task-id')?.[0]?.from ?? Infinity,
+            parsed.occurrences.get('depends-on')?.[0]?.from ?? Infinity,
+            parsed.occurrences.get('block-id')?.[0]?.from ?? Infinity,
+          )
+        : Infinity;
+    if (later) return Math.min(later.from, carrierAt);
+    if (carrierAt !== Infinity) return carrierAt;
   }
   const blockId = parsed.occurrences.get('block-id')?.[0];
   if (blockId) return blockId.from;

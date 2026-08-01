@@ -1083,7 +1083,7 @@ describe('TaskMarkdownCodec', () => {
     expectLosslessPartition(parsed);
   });
 
-  it('edits recurrence and completion policy in canonical order without touching protected carriers', () => {
+  it('inserts recurrence and completion policy before IDs without touching protected carriers', () => {
     const source =
       '> - [ ] `🔁 title` [🏁 label](https://example.test) #work 🆔 id-1 ⛔ prep-1 ^ship\r\n';
     const result = applyTaskCommand(codec, source, {
@@ -1098,7 +1098,7 @@ describe('TaskMarkdownCodec', () => {
     expect(result).toEqual({
       type: 'changed',
       content:
-        '> - [ ] `🔁 title` [🏁 label](https://example.test) #work 🆔 id-1 ⛔ prep-1 🔁 every week 🏁 delete ^ship\r\n',
+        '> - [ ] `🔁 title` [🏁 label](https://example.test) #work 🔁 every week 🏁 delete 🆔 id-1 ⛔ prep-1 ^ship\r\n',
     });
   });
 
