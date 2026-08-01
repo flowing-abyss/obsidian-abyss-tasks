@@ -255,4 +255,81 @@ describe('span interaction geometry', () => {
       root.remove();
     }
   });
+
+  it('clears a boundary preview once when returning to its unchanged date', () => {
+    const root = document.createElement('div');
+    root.className = 'tc-tg-root';
+    const row = root.createDiv({ cls: 'tc-tg-allday-days' });
+    const layer = row.createDiv({ cls: 'tc-tg-span-layer' });
+    for (const [index, date] of ['2026-07-06', '2026-07-07', '2026-07-08'].entries()) {
+      const cell = row.createDiv({ cls: 'tc-tg-allday-cell' });
+      cell.dataset['tgDate'] = date;
+      vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(index * 100, 0, 100, 100),
+      );
+    }
+    document.body.appendChild(root);
+    const source = layer.createDiv();
+    source.style.gridRow = '1';
+    const handle = source.createDiv();
+    const snapshot = task({ planning: { start: '2026-07-07', due: '2026-07-08' } });
+    let layoutComputations = 0;
+
+    attachSpanInteractions({
+      source,
+      task: snapshot,
+      segmentStart: '2026-07-07',
+      segmentEnd: '2026-07-07',
+      owner: createSpanInteractionOwner(),
+      previewLayoutFor: (candidate, planning) => {
+        layoutComputations++;
+        return layoutVisibleSpans(
+          [{ ...candidate, planning }],
+          ['2026-07-06', '2026-07-07', '2026-07-08'],
+        );
+      },
+      boundaryHandles: [{ element: handle, boundary: 'start' }],
+      onMove: vi.fn(),
+      onBoundary: vi.fn(),
+    });
+
+    try {
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 150,
+          clientY: 50,
+          pointerId: 4,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 4 }),
+      );
+      const firstPreview = root.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
+      const remove = vi.spyOn(firstPreview, 'remove');
+
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 50, pointerId: 4 }),
+      );
+      expect(root.querySelectorAll('.tc-span-boundary-preview')).toHaveLength(0);
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(layoutComputations).toBe(1);
+
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 175, clientY: 50, pointerId: 4 }),
+      );
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(layoutComputations).toBe(1);
+
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 4 }),
+      );
+      expect(root.querySelectorAll('.tc-span-boundary-preview')).toHaveLength(3);
+      expect(layoutComputations).toBe(2);
+    } finally {
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 4 }));
+      root.remove();
+    }
+  });
 });

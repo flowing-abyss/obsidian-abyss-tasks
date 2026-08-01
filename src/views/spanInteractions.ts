@@ -36,6 +36,18 @@ export type InteractiveSpanBoundaryTarget =
       readonly dayDelta: number;
     };
 
+function semanticTargetKey(
+  kind: 'move' | 'start' | 'due' | 'create-span',
+  target: Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget>,
+): string {
+  if (kind === 'move') {
+    const move = target as SpanMoveTarget;
+    return `${kind}:${move.grabbedDate}:${move.targetDate}:${move.days}`;
+  }
+  const boundary = target as InteractiveSpanBoundaryTarget;
+  return `${kind}:${boundary.boundary}:${boundary.date}:${boundary.dayDelta}`;
+}
+
 export interface SpanInteractionOwner {
   begin(dispose: () => void): void;
   end(dispose: () => void): void;
@@ -309,12 +321,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     const originalDraggable = source.getAttribute('draggable');
     let previews: HTMLElement[] = [];
     let latest: Readonly<SpanMoveTarget | InteractiveSpanBoundaryTarget> | undefined;
+    let renderedTargetKey: string | undefined;
     let dragStarted = false;
     let disposed = false;
 
     const clearPreview = (): void => {
       for (const preview of previews) preview.remove();
       previews = [];
+      renderedTargetKey = undefined;
     };
 
     const previewRow = (
@@ -443,11 +457,14 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       if (disposed || pointer.pointerId !== pointerId) return;
       latest = resolve(pointer);
       if (!latest) {
-        clearPreview();
+        if (renderedTargetKey !== undefined) clearPreview();
         return;
       }
+      const targetKey = semanticTargetKey(kind, latest);
+      if (targetKey === renderedTargetKey) return;
       if (kind === 'move') renderMovePreview(latest as SpanMoveTarget);
       else renderBoundaryPreview(latest as InteractiveSpanBoundaryTarget);
+      renderedTargetKey = targetKey;
     };
 
     const dispose = (): void => {

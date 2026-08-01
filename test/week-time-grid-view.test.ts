@@ -4,6 +4,7 @@ import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import * as spanLayout from '../src/views/spanLayout';
 import { fixedToday, freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -1112,6 +1113,80 @@ describe('WeekTimeGridView', () => {
     ).toEqual(['1', '1', '1', '1']);
     view.destroy();
     restoreElementFromPoint();
+  });
+
+  it('retains resize preview nodes for repeated semantic boundary targets', () => {
+    const container = freshContainer();
+    const view = new WeekTimeGridView(callbacks());
+    const resizing = task({
+      source: { filePath: 'a.md', line: 1 },
+      planning: { start: '2026-07-08', due: '2026-07-09' },
+    });
+    const blocker = task({
+      source: { filePath: 'b.md', line: 2 },
+      planning: { start: '2026-07-06', due: '2026-07-09' },
+    });
+    const config = resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 });
+    view.render(container, [resizing, blocker], config);
+    const restoreElementFromPoint = measureAllDayCells(container);
+    const layoutComputations = vi.spyOn(spanLayout, 'layoutVisibleSpansWithReplacement');
+
+    try {
+      const source = container.querySelector<HTMLElement>(
+        '[data-task-path="a.md"][data-span-kind="ghost"]',
+      )!;
+      const handle = source.querySelector<HTMLElement>('[data-boundary="start"]')!;
+      handle.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 250,
+          clientY: 50,
+          pointerId: 54,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 54 }),
+      );
+      const firstPreviews = Array.from(
+        container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+      );
+
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 54 }),
+      );
+      const currentPreviews = Array.from(
+        container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+      );
+
+      expect(currentPreviews).toEqual(firstPreviews);
+      expect(currentPreviews[0]).toBe(firstPreviews[0]);
+      expect(layoutComputations).toHaveBeenCalledTimes(1);
+
+      window.dispatchEvent(
+        new PointerEvent('pointermove', { clientX: 150, clientY: 50, pointerId: 54 }),
+      );
+      const adjacentPreviews = Array.from(
+        container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+      );
+
+      expect(JSON.parse(adjacentPreviews[0]!.dataset['target']!)).toEqual({
+        boundary: 'start',
+        date: '2026-07-07',
+        dayDelta: -1,
+      });
+      expect(adjacentPreviews).not.toEqual(firstPreviews);
+      expect(adjacentPreviews[0]).not.toBe(firstPreviews[0]);
+      expect(layoutComputations).toHaveBeenCalledTimes(2);
+
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 54 }));
+      expect(container.querySelectorAll('.tc-span-boundary-preview')).toHaveLength(0);
+    } finally {
+      window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 54 }));
+      layoutComputations.mockRestore();
+      view.destroy();
+      restoreElementFromPoint();
+    }
   });
 
   it('destroy() does not throw', () => {
