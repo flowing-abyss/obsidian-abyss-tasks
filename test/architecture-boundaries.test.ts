@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 const ROOT = resolve(import.meta.dirname, '..');
 const SRC_ROOT = resolve(ROOT, 'src');
 const TASK_PUBLIC_ENTRY = 'src/tasks';
+const RECURRENCE_ENGINE = 'src/tasks/domain/recurrence.ts';
 
 const PRESENTATION_PATH = /^src\/(?:code-block|panels|ui|views)\//u;
 const PRESENTATION_FILES = new Set(['src/settings/SettingsTab.ts']);
@@ -203,10 +204,12 @@ function dependencyViolationsFor(path: string, records: readonly ImportRecord[])
   if (path.startsWith('src/tasks/domain/')) {
     for (const record of records) {
       const target = resolvedImport(path, record.specifier);
+      const allowedRecurrenceBoundary = path === RECURRENCE_ENGINE && record.specifier === 'rrule';
       if (
-        record.specifier === 'obsidian' ||
-        target === undefined ||
-        !target.startsWith('src/tasks/domain/')
+        !allowedRecurrenceBoundary &&
+        (record.specifier === 'obsidian' ||
+          target === undefined ||
+          !target.startsWith('src/tasks/domain/'))
       ) {
         violations.push(`${path} -> ${record.specifier}`);
       }
@@ -260,7 +263,8 @@ function ambientBoundarySitesFor(path: string, module: ts.SourceFile): string[] 
     if (
       ts.isNewExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      node.expression.text === 'Date'
+      node.expression.text === 'Date' &&
+      !(path === RECURRENCE_ENGINE && node.arguments?.length === 1)
     ) {
       sites.push(`${path}:new Date`);
     }
@@ -427,6 +431,48 @@ describe('task architecture boundaries', () => {
   it('enforces domain, application, infrastructure, and presentation dependency direction', () => {
     expect(dependencyViolations()).toEqual([]);
     expect(ambientBoundarySites()).toEqual([]);
+  });
+
+  it('allows only the recurrence engine to import the deterministic rrule boundary', () => {
+    const rruleImport = importsFromSyntax(
+      syntaxFromText('src/tasks/domain/recurrence.ts', "import { RRule } from 'rrule';"),
+    );
+    expect(dependencyViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
+    expect(dependencyViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
+      'src/tasks/domain/validation.ts -> rrule',
+    ]);
+
+    const forbiddenImport = importsFromSyntax(
+      syntaxFromText('src/tasks/domain/recurrence.ts', "import { Notice } from 'obsidian';"),
+    );
+    expect(dependencyViolationsFor('src/tasks/domain/recurrence.ts', forbiddenImport)).toEqual([
+      'src/tasks/domain/recurrence.ts -> obsidian',
+    ]);
+  });
+
+  it('allows only explicit Date construction in the recurrence engine', () => {
+    const safe = syntaxFromText(
+      'src/tasks/domain/recurrence.ts',
+      'new Date(Date.UTC(2026, 7, 1)); new Date(explicitValue);',
+    );
+    expect(ambientBoundarySitesFor('src/tasks/domain/recurrence.ts', safe)).toEqual([]);
+    expect(ambientBoundarySitesFor('src/tasks/domain/validation.ts', safe)).toEqual([
+      'src/tasks/domain/validation.ts:new Date',
+      'src/tasks/domain/validation.ts:new Date',
+    ]);
+
+    const unsafe = syntaxFromText(
+      'src/tasks/domain/recurrence.ts',
+      'new Date(); new Date(2026, 7, 1); Date(); Date.now(); window.location; document.title;',
+    );
+    expect(ambientBoundarySitesFor('src/tasks/domain/recurrence.ts', unsafe)).toEqual([
+      'src/tasks/domain/recurrence.ts:new Date',
+      'src/tasks/domain/recurrence.ts:new Date',
+      'src/tasks/domain/recurrence.ts:Date()',
+      'src/tasks/domain/recurrence.ts:Date.now',
+      'src/tasks/domain/recurrence.ts:window',
+      'src/tasks/domain/recurrence.ts:document',
+    ]);
   });
 
   it('recognizes one- and two-argument dynamic imports before checking their layer', () => {

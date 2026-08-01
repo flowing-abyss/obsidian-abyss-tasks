@@ -84,6 +84,39 @@ export default tseslint.config(
     },
   },
   {
+    files: ['src/tasks/domain/recurrence.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              regex: '^(?!\\./|rrule$)',
+              message:
+                'The recurrence engine may import only sibling domain modules and the deterministic rrule boundary.',
+            },
+          ],
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "NewExpression[callee.name='Date'][arguments.length!=1]",
+          message:
+            'The recurrence engine may construct Date only from one explicit UTC-derived value.',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Date'][callee.property.name='now']",
+          message: 'Task domain receives time through explicit values or a Clock port.',
+        },
+        {
+          selector: "CallExpression[callee.name='Date']",
+          message: 'Task domain receives time through explicit values or a Clock port.',
+        },
+      ],
+    },
+  },
+  {
     files: ['src/tasks/application/**/*.ts'],
     rules: {
       'no-restricted-imports': [
