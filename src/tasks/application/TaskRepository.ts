@@ -14,6 +14,10 @@ import type {
 } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
 
+type AddSubtaskLifecycle =
+  | { readonly today: LocalDate; readonly addCreatedDate: true }
+  | { readonly today: LocalDate; readonly addCreatedDate: false };
+
 export type TaskEditCommand =
   | Exclude<
       TaskCommand,
@@ -36,13 +40,11 @@ export type TaskEditCommand =
       readonly text: string;
       readonly stamp: LocalDate;
     }
-  | {
+  | ({
       readonly type: 'add-subtask';
       readonly parent: TaskStatusTarget;
       readonly text: string;
-      readonly today?: LocalDate;
-      readonly addCreatedDate?: boolean;
-    };
+    } & AddSubtaskLifecycle);
 
 export interface TaskDraft {
   readonly markdownBody: string;

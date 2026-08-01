@@ -9,6 +9,7 @@ import type {
 import type { MoveRecovery, PlanningTarget, TaskResolutionCandidate } from '../../domain/commands';
 import type {
   CommentRef,
+  LocalDate,
   SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
@@ -670,10 +671,17 @@ export class ObsidianTaskRepository implements TaskRepository {
           content,
         };
       }
+      const today = (command as unknown as { readonly today?: LocalDate }).today;
+      if (today === undefined) {
+        return {
+          result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] },
+          content,
+        };
+      }
       const created = createTaskBlock(this.options.codec, {
         markdownBody: command.text,
-        today: command.today ?? localDate('1970-01-01'),
-        addCreatedDate: command.addCreatedDate ?? false,
+        today,
+        addCreatedDate: command.addCreatedDate,
       });
       if (created.type === 'invalid') return { result: created, content };
       editorCommand = { ...command, text: created.content.slice('- [ ] '.length) };

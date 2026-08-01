@@ -879,11 +879,12 @@ describe('CenterPanel project selection', () => {
       settings,
     );
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
+    fixedToday(TODAY);
     await call<void>(panel, 'createTask', 'under section');
     const content = await readMd(app, 'Projects/A.md');
     const lines = content.split('\n');
     const sectionIdx = lines.findIndex((l) => l.trim() === '## Tasks');
-    expect(lines[sectionIdx + 1]).toBe('- [ ] under section ➕ 2026-08-02');
+    expect(lines[sectionIdx + 1]).toBe(`- [ ] under section ➕ ${TODAY}`);
   });
 });
 

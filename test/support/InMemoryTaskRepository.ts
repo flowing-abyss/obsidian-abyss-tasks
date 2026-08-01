@@ -8,6 +8,7 @@ import type {
 import type { PlanningTarget } from '../../src/tasks/domain/commands';
 import type {
   CommentRef,
+  LocalDate,
   SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
@@ -456,10 +457,14 @@ export class InMemoryTaskRepository implements TaskRepository {
         if (command.text.trim().length === 0 || /[\r\n]/u.test(command.text)) {
           return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
         }
+        const today = (command as unknown as { readonly today?: LocalDate }).today;
+        if (today === undefined) {
+          return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
+        }
         const created = createTaskBlock(this.options.codec, {
           markdownBody: command.text,
-          today: command.today ?? localDate('1970-01-01'),
-          addCreatedDate: command.addCreatedDate ?? false,
+          today,
+          addCreatedDate: command.addCreatedDate,
         });
         if (created.type === 'invalid') return created;
         editorCommand = { ...command, text: created.content.slice('- [ ] '.length) };

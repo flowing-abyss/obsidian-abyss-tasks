@@ -2,7 +2,7 @@ import { TFile } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskRepository } from '../../src/tasks/application/TaskRepository';
+import type { TaskEditCommand, TaskRepository } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
@@ -154,6 +154,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         type: 'add-subtask',
         parent: { type: 'subtask', ref: parent.ref },
         text: 'new [[child]]',
+        today: localDate('2026-07-14'),
+        addCreatedDate: false,
       });
 
       expect(result).toMatchObject({
@@ -292,11 +294,27 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           type: 'add-subtask',
           parent: { type: 'task', ref: root.ref },
           text: 'invalid\nchild',
+          today: localDate('2026-07-14'),
+          addCreatedDate: false,
         }),
       ).resolves.toEqual({
         type: 'invalid',
         issues: [{ code: 'invalid-target', field: 'subtask' }],
       });
+
+      const beforeMissingLifecycle = await h.read();
+      await expect(
+        h.repository.edit({
+          type: 'add-subtask',
+          parent: { type: 'task', ref: root.ref },
+          text: 'must not become epoch dated',
+          addCreatedDate: true,
+        } as unknown as TaskEditCommand),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'subtask' }],
+      });
+      expect(await h.read()).toBe(beforeMissingLifecycle);
       expect(await h.read()).toBe(source);
     });
 

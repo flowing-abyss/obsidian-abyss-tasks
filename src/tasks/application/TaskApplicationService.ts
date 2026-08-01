@@ -290,7 +290,7 @@ export class TaskApplicationService implements TaskApplicationApi {
       return {
         command: {
           ...command,
-          ...(settings.taskLifecycle.addCreatedDate && { today: this.clock.today() }),
+          today: this.clock.today(),
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },
       };

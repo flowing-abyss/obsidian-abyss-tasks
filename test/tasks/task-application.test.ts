@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
+  TaskEditCommand,
   TaskRepository,
   TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
@@ -72,6 +73,50 @@ function service(
 }
 
 describe('TaskApplicationService planning commands', () => {
+  it('always forwards the captured day for an unstamped subtask request', async () => {
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: snapshot() },
+      changed: true,
+    });
+    const application = new TaskApplicationService(
+      queries(),
+      { edit, create: vi.fn(), move: vi.fn() },
+      statuses,
+      clock,
+      undefined,
+      () => ({
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+
+    await application.execute({
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'child',
+    });
+
+    expect(edit).toHaveBeenCalledWith({
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'child',
+      today: localDate('2026-07-14'),
+      addCreatedDate: false,
+    });
+  });
+
+  it('does not permit an enabled subtask stamp without its explicit day', () => {
+    // @ts-expect-error enabled created-date stamping requires an explicit day
+    const invalid: TaskEditCommand = {
+      type: 'add-subtask',
+      parent: { type: 'task', ref },
+      text: 'child',
+      addCreatedDate: true,
+    };
+    expect(invalid).toBeDefined();
+  });
+
   it.each([
     ['zero shift', { type: 'shift-schedule' as const, ref, days: 0 }],
     ['unsafe shift', { type: 'shift-schedule' as const, ref, days: Number.MAX_SAFE_INTEGER + 1 }],
