@@ -6,6 +6,7 @@ import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { CalendarSettings } from '../../src/settings/types';
 import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
+import type { TaskBehaviorSettingsProvider } from '../../src/tasks/application/TaskBehaviorSettings';
 import type { TaskDestinationProvider } from '../../src/tasks/application/TaskDestinationProvider';
 import type { TaskDraft, TaskRepository } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
@@ -233,6 +234,38 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(await harness.read()).toBe(beforeDuplicate);
     });
 
+    it('inserts one stamped task block and never writes an invalid second root', async () => {
+      const harness = await makeHarness(adapter, '# Tasks\n');
+      const draft: TaskDraft & { today: ReturnType<typeof localDate>; addCreatedDate: boolean } = {
+        markdownBody: 'Parent\n  - [ ] Child',
+        today: localDate('2026-08-01'),
+        addCreatedDate: true,
+      };
+
+      await expect(harness.repository.create(appendDestination, draft)).resolves.toMatchObject({
+        type: 'committed',
+        outcome: {
+          type: 'task',
+          task: {
+            planning: { created: '2026-08-01' },
+            subtasks: [{ planning: { created: '2026-08-01' } }],
+          },
+        },
+      });
+      expect(await harness.read()).toBe(
+        '# Tasks\n- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01\n',
+      );
+
+      const before = await harness.read();
+      await expect(
+        harness.repository.create(appendDestination, {
+          ...draft,
+          markdownBody: 'Parent\n- [ ] Second root',
+        }),
+      ).resolves.toMatchObject({ type: 'invalid' });
+      expect(await harness.read()).toBe(before);
+    });
+
     it('deletes the exact confirmed root and its complete nested block', async () => {
       const source =
         '- [ ] root\n  - > description\n  - [ ] child\n    - [ ] descendant\n- [ ] keep\n';
@@ -337,7 +370,11 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     expect(destinationProvider.resolveConfiguredDefault).toHaveBeenCalledOnce();
     expect(destinationProvider.prepare).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(appendDestination, draft);
+    expect(create).toHaveBeenCalledWith(appendDestination, {
+      ...draft,
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
     expect(edit).not.toHaveBeenCalled();
   });
 
@@ -369,7 +406,11 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     expect(provider.resolveConfiguredDefault).not.toHaveBeenCalled();
     expect(provider.prepare).not.toHaveBeenCalled();
-    expect(create).toHaveBeenCalledWith(appendDestination, { markdownBody: 'explicit' });
+    expect(create).toHaveBeenCalledWith(appendDestination, {
+      markdownBody: 'explicit',
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
 
     create.mockClear();
     await application.execute({
@@ -382,7 +423,11 @@ describe('TaskApplicationService lifecycle routing', () => {
       markdownBody: 'prepared',
     });
     expect(provider.prepare).toHaveBeenCalledWith(appendDestination);
-    expect(create).toHaveBeenCalledWith(appendDestination, { markdownBody: 'prepared' });
+    expect(create).toHaveBeenCalledWith(appendDestination, {
+      markdownBody: 'prepared',
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
 
     await expect(
       application.execute({
@@ -418,6 +463,8 @@ describe('TaskApplicationService lifecycle routing', () => {
     expect(create).toHaveBeenCalledWith(appendDestination, {
       markdownBody: 'tagged',
       initial: { tags: { add: ['#work'], remove: ['#later'] } },
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
     });
 
     create.mockClear();
@@ -433,6 +480,137 @@ describe('TaskApplicationService lifecycle routing', () => {
       issues: [{ code: 'invalid-target', field: 'tags' }],
     });
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('TaskApplicationService lifecycle settings', () => {
+  const queries: TaskQueryApi = {
+    list: () => [],
+    forCalendarDates: () => [],
+    resolve: (ref) => ({ type: 'not-found', ref }),
+    subscribe: () => () => {},
+  };
+
+  it('snapshots lifecycle settings once per command for root and subtask creation/completion dates', async () => {
+    const harness = await makeHarness('in-memory', '');
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const behavior: TaskBehaviorSettingsProvider = vi.fn<TaskBehaviorSettingsProvider>(() => ({
+      taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+      recurrence: { newOccurrencePlacement: 'before' as const, removeScheduledDate: false },
+    }));
+    const api = new TaskApplicationService(
+      queries,
+      harness.repository,
+      catalog,
+      { today: () => localDate('2026-08-01') },
+      undefined,
+      behavior,
+    );
+
+    const created = await api.execute({
+      type: 'create',
+      destination: { type: 'explicit', destination: appendDestination },
+      markdownBody: 'Parent\n  - [ ] Child',
+    });
+    expect(await harness.read()).toBe('- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01');
+    expect(behavior).toHaveBeenCalledOnce();
+    if (created.type !== 'ok' || created.outcome.type !== 'task')
+      throw new Error('task not created');
+
+    const subtaskAdded = await api.execute({
+      type: 'add-subtask',
+      parent: { type: 'task', ref: created.outcome.task.ref },
+      text: 'Added later',
+    });
+    expect(await harness.read()).toBe(
+      '- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01\n  - [ ] Added later ➕ 2026-08-01',
+    );
+    if (subtaskAdded.type !== 'ok' || subtaskAdded.outcome.type !== 'task') {
+      throw new Error('subtask not added');
+    }
+
+    const rootDone = await api.execute({
+      type: 'set-status',
+      target: { type: 'task', ref: subtaskAdded.outcome.task.ref },
+      symbol: 'x',
+    });
+    expect(rootDone).toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task', task: { planning: { completion: '2026-08-01' } } },
+    });
+    expect(await harness.read()).toContain('- [x] Parent ➕ 2026-08-01 ✅ 2026-08-01');
+    if (rootDone.type !== 'ok' || rootDone.outcome.type !== 'task')
+      throw new Error('task not completed');
+
+    const childDone = await api.execute({
+      type: 'set-status',
+      target: { type: 'subtask', ref: rootDone.outcome.task.subtasks[0]!.ref },
+      symbol: 'x',
+    });
+    expect(childDone).toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task' },
+    });
+    if (childDone.type !== 'ok' || childDone.outcome.type !== 'task')
+      throw new Error('subtask not completed');
+    expect(childDone.outcome.task.subtasks[0]?.planning.completion).toBe('2026-08-01');
+
+    const rootDoneAgain = await api.execute({
+      type: 'set-status',
+      target: { type: 'task', ref: childDone.outcome.task.ref },
+      symbol: 'x',
+    });
+    expect(rootDoneAgain).toMatchObject({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: { planning: { completion: '2026-08-01' } } },
+    });
+
+    const reopened = await api.execute({
+      type: 'set-status',
+      target:
+        rootDoneAgain.type === 'ok' && rootDoneAgain.outcome.type === 'task'
+          ? { type: 'task', ref: rootDoneAgain.outcome.task.ref }
+          : { type: 'task', ref: rootDone.outcome.task.ref },
+      symbol: ' ',
+    });
+    expect(reopened).toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task', task: { planning: {} } },
+    });
+    expect((await harness.read()).split('\n')[0]).toBe('- [ ] Parent ➕ 2026-08-01');
+    expect(behavior).toHaveBeenCalledTimes(6);
+  });
+
+  it('does not add creation or completion dates when lifecycle dates are disabled', async () => {
+    const harness = await makeHarness('in-memory', '');
+    const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const api = new TaskApplicationService(
+      queries,
+      harness.repository,
+      catalog,
+      { today: () => localDate('2026-08-01') },
+      undefined,
+      () => ({
+        taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+        recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+      }),
+    );
+
+    const created = await api.execute({
+      type: 'create',
+      destination: { type: 'explicit', destination: appendDestination },
+      markdownBody: 'No stamps',
+    });
+    if (created.type !== 'ok' || created.outcome.type !== 'task')
+      throw new Error('task not created');
+    await api.execute({
+      type: 'set-status',
+      target: { type: 'task', ref: created.outcome.task.ref },
+      symbol: 'x',
+    });
+
+    expect(await harness.read()).toBe('- [x] No stamps');
   });
 });
 
@@ -547,7 +725,7 @@ describe('configured destination end-to-end lifecycle', () => {
     });
     const file = app.vault.getAbstractFileByPath(scenario.path);
     expect(file).toBeInstanceOf(TFile);
-    expect(await app.vault.cachedRead(file as TFile)).toBe('- [ ] first task');
+    expect(await app.vault.cachedRead(file as TFile)).toBe('- [ ] first task ➕ 2026-07-14');
     presentTaskCreationResult(result);
     expect(Notice).toHaveBeenCalledWith(`Task added to ${scenario.path}`);
   });
@@ -597,7 +775,7 @@ describe('configured destination end-to-end lifecycle', () => {
     expect(file).toBeInstanceOf(TFile);
     const content = await app.vault.cachedRead(file as TFile);
     expect(content).toContain(`# ${today}`);
-    expect(content).toContain(`## Tasks\n- [ ] planned task 📅 2026-07-20`);
+    expect(content).toContain(`## Tasks\n- [ ] planned task ➕ 2026-07-14 📅 2026-07-20`);
     expect(content).toContain('Daily notes stay here.');
     expect(content.split(/\r?\n/u).filter((line) => /^- \[.\]/u.test(line))).toHaveLength(1);
     expect(content).not.toContain('🆔');

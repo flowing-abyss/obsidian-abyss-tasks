@@ -203,6 +203,9 @@ export function applyTaskCommand(
           type: 'set-status',
           symbol: command.symbol,
           ...(command.stamp !== undefined && { today: command.stamp }),
+          ...(command.addCompletionDate !== undefined && {
+            addCompletionDate: command.addCompletionDate,
+          }),
         },
       ];
       break;

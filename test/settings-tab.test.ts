@@ -32,6 +32,15 @@ function makeTab(): CalendarSettingsTab {
 }
 
 describe('CalendarSettingsTab sections', () => {
+  it('renders lifecycle and recurrence setting rows in General', () => {
+    const tab = makeTab();
+    tab.containerEl.querySelector<HTMLElement>('.tc-settings-section-header')!.click();
+    expect(tab.containerEl.textContent).toContain('Add created date');
+    expect(tab.containerEl.textContent).toContain('Add completion date');
+    expect(tab.containerEl.textContent).toContain('New occurrence placement');
+    expect(tab.containerEl.textContent).toContain('Remove scheduled date');
+  });
+
   it('renders exactly 6 sections', () => {
     const tab = makeTab();
     const sections = tab.containerEl.querySelectorAll('.tc-settings-section');

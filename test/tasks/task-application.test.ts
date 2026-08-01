@@ -277,7 +277,13 @@ describe('TaskApplicationService planning commands', () => {
     });
 
     expect(edit.mock.calls.map(([command]) => command)).toEqual([
-      { type: 'add-subtask', parent, text: 'new child' },
+      {
+        type: 'add-subtask',
+        parent,
+        text: 'new child',
+        today: localDate('2026-07-14'),
+        addCreatedDate: true,
+      },
       { type: 'delete-subtask', subtask: first },
       {
         type: 'reorder-subtask',
@@ -654,6 +660,7 @@ describe('TaskApplicationService planning commands', () => {
       target: { type: 'task', ref },
       symbol: 'x',
       stamp: localDate('2026-07-14'),
+      addCompletionDate: true,
     });
   });
 
@@ -725,6 +732,7 @@ describe('TaskApplicationService planning commands', () => {
       type: 'set-status',
       target: { type: 'task', ref },
       symbol: 'X',
+      addCompletionDate: true,
     });
   });
 
@@ -757,6 +765,7 @@ describe('TaskApplicationService planning commands', () => {
       type: 'set-status',
       target: { type: 'task', ref },
       symbol: 'd',
+      addCompletionDate: true,
     });
   });
 
@@ -841,6 +850,7 @@ describe('TaskApplicationService planning commands', () => {
       target: { type: 'task', ref: fresh.ref },
       symbol: 'x',
       stamp: localDate('2026-07-14'),
+      addCompletionDate: true,
     });
   });
 
@@ -937,6 +947,7 @@ describe('TaskApplicationService planning commands', () => {
       target: { type: 'subtask', ref: freshChild.ref },
       symbol: 'x',
       stamp: localDate('2026-07-14'),
+      addCompletionDate: true,
     });
   });
 
@@ -1062,6 +1073,7 @@ describe('TaskApplicationService planning commands', () => {
       target: { type: 'task', ref },
       symbol: 'd',
       stamp: localDate('2026-07-14'),
+      addCompletionDate: true,
     });
   });
 

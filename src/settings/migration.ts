@@ -134,6 +134,33 @@ function migrateListViewStates(raw: Record<string, unknown>): void {
   }
 }
 
+function migrateTaskLifecycle(raw: Record<string, unknown>): void {
+  if (!raw['taskLifecycle'] || typeof raw['taskLifecycle'] !== 'object') {
+    raw['taskLifecycle'] = { addCreatedDate: true, addCompletionDate: true };
+    return;
+  }
+  const lifecycle = raw['taskLifecycle'] as Record<string, unknown>;
+  if (typeof lifecycle['addCreatedDate'] !== 'boolean') lifecycle['addCreatedDate'] = true;
+  if (typeof lifecycle['addCompletionDate'] !== 'boolean') lifecycle['addCompletionDate'] = true;
+}
+
+function migrateRecurrence(raw: Record<string, unknown>): void {
+  if (!raw['recurrence'] || typeof raw['recurrence'] !== 'object') {
+    raw['recurrence'] = { newOccurrencePlacement: 'before', removeScheduledDate: false };
+    return;
+  }
+  const recurrence = raw['recurrence'] as Record<string, unknown>;
+  if (
+    recurrence['newOccurrencePlacement'] !== 'before' &&
+    recurrence['newOccurrencePlacement'] !== 'after'
+  ) {
+    recurrence['newOccurrencePlacement'] = 'before';
+  }
+  if (typeof recurrence['removeScheduledDate'] !== 'boolean') {
+    recurrence['removeScheduledDate'] = false;
+  }
+}
+
 export function migrateSettings(raw: Record<string, unknown>): void {
   migrateInbox(raw);
   if (!('pinnedTags' in raw)) raw['pinnedTags'] = [];
@@ -144,4 +171,6 @@ export function migrateSettings(raw: Record<string, unknown>): void {
   }
   migrateTaskStatuses(raw);
   migrateListViewStates(raw);
+  migrateTaskLifecycle(raw);
+  migrateRecurrence(raw);
 }

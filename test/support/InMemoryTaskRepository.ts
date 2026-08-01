@@ -17,8 +17,9 @@ import type {
   TaskSnapshot,
 } from '../../src/tasks/domain/types';
 import { sameTaskNodeRef } from '../../src/tasks/domain/types';
+import { localDate } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
-import { createTaskLine } from '../../src/tasks/infrastructure/markdown/createTaskLine';
+import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
 import {
   type TaskBlockEdit,
   TaskBlockEditor,
@@ -294,9 +295,13 @@ export class InMemoryTaskRepository implements TaskRepository {
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       };
     }
-    const line = createTaskLine(this.options.codec, draft);
-    if (line.type === 'invalid') return line;
-    const inserted = this.editor.insertRoot(content, line.content, destination.insertion);
+    const block = createTaskBlock(this.options.codec, {
+      ...draft,
+      today: draft.today ?? localDate('1970-01-01'),
+      addCreatedDate: draft.addCreatedDate ?? false,
+    });
+    if (block.type === 'invalid') return block;
+    const inserted = this.editor.insertRootBlock(content, block.content, destination.insertion);
     if (!inserted) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
     const task = this.snapshot(destination.filePath, inserted.content, inserted.block.line);
     if (!task) return { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
@@ -446,11 +451,24 @@ export class InMemoryTaskRepository implements TaskRepository {
         return { type: 'conflict', current };
       }
       const blockLength = located.block.toLine - located.block.line + 1;
+      let editorCommand = command;
+      if (command.type === 'add-subtask') {
+        if (command.text.trim().length === 0 || /[\r\n]/u.test(command.text)) {
+          return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] };
+        }
+        const created = createTaskBlock(this.options.codec, {
+          markdownBody: command.text,
+          today: command.today ?? localDate('1970-01-01'),
+          addCreatedDate: command.addCreatedDate ?? false,
+        });
+        if (created.type === 'invalid') return created;
+        editorCommand = { ...command, text: created.content.slice('- [ ] '.length) };
+      }
       const edited = this.editor.edit(
         content,
         located.block,
         blockTarget(targetSnapshot, blockLength, relativeLine),
-        structuralEdit(command),
+        structuralEdit(editorCommand),
       );
       if (edited.type === 'conflict') return { type: 'conflict', current };
       if (edited.type === 'invalid') {

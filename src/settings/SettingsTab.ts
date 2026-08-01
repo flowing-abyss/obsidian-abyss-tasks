@@ -246,6 +246,55 @@ export class CalendarSettingsTab extends PluginSettingTab {
         }),
       );
 
+    new Setting(containerEl)
+      .setName('Add created date')
+      .setDesc('Add a created date to newly created tasks.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.taskLifecycle.addCreatedDate)
+          .onChange(async (value) => {
+            this.plugin.settings.taskLifecycle.addCreatedDate = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Add completion date')
+      .setDesc('Add a completion date when a task is completed.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.taskLifecycle.addCompletionDate)
+          .onChange(async (value) => {
+            this.plugin.settings.taskLifecycle.addCompletionDate = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('New occurrence placement')
+      .setDesc('Place recurring task occurrences before or after the completed task.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOptions({ before: 'Before completed task', after: 'After completed task' })
+          .setValue(this.plugin.settings.recurrence.newOccurrencePlacement)
+          .onChange(async (value) => {
+            this.plugin.settings.recurrence.newOccurrencePlacement = value as 'before' | 'after';
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName('Remove scheduled date')
+      .setDesc('Remove the scheduled date from a newly generated recurring task.')
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.recurrence.removeScheduledDate)
+          .onChange(async (value) => {
+            this.plugin.settings.recurrence.removeScheduledDate = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
     if (this.plugin.settings.addToToday) {
       const resolver = new DailyNoteResolver(this.app, this.plugin.settings);
       const providers = resolver.getAvailableProviders();

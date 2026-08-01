@@ -59,6 +59,10 @@ export default class TaskCalendarPlugin extends Plugin {
       this.statusCatalog,
       { today: () => localDate(window.moment().format('YYYY-MM-DD')) },
       destinationProvider,
+      () => ({
+        taskLifecycle: this.settings.taskLifecycle,
+        recurrence: this.settings.recurrence,
+      }),
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());

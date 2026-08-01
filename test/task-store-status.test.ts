@@ -215,6 +215,7 @@ describe('live status catalog transitions', () => {
         type: 'set-status',
         target: { type: 'task', ref: h.indexed.ref },
         symbol: expectedSymbol,
+        ...(operation === 'set-status' && { addCompletionDate: true }),
       });
     },
   );
@@ -276,6 +277,7 @@ describe('live status catalog transitions', () => {
         target: { type: 'task', ref: h.indexed.ref },
         symbol: expectedSymbol,
         stamp: localDate('2026-07-14'),
+        addCompletionDate: true,
       });
     },
   );

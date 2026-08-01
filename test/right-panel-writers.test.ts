@@ -1858,7 +1858,7 @@ describe('RightPanel — blockquote write-path preserves "> " formatting', () =>
     });
     await call<Promise<void>>(panel, 'addSubTask', t, 'child');
     const lines = (await readMd(app, 't.md')).split('\n');
-    expect(lines[1]).toBe('>   - [ ] child');
+    expect(lines[1]).toBe('>   - [ ] child ➕ 2026-07-14');
     expect(lines[2]).toBe('> - [ ] other');
   });
 

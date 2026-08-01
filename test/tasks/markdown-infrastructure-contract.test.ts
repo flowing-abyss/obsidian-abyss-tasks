@@ -3,7 +3,7 @@ import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
-import { createTaskLine } from '../../src/tasks/infrastructure/markdown/createTaskLine';
+import { createTaskBlock } from '../../src/tasks/infrastructure/markdown/createTaskBlock';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { canonicalStatusCatalog } from '../helpers';
 
@@ -144,23 +144,61 @@ describe('markdown infrastructure contracts', () => {
     },
   );
 
+  it('constructs one complete root block and stamps missing created dates recursively', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Parent\n  - [ ] Child',
+        today: localDate('2026-08-01'),
+        addCreatedDate: true,
+      }),
+    ).toEqual({
+      type: 'created',
+      content: '- [ ] Parent ➕ 2026-08-01\n  - [ ] Child ➕ 2026-08-01',
+    });
+  });
+
+  it('preserves an authored created date and applies initial fields only to the owner', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Parent ➕ 2026-07-31\n  - [ ] Child',
+        initial: { due: { type: 'set', value: localDate('2026-08-10') } },
+        today: localDate('2026-08-01'),
+        addCreatedDate: true,
+      }),
+    ).toEqual({
+      type: 'created',
+      content: '- [ ] Parent ➕ 2026-07-31 📅 2026-08-10\n  - [ ] Child ➕ 2026-08-01',
+    });
+  });
+
+  it('does not add created dates when the lifecycle setting is disabled', () => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody: 'Parent\n  - [ ] Child',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+      }),
+    ).toEqual({ type: 'created', content: '- [ ] Parent\n  - [ ] Child' });
+  });
+
   it.each([
-    {
-      name: 'multiline body',
-      markdownBody: 'first\nsecond',
-      issues: [{ code: 'invalid-title', field: 'title' }],
-    },
-    {
-      name: 'empty title',
-      markdownBody: '   ',
-      issues: [{ code: 'invalid-title', field: 'title' }],
-    },
-    {
-      name: 'malformed metadata',
-      markdownBody: 'task ⏰ 25:00',
-      issues: [{ code: 'invalid-time', field: 'time' }],
-    },
-  ] as const)('rejects a $name while constructing a root line', ({ markdownBody, issues }) => {
-    expect(createTaskLine(codec, { markdownBody })).toEqual({ type: 'invalid', issues });
+    'Parent ➕ 2026-08-01 ➕ 2026-08-02',
+    'Parent ➕',
+    'Parent ➕ 2026-02-30',
+    'Parent\n  - [ ] Child ➕ 2026-08-01 ➕ 2026-08-02',
+    'Parent\n  - [ ] Child ➕',
+    'Parent\n  - [ ] Child ➕ 2026-02-30',
+    'Parent\n- [ ] A second root',
+    'Parent\n  - [ ] Child\nde-indented content',
+    'Parent\r  - [ ] Child',
+    '   ',
+  ])('rejects invalid task blocks atomically: %j', (markdownBody) => {
+    expect(
+      createTaskBlock(codec, {
+        markdownBody,
+        today: localDate('2026-08-01'),
+        addCreatedDate: true,
+      }),
+    ).toMatchObject({ type: 'invalid' });
   });
 });

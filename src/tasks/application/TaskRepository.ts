@@ -21,23 +21,34 @@ export type TaskEditCommand =
       | { readonly type: 'move' }
       | { readonly type: 'set-status' | 'toggle-completion' }
       | { readonly type: 'add-comment' }
+      | { readonly type: 'add-subtask' }
     >
   | {
       readonly type: 'set-status';
       readonly target: TaskStatusTarget;
       readonly symbol: string;
       readonly stamp?: LocalDate;
+      readonly addCompletionDate?: boolean;
     }
   | {
       readonly type: 'add-comment';
       readonly parent: TaskStatusTarget;
       readonly text: string;
       readonly stamp: LocalDate;
+    }
+  | {
+      readonly type: 'add-subtask';
+      readonly parent: TaskStatusTarget;
+      readonly text: string;
+      readonly today?: LocalDate;
+      readonly addCreatedDate?: boolean;
     };
 
 export interface TaskDraft {
   readonly markdownBody: string;
   readonly initial?: NonNullable<Extract<TaskCommand, { readonly type: 'create' }>['initial']>;
+  readonly today?: LocalDate;
+  readonly addCreatedDate?: boolean;
 }
 
 export type TaskRepositoryResult =

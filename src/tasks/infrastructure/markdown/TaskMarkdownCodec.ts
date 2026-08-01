@@ -19,7 +19,12 @@ export type LineEdit =
   | { readonly type: 'set-title'; readonly markdownTitle: string }
   | { readonly type: 'append-title'; readonly markdown: string }
   | { readonly type: 'edit-link'; readonly occurrence: number; readonly replacement: string }
-  | { readonly type: 'set-status'; readonly symbol: string; readonly today?: string }
+  | {
+      readonly type: 'set-status';
+      readonly symbol: string;
+      readonly today?: string;
+      readonly addCompletionDate?: boolean;
+    }
   | { readonly type: 'set-priority'; readonly priority: TaskPriority }
   | {
       readonly type: 'set-date';
@@ -955,7 +960,11 @@ export class TaskMarkdownCodec {
       const current = this.parseLine(content, { filePath: '', line: 0 })!;
       content = this.replaceOrInsertToken(current, kind, null);
     }
-    if (stampedKind !== undefined && edit.today !== undefined) {
+    if (
+      stampedKind !== undefined &&
+      edit.today !== undefined &&
+      (stampedKind === 'cancelled' || edit.addCompletionDate !== false)
+    ) {
       const marker = stampedKind === 'completion' ? '✅' : '❌';
       const current = this.parseLine(content, { filePath: '', line: 0 })!;
       content = this.replaceOrInsertToken(current, stampedKind, `${marker} ${edit.today}`);

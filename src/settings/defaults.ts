@@ -124,6 +124,8 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   projects: buildDefaultProjectsSettings(),
   sectionCollapse: { pinned: false, projects: false, tags: false },
   taskStatuses: buildDefaultTaskStatuses(),
+  taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+  recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
 };
 
 export function getListViewDefaults(listKey: string): ListViewState {

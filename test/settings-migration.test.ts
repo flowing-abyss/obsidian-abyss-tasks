@@ -1,7 +1,59 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import TaskCalendarPlugin from '../src/main';
 import { migrateSettings } from '../src/settings/migration';
 
 describe('migrateSettings', () => {
+  it('adds lifecycle and recurrence defaults without persisting during migration', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    expect(raw['taskLifecycle']).toEqual({ addCreatedDate: true, addCompletionDate: true });
+    expect(raw['recurrence']).toEqual({
+      newOccurrencePlacement: 'before',
+      removeScheduledDate: false,
+    });
+  });
+
+  it('preserves lifecycle and recurrence preferences and is idempotent', () => {
+    const raw: Record<string, unknown> = {
+      taskLifecycle: { addCreatedDate: false, addCompletionDate: false },
+      recurrence: { newOccurrencePlacement: 'after', removeScheduledDate: true },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    expect(raw['taskLifecycle']).toEqual({ addCreatedDate: false, addCompletionDate: false });
+    expect(raw['recurrence']).toEqual({
+      newOccurrencePlacement: 'after',
+      removeScheduledDate: true,
+    });
+  });
+
+  it('loads migrated lifecycle settings without saving them back', async () => {
+    const plugin = Object.create(TaskCalendarPlugin.prototype) as TaskCalendarPlugin & {
+      loadData: ReturnType<typeof vi.fn>;
+      saveData: ReturnType<typeof vi.fn>;
+    };
+    plugin.loadData = vi.fn().mockResolvedValue({});
+    plugin.saveData = vi.fn().mockResolvedValue(undefined);
+
+    await plugin.loadSettings();
+
+    expect(plugin.settings.taskLifecycle).toEqual({
+      addCreatedDate: true,
+      addCompletionDate: true,
+    });
+    expect(plugin.settings.recurrence).toEqual({
+      newOccurrencePlacement: 'before',
+      removeScheduledDate: false,
+    });
+    expect(plugin.saveData).not.toHaveBeenCalled();
+  });
+
   it('adds missing pinnedTags and archivedTags arrays', () => {
     const raw: Record<string, unknown> = {};
     migrateSettings(raw);

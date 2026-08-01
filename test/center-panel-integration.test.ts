@@ -191,7 +191,7 @@ describe('CenterPanel.createTask', () => {
     fixedToday(TODAY);
     await call<void>(panel, 'createTask', 'buy milk');
     const content = await readMd(app, 'inbox.md');
-    expect(content).toContain(`- [ ] buy milk 📅 ${TODAY}`);
+    expect(content).toContain(`- [ ] buy milk ➕ ${TODAY} 📅 ${TODAY}`);
   });
 
   it("sel='upcoming' uses the same configured TaskApplicationApi route as today", async () => {
@@ -207,7 +207,7 @@ describe('CenterPanel.createTask', () => {
     await call<void>(panel, 'createTask', 'future task');
     const content = await readMd(app, 'inbox.md');
     // CURRENT BEHAVIOR: upcoming uses today's date as the due date (same as 'today')
-    expect(content).toContain(`- [ ] future task 📅 ${TODAY}`);
+    expect(content).toContain(`- [ ] future task ➕ ${TODAY} 📅 ${TODAY}`);
   });
 
   it("sel='inbox' tag mode appends task line with inboxTag to customFilePath", async () => {
@@ -883,7 +883,7 @@ describe('CenterPanel project selection', () => {
     const content = await readMd(app, 'Projects/A.md');
     const lines = content.split('\n');
     const sectionIdx = lines.findIndex((l) => l.trim() === '## Tasks');
-    expect(lines[sectionIdx + 1]).toBe('- [ ] under section');
+    expect(lines[sectionIdx + 1]).toBe('- [ ] under section ➕ 2026-08-02');
   });
 });
 
@@ -1406,7 +1406,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
-    expect(content).toContain(`- [ ] water the plants 📅 ${date}`);
+    expect(content).toContain(`- [ ] water the plants ➕ ${TODAY} 📅 ${date}`);
     expect(el.querySelector('.tc-mg-head-row')).toBe(header);
     expect(el.querySelector(`[data-mg-date="${date}"]`)).toBe(cell);
     expect(cell.closest('.tc-mg-row')).toBe(row);
@@ -1467,7 +1467,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
-    expect(content).toContain(`- [ ] stand-up ⏰ 10:00 📅 ${date}`);
+    expect(content).toContain(`- [ ] stand-up ⏰ 10:00 ➕ ${TODAY} 📅 ${date}`);
   });
 
   it('clicking on an existing timed block in the hour grid does not open the quick-add', async () => {
@@ -1512,7 +1512,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
-    expect(content).toContain(`- [ ] renew passport 📅 ${date}`);
+    expect(content).toContain(`- [ ] renew passport ➕ ${TODAY} 📅 ${date}`);
   });
 
   it('clicking empty space in the all-day row in Week view opens an inline quick-add; Enter writes a plain task on that day', async () => {
@@ -1534,7 +1534,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
-    expect(content).toContain(`- [ ] water plants 📅 ${date}`);
+    expect(content).toContain(`- [ ] water plants ➕ ${TODAY} 📅 ${date}`);
   });
 
   it('clicking on an existing item in the all-day row does not open the quick-add (guarded, same as the hour grid)', async () => {

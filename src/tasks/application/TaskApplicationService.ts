@@ -13,6 +13,7 @@ import type {
 } from '../domain/types';
 import { isSingleLineText } from '../domain/validation';
 import type { TaskApplicationApi, TaskQueryApi } from './TaskApplicationApi';
+import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import type { TaskDestinationProvider } from './TaskDestinationProvider';
 import type { TaskEditCommand, TaskRepository } from './TaskRepository';
 
@@ -91,6 +92,10 @@ function refKey(ref: TaskRef): string {
 }
 
 const RECENT_OUTCOME_LIMIT = 64;
+const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
+  taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+  recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+};
 type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
 type MoveScheduleCommand = Extract<
   TaskCommand,
@@ -114,12 +119,6 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
       (command.type === 'shift-schedule' && command.days === 0))
   ) {
     return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'days' }] };
-  }
-  if (
-    command.type === 'create' &&
-    (!isSingleLineText(command.markdownBody) || command.markdownBody.trim().length === 0)
-  ) {
-    return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
   }
   if (
     command.type === 'patch' &&
@@ -170,6 +169,14 @@ function prepareBlockCommand(
   return { command: { ...command, text: text.trim().length > 0 ? text : null } };
 }
 
+function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskBehaviorSettings {
+  const settings = provider();
+  return {
+    taskLifecycle: { ...settings.taskLifecycle },
+    recurrence: { ...settings.recurrence },
+  };
+}
+
 export class TaskApplicationService implements TaskApplicationApi {
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
@@ -181,13 +188,16 @@ export class TaskApplicationService implements TaskApplicationApi {
     private readonly statusCatalog: StatusCatalog,
     private readonly clock: Clock,
     private readonly destinationProvider?: TaskDestinationProvider,
+    private readonly behaviorSettings: TaskBehaviorSettingsProvider = () =>
+      DEFAULT_BEHAVIOR_SETTINGS,
   ) {}
 
   async execute(command: TaskCommand): Promise<TaskCommandResult> {
     try {
-      if (command.type === 'create') return await this.create(command);
+      const settings = snapshotBehaviorSettings(this.behaviorSettings);
+      if (command.type === 'create') return await this.create(command, settings);
       if (command.type === 'move') return await this.move(command);
-      const prepared = this.prepare(command);
+      const prepared = this.prepare(command, settings);
       if ('result' in prepared) return prepared.result;
       const result = await this.repository.edit(prepared.command);
       if (result.type === 'committed') {
@@ -216,7 +226,14 @@ export class TaskApplicationService implements TaskApplicationApi {
 
   private async create(
     command: Extract<TaskCommand, { readonly type: 'create' }>,
+    settings: TaskBehaviorSettings,
   ): Promise<TaskCommandResult> {
+    if (
+      command.markdownBody.replace(/\r\n/gu, '').includes('\r') ||
+      command.markdownBody.split(/\r?\n/u)[0]?.trim().length === 0
+    ) {
+      return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
+    }
     const inputIssue = multilineInputIssue(command);
     if (inputIssue) return inputIssue;
     let destination: TaskDestination;
@@ -254,6 +271,8 @@ export class TaskApplicationService implements TaskApplicationApi {
     const result = await this.repository.create(destination, {
       markdownBody: command.markdownBody,
       ...(initial !== undefined && { initial }),
+      today: this.clock.today(),
+      addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
     if (result.type !== 'committed') return result;
     if (result.outcome.type === 'task') this.remember(result.outcome.task);
@@ -262,10 +281,20 @@ export class TaskApplicationService implements TaskApplicationApi {
 
   private prepare(
     command: EditableTaskCommand,
+    settings: TaskBehaviorSettings,
   ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
     const inputIssue = multilineInputIssue(command);
     if (inputIssue !== undefined) return { result: inputIssue };
     if (isBlockCommand(command)) return prepareBlockCommand(command, this.clock);
+    if (command.type === 'add-subtask') {
+      return {
+        command: {
+          ...command,
+          ...(settings.taskLifecycle.addCreatedDate && { today: this.clock.today() }),
+          addCreatedDate: settings.taskLifecycle.addCreatedDate,
+        },
+      };
+    }
 
     if (command.type === 'patch' && command.patch.tags !== undefined) {
       const tags = normalizeTagChange(command.patch.tags);
@@ -360,6 +389,9 @@ export class TaskApplicationService implements TaskApplicationApi {
         target: command.target,
         symbol: sameConfiguredStatus ? current.statusSymbol : rule.symbol,
         ...(entersStampedState && { stamp: this.clock.today() }),
+        ...(rule.type === 'done' && {
+          addCompletionDate: settings.taskLifecycle.addCompletionDate,
+        }),
       },
     };
   }

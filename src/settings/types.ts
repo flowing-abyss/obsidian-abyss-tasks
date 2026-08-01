@@ -88,6 +88,14 @@ export interface CalendarSettings {
   projects: ProjectsSettings;
   sectionCollapse: { pinned: boolean; projects: boolean; tags: boolean };
   taskStatuses: TaskStatusDef[];
+  taskLifecycle: {
+    addCreatedDate: boolean;
+    addCompletionDate: boolean;
+  };
+  recurrence: {
+    newOccurrencePlacement: 'before' | 'after';
+    removeScheduledDate: boolean;
+  };
 }
 
 // Params parsed from a task-calendar code block (all optional overrides of ViewConfig)

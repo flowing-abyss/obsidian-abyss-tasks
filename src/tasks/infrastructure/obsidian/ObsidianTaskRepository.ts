@@ -18,8 +18,9 @@ import type {
   TaskSnapshot,
 } from '../../domain/types';
 import { sameTaskNodeRef } from '../../domain/types';
+import { localDate } from '../../domain/validation';
 import { applyTaskCommand } from '../markdown/applyTaskCommand';
-import { createTaskLine } from '../markdown/createTaskLine';
+import { createTaskBlock } from '../markdown/createTaskBlock';
 import type { TaskBlockEdit, TaskRootBlock } from '../markdown/TaskBlockEditor';
 import { TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { TaskLocator } from '../markdown/TaskLocator';
@@ -319,14 +320,18 @@ export class ObsidianTaskRepository implements TaskRepository {
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       };
     }
-    const line = createTaskLine(this.options.codec, draft);
-    if (line.type === 'invalid') return line;
+    const block = createTaskBlock(this.options.codec, {
+      ...draft,
+      today: draft.today ?? localDate('1970-01-01'),
+      addCreatedDate: draft.addCreatedDate ?? false,
+    });
+    if (block.type === 'invalid') return block;
     let result: TaskRepositoryResult | undefined;
     try {
       await this.processFile(file, (content) => {
-        const inserted = this.options.editor.insertRoot(
+        const inserted = this.options.editor.insertRootBlock(
           content,
-          line.content,
+          block.content,
           destination.insertion,
         );
         if (!inserted) {
@@ -657,11 +662,27 @@ export class ObsidianTaskRepository implements TaskRepository {
     ) {
       return { result: { type: 'conflict', current }, content };
     }
+    let editorCommand = command;
+    if (command.type === 'add-subtask') {
+      if (command.text.trim().length === 0 || /[\r\n]/u.test(command.text)) {
+        return {
+          result: { type: 'invalid', issues: [{ code: 'invalid-target', field: 'subtask' }] },
+          content,
+        };
+      }
+      const created = createTaskBlock(this.options.codec, {
+        markdownBody: command.text,
+        today: command.today ?? localDate('1970-01-01'),
+        addCreatedDate: command.addCreatedDate ?? false,
+      });
+      if (created.type === 'invalid') return { result: created, content };
+      editorCommand = { ...command, text: created.content.slice('- [ ] '.length) };
+    }
     const edited = this.options.editor.edit(
       content,
       block,
       blockTarget(node, block, relativeLine),
-      structuralEdit(command),
+      structuralEdit(editorCommand),
     );
     if (edited.type === 'conflict') {
       return { result: { type: 'conflict', current }, content };
