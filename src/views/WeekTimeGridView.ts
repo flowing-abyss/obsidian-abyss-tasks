@@ -68,6 +68,7 @@ export class WeekTimeGridView extends BaseView {
       this.callbacks.onCreateAtTime,
       this.callbacks.onDayHeaderClick,
     );
+    handles.rootEl.addClass('tc-tg-root--week');
     this.gridHandles = handles;
     this.renderTaskLayers(tasks, dates, handles, true);
 

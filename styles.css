@@ -1307,6 +1307,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-cell-items {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+}
+
+.tc-tg-root--week .tc-tg-cell-items {
   display: grid;
   grid-auto-rows: var(--tc-calendar-track-height);
   gap: 0;
@@ -1315,8 +1322,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 /* Week compact items share the span track's one-pixel block inset. The horizontal position
    remains the all-day cell's 1px border + 4px padding, matching the Week span segment below. */
-.tc-tg-cell-items > .tc-tg-body,
-.tc-tg-cell-items > .tc-tg-deadline-marker {
+.tc-tg-root--week .tc-tg-cell-items > .tc-tg-body,
+.tc-tg-root--week .tc-tg-cell-items > .tc-tg-deadline-marker {
   margin-block: 1px;
 }
 
@@ -1332,6 +1339,10 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-span-layer {
+  inset: 2px 4px auto;
+}
+
+.tc-tg-root--week .tc-tg-span-layer {
   inset: 2px 0 auto;
 }
 
@@ -1347,9 +1358,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Week layers start at the cell border: 5px reaches the plain item's border-start
    (1px cell border + 4px padding), while 4px reaches its border-end. Keep Month's
    shared two-pixel margins unchanged. */
-.tc-tg-span-layer .tc-span-piece,
-.tc-tg-span-layer > .tc-span-move-preview,
-.tc-tg-span-layer > .tc-span-boundary-preview {
+.tc-tg-root--week .tc-tg-span-layer .tc-span-piece,
+.tc-tg-root--week .tc-tg-span-layer > .tc-span-move-preview,
+.tc-tg-root--week .tc-tg-span-layer > .tc-span-boundary-preview {
   margin: 1px 4px 1px 5px;
 }
 
@@ -1734,7 +1745,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--tc-tag-text-color, var(--text-normal));
 }
 
-.tc-tg-deadline-title {
+.tc-tg-root--week .tc-tg-deadline-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

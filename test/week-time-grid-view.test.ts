@@ -163,6 +163,7 @@ describe('WeekTimeGridView', () => {
     const layer = container.querySelector('.tc-tg-span-layer');
     const row = layer!;
     expect(layer).not.toBeNull();
+    expect(container.querySelector('.tc-tg-root--week')).not.toBeNull();
     expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
     expect(row.querySelectorAll('[data-span-kind="terminal"]')).toHaveLength(1);
     expect([...row.querySelectorAll('.tc-tg-body-title')].map((el) => el.textContent)).toEqual([

@@ -179,6 +179,7 @@ describe('TodayView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
     expect(container.querySelector('.tc-tg-plain')).not.toBeNull();
     expect(container.querySelector('.tc-tg-block')).toBeNull();
+    expect(container.querySelector('.tc-tg-root--week')).toBeNull();
   });
 
   it('gives a Day all-day span one stylesheet-backed track so its segment fills the layer', () => {
