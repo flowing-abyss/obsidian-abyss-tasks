@@ -61,8 +61,13 @@ function parseSubtask(
     ...(meta.due !== undefined && { due: meta.due }),
     ...(meta.scheduled !== undefined && { scheduled: meta.scheduled }),
     ...(meta.start !== undefined && { start: meta.start }),
+    ...(meta.completion !== undefined && { completion: meta.completion }),
+    ...(meta.cancelledDate !== undefined && { cancelledDate: meta.cancelledDate }),
+    ...(meta.created !== undefined && { created: meta.created }),
     ...(meta.time !== undefined && { time: meta.time }),
     ...(meta.recurrence !== undefined && { recurrence: meta.recurrence }),
+    onCompletion: meta.onCompletion,
+    onCompletionExplicit: meta.onCompletionExplicit,
   };
   if (childResult.subtasks.length) subtask.subtasks = childResult.subtasks;
   if (childResult.comments.length) subtask.comments = childResult.comments;

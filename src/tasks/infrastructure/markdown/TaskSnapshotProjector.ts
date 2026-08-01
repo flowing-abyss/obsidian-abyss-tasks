@@ -83,6 +83,7 @@ function asDuration(value: number | undefined): DurationMinutes | undefined {
 }
 
 function planningFrom(planning: {
+  readonly created?: string;
   readonly due?: string;
   readonly scheduled?: string;
   readonly start?: string;
@@ -91,6 +92,7 @@ function planningFrom(planning: {
   readonly time?: string;
   readonly duration?: number;
 }): TaskPlanning {
+  const created = asLocalDate(planning.created);
   const due = asLocalDate(planning.due);
   const scheduled = asLocalDate(planning.scheduled);
   const start = asLocalDate(planning.start);
@@ -99,6 +101,7 @@ function planningFrom(planning: {
   const time = asLocalTime(planning.time);
   const duration = asDuration(planning.duration);
   return {
+    ...(created && { created }),
     ...(due && { due }),
     ...(scheduled && { scheduled }),
     ...(start && { start }),
@@ -110,19 +113,28 @@ function planningFrom(planning: {
 }
 
 function subtaskPlanningFrom(planning: {
+  readonly created?: string;
   readonly due?: string;
   readonly scheduled?: string;
   readonly start?: string;
+  readonly completion?: string;
+  readonly cancelled?: string;
   readonly time?: string;
 }): SubtaskPlanning {
+  const created = asLocalDate(planning.created);
   const due = asLocalDate(planning.due);
   const scheduled = asLocalDate(planning.scheduled);
   const start = asLocalDate(planning.start);
+  const completion = asLocalDate(planning.completion);
+  const cancelled = asLocalDate(planning.cancelled);
   const time = asLocalTime(planning.time);
   return {
+    ...(created && { created }),
     ...(due && { due }),
     ...(scheduled && { scheduled }),
     ...(start && { start }),
+    ...(completion && { completion }),
+    ...(cancelled && { cancelled }),
     ...(time && { time }),
   };
 }
@@ -256,6 +268,8 @@ function projectSubtask(
       planning: subtaskPlanningFrom(parsed.planning),
       tags: [...parsed.tags],
       ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
+      onCompletion: parsed.onCompletion,
+      onCompletionExplicit: parsed.onCompletionExplicit,
       subtasks: relocatedChildren.subtasks,
       comments: relocatedChildren.comments,
       ...(relocatedChildren.description !== undefined && {
@@ -319,6 +333,8 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
     planning: planningFrom(parsed.planning),
     tags: [...parsed.tags],
     ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
+    onCompletion: parsed.onCompletion,
+    onCompletionExplicit: parsed.onCompletionExplicit,
     subtasks: children.subtasks,
     comments: children.comments,
     ...(children.description !== undefined && { description: children.description }),

@@ -1,6 +1,7 @@
 export type TaskStatus = 'open' | 'done' | 'cancelled' | 'in-progress';
 export type TaskStatusType = 'todo' | 'in-progress' | 'done' | 'cancelled';
 export type TaskPriority = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
+export type OnCompletion = 'keep' | 'delete';
 
 declare const localDateBrand: unique symbol;
 declare const localTimeBrand: unique symbol;
@@ -81,6 +82,7 @@ export type TaskTextTarget =
   | { readonly type: 'comment'; readonly ref: CommentRef };
 
 export interface TaskPlanning {
+  readonly created?: LocalDate;
   readonly due?: LocalDate;
   readonly scheduled?: LocalDate;
   readonly start?: LocalDate;
@@ -91,9 +93,12 @@ export interface TaskPlanning {
 }
 
 export interface SubtaskPlanning {
+  readonly created?: LocalDate;
   readonly due?: LocalDate;
   readonly scheduled?: LocalDate;
   readonly start?: LocalDate;
+  readonly completion?: LocalDate;
+  readonly cancelled?: LocalDate;
   readonly time?: LocalTime;
 }
 
@@ -129,6 +134,8 @@ export interface SubtaskSnapshot {
   readonly planning: SubtaskPlanning;
   readonly tags: readonly string[];
   readonly recurrence?: string;
+  readonly onCompletion: OnCompletion;
+  readonly onCompletionExplicit: boolean;
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
   readonly description?: string;
@@ -144,6 +151,8 @@ export interface TaskSnapshot {
   readonly planning: TaskPlanning;
   readonly tags: readonly string[];
   readonly recurrence?: string;
+  readonly onCompletion: OnCompletion;
+  readonly onCompletionExplicit: boolean;
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
   readonly description?: string;

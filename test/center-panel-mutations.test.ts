@@ -122,6 +122,8 @@ describe('CenterPanel planning API delegation', () => {
         status: 'open',
         statusSymbol: ' ',
         priority: 'D',
+        onCompletion: 'keep' as const,
+        onCompletionExplicit: false,
         planning: {},
         tags: [],
         subtasks: [],
@@ -223,6 +225,8 @@ describe('CenterPanel planning API delegation', () => {
         status: 'open',
         statusSymbol: ' ',
         priority: 'D',
+        onCompletion: 'keep' as const,
+        onCompletionExplicit: false,
         planning: {
           start: '2026-07-18',
           due: '2026-07-20',

@@ -1,4 +1,4 @@
-import type { TaskPriority, TaskStatus } from '../tasks/domain/types';
+import type { OnCompletion, TaskPriority, TaskStatus } from '../tasks/domain/types';
 
 export interface Task {
   filePath: string;
@@ -17,6 +17,9 @@ export interface Task {
   time?: string; // HH:MM from ⏰
   duration?: number; // minutes, parsed from ⏱️
   recurrence?: string; // text after 🔁, e.g. "every week"
+  onCompletion: OnCompletion;
+  onCompletionExplicit: boolean;
+  created?: string; // YYYY-MM-DD from ➕
   priority: TaskPriority;
   subtasks?: SubTask[];
   comments?: TaskComment[];
@@ -41,9 +44,14 @@ export interface SubTask {
   due?: string;
   scheduled?: string;
   start?: string;
+  completion?: string;
+  cancelledDate?: string;
+  created?: string;
   time?: string;
   priority: TaskPriority;
   recurrence?: string;
+  onCompletion: OnCompletion;
+  onCompletionExplicit: boolean;
   subtasks?: SubTask[];
   comments?: TaskComment[];
   description?: string;

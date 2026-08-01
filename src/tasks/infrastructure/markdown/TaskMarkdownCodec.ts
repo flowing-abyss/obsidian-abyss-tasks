@@ -1,7 +1,8 @@
 import { inlineCodeRanges, type SourceRange } from '../../../parser/inlineCode';
 import { parseLinks } from '../../../parser/links';
 import { StatusCatalog } from '../../domain/StatusCatalog';
-import type { TaskPriority, TaskStatus } from '../../domain/types';
+import { parseRecurrenceRule } from '../../domain/recurrence';
+import type { OnCompletion, TaskPriority, TaskStatus } from '../../domain/types';
 import {
   formatDurationMinutes,
   isSingleLineText,
@@ -27,6 +28,8 @@ export type LineEdit =
     }
   | { readonly type: 'set-time'; readonly value: string | null }
   | { readonly type: 'set-duration'; readonly value: number | null }
+  | { readonly type: 'set-recurrence'; readonly value: string | null }
+  | { readonly type: 'set-on-completion'; readonly value: OnCompletion | null }
   | {
       readonly type: 'change-tags';
       readonly add: readonly string[];
@@ -52,6 +55,7 @@ export type TaskSpanKind =
   | 'tag'
   | 'priority'
   | 'recurrence'
+  | 'on-completion'
   | 'created'
   | 'start'
   | 'scheduled'
@@ -88,6 +92,7 @@ export interface ParsedTaskLine {
   readonly occurrences: ReadonlyMap<TaskSpanKind, readonly SourceSpan[]>;
   readonly planning: {
     readonly due?: string;
+    readonly created?: string;
     readonly scheduled?: string;
     readonly start?: string;
     readonly completion?: string;
@@ -97,6 +102,8 @@ export interface ParsedTaskLine {
   };
   readonly priority: TaskPriority;
   readonly recurrence?: string;
+  readonly onCompletion: OnCompletion;
+  readonly onCompletionExplicit: boolean;
   readonly source: {
     readonly filePath: string;
     readonly line: number;
@@ -130,6 +137,7 @@ const DATE_PATTERNS: ReadonlyArray<{
 const TIME_RE = /⏰\s*(\d{1,2}:\d{2})/gu;
 const DURATION_RE = /⏱️\s*(?:(\d{1,2}):([0-5]\d)(?=\s|$)|(?:(\d+)h)?(?:(\d+)m)?)/gu;
 const RECURRENCE_MARKER_RE = /🔁/gu;
+const ON_COMPLETION_RE = /🏁\s*(keep|delete)(?=\s|$)/giu;
 const BLOCK_ID_RE = /\^[A-Za-z0-9-]+(?=\s*$)/gu;
 
 const MARKER_BY_FIELD: Readonly<Record<TaskValidationField, string>> = {
@@ -142,6 +150,8 @@ const MARKER_BY_FIELD: Readonly<Record<TaskValidationField, string>> = {
   cancelled: '❌',
   time: '⏰',
   duration: '⏱️',
+  recurrence: '🔁',
+  'on-completion': '🏁',
 };
 
 const SPAN_KIND_BY_FIELD: Readonly<Partial<Record<TaskValidationField, TaskSpanKind>>> = {
@@ -152,6 +162,8 @@ const SPAN_KIND_BY_FIELD: Readonly<Partial<Record<TaskValidationField, TaskSpanK
   cancelled: 'cancelled',
   time: 'time',
   duration: 'duration',
+  recurrence: 'recurrence',
+  'on-completion': 'on-completion',
 };
 
 const TOKEN_BY_PRIORITY: Readonly<Record<TaskPriority, string>> = {
@@ -168,6 +180,7 @@ const TOKEN_RANK: Readonly<Partial<Record<TaskSpanKind, number>>> = {
   duration: 20,
   priority: 30,
   recurrence: 40,
+  'on-completion': 45,
   created: 50,
   start: 60,
   scheduled: 70,
@@ -190,6 +203,7 @@ const KNOWN_CARRIER_MARKERS = [
   { marker: '❌', kind: 'cancelled' },
   { marker: '⏰', kind: 'time' },
   { marker: '⏱️', kind: 'duration' },
+  { marker: '🏁', kind: 'on-completion' },
   { marker: '🆔', kind: 'task-id' },
   { marker: '⛔', kind: 'depends-on' },
 ] as const satisfies ReadonlyArray<{
@@ -200,6 +214,7 @@ const KNOWN_CARRIER_MARKERS = [
 const METADATA_KINDS = new Set<TaskSpanKind>([
   'priority',
   'recurrence',
+  'on-completion',
   'created',
   'start',
   'scheduled',
@@ -428,7 +443,11 @@ function pushRecurrenceCandidates(
     while (boundaryIndex < boundaries.length && boundaries[boundaryIndex]! <= recurrenceAt) {
       boundaryIndex++;
     }
-    const recurrenceTo = boundaries[boundaryIndex] ?? body.length;
+    const recurrenceBoundary = boundaries[boundaryIndex] ?? body.length;
+    let recurrenceTo = recurrenceBoundary;
+    while (recurrenceTo > recurrenceAt && /\s/u.test(body[recurrenceTo - 1] ?? '')) {
+      recurrenceTo--;
+    }
     const rawValue = body.slice(recurrenceAt + '🔁'.length, recurrenceTo).trim();
     candidates.push({
       kind: 'recurrence',
@@ -521,6 +540,16 @@ function collapseLinks(input: string): string {
 function firstString(candidates: readonly Candidate[], kind: TaskSpanKind): string | undefined {
   const value = candidates.find((candidate) => candidate.kind === kind)?.value;
   return typeof value === 'string' ? value : undefined;
+}
+
+function completionPolicyFrom(candidates: readonly Candidate[]): {
+  readonly onCompletion: OnCompletion;
+  readonly onCompletionExplicit: boolean;
+} {
+  const value = firstString(candidates, 'on-completion')?.toLowerCase();
+  return value === 'delete'
+    ? { onCompletion: 'delete', onCompletionExplicit: true }
+    : { onCompletion: 'keep', onCompletionExplicit: value !== undefined };
 }
 
 function lineEndingOf(original: string): ParsedTaskLine['lineEnding'] {
@@ -667,6 +696,12 @@ export class TaskMarkdownCodec {
     ) {
       malformed.add('duration');
     }
+    if (
+      (parsed.occurrences.get('recurrence')?.length ?? 0) > 0 &&
+      parsed.recurrence === undefined
+    ) {
+      malformed.add('recurrence');
+    }
     return malformed;
   }
 
@@ -676,6 +711,8 @@ export class TaskMarkdownCodec {
       statusSymbol: parsed.statusSymbol,
       statusConfigured: this.statusCatalog.ruleForSymbol(parsed.statusSymbol) !== undefined,
       planning: parsed.planning,
+      recurrence: parsed.recurrence,
+      onCompletion: parsed.onCompletion,
       malformedFields: [...this.malformedFields(parsed)],
     };
   }
@@ -694,6 +731,8 @@ export class TaskMarkdownCodec {
         'cancelled',
         'time',
         'duration',
+        'recurrence',
+        'on-completion',
       ]),
     );
   }
@@ -708,6 +747,8 @@ export class TaskMarkdownCodec {
     if (!this.malformedFields(parsed).has(field)) return [];
     if (field === 'time') return [{ code: 'invalid-time', field }];
     if (field === 'duration') return [{ code: 'invalid-duration', field }];
+    if (field === 'on-completion') return [{ code: 'invalid-on-completion', field }];
+    if (field === 'recurrence') return [{ code: 'unparseable-rule', field }];
     return [{ code: 'invalid-date', field }];
   }
 
@@ -1014,6 +1055,71 @@ export class TaskMarkdownCodec {
     };
   }
 
+  private prepareRecurrenceEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-recurrence' }>,
+  ): PreparedLineEdit {
+    if (edit.value !== null && !isSingleLineText(edit.value)) {
+      return invalid('invalid-target', 'recurrence');
+    }
+    const issues = [
+      ...this.duplicateIssue(parsed, 'recurrence', 'recurrence'),
+      ...this.malformedTargetIssue(parsed, 'recurrence'),
+    ];
+    if (issues.length > 0) return { type: 'invalid', issues };
+    const recurrence = edit.value === null ? undefined : parseRecurrenceRule(edit.value);
+    if (recurrence?.type === 'invalid') {
+      return invalid(recurrence.code, 'recurrence');
+    }
+    if (
+      (edit.value === null && parsed.recurrence === undefined) ||
+      (edit.value !== null && parsed.recurrence === edit.value)
+    ) {
+      return { type: 'unchanged', content: parsed.original };
+    }
+    return {
+      type: 'prepared',
+      content: this.replaceOrInsertToken(
+        parsed,
+        'recurrence',
+        edit.value === null ? null : `🔁 ${edit.value}`,
+      ),
+      fields: ['recurrence'],
+    };
+  }
+
+  private prepareOnCompletionEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-on-completion' }>,
+  ): PreparedLineEdit {
+    if (
+      edit.value !== null &&
+      (!isSingleLineText(edit.value) || (edit.value !== 'keep' && edit.value !== 'delete'))
+    ) {
+      return invalid('invalid-target', 'on-completion');
+    }
+    const issues = [
+      ...this.duplicateIssue(parsed, 'on-completion', 'on-completion'),
+      ...this.malformedTargetIssue(parsed, 'on-completion'),
+    ];
+    if (issues.length > 0) return { type: 'invalid', issues };
+    if (
+      (edit.value === null && !parsed.onCompletionExplicit) ||
+      (edit.value !== null && parsed.onCompletionExplicit && parsed.onCompletion === edit.value)
+    ) {
+      return { type: 'unchanged', content: parsed.original };
+    }
+    return {
+      type: 'prepared',
+      content: this.replaceOrInsertToken(
+        parsed,
+        'on-completion',
+        edit.value === null ? null : `🏁 ${edit.value}`,
+      ),
+      fields: ['on-completion'],
+    };
+  }
+
   private prepareLineEdit(parsed: ParsedTaskLine, edit: LineEdit): PreparedLineEdit {
     switch (edit.type) {
       case 'set-title':
@@ -1047,6 +1153,10 @@ export class TaskMarkdownCodec {
         return this.prepareTimeEdit(parsed, edit);
       case 'set-duration':
         return this.prepareDurationEdit(parsed, edit);
+      case 'set-recurrence':
+        return this.prepareRecurrenceEdit(parsed, edit);
+      case 'set-on-completion':
+        return this.prepareOnCompletionEdit(parsed, edit);
       case 'change-tags':
         return this.prepareTagChange(parsed, edit.add, edit.remove);
     }
@@ -1131,6 +1241,7 @@ export class TaskMarkdownCodec {
     for (const pattern of DATE_PATTERNS) {
       pushPatternCandidates(candidates, body, prefixEnd, pattern.kind, pattern.regex, 1);
     }
+    pushPatternCandidates(candidates, body, prefixEnd, 'on-completion', ON_COMPLETION_RE, 1);
     pushTagCandidates(candidates, body, prefixEnd);
     pushPatternCandidates(candidates, body, prefixEnd, 'priority', PRIORITY_RE);
     pushPatternCandidates(candidates, body, prefixEnd, 'time', TIME_RE, 1);
@@ -1261,6 +1372,9 @@ export class TaskMarkdownCodec {
       firstDuration && typeof firstDuration.value === 'number' ? firstDuration.value : undefined;
     const planning: ParsedTaskLine['planning'] = {
       ...(firstString(accepted, 'due') !== undefined && { due: firstString(accepted, 'due') }),
+      ...(firstString(accepted, 'created') !== undefined && {
+        created: firstString(accepted, 'created'),
+      }),
       ...(firstString(accepted, 'scheduled') !== undefined && {
         scheduled: firstString(accepted, 'scheduled'),
       }),
@@ -1277,6 +1391,7 @@ export class TaskMarkdownCodec {
       ...(typeof duration === 'number' && { duration }),
     };
 
+    const completionPolicy = completionPolicyFrom(accepted);
     return {
       original,
       lineEnding,
@@ -1291,6 +1406,7 @@ export class TaskMarkdownCodec {
       planning,
       priority,
       recurrence: firstString(accepted, 'recurrence'),
+      ...completionPolicy,
       source: { ...source, originalMarkdown: original },
     };
   }

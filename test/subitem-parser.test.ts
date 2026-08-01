@@ -385,6 +385,24 @@ describe('parseSubItems', () => {
       expect(r.subtasks[0]).toMatchObject({ recurrence: 'every day' });
     });
 
+    it('projects lifecycle and completion policy through the legacy subtask adapter', () => {
+      const lines = [
+        '- [ ] Parent',
+        '  - [x] Child 🔁 every day 🏁 DELETE ➕ 2026-08-01 ✅ 2026-08-02 ❌ 2026-08-03',
+      ];
+      const result = parseSubItems(lines, 0, FILE);
+
+      expect(result.subtasks[0]).toMatchObject({
+        recurrence: 'every day',
+        onCompletion: 'delete',
+        onCompletionExplicit: true,
+        created: '2026-08-01',
+        completion: '2026-08-02',
+        cancelledDate: '2026-08-03',
+        markdownText: 'Child',
+      });
+    });
+
     it('strips metadata emoji from subtask text', () => {
       const lines = ['- [ ] Parent', '  - [ ] Fix bug 📅 2026-07-01 #work'];
       const r = parseSubItems(lines, 0, FILE);

@@ -13,8 +13,11 @@ export interface ExtractedMetadata {
   start?: string;
   completion?: string;
   cancelledDate?: string;
+  created?: string;
   time?: string;
   recurrence?: string;
+  onCompletion: 'keep' | 'delete';
+  onCompletionExplicit: boolean;
   priority: TaskPriority;
   cleanText: string;
 }
@@ -71,7 +74,7 @@ function legacyRecurrenceProjection(
   let consumedTo = recurrence.to;
   for (const span of parsed.spans) {
     if (span.from < recurrence.to) continue;
-    if (span.kind === 'priority') break;
+    if (span.kind === 'priority' || span.kind === 'on-completion') break;
     if (policy.removedBeforeRecurrence.has(span.kind)) {
       if (firstByKind.get(span.kind) === span) {
         consumedTo = span.to;
@@ -134,6 +137,7 @@ function legacyCleanText(parsed: ParsedTaskLine): string {
   return parsed.spans
     .map((span) => {
       if (span.kind === 'prefix' || span.kind === 'tag') return '';
+      if (span.kind === 'created' || span.kind === 'on-completion') return '';
       if (isLegacyRecurrenceSpanConsumed(parsed, span)) return '';
       if (EXTRACTOR_REMOVED_BEFORE_RECURRENCE.has(span.kind)) {
         return firstByKind.get(span.kind) === span ? '' : parsed.original.slice(span.from, span.to);
@@ -152,7 +156,14 @@ function legacyCleanText(parsed: ParsedTaskLine): string {
 /** Compatibility projection for legacy callers that parse a task title body. */
 export function extractMetadata(text: string): ExtractedMetadata {
   const parsed = CODEC.parseLine(SYNTHETIC_PREFIX + text, { filePath: '', line: 0 });
-  if (!parsed) return { priority: 'D', cleanText: text };
+  if (!parsed) {
+    return {
+      priority: 'D',
+      onCompletion: 'keep',
+      onCompletionExplicit: false,
+      cleanText: text,
+    };
+  }
 
   return {
     due: parsed.planning.due,
@@ -160,8 +171,11 @@ export function extractMetadata(text: string): ExtractedMetadata {
     start: parsed.planning.start,
     completion: parsed.planning.completion,
     cancelledDate: parsed.planning.cancelled,
+    created: parsed.planning.created,
     time: parsed.planning.time,
     recurrence: legacyRecurrenceFromParsed(parsed),
+    onCompletion: parsed.onCompletion,
+    onCompletionExplicit: parsed.onCompletionExplicit,
     priority: parsed.priority,
     cleanText: legacyCleanText(parsed),
   };

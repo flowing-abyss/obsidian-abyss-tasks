@@ -22,6 +22,8 @@ function snapshot(filePath: string): TaskSnapshot {
     status: 'open',
     statusSymbol: ' ',
     priority: 'C',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],

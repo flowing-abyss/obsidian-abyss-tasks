@@ -19,6 +19,23 @@ function fieldEdit(field: SchedulingDateField, update: FieldUpdate<string>): Lin
   };
 }
 
+function recurrenceEdits(patch: TaskPatch): readonly LineEdit[] {
+  const edits: LineEdit[] = [];
+  if (patch.recurrence) {
+    edits.push({
+      type: 'set-recurrence',
+      value: patch.recurrence.type === 'set' ? patch.recurrence.value : null,
+    });
+  }
+  if (patch.onCompletion) {
+    edits.push({
+      type: 'set-on-completion',
+      value: patch.onCompletion.type === 'set' ? patch.onCompletion.value : null,
+    });
+  }
+  return edits;
+}
+
 function orderedPatchEdits(parsed: ParsedTaskLine, patch: TaskPatch): readonly LineEdit[] {
   const edits: LineEdit[] = [];
   if (patch.markdownTitle) {
@@ -58,6 +75,7 @@ function orderedPatchEdits(parsed: ParsedTaskLine, patch: TaskPatch): readonly L
       value: patch.duration.type === 'set' ? patch.duration.value : null,
     });
   }
+  edits.push(...recurrenceEdits(patch));
   if (patch.tags) {
     edits.push({
       type: 'change-tags',

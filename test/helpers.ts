@@ -175,6 +175,7 @@ export type TaskFixtureInput = Omit<
   'planning' | 'presentation' | 'ref' | 'source'
 > & {
   readonly planning?: {
+    readonly created?: string;
     readonly due?: string;
     readonly scheduled?: string;
     readonly start?: string;
@@ -213,6 +214,8 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
     status: 'open',
     statusSymbol: ' ',
     priority: 'D',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],
@@ -250,6 +253,9 @@ export function taskFromCodecLine(
     markdownTitle: parsed.markdownTitle,
     planning: parsed.planning,
     priority: parsed.priority,
+    recurrence: parsed.recurrence,
+    onCompletion: parsed.onCompletion,
+    onCompletionExplicit: parsed.onCompletionExplicit,
     tags: [...parsed.tags],
     statusSymbol: parsed.statusSymbol,
     source: {
@@ -262,9 +268,12 @@ export function taskFromCodecLine(
 
 export type SubtaskFixtureInput = Omit<Partial<SubtaskSnapshot>, 'planning' | 'ref'> & {
   readonly planning?: {
+    readonly created?: string;
     readonly due?: string;
     readonly scheduled?: string;
     readonly start?: string;
+    readonly completion?: string;
+    readonly cancelled?: string;
     readonly time?: string;
   };
   readonly ref?: Partial<Omit<SubtaskSnapshot['ref'], 'parent'>> & {
@@ -298,6 +307,8 @@ export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
     status: overrides.status ?? 'open',
     statusSymbol: overrides.statusSymbol ?? ' ',
     priority: overrides.priority ?? 'D',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: { ...overrides.planning } as SubtaskSnapshot['planning'],
     tags: [...(overrides.tags ?? [])],
     recurrence: overrides.recurrence,

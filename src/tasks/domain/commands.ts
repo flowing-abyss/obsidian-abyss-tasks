@@ -3,6 +3,7 @@ import type {
   DurationMinutes,
   LocalDate,
   LocalTime,
+  OnCompletion,
   SubtaskRef,
   TaskDestination,
   TaskMutationTarget,
@@ -26,6 +27,8 @@ export interface TaskPatch {
   readonly start?: FieldUpdate<LocalDate>;
   readonly time?: FieldUpdate<LocalTime>;
   readonly duration?: FieldUpdate<DurationMinutes>;
+  readonly recurrence?: FieldUpdate<string>;
+  readonly onCompletion?: FieldUpdate<OnCompletion>;
   readonly tags?: {
     readonly add?: readonly string[];
     readonly remove?: readonly string[];

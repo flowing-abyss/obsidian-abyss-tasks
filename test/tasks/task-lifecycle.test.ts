@@ -283,6 +283,8 @@ describe('TaskApplicationService lifecycle routing', () => {
     status: 'open',
     statusSymbol: ' ',
     priority: 'D',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],

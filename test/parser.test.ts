@@ -112,6 +112,38 @@ describe('parseTask', () => {
     expect(t?.text).not.toContain('🔁');
   });
 
+  it('projects lifecycle, recurrence, and completion policy through the legacy task adapter', () => {
+    const task = parseTask(
+      '- [x] Ship 🔁 every week 🏁 delete ➕ 2026-08-01 ✅ 2026-08-02 ❌ 2026-08-03',
+      { filePath: 'f.md', line: 0 },
+    );
+
+    expect(task).toMatchObject({
+      recurrence: 'every week',
+      onCompletion: 'delete',
+      onCompletionExplicit: true,
+      created: '2026-08-01',
+      completion: '2026-08-02',
+      cancelledDate: '2026-08-03',
+      markdownText: 'Ship',
+    });
+  });
+
+  it('keeps an invalid raw recurrence readable while separating the completion policy', () => {
+    const task = parseTask('- [ ] Ship 🔁 not a rule 🏁 KEEP ➕ 2026-08-01', {
+      filePath: 'f.md',
+      line: 0,
+    });
+
+    expect(task).toMatchObject({
+      recurrence: 'not a rule',
+      onCompletion: 'keep',
+      onCompletionExplicit: true,
+      created: '2026-08-01',
+      markdownText: 'Ship',
+    });
+  });
+
   it.each([
     ['priority', '🔺 trailing', 'every day', 'Task trailing'],
     ['recurrence', '🔁 every week', 'every day 🔁 every week', 'Task'],

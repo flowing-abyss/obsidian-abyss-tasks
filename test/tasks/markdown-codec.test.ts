@@ -1044,6 +1044,7 @@ describe('TaskMarkdownCodec', () => {
     expect(parsed.markdownTitle).toBe('Ship');
     expect(parsed.recurrence).toBe('every week');
     expect(parsed.planning).toEqual({
+      created: '2026-07-01',
       start: '2026-07-02',
       scheduled: '2026-07-03',
       due: '2026-07-04',
@@ -1054,6 +1055,146 @@ describe('TaskMarkdownCodec', () => {
     });
     expect(spanText(parsed, 'created')).toEqual(['➕ 2026-07-01']);
     expectLosslessPartition(parsed);
+  });
+
+  it('parses recurrence through its completion policy boundary', () => {
+    const parsed = parse('- [ ] Ship 🔁 every week 🏁 DELETE ➕ 2026-08-01');
+
+    expect(parsed).toMatchObject({
+      recurrence: 'every week',
+      onCompletion: 'delete',
+      onCompletionExplicit: true,
+      planning: { created: '2026-08-01' },
+    });
+    expect(spanText(parsed, 'recurrence')).toEqual(['🔁 every week']);
+    expect(spanText(parsed, 'on-completion')).toEqual(['🏁 DELETE']);
+    expectLosslessPartition(parsed);
+  });
+
+  it.each([
+    ['🏁 delete', 'delete', true],
+    ['🏁 DELETE', 'delete', true],
+    ['🏁 Keep', 'keep', true],
+    ['', 'keep', false],
+  ] as const)('normalizes completion policy %j', (suffix, onCompletion, onCompletionExplicit) => {
+    const parsed = parse(`- [ ] Ship 🔁 every week${suffix ? ` ${suffix}` : ''}`);
+
+    expect(parsed).toMatchObject({ onCompletion, onCompletionExplicit });
+    expectLosslessPartition(parsed);
+  });
+
+  it('edits recurrence and completion policy in canonical order without touching protected carriers', () => {
+    const source =
+      '> - [ ] `🔁 title` [🏁 label](https://example.test) #work 🆔 id-1 ⛔ prep-1 ^ship\r\n';
+    const result = applyTaskCommand(codec, source, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: {
+        recurrence: { type: 'set', value: 'every week' },
+        onCompletion: { type: 'set', value: 'delete' },
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'changed',
+      content:
+        '> - [ ] `🔁 title` [🏁 label](https://example.test) #work 🆔 id-1 ⛔ prep-1 🔁 every week 🏁 delete ^ship\r\n',
+    });
+  });
+
+  it('clears recurrence and completion policy together as one valid candidate', () => {
+    const source = '- [ ] Ship 🔁 every week 🏁 delete\r\n';
+    const result = applyTaskCommand(codec, source, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: {
+        recurrence: { type: 'clear' },
+        onCompletion: { type: 'clear' },
+      },
+    });
+
+    expect(result).toEqual({ type: 'changed', content: '- [ ] Ship\r\n' });
+  });
+
+  it('rejects duplicate and malformed completion policies only when targeted', () => {
+    expect(
+      codec.applyLineEdit('- [ ] Ship 🏁 keep 🏁 delete', {
+        type: 'set-on-completion',
+        value: 'keep',
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'duplicate-field', field: 'on-completion' }] });
+    expect(
+      codec.applyLineEdit('- [ ] Ship 🏁 later', {
+        type: 'set-on-completion',
+        value: 'keep',
+      }),
+    ).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-on-completion', field: 'on-completion' }],
+    });
+  });
+
+  it('rejects multiline recurrence and completion policy values through direct edits and patches', () => {
+    expect(
+      codec.applyLineEdit('- [ ] Ship', {
+        type: 'set-recurrence',
+        value: 'every\nweek',
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'recurrence' }] });
+    expect(
+      codec.applyLineEdit('- [ ] Ship', {
+        type: 'set-on-completion',
+        value: 'keep\n- [ ] injected' as never,
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'on-completion' }] });
+    expect(
+      applyTaskCommand(codec, '- [ ] Ship', {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { recurrence: { type: 'set', value: 'every\nweek' } },
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'recurrence' }] });
+    expect(
+      applyTaskCommand(codec, '- [ ] Ship', {
+        type: 'patch',
+        target: { type: 'task', ref },
+        patch: { onCompletion: { type: 'set', value: 'delete\n- [ ] injected' as never } },
+      }),
+    ).toEqual({ type: 'invalid', issues: [{ code: 'invalid-target', field: 'on-completion' }] });
+  });
+
+  it('preserves invalid raw recurrence and lifecycle metadata across unrelated title, tag, and date edits', () => {
+    const source =
+      '> - [ ] `🔁 literal` [🏁 link](https://example.test) #old 🔁 nonsense 🏁 KEEP ➕ 2026-08-01 📅 2026-08-02 🆔 ship-1 ⛔ prep-1 ^ship\r\n';
+    const titleChanged = codec.applyLineEdit(source, {
+      type: 'set-title',
+      markdownTitle: 'Renamed',
+    });
+    expect(titleChanged).toEqual({
+      type: 'changed',
+      content:
+        '> - [ ] Renamed #old 🔁 nonsense 🏁 KEEP ➕ 2026-08-01 📅 2026-08-02 🆔 ship-1 ⛔ prep-1 ^ship\r\n',
+    });
+    const tagged = codec.applyLineEdit(
+      (titleChanged as Extract<typeof titleChanged, { type: 'changed' }>).content,
+      { type: 'change-tags', add: ['new'], remove: ['old'] },
+    );
+    expect(tagged).toEqual({
+      type: 'changed',
+      content:
+        '> - [ ] Renamed #new 🔁 nonsense 🏁 KEEP ➕ 2026-08-01 📅 2026-08-02 🆔 ship-1 ⛔ prep-1 ^ship\r\n',
+    });
+    expect(
+      codec.applyLineEdit((tagged as Extract<typeof tagged, { type: 'changed' }>).content, {
+        type: 'set-date',
+        field: 'due',
+        value: '2026-08-03',
+      }),
+    ).toEqual({
+      type: 'changed',
+      content:
+        '> - [ ] Renamed #new 🔁 nonsense 🏁 KEEP ➕ 2026-08-01 📅 2026-08-03 🆔 ship-1 ⛔ prep-1 ^ship\r\n',
+    });
   });
 
   it('retains every duplicate occurrence while exposing legacy first-value semantics', () => {

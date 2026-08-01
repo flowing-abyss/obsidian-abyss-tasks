@@ -19,6 +19,8 @@ function task(status: TaskSnapshot['status']): TaskSnapshot {
     status,
     statusSymbol: status === 'done' ? 'x' : ' ',
     priority: 'F',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],

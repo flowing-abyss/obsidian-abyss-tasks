@@ -1,3 +1,4 @@
+import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
 import type { DurationMinutes, LocalDate, LocalTime } from './types';
 
 type TaskIssueCode =
@@ -10,7 +11,9 @@ type TaskIssueCode =
   | 'duplicate-field'
   | 'invalid-task-syntax'
   | 'invalid-target'
-  | 'destination-unavailable';
+  | 'destination-unavailable'
+  | 'invalid-on-completion'
+  | RecurrenceIssueCode;
 
 export interface TaskIssue {
   readonly code: TaskIssueCode;
@@ -26,7 +29,9 @@ export type TaskValidationField =
   | 'completion'
   | 'cancelled'
   | 'time'
-  | 'duration';
+  | 'duration'
+  | 'recurrence'
+  | 'on-completion';
 
 /** Source-line edits must never be able to introduce another Markdown line. */
 export function isSingleLineText(value: string): boolean {
@@ -46,6 +51,8 @@ export interface TaskValidationState {
     readonly time?: string;
     readonly duration?: number;
   };
+  readonly recurrence?: string;
+  readonly onCompletion: 'keep' | 'delete';
   readonly malformedFields?: readonly TaskValidationField[];
 }
 
@@ -114,6 +121,31 @@ function isValidDuration(value: number | undefined): boolean {
   }
 }
 
+function recurrenceIssues(
+  state: TaskValidationState,
+  malformed: ReadonlySet<TaskValidationField>,
+  fields: ReadonlySet<TaskValidationField>,
+): readonly TaskIssue[] {
+  if (!fields.has('recurrence')) return [];
+  const parsed = state.recurrence === undefined ? undefined : parseRecurrenceRule(state.recurrence);
+  if (!malformed.has('recurrence') && parsed?.type !== 'invalid') return [];
+  return [
+    {
+      code: parsed?.type === 'invalid' ? parsed.code : 'unparseable-rule',
+      field: 'recurrence',
+    },
+  ];
+}
+
+function completionPolicyIssues(
+  malformed: ReadonlySet<TaskValidationField>,
+  fields: ReadonlySet<TaskValidationField>,
+): readonly TaskIssue[] {
+  return fields.has('on-completion') && malformed.has('on-completion')
+    ? [{ code: 'invalid-on-completion', field: 'on-completion' }]
+    : [];
+}
+
 /** Validate only fields introduced by an edit, plus their semantic dependencies. */
 export function validateTaskChange(
   state: TaskValidationState,
@@ -159,6 +191,8 @@ export function validateTaskChange(
       issues.push({ code: 'invalid-duration', field: 'duration' });
     }
   }
+  issues.push(...recurrenceIssues(state, malformed, fields));
+  issues.push(...completionPolicyIssues(malformed, fields));
 
   if (
     fields.has('start') &&

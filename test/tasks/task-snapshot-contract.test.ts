@@ -62,6 +62,34 @@ describe('TaskSnapshot contract', () => {
     index.destroy();
   });
 
+  it('projects lifecycle and recurrence contracts for root and nested subtasks', async () => {
+    const content = [
+      '- [x] root 🔁 every week 🏁 DELETE ➕ 2026-08-01 ✅ 2026-08-02 ❌ 2026-08-03',
+      '  - [ ] child 🔁 every day 🏁 Keep ➕ 2026-08-04 ✅ 2026-08-05 ❌ 2026-08-06',
+    ].join('\n');
+    const { index } = await snapshotIndex(content);
+
+    expect(index.list()[0]).toMatchObject({
+      recurrence: 'every week',
+      onCompletion: 'delete',
+      onCompletionExplicit: true,
+      planning: { created: '2026-08-01', completion: '2026-08-02', cancelled: '2026-08-03' },
+      subtasks: [
+        {
+          recurrence: 'every day',
+          onCompletion: 'keep',
+          onCompletionExplicit: true,
+          planning: {
+            created: '2026-08-04',
+            completion: '2026-08-05',
+            cancelled: '2026-08-06',
+          },
+        },
+      ],
+    });
+    index.destroy();
+  });
+
   it('returns detached arrays, task objects, nested values, and calendar buckets', async () => {
     const content = [
       '- [ ] root #tag 📅 2026-07-13',

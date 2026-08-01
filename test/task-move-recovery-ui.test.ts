@@ -17,6 +17,8 @@ function snapshot(ref: TaskRef, originalBlock = '- [ ] task'): TaskSnapshot {
     status: 'open',
     statusSymbol: ' ',
     priority: 'C',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],

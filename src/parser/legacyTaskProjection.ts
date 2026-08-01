@@ -27,6 +27,8 @@ const FIRST_ONLY_KINDS = new Set<TaskSpanKind>([
   'cancelled',
   'time',
   'duration',
+  'created',
+  'on-completion',
 ]);
 
 function compatibilityMarkdownTitle(parsed: ParsedTaskLine): string {
@@ -77,9 +79,12 @@ export function legacyTaskFromParsed(
     start: parsed.planning.start,
     completion: parsed.planning.completion,
     cancelledDate: parsed.planning.cancelled,
+    created: parsed.planning.created,
     time: parsed.planning.time,
     duration: parsed.planning.duration,
     recurrence: legacyTaskRecurrenceFromParsed(parsed),
+    onCompletion: parsed.onCompletion,
+    onCompletionExplicit: parsed.onCompletionExplicit,
     priority: parsed.priority,
     dailyNoteDate: ctx.dailyNoteDate,
   };

@@ -18,6 +18,8 @@ function snapshot(
     status: 'open',
     statusSymbol: ' ',
     priority: 'F',
+    onCompletion: 'keep' as const,
+    onCompletionExplicit: false,
     planning: {},
     tags: [],
     subtasks: [],
@@ -99,6 +101,8 @@ describe('selectTaskList', () => {
         status: 'done',
         statusSymbol: 'x',
         priority: 'A',
+        onCompletion: 'keep' as const,
+        onCompletionExplicit: false,
         planning: { due: today },
       }),
     ];
