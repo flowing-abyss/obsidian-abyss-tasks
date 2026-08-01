@@ -277,6 +277,65 @@ describe('WeekTimeGridView', () => {
     }
   });
 
+  it('routes an unfocused ghost left proxy across the preceding day to start-boundary resize', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const view = new WeekTimeGridView(cbs);
+    const clipped = task({
+      title: 'Clipped',
+      planning: { start: '2026-07-01', due: '2026-07-20' },
+      source: { filePath: 'clipped.md', line: 3 },
+    });
+
+    view.render(
+      container,
+      [clipped],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+    );
+    const restoreElementFromPoint = measureAllDayCells(container);
+    try {
+      const ghost = container.querySelector<HTMLElement>(
+        '[data-task-path="clipped.md"][data-span-date="2026-07-08"]',
+      )!;
+      const proxy = ghost.querySelector<HTMLElement>(
+        '.tc-tg-span-edge--left.tc-tg-span-edge--proxy',
+      )!;
+
+      expect(document.activeElement).not.toBe(ghost);
+      proxy.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          button: 0,
+          clientX: 250,
+          clientY: 50,
+          pointerId: 63,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointermove', {
+          clientX: 150,
+          clientY: 50,
+          pointerId: 63,
+        }),
+      );
+      window.dispatchEvent(
+        new PointerEvent('pointerup', {
+          clientX: 150,
+          clientY: 50,
+          pointerId: 63,
+        }),
+      );
+
+      expect(cbs.onSpanMove).not.toHaveBeenCalled();
+      expect(cbs.onSpanBoundary).toHaveBeenCalledWith(
+        clipped,
+        expect.objectContaining({ boundary: 'start', date: '2026-07-07' }),
+      );
+    } finally {
+      restoreElementFromPoint();
+    }
+  });
+
   it('keeps a clipped ghost edge click without pointer movement as a no-op', () => {
     const container = freshContainer();
     const cbs = callbacks();

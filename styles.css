@@ -1307,10 +1307,17 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-cell-items {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  display: grid;
+  grid-auto-rows: var(--tc-calendar-track-height);
+  gap: 0;
   margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+}
+
+/* Week compact items share the span track's one-pixel block inset. The horizontal position
+   remains the all-day cell's 1px border + 4px padding, matching the Week span segment below. */
+.tc-tg-cell-items > .tc-tg-body,
+.tc-tg-cell-items > .tc-tg-deadline-marker {
+  margin-block: 1px;
 }
 
 .tc-tg-span-layer,
@@ -1325,7 +1332,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 .tc-tg-span-layer {
-  inset: 2px 4px auto;
+  inset: 2px 0 auto;
 }
 
 .tc-span-piece {
@@ -1335,6 +1342,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   pointer-events: auto;
   cursor: grab;
   min-width: 0;
+}
+
+/* Week layers start at the cell border: 5px reaches the plain item's border-start
+   (1px cell border + 4px padding), while 4px reaches its border-end. Keep Month's
+   shared two-pixel margins unchanged. */
+.tc-tg-span-layer .tc-span-piece,
+.tc-tg-span-layer > .tc-span-move-preview,
+.tc-tg-span-layer > .tc-span-boundary-preview {
+  margin: 1px 4px 1px 5px;
 }
 
 .tc-span-piece:focus-visible {
@@ -1718,6 +1734,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--tc-tag-text-color, var(--text-normal));
 }
 
+.tc-tg-deadline-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tc-tg-span-continuation {
   cursor: grab;
   border-inline-start: var(--tc-calendar-ghost-rail) dashed
@@ -1797,6 +1820,18 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   opacity: 0;
   pointer-events: none;
 }
+.tc-span-piece:hover > .tc-tg-span-edge--proxy::after {
+  opacity: 1;
+}
+.tc-tg-span-edge--proxy {
+  width: 16px;
+}
+.tc-tg-span-edge--proxy::after {
+  left: calc(50% - 1px);
+}
+.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left {
+  left: calc(-1 * var(--tc-calendar-ghost-rail));
+}
 .tc-tg-span-edge--left {
   left: -5px;
 }
@@ -1816,6 +1851,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 .tc-tg-body > .tc-tg-span-edge--left {
   left: 0;
+}
+
+/* Terminal status controls deliberately stack above literal resize handles. */
+.tc-tg-body > .tc-status-marker {
+  position: relative;
+  z-index: 4;
 }
 
 /* A pre-due timed continuation keeps the common .tc-tg-block root and full-opacity text. Its

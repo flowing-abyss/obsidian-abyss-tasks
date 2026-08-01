@@ -3168,4 +3168,23 @@ describe('calendar surface style contract', () => {
       /box-shadow\s*:\s*inset 0 0 0 1px[\s\S]*--tc-event-outline-strength/u,
     );
   });
+
+  it('makes ghost proxy rails discoverable without enlarging literal terminal handles', () => {
+    const literal = declarationsFor('.tc-tg-span-edge');
+    const proxy = declarationsFor('.tc-tg-span-edge--proxy');
+    const leftProxy = declarationsFor(
+      '.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left',
+    );
+    const proxyRail = declarationsFor('.tc-span-piece:hover > .tc-tg-span-edge--proxy::after');
+    const marker = declarationsFor('.tc-tg-body > .tc-status-marker');
+
+    expect(literal).toMatch(/width\s*:\s*10px/u);
+    expect(proxy).toMatch(/width\s*:\s*16px/u);
+    expect(leftProxy).toMatch(/left\s*:\s*calc\(-1 \* var\(--tc-calendar-ghost-rail\)\)/u);
+    expect(proxyRail).toMatch(/opacity\s*:\s*1/u);
+    expect(css).toMatch(
+      /(?:^|\})\s*\.tc-tg-span-edge--proxy::after\s*\{[^}]*left\s*:\s*calc\(50% - 1px\)/u,
+    );
+    expect(marker).toMatch(/z-index\s*:\s*4/u);
+  });
 });

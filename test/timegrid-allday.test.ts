@@ -119,10 +119,12 @@ describe('renderAllDayCell', () => {
     )) {
       expect(segment.querySelector('[data-boundary="start"]')).not.toBeNull();
       expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
+      expect(segment.querySelectorAll('.tc-tg-span-edge--proxy')).toHaveLength(2);
     }
     const terminal = segments.find((candidate) => candidate.dataset['spanKind'] === 'terminal')!;
     expect(terminal.querySelector('[data-boundary="start"]')).toBeNull();
     expect(terminal.querySelector('[data-boundary="due"]')).not.toBeNull();
+    expect(terminal.querySelector('.tc-tg-span-edge--proxy')).toBeNull();
   });
 
   it('does not expose unusable clipped boundary proxies in a single-day time grid', () => {
@@ -1191,13 +1193,29 @@ describe('renderAllDayCell', () => {
       const host = declarationsFor('.tc-span-piece-host');
       const item = declarationsFor('.tc-tg-body');
       const items = declarationsFor('.tc-tg-cell-items');
+      const deadlineTitle = declarationsFor('.tc-tg-deadline-title');
+      const weekLayer = declarationsFor('.tc-tg-span-layer');
 
       expect(layer).toMatch(/grid-auto-rows\s*:\s*var\(--tc-calendar-track-height\)/u);
       expect(layer).toMatch(/gap\s*:\s*0/u);
       expect(piece).toMatch(/height\s*:\s*calc\(100% - 2px\)/u);
       expect(piece).toMatch(/margin\s*:\s*1px 2px/u);
+      expect(items).toMatch(/display\s*:\s*grid/u);
+      expect(items).toMatch(/grid-auto-rows\s*:\s*var\(--tc-calendar-track-height\)/u);
+      expect(items).toMatch(/gap\s*:\s*0/u);
       expect(items).toMatch(
         /margin-top\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
+      );
+      expect(css).toMatch(
+        /\.tc-tg-cell-items > \.tc-tg-body,\s*\.tc-tg-cell-items > \.tc-tg-deadline-marker\s*\{[^}]*margin-block\s*:\s*1px/u,
+      );
+      expect(deadlineTitle).toMatch(/min-width\s*:\s*0/u);
+      expect(deadlineTitle).toMatch(/overflow\s*:\s*hidden/u);
+      expect(deadlineTitle).toMatch(/text-overflow\s*:\s*ellipsis/u);
+      expect(deadlineTitle).toMatch(/white-space\s*:\s*nowrap/u);
+      expect(weekLayer).toMatch(/inset\s*:\s*2px 0 auto/u);
+      expect(css).toMatch(
+        /\.tc-tg-span-layer \.tc-span-piece,\s*\.tc-tg-span-layer > \.tc-span-move-preview,\s*\.tc-tg-span-layer > \.tc-span-boundary-preview\s*\{[^}]*margin\s*:\s*1px 4px 1px 5px/u,
       );
       expect(css).not.toMatch(/\.tc-tg-span\s*\{[^}]*--interactive-accent/u);
       expect(host).toMatch(/height\s*:\s*100%/u);
