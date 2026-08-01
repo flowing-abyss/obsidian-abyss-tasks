@@ -517,6 +517,34 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
 describe('CenterPanel.renderSearch', () => {
   fixedToday('2026-06-25');
 
+  function withQueuedAnimationFrames(
+    run: (flush: () => void, callbacks: Map<number, FrameRequestCallback>) => void,
+  ): void {
+    const callbacks = new Map<number, FrameRequestCallback>();
+    let nextFrame = 1;
+    const requestAnimationFrame = window.requestAnimationFrame;
+    const cancelAnimationFrame = window.cancelAnimationFrame;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback): number => {
+      const frame = nextFrame++;
+      callbacks.set(frame, callback);
+      return frame;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = ((frame: number): void => {
+      callbacks.delete(frame);
+    }) as typeof window.cancelAnimationFrame;
+
+    try {
+      run(() => {
+        const queued = [...callbacks.entries()];
+        callbacks.clear();
+        for (const [, callback] of queued) callback(0);
+      }, callbacks);
+    } finally {
+      window.requestAnimationFrame = requestAnimationFrame;
+      window.cancelAnimationFrame = cancelAnimationFrame;
+    }
+  }
+
   it('renders matching task cards for a query', () => {
     const tasks = [
       task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
@@ -535,6 +563,93 @@ describe('CenterPanel.renderSearch', () => {
     expect((cards[0] as HTMLElement).dataset['filePath']).toBe('a.md');
     expect((cards[0] as HTMLElement).dataset['line']).toBe('0');
     panel.destroy();
+  });
+
+  it('keeps the live search input mounted and coalesces result refreshes into one frame', () => {
+    const tasks = [
+      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
+      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
+    ];
+    const state = new AppState();
+    state.set('mode', 'search');
+    const panel = makeStaticPanel(state, tasks);
+    const container = freshContainer();
+    document.body.append(container);
+    panel.mount(container);
+    const originalInput = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    originalInput.focus();
+    const renderSpy = vi.spyOn(panel as unknown as { render: () => void }, 'render');
+    const renderFlatSpy = vi.spyOn(
+      panel as unknown as { renderFlat: (host: HTMLElement, tasks: TaskSnapshot[]) => void },
+      'renderFlat',
+    );
+
+    withQueuedAnimationFrames((flush) => {
+      originalInput.value = 'mil';
+      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
+      originalInput.value = 'milk';
+      originalInput.dispatchEvent(new Event('input', { bubbles: true }));
+      flush();
+    });
+
+    expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
+    expect(document.activeElement).toBe(originalInput);
+    expect(originalInput.value).toBe('milk');
+    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
+    expect(renderSpy).not.toHaveBeenCalled();
+    expect(renderFlatSpy).toHaveBeenCalledTimes(1);
+    panel.destroy();
+    container.remove();
+  });
+
+  it('leaves a queued search refresh inert after changing modes', () => {
+    const state = new AppState();
+    state.set('mode', 'search');
+    const panel = makeStaticPanel(state, [
+      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
+    ]);
+    const container = freshContainer();
+    document.body.append(container);
+    panel.mount(container);
+    const input = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+
+    withQueuedAnimationFrames((_flush, callbacks) => {
+      input.value = 'milk';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(callbacks).toHaveLength(1);
+      const callback = [...callbacks.values()][0]!;
+      state.set('mode', 'projects');
+      expect(() => callback(0)).not.toThrow();
+    });
+
+    expect(panel['el'].querySelector('.tc-search-global')).toBeNull();
+    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(0);
+    panel.destroy();
+    container.remove();
+  });
+
+  it('leaves a queued search refresh inert after destruction', () => {
+    const state = new AppState();
+    state.set('mode', 'search');
+    const panel = makeStaticPanel(state, [
+      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
+    ]);
+    const container = freshContainer();
+    document.body.append(container);
+    panel.mount(container);
+    const input = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+
+    withQueuedAnimationFrames((_flush, callbacks) => {
+      input.value = 'milk';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      expect(callbacks).toHaveLength(1);
+      const callback = [...callbacks.values()][0]!;
+      panel.destroy();
+      expect(() => callback(0)).not.toThrow();
+    });
+
+    expect(panel['el'].childElementCount).toBe(0);
+    container.remove();
   });
 
   it('clicking a result sets selectedList + mode + taskStack on state', () => {

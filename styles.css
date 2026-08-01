@@ -2749,7 +2749,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 200px;
 }
 .tc-search-global {
-  width: 100%;
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  max-width: 360px;
+  transition: border-color 0.15s;
+}
+.tc-search-global:focus {
+  width: auto;
 }
 .tc-center-scroll {
   flex: 1;

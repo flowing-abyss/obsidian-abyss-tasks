@@ -156,6 +156,9 @@ export class CenterPanel {
   private reopenStatusGroupPopover = false;
   private onSaveSettings: () => Promise<void>;
   private md = new Component();
+  private searchInputEl: HTMLInputElement | null = null;
+  private searchResultsEl: HTMLElement | null = null;
+  private searchResultsFrame: number | null = null;
 
   private projectsPanel: ProjectsPanel | null = null;
 
@@ -250,7 +253,7 @@ export class CenterPanel {
         this.render();
       }),
       this.state.on('centerFilter', () => this.render()),
-      this.state.on('searchQuery', () => this.render()),
+      this.state.on('searchQuery', (query) => this.handleSearchQueryChanged(query)),
       this.state.on('taskStack', () => {
         const stack = this.state.get('taskStack');
         const root = stack[0];
@@ -376,6 +379,7 @@ export class CenterPanel {
 
   destroy(): void {
     this.cancelKeyboardInteraction();
+    this.clearSearchShell();
     this.clearTaskDatePicker();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
@@ -482,11 +486,15 @@ export class CenterPanel {
 
   private render(): void {
     this.clearTaskDatePicker();
-    this.md.unload();
-    this.md = new Component();
-    this.md.load();
+    this.clearSearchShell();
 
     const mode = this.state.get('mode');
+
+    if (mode !== 'search') {
+      this.md.unload();
+      this.md = new Component();
+      this.md.load();
+    }
 
     if (mode !== 'projects') this.destroyProjectsPanel();
 
@@ -1279,26 +1287,76 @@ export class CenterPanel {
     });
     input.value = this.state.get('searchQuery');
     input.addEventListener('input', () => this.state.set('searchQuery', input.value));
-    window.setTimeout(() => input.focus(), 0);
+    this.searchInputEl = input;
 
-    const query = this.state.get('searchQuery').toLowerCase();
+    const results = this.el.createDiv({ cls: 'tc-center-scroll' });
+    this.searchResultsEl = results;
+    this.renderSearchResults(results, input.value);
+
+    window.setTimeout(() => {
+      if (this.searchInputEl === input && input.isConnected) input.focus();
+    }, 0);
+  }
+
+  private handleSearchQueryChanged(query: string): void {
+    if (
+      this.state.get('mode') !== 'search' ||
+      !this.searchInputEl?.isConnected ||
+      !this.searchResultsEl?.isConnected
+    ) {
+      this.render();
+      return;
+    }
+    if (this.searchInputEl.value !== query) this.searchInputEl.value = query;
+    this.scheduleSearchResults(query);
+  }
+
+  private scheduleSearchResults(query: string): void {
+    if (this.searchResultsFrame !== null) {
+      window.cancelAnimationFrame(this.searchResultsFrame);
+    }
+    this.searchResultsFrame = window.requestAnimationFrame(() => {
+      this.searchResultsFrame = null;
+      const input = this.searchInputEl;
+      const results = this.searchResultsEl;
+      if (this.state.get('mode') !== 'search' || !input?.isConnected || !results?.isConnected) {
+        return;
+      }
+      this.renderSearchResults(results, query);
+    });
+  }
+
+  private clearSearchShell(): void {
+    if (this.searchResultsFrame !== null) {
+      window.cancelAnimationFrame(this.searchResultsFrame);
+      this.searchResultsFrame = null;
+    }
+    this.searchInputEl = null;
+    this.searchResultsEl = null;
+  }
+
+  private renderSearchResults(host: HTMLElement, query: string): void {
+    this.md.unload();
+    this.md = new Component();
+    this.md.load();
+    host.empty();
+    host.toggleClass('tc-search-empty', query.length === 0);
+
     if (!query) {
-      const empty = this.el.createDiv({ cls: 'tc-center-scroll tc-search-empty' });
-      empty.createEl('p', { cls: 'tc-empty-state', text: 'Type to search tasks…' });
+      host.createEl('p', { cls: 'tc-empty-state', text: 'Type to search tasks…' });
       return;
     }
 
-    const results = [...searchTaskList(this.queries.list(), query)];
-    const scroll = this.el.createDiv({ cls: 'tc-center-scroll' });
-    if (results.length === 0) {
-      scroll.createDiv({ cls: 'tc-center-empty', text: 'No results' });
+    const matchingTasks = [...searchTaskList(this.queries.list(), query)];
+    if (matchingTasks.length === 0) {
+      host.createDiv({ cls: 'tc-center-empty', text: 'No results' });
       return;
     }
-    this.renderFlat(scroll, results);
+    this.renderFlat(host, matchingTasks);
 
     // Navigate to task in tasks mode when clicking a search result
-    scroll.querySelectorAll<HTMLElement>('.tc-task-card').forEach((cardEl, idx) => {
-      const task = results[idx];
+    host.querySelectorAll<HTMLElement>('.tc-task-card').forEach((cardEl, idx) => {
+      const task = matchingTasks[idx];
       if (!task) return;
       cardEl.addEventListener(
         'click',

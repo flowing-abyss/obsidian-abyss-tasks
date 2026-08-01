@@ -195,3 +195,18 @@ describe('Panel shell top rhythm', () => {
     }
   });
 });
+
+describe('Global search field geometry', () => {
+  it('keeps the global search field flexible and bounded without width animation', () => {
+    const globalSearch = declarationsFor('.tc-search-global');
+    const focusedGlobalSearch = declarationsFor('.tc-search-global:focus');
+
+    expect(globalSearch).toContain('flex: 1');
+    expect(globalSearch).toContain('min-width: 0');
+    expect(globalSearch).toMatch(/max-width:\s*\d+px/);
+    expect(globalSearch).toContain('width: auto');
+    expect(focusedGlobalSearch).toContain('width: auto');
+    expect(globalSearch).toMatch(/transition:\s*border-color/);
+    expect(globalSearch).not.toMatch(/transition:[^;]*\bwidth\b/);
+  });
+});
