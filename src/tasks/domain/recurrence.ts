@@ -64,6 +64,48 @@ function normalizedRuleText(value: string): string {
   return value.trim().replace(/\s+/gu, ' ');
 }
 
+const WORD_ORDINALS: Readonly<Record<string, string>> = {
+  first: '1',
+  second: '2',
+  third: '3',
+  fourth: '4',
+  fifth: '5',
+};
+
+const PARSER_WORD_ORDINALS: Readonly<Record<string, string>> = {
+  first: '1st',
+  second: '2nd',
+  third: '3rd',
+  fourth: '4th',
+  fifth: '5th',
+};
+
+function parserGrammarText(value: string): string {
+  return value.replace(
+    /\b(first|second|third|fourth|fifth)\b/giu,
+    (word) => PARSER_WORD_ORDINALS[word.toLowerCase()]!,
+  );
+}
+
+function normalizedGrammarText(value: string): string {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/\b(first|second|third|fourth|fifth)\b/gu, (word) => WORD_ORDINALS[word]!)
+    .replace(/\b([1-9]\d*)(?:st|nd|rd|th)\b/gu, '$1')
+    .replace(/\bthe\b/gu, ' ')
+    .replace(/,/gu, ' , ')
+    .replace(/\band\b/gu, ' , ')
+    .replace(/\b(weekdays?|days?|weeks?|months?|years?)\b/gu, (unit) =>
+      unit.endsWith('s') ? unit.slice(0, -1) : unit,
+    )
+    .replace(/^every 1 (?=(?:weekday|day|week|month|year)\b)/u, 'every ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+  const tokens = normalized.split(' ');
+  return tokens.filter((token, index) => token !== ',' || tokens[index - 1] !== ',').join(' ');
+}
+
 function hasOnlySupportedOptions(options: Partial<Options>): boolean {
   const common = ['freq', 'interval'] as const satisfies readonly (keyof Options)[];
   let allowed: ReadonlySet<keyof Options>;
@@ -108,12 +150,15 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
     : normalized;
 
   try {
-    const options = RRule.parseText(ruleText);
+    const options = RRule.parseText(parserGrammarText(ruleText));
     if (!hasOnlySupportedOptions(options)) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
     const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
     const canonical = compiled.toText();
+    if (normalizedGrammarText(ruleText) !== normalizedGrammarText(canonical)) {
+      return { type: 'invalid', code: 'unparseable-rule' };
+    }
     compiledRules.set(canonical, compiled);
     return { type: 'valid', raw, canonical, whenDone };
   } catch {

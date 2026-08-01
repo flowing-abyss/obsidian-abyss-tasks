@@ -64,12 +64,69 @@ describe('parseRecurrenceRule', () => {
   });
 
   it.each([
+    ['case and whitespace', '  EVERY   WEEK  ', 'every week'],
+    ['optional the', 'every month on last Friday', 'every month on the last Friday'],
+    ['Oxford list', 'every week on Tuesday, and Friday', 'every week on Tuesday, Friday'],
+    ['fourth ordinal', 'every month on the fourth Tuesday', 'every month on the 4th Tuesday'],
+    ['fifth ordinal', 'every month on the fifth Tuesday', 'every month on the 5th Tuesday'],
+    ['interval-one plural', 'every 1 days', 'every day'],
+  ] as const)('accepts the supported %s alias', (_name, raw, canonical) => {
+    expect(parseRecurrenceRule(raw)).toMatchObject({ type: 'valid', raw, canonical });
+  });
+
+  it.each([
+    ['daily', 'every day', 'every day', false],
+    ['numeric interval', 'every 2 days', 'every 2 days', false],
+    ['weekday', 'every weekday', 'every weekday', false],
+    [
+      'weekly multi-day',
+      'every week on Tuesday and Friday',
+      'every week on Tuesday, Friday',
+      false,
+    ],
+    ['implicit month', 'every month', 'every month', false],
+    ['explicit month day', 'every month on the 31st', 'every month on the 31st', false],
+    [
+      'last monthly weekday',
+      'every month on the last Friday',
+      'every month on the last Friday',
+      false,
+    ],
+    [
+      'nth monthly weekday',
+      'every month on the second Tuesday',
+      'every month on the 2nd Tuesday',
+      false,
+    ],
+    [
+      '2nd-last monthly weekday',
+      'every month on the 2nd last Friday',
+      'every month on the 2nd last Friday',
+      false,
+    ],
+    [
+      'multiple month dates',
+      'every month on the 1st and 15th',
+      'every month on the 1st and 15th',
+      false,
+    ],
+    ['yearly', 'every year', 'every year', false],
+    ['leap date', 'every February on the 29th', 'every February on the 29th', false],
+    ['when done', 'every week when done', 'every week', true],
+  ] as const)('keeps documented %s grammar valid', (_name, raw, canonical, whenDone) => {
+    expect(parseRecurrenceRule(raw)).toMatchObject({ type: 'valid', raw, canonical, whenDone });
+  });
+
+  it.each([
     ['weekly', 'must-start-with-every'],
     ['every day for 4 times', 'unsupported-recurrence-count'],
     ['every day until 2026-09-01', 'unsupported-recurrence-until'],
     ['every day when done trailing', 'invalid-when-done'],
     ['every hour when done', 'unparseable-rule'],
     ['every 2 months in January', 'unparseable-rule'],
+    ['every day trailing', 'unparseable-rule'],
+    ['every week on Funday', 'unparseable-rule'],
+    ['every day on Monday', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });
