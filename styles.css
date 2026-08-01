@@ -1327,6 +1327,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   margin-block: 1px;
 }
 
+.tc-tg-root--week .tc-tg-cell-items > .tc-tg-deadline-marker {
+  /* Unlike .tc-tg-body, this inline-flex grid item's intrinsic title width would otherwise
+     become the Week track minimum and overflow the all-day day cell. */
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .tc-tg-span-layer,
 .tc-mg-span-layer {
   position: absolute;

@@ -1234,6 +1234,38 @@ describe('renderAllDayCell', () => {
       expect(item).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
     });
 
+    it('keeps a long Week deadline marker inside its no-time grid track while its title ellipsizes', () => {
+      const weekDeadline = declarationsForRuleContaining(
+        '.tc-tg-root--week .tc-tg-cell-items > .tc-tg-deadline-marker',
+      );
+      const deadlineTitle = declarationsFor('.tc-tg-root--week .tc-tg-deadline-title');
+      const container = freshContainer();
+      const weekRoot = container.createDiv({ cls: 'tc-tg-root--week' });
+      const items = weekRoot.createDiv({ cls: 'tc-tg-cell-items' });
+      const longTitle = 'A deadline title deliberately wider than one Week no-time day track';
+
+      renderAllDayCell(
+        items,
+        '2026-07-10',
+        [],
+        [],
+        [task({ title: longTitle, planning: { due: '2026-07-10', scheduled: '2026-07-05' } })],
+        callbacks(),
+      );
+
+      const marker = items.querySelector<HTMLElement>(':scope > .tc-tg-deadline-marker');
+      const title = marker?.querySelector<HTMLElement>('.tc-tg-deadline-title');
+      expect(marker).not.toBeNull();
+      expect(title?.textContent).toBe(longTitle);
+      expect(weekDeadline).toMatch(/min-width\s*:\s*0/u);
+      expect(weekDeadline).toMatch(/width\s*:\s*100%/u);
+      expect(weekDeadline).toMatch(/max-width\s*:\s*100%/u);
+      expect(weekDeadline).toMatch(/box-sizing\s*:\s*border-box/u);
+      expect(deadlineTitle).toMatch(/overflow\s*:\s*hidden/u);
+      expect(deadlineTitle).toMatch(/text-overflow\s*:\s*ellipsis/u);
+      expect(deadlineTitle).toMatch(/white-space\s*:\s*nowrap/u);
+    });
+
     it('keeps a focused span above the later hover shadow in the cascade', () => {
       const focusRule = declarationsFor('.tc-span-piece:focus-visible:hover');
       const hoverIndex = css.indexOf('.tc-tg-block:hover');
