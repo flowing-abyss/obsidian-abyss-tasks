@@ -13,6 +13,7 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
+import { calendarRootTaskRef, isForecastCalendarTask } from '../calendarOccurrences';
 import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
@@ -170,6 +171,7 @@ function renderAllDayBody(
     renderStatusMarker(el, {
       task,
       registry: callbacks.statusRegistry,
+      interactive: !isForecastCalendarTask(task),
       onLeftClick: () => callbacks.onToggle(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -186,7 +188,9 @@ function renderAllDayBody(
       },
     });
   }
-  if (task.recurrence) renderRecurrenceBadge(el, recurrenceBadgeInput(task.recurrence));
+  if (task.recurrence) {
+    renderRecurrenceBadge(el, recurrenceBadgeInput(task.recurrence, isForecastCalendarTask(task)));
+  }
   // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
   // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.tc-tg-block-head`.
@@ -230,7 +234,7 @@ function renderAllDayBody(
     const textColorVar = tagFillTextColorVar(el, tagColor);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
-  if (nativeDraggable) {
+  if (nativeDraggable && calendarRootTaskRef(task) !== undefined) {
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
@@ -285,7 +289,8 @@ function renderAllDaySpanSegment(
     segment.kind === 'terminal',
     false,
   );
-  body.setAttribute('tabindex', '0');
+  const rootInteractive = calendarRootTaskRef(segment.task) !== undefined;
+  if (rootInteractive) body.setAttribute('tabindex', '0');
   body.setAttribute('data-span-kind', segment.kind);
   body.dataset['spanDate'] = segment.date;
   body.dataset['continuesBefore'] = String(segment.continuesBefore);
@@ -304,6 +309,8 @@ function renderAllDaySpanSegment(
       body.insertBefore(time, title);
     }
   }
+
+  if (!rootInteractive) return;
 
   const boundaryHandles: {
     element: HTMLElement;
@@ -508,6 +515,7 @@ export function renderAllDayCell(
       continue;
     }
     const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups);
+    if (calendarRootTaskRef(t) === undefined) continue;
     const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
     leftEdge.setAttribute('data-boundary', 'start');
     leftEdge.setAttribute('data-resize-edge', 'start-date');
@@ -519,6 +527,7 @@ export function renderAllDayCell(
   }
   for (const t of plain) {
     const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups);
+    if (calendarRootTaskRef(t) === undefined) continue;
     // A plain task has no `start` yet: dragging this handle doesn't just move `due`
     // (there'd be nothing anchoring the other end) — it extends the task into a real
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
@@ -550,6 +559,7 @@ export function renderAllDayCell(
     renderStatusMarker(marker, {
       task: t,
       registry: callbacks.statusRegistry,
+      interactive: !isForecastCalendarTask(t),
       onLeftClick: () => callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -565,7 +575,9 @@ export function renderAllDayCell(
         });
       },
     });
-    if (t.recurrence) renderRecurrenceBadge(marker, recurrenceBadgeInput(t.recurrence));
+    if (t.recurrence) {
+      renderRecurrenceBadge(marker, recurrenceBadgeInput(t.recurrence, isForecastCalendarTask(t)));
+    }
     marker.createSpan({ text: '📅 ' });
     // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
     // and all-day span/plain items above — previously this title had no status class at all.

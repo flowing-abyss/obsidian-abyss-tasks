@@ -4,7 +4,7 @@ import type { AppState } from '../src/app/AppState';
 import type { TaskIndexEvent, TaskQueryApi, TaskResolution, TaskSnapshot } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
 import { rebuildTaskSelection, taskNodeLine } from '../src/ui/taskSelection';
-import { testStatusRegistry } from './helpers';
+import { taskQueryApi, testStatusRegistry } from './helpers';
 
 const captured = vi.hoisted(() => ({
   state: null as AppState | null,
@@ -59,15 +59,13 @@ function queryHarness(initial: TaskResolution) {
   let result = initial;
   let listener: ((event: TaskIndexEvent) => void) | undefined;
   const unsubscribe = vi.fn();
-  const queries: TaskQueryApi = {
-    list: () => [],
-    forCalendarDates: () => [],
+  const queries: TaskQueryApi = taskQueryApi({
     resolve: vi.fn(() => result),
     subscribe: (next) => {
       listener = next;
       return unsubscribe;
     },
-  };
+  });
   return {
     queries,
     set: (next: TaskResolution) => {

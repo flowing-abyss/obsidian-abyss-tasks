@@ -1,5 +1,6 @@
 import { Modal, type App } from 'obsidian';
 import { firstVisibleWeekDate, resolveWeekStartPosition } from '../domain/weekGridOffset';
+import { visibleCalendarDates } from '../panels/visibleCalendarDates';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import {
@@ -10,6 +11,15 @@ import {
   type TaskSnapshot,
 } from '../tasks';
 import { BaseView } from '../views/BaseView';
+import {
+  calendarMutationTarget,
+  calendarOccurrenceForTask,
+  calendarPatchCommand,
+  hasOtherCalendarRecurrenceOwner,
+  isForecastCalendarTask,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../views/calendarOccurrences';
 import { ListView } from '../views/ListView';
 import { MonthView } from '../views/MonthView';
 import { WeekView } from '../views/WeekView';
@@ -105,7 +115,7 @@ export class CalendarRenderer {
 
     this.unsubscribe = this.queries.subscribe(() => {
       this.dismissRecurrenceEditor();
-      this.activeView?.patch(this.viewContainer!, [...this.queries.list()], this.buildConfig());
+      this.activeView?.patch(this.viewContainer!, this.calendarTasks(), this.buildConfig());
       this.updateToolbar();
     });
   }
@@ -141,10 +151,11 @@ export class CalendarRenderer {
   private buildCallbacks() {
     return {
       onToggle: (task: TaskSnapshot) => {
+        if (isForecastCalendarTask(task)) return;
+        const target = calendarMutationTarget(task);
+        if (!target) return;
         void requestTaskCompletion(task, () =>
-          this.tasks
-            .execute({ type: 'toggle-completion', target: { type: 'task', ref: task.ref } })
-            .then(presentTaskCommandResult),
+          this.tasks.execute({ type: 'toggle-completion', target }).then(presentTaskCommandResult),
         );
       },
       onCellClick: (date: string) => this.openAddTaskModal(date),
@@ -158,6 +169,9 @@ export class CalendarRenderer {
       },
       onDateClick: (date: string) => this.openAddTaskModal(date),
       onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => {
+        if (isForecastCalendarTask(task)) return;
+        const target = calendarMutationTarget(task);
+        if (!target) return;
         const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : this.rootEl;
         showStatusMenuAt(ev, {
           task,
@@ -165,7 +179,7 @@ export class CalendarRenderer {
           onPickStatus: (symbol) => {
             const apply = (): Promise<void> =>
               this.tasks
-                .execute({ type: 'set-status', target: { type: 'task', ref: task.ref }, symbol })
+                .execute({ type: 'set-status', target, symbol })
                 .then(presentTaskCommandResult);
             if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
               void requestTaskCompletion(task, apply);
@@ -174,13 +188,10 @@ export class CalendarRenderer {
             }
           },
           onPickPriority: (priority) => {
-            void this.tasks
-              .execute({
-                type: 'patch',
-                target: { type: 'task', ref: task.ref },
-                patch: { priority: { type: 'set', value: priority } },
-              })
-              .then(presentTaskCommandResult);
+            const command = calendarPatchCommand(task, {
+              priority: { type: 'set', value: priority },
+            });
+            if (command) void this.tasks.execute(command).then(presentTaskCommandResult);
           },
           onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
         });
@@ -189,19 +200,30 @@ export class CalendarRenderer {
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+    if (isForecastCalendarTask(task)) return;
     this.dismissRecurrenceEditor();
+    const occurrence = calendarOccurrenceForTask(task);
+    const source = occurrence?.source ?? {
+      root: task,
+      target: { type: 'task' as const, ref: task.ref },
+      node: task,
+    };
     let cleanup: () => void;
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
-      source: { root: task, target: { type: 'task', ref: task.ref } },
+      source,
       policy: this.recurrencePolicy,
-      ownershipConflict: this.hasNestedRecurrence(task),
-      onSubmit: (patch) =>
-        this.tasks.execute({
-          type: 'patch',
-          target: { type: 'task', ref: task.ref },
-          patch,
-        }),
+      ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
+      onSubmit: (patch) => {
+        const command = calendarPatchCommand(task, patch);
+        return command
+          ? this.tasks.execute(command)
+          : Promise.resolve({
+              type: 'io-error',
+              cause: 'unsupported-calendar-patch',
+              contentState: 'unchanged',
+            });
+      },
       onClose: () => {
         if (this.recurrenceEditorCleanup === cleanup) {
           this.recurrenceEditorCleanup = null;
@@ -218,16 +240,6 @@ export class CalendarRenderer {
     cleanup?.();
   }
 
-  private hasNestedRecurrence(task: TaskSnapshot): boolean {
-    const queue = [...task.subtasks];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      if (current.recurrence !== undefined) return true;
-      queue.push(...current.subtasks);
-    }
-    return false;
-  }
-
   private buildConfig(): ResolvedConfig {
     return {
       ...this.config,
@@ -238,10 +250,24 @@ export class CalendarRenderer {
     };
   }
 
+  private calendarTasks(): TaskSnapshot[] {
+    const viewType = this.activeViewType === 'week' ? 'week' : 'month';
+    const dates = visibleCalendarDates(viewType, this.selectedDate, this.config.firstDayOfWeek);
+    const sources = this.queries.forCalendarProjection(dates.map(localDate));
+    const projection = projectCalendarOccurrences(
+      sources,
+      { from: localDate(dates[0]!), to: localDate(dates[dates.length - 1]!) },
+      this.recurrencePolicy,
+    );
+    const projected = projection.occurrences.map(taskSnapshotForCalendarOccurrence);
+    if (this.activeViewType !== 'list') return projected;
+    return [...this.queries.list(), ...projected.filter((task) => isForecastCalendarTask(task))];
+  }
+
   private renderView(): void {
     if (!this.viewContainer) return;
     this.dismissRecurrenceEditor();
-    const tasks = [...this.queries.list()];
+    const tasks = this.calendarTasks();
     const config = this.buildConfig();
     const cb = this.buildCallbacks();
 

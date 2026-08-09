@@ -61,6 +61,16 @@ import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
 import { WeekTimeGridView } from '../views/WeekTimeGridView';
+import {
+  calendarMutationTarget,
+  calendarOccurrenceForTask,
+  calendarPatchCommand,
+  calendarRootTaskRef,
+  hasOtherCalendarRecurrenceOwner,
+  isForecastCalendarTask,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../views/calendarOccurrences';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
   groupTasksByDate,
@@ -665,6 +675,7 @@ export class CenterPanel {
     updateTitle();
 
     const handleTaskClick = (t: TaskSnapshot): void => {
+      if (calendarRootTaskRef(t) === undefined) return;
       this.taskModal?.open(t);
     };
     const handleDrop = (dragData: string, targetDate: string): void => {
@@ -674,36 +685,47 @@ export class CenterPanel {
       void this.setTaskTimeFromDrop(dragData, date, time);
     };
     const handleTimeChange = (t: TaskSnapshot, newStartMinutes: number): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.updateTaskTime(t, newStartMinutes);
     };
     const handleDurationChange = (t: TaskSnapshot, newDurationMinutes: number): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.updateTaskDuration(t, newDurationMinutes);
     };
     const handleTimedMove = (t: TaskSnapshot, target: TimedDragTarget): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.commitTimedMove(t, target);
     };
     const handleTimedDuration = (t: TaskSnapshot, target: TimedVerticalResizeTarget): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.commitTimedDuration(t, target);
     };
     const handleTimedBoundary = (t: TaskSnapshot, target: TimedBoundaryTarget): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.commitTimedBoundary(t, target);
     };
     const handleSpanMove = (t: TaskSnapshot, target: SpanMoveTarget): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.commitSpanMove(t, target);
     };
     const handleSpanBoundary = (t: TaskSnapshot, target: InteractiveSpanBoundaryTarget): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.commitTimedBoundary(t, target);
     };
     const handleStartChange = (t: TaskSnapshot, newStart: string): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.updateTaskStart(t, newStart);
     };
     const handleDueChange = (t: TaskSnapshot, newDue: string): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.rescheduleTaskDue(t, newDue);
     };
     const handleExtendToSpan = (t: TaskSnapshot, newDue: string): void => {
+      if (isForecastCalendarTask(t)) return;
       void this.extendTaskToSpan(t, newDue);
     };
     const handleKeyboardIntent = (task: TaskSnapshot, intent: TimedBlockKeyboardIntent): void => {
+      if (calendarRootTaskRef(task) === undefined) return;
       if (!this.keyboardQueue) return;
       const active = this.el.ownerDocument.activeElement;
       const originElement = isRealmHTMLElement(active)
@@ -794,9 +816,20 @@ export class CenterPanel {
         this.calDate,
         config.firstDayOfWeek,
       );
+      const projection = this.queries.forCalendarProjection(
+        visibleDates as unknown as readonly LocalDate[],
+      );
+      const occurrences = projectCalendarOccurrences(
+        projection,
+        {
+          from: localDate(visibleDates[0]!),
+          to: localDate(visibleDates[visibleDates.length - 1]!),
+        },
+        { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      );
       return {
         config,
-        tasks: [...this.queries.forCalendarDates(visibleDates as unknown as readonly LocalDate[])],
+        tasks: occurrences.occurrences.map(taskSnapshotForCalendarOccurrence),
       };
     };
 
@@ -2858,14 +2891,15 @@ export class CenterPanel {
   }
 
   private async commitTimedMove(task: TaskSnapshot, target: TimedDragTarget): Promise<void> {
-    if (!this.tasks) return;
+    const ref = calendarRootTaskRef(task);
+    if (!this.tasks || !ref) return;
     try {
       const command: Parameters<TaskApplicationApi['execute']>[0] =
         target.destination === 'all-day'
-          ? { type: 'move-to-all-day', ref: task.ref, days: target.dayDelta }
+          ? { type: 'move-to-all-day', ref, days: target.dayDelta }
           : {
               type: 'move-time-slot',
-              ref: task.ref,
+              ref,
               days: target.dayDelta,
               time: localTime(minutesToTimeString(target.startMinutes)),
             };
@@ -2881,29 +2915,26 @@ export class CenterPanel {
   ): Promise<void> {
     if (!this.tasks) return;
     try {
-      presentTaskCommandResult(
-        await this.tasks.execute({
-          type: 'patch',
-          target: { type: 'task', ref: task.ref },
-          patch: {
-            time: {
-              type: 'set',
-              value: localTime(minutesToTimeString(target.startMinutes)),
-            },
-            duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
-          },
-        }),
-      );
+      const command = calendarPatchCommand(task, {
+        time: {
+          type: 'set',
+          value: localTime(minutesToTimeString(target.startMinutes)),
+        },
+        duration: { type: 'set', value: durationMinutes(target.durationMinutes) },
+      });
+      if (!command) return;
+      presentTaskCommandResult(await this.tasks.execute(command));
     } catch {
       // Keep the previous duration if a forged target fails validation.
     }
   }
 
   private async commitSpanMove(task: TaskSnapshot, target: SpanMoveTarget): Promise<void> {
-    if (!this.tasks || target.days === 0) return;
+    const ref = calendarRootTaskRef(task);
+    if (!this.tasks || !ref || target.days === 0) return;
     try {
       presentTaskCommandResult(
-        await this.tasks.execute({ type: 'shift-schedule', ref: task.ref, days: target.days }),
+        await this.tasks.execute({ type: 'shift-schedule', ref, days: target.days }),
       );
     } catch {
       // The shared resolver validates the exact frozen delta again at the command boundary.
@@ -2914,14 +2945,15 @@ export class CenterPanel {
     task: TaskSnapshot,
     target: TimedBoundaryTarget,
   ): Promise<void> {
-    if (!this.tasks) return;
+    const ref = calendarRootTaskRef(task);
+    if (!this.tasks || !ref) return;
     try {
       const command: Parameters<TaskApplicationApi['execute']>[0] =
         target.boundary === 'create-span'
-          ? { type: 'extend-span', ref: task.ref, due: localDate(target.date) }
+          ? { type: 'extend-span', ref, due: localDate(target.date) }
           : {
               type: 'set-span-boundary',
-              ref: task.ref,
+              ref,
               boundary: target.boundary,
               date: localDate(target.date),
             };
@@ -2932,41 +2964,33 @@ export class CenterPanel {
   }
 
   private async updateTaskTime(task: TaskSnapshot, newStartMinutes: number): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
+    if (!this.tasks) return;
     try {
-      presentTaskCommandResult(
-        await this.tasks.execute({
-          type: 'patch',
-          target: { type: 'task', ref },
-          patch: { time: { type: 'set', value: localTime(minutesToTimeString(newStartMinutes)) } },
-        }),
-      );
+      const command = calendarPatchCommand(task, {
+        time: { type: 'set', value: localTime(minutesToTimeString(newStartMinutes)) },
+      });
+      if (!command) return;
+      presentTaskCommandResult(await this.tasks.execute(command));
     } catch {
       // Keep the previous valid time when gesture arithmetic is out of range.
     }
   }
 
   private async updateTaskDuration(task: TaskSnapshot, newDurationMinutes: number): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
+    if (!this.tasks) return;
     try {
-      presentTaskCommandResult(
-        await this.tasks.execute({
-          type: 'patch',
-          target: { type: 'task', ref },
-          patch: {
-            duration: { type: 'set', value: durationMinutes(newDurationMinutes) },
-          },
-        }),
-      );
+      const command = calendarPatchCommand(task, {
+        duration: { type: 'set', value: durationMinutes(newDurationMinutes) },
+      });
+      if (!command) return;
+      presentTaskCommandResult(await this.tasks.execute(command));
     } catch {
       // Keep the previous valid duration when gesture arithmetic is invalid.
     }
   }
 
   private async updateTaskStart(task: TaskSnapshot, newStart: string): Promise<void> {
-    const ref = task.ref;
+    const ref = calendarRootTaskRef(task);
     if (!ref || !this.tasks) return;
     try {
       presentTaskCommandResult(
@@ -2983,7 +3007,7 @@ export class CenterPanel {
   }
 
   private async rescheduleTaskDue(task: TaskSnapshot, newDue: string): Promise<void> {
-    const ref = task.ref;
+    const ref = calendarRootTaskRef(task);
     if (!ref || !this.tasks) return;
     try {
       presentTaskCommandResult(
@@ -3003,7 +3027,7 @@ export class CenterPanel {
   // validates the final span atomically; presentation supplies only the dragged-to edge.
   private async extendTaskToSpan(task: TaskSnapshot, newDue: string): Promise<void> {
     if (!(task.planning.start ?? task.planning.scheduled ?? task.planning.due)) return;
-    const ref = task.ref;
+    const ref = calendarRootTaskRef(task);
     if (!ref || !this.tasks) return;
     try {
       presentTaskCommandResult(
@@ -3015,15 +3039,15 @@ export class CenterPanel {
   }
 
   private editTaskLink(task: TaskSnapshot, occ: number, token: LinkToken): void {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
+    const target = calendarMutationTarget(task);
+    if (!target || !this.tasks) return;
     new LinkEditModal(
       this.app,
       token,
       (newRaw) => {
         void this.tasks!.execute({
           type: 'edit-link',
-          target: { type: 'title', target: { type: 'task', ref } },
+          target: { type: 'title', target },
           occurrence: occ,
           replacement: newRaw,
         }).then(presentTaskCommandResult);
@@ -3042,17 +3066,11 @@ export class CenterPanel {
   }
 
   private async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
-    presentTaskCommandResult(
-      await this.tasks.execute({
-        type: 'patch',
-        target: { type: 'task', ref },
-        patch: {
-          due: value === null ? { type: 'clear' } : { type: 'set', value },
-        },
-      }),
-    );
+    const command = calendarPatchCommand(task, {
+      due: value === null ? { type: 'clear' } : { type: 'set', value },
+    });
+    if (!command || !this.tasks) return;
+    presentTaskCommandResult(await this.tasks.execute(command));
   }
 
   private async applyDueInOrder(tasks: readonly TaskSnapshot[], value: LocalDate): Promise<void> {
@@ -3194,33 +3212,32 @@ export class CenterPanel {
     task: TaskSnapshot,
     priority: 'A' | 'B' | 'C' | 'D' | 'E' | 'F',
   ): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
-    presentTaskCommandResult(
-      await this.tasks.execute({
-        type: 'patch',
-        target: { type: 'task', ref },
-        patch: { priority: { type: 'set', value: priority } },
-      }),
-    );
+    if (isForecastCalendarTask(task)) return;
+    const command = calendarPatchCommand(task, {
+      priority: { type: 'set', value: priority },
+    });
+    if (!command || !this.tasks) return;
+    presentTaskCommandResult(await this.tasks.execute(command));
   }
 
   private toggleTask(task: TaskSnapshot): Promise<void> {
+    if (isForecastCalendarTask(task)) return Promise.resolve();
     return requestTaskCompletion(task, () => this.commitTaskToggle(task));
   }
 
   private async commitTaskToggle(task: TaskSnapshot): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
+    const target = calendarMutationTarget(task);
+    if (!target || !this.tasks) return;
     presentTaskCommandResult(
       await this.tasks.execute({
         type: 'toggle-completion',
-        target: { type: 'task', ref },
+        target,
       }),
     );
   }
 
   private setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+    if (isForecastCalendarTask(task)) return Promise.resolve();
     if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
       return requestTaskCompletion(task, () => this.commitTaskStatus(task, symbol));
     }
@@ -3228,38 +3245,42 @@ export class CenterPanel {
   }
 
   private async commitTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
-    const ref = task.ref;
-    if (!ref || !this.tasks) return;
+    const target = calendarMutationTarget(task);
+    if (!target || !this.tasks) return;
     presentTaskCommandResult(
       await this.tasks.execute({
         type: 'set-status',
-        target: { type: 'task', ref },
+        target,
         symbol,
       }),
     );
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+    if (isForecastCalendarTask(task)) return;
     this.dismissRecurrenceEditor();
+    const occurrence = calendarOccurrenceForTask(task);
+    const source = occurrence?.source ?? {
+      root: task,
+      target: { type: 'task' as const, ref: task.ref },
+      node: task,
+    };
     let cleanup: () => void;
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
-      source: { root: task, target: { type: 'task', ref: task.ref } },
+      source,
       policy: { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
-      ownershipConflict: this.hasNestedRecurrence(task),
+      ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
       onSubmit: (patch) => {
-        if (!this.tasks) {
+        const command = calendarPatchCommand(task, patch);
+        if (!this.tasks || !command) {
           return Promise.resolve({
             type: 'io-error' as const,
             cause: 'application-unavailable',
             contentState: 'unchanged' as const,
           });
         }
-        return this.tasks.execute({
-          type: 'patch',
-          target: { type: 'task', ref: task.ref },
-          patch,
-        });
+        return this.tasks.execute(command);
       },
       onClose: () => {
         if (this.recurrenceEditorCleanup === cleanup) {
@@ -3275,15 +3296,5 @@ export class CenterPanel {
     const cleanup = this.recurrenceEditorCleanup;
     this.recurrenceEditorCleanup = null;
     cleanup?.();
-  }
-
-  private hasNestedRecurrence(task: TaskSnapshot): boolean {
-    const queue = [...task.subtasks];
-    while (queue.length > 0) {
-      const current = queue.shift()!;
-      if (current.recurrence !== undefined) return true;
-      queue.push(...current.subtasks);
-    }
-    return false;
   }
 }

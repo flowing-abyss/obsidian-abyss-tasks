@@ -86,13 +86,13 @@ describe('TaskQueryApi contract', () => {
       ].join('\n'),
     });
 
-    const tasks = index.forCalendarDates([
+    const tasks = index.forCalendarProjection([
       localDate('2026-07-02'),
       localDate('2026-07-03'),
       localDate('2026-07-05'),
       localDate('2026-07-02'),
-    ]);
-    expect(tasks.map((task) => task.title)).toEqual(['span', 'deadline', 'scheduled only']);
+    ]).materialized;
+    expect(tasks.map(({ node }) => node.title)).toEqual(['span', 'deadline', 'scheduled only']);
     index.destroy();
   });
 
@@ -100,12 +100,50 @@ describe('TaskQueryApi contract', () => {
     const index = await queryIndex({
       'long.md': '- [ ] long 🛫 2026-01-01 📅 2027-12-31',
     });
-    expect(index.forCalendarDates([localDate('2026-01-01')])).toHaveLength(1);
-    expect(index.forCalendarDates([localDate('2026-07-01')])).toHaveLength(1);
-    expect(index.forCalendarDates([localDate('2027-01-02')])).toHaveLength(1);
-    expect(index.forCalendarDates([localDate('2027-12-31')])).toHaveLength(1);
-    expect(index.forCalendarDates([localDate('2028-01-01')])).toHaveLength(0);
-    expect(index.forCalendarDates([localDate('2027-01-01')])).toHaveLength(1);
+    expect(index.forCalendarProjection([localDate('2026-01-01')]).materialized).toHaveLength(1);
+    expect(index.forCalendarProjection([localDate('2026-07-01')]).materialized).toHaveLength(1);
+    expect(index.forCalendarProjection([localDate('2027-01-02')]).materialized).toHaveLength(1);
+    expect(index.forCalendarProjection([localDate('2027-12-31')]).materialized).toHaveLength(1);
+    expect(index.forCalendarProjection([localDate('2028-01-01')]).materialized).toHaveLength(0);
+    expect(index.forCalendarProjection([localDate('2027-01-01')]).materialized).toHaveLength(1);
+    index.destroy();
+  });
+
+  it('indexes active root and nested recurrence owners independently of viewport and parent status', async () => {
+    const index = await queryIndex({
+      'owners.md': [
+        '- [ ] root owner 🔁 every week 📅 2026-06-01',
+        '  - [/] nested visible 🔁 every day 📅 2026-08-08',
+        '  - [x] nested done 🔁 every day 📅 2026-08-08',
+        '  - [-] nested cancelled 🔁 every day 📅 2026-08-08',
+        '  - [ ] nested plain 📅 2026-08-08',
+        '- [x] done parent',
+        '  - [ ] nested active 🔁 every month 📅 2026-06-30',
+        '- [/] progressing owner 🔁 every week 📅 2026-06-01',
+        '- [x] done owner 🔁 every week 📅 2026-06-01',
+        '- [-] cancelled owner 🔁 every week 📅 2026-06-01',
+      ].join('\n'),
+    });
+
+    const projection = index.forCalendarProjection([localDate('2026-08-08')]);
+    expect(projection.materialized.map(({ node }) => node.title)).toEqual([
+      'nested visible',
+      'nested done',
+      'nested cancelled',
+    ]);
+    expect(projection.recurringSources.map(({ node }) => node.title)).toEqual([
+      'root owner',
+      'nested visible',
+      'nested active',
+      'progressing owner',
+    ]);
+    expect(projection.recurringSources.map(({ target }) => target.type)).toEqual([
+      'task',
+      'subtask',
+      'subtask',
+      'task',
+    ]);
+    expect(projection.recurringSources[2]?.root.status).toBe('done');
     index.destroy();
   });
 });

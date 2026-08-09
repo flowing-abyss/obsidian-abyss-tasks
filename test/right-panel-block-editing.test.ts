@@ -8,6 +8,7 @@ import {
   createAppWithFiles,
   flushMicrotasks,
   freshContainer,
+  taskQueryApi,
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
@@ -118,12 +119,7 @@ function snapshotWithNestedChildren(revision: string): TaskSnapshot {
 
 function api(execute: TaskApplicationApi['execute']): TaskApplicationApi {
   return {
-    queries: {
-      list: () => [],
-      forCalendarDates: () => [],
-      resolve: (ref) => ({ type: 'not-found', ref }),
-      subscribe: () => () => {},
-    },
+    queries: taskQueryApi(),
     execute,
   };
 }

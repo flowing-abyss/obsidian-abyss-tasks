@@ -14,6 +14,7 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
+import { calendarRootTaskRef, isForecastCalendarTask } from '../calendarOccurrences';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
   capContinuationMinHeightsPx,
@@ -154,6 +155,8 @@ export function renderTimedBlocksForDay(
   // doc comment for why a same-column neighbor can still need that growth clamped back down so
   // the two blocks never visually cross.
   for (const p of positioned) {
+    const forecast = isForecastCalendarTask(p.task);
+    const rootInteractive = calendarRootTaskRef(p.task) !== undefined;
     const widthPct = 100 / p.columns;
     const terminal = options
       ? (options.terminal ?? (!p.task.planning.due || p.task.planning.due === options.date))
@@ -167,7 +170,7 @@ export function renderTimedBlocksForDay(
     if (options) block.setAttribute('data-tg-segment-date', options.date);
     // Keep each block as the stable focus root used by relative arrow intents and same-day
     // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
-    block.setAttribute('tabindex', '0');
+    if (rootInteractive) block.setAttribute('tabindex', '0');
     block.style.top = `${minutesToPixels(p.startMinutes)}px`;
     const heightPx = minutesToPixels(p.durationMinutes);
     block.style.height = `${heightPx}px`;
@@ -226,6 +229,7 @@ export function renderTimedBlocksForDay(
       renderStatusMarker(head, {
         task: p.task,
         registry: callbacks.statusRegistry,
+        interactive: !forecast,
         onLeftClick: () => callbacks.onToggle(p.task),
         onContextMenu: (ev) => {
           ev.stopPropagation();
@@ -243,7 +247,7 @@ export function renderTimedBlocksForDay(
       });
     }
     if (p.task.recurrence) {
-      renderRecurrenceBadge(head, recurrenceBadgeInput(p.task.recurrence));
+      renderRecurrenceBadge(head, recurrenceBadgeInput(p.task.recurrence, forecast));
     }
     // Task 38: a completed/cancelled task stays a full, visible block (checkbox showing its
     // checked state via the marker above), communicating completion purely through this
@@ -263,16 +267,18 @@ export function renderTimedBlocksForDay(
         text: plainGhostTaskTitle(p.task),
       });
     }
-    attachTimedBlockControls(
-      block,
-      hourColumnEl,
-      p.task,
-      p.startMinutes,
-      p.durationMinutes,
-      terminal,
-      callbacks,
-      options,
-    );
+    if (rootInteractive) {
+      attachTimedBlockControls(
+        block,
+        hourColumnEl,
+        p.task,
+        p.startMinutes,
+        p.durationMinutes,
+        terminal,
+        callbacks,
+        options,
+      );
+    }
   }
 }
 

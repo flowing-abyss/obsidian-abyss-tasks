@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../src/tasks';
+import { taskQueryApi } from './helpers';
 
 function tfile(path: string, extension = 'md'): TFile {
   return Object.assign(Object.create(TFile.prototype) as object, {
@@ -82,18 +83,17 @@ function harness() {
   let snapshots: readonly TaskSnapshot[] = [task('open')];
   let indexListener: ((event: TaskIndexEvent) => void) | undefined;
   const indexUnsub = vi.fn();
-  const queries: TaskQueryApi = {
+  const queries: TaskQueryApi = taskQueryApi({
     list: (query) =>
       snapshots.filter(
         (snapshot) => query?.filePath === undefined || snapshot.ref.filePath === query.filePath,
       ),
-    forCalendarDates: () => [],
     resolve: vi.fn(),
     subscribe: (listener) => {
       indexListener = listener;
       return indexUnsub;
     },
-  };
+  });
   return {
     app: app as never,
     queries,

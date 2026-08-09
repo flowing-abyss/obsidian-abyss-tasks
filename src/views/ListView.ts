@@ -12,6 +12,7 @@ import {
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { BaseView } from './BaseView';
+import { isForecastCalendarTask } from './calendarOccurrences';
 import { getTasksForDate, sortTasks } from './taskGrouping';
 
 export interface ListViewCallbacks {
@@ -126,12 +127,16 @@ export class ListView extends BaseView {
     const marker = renderStatusMarker(row, {
       task,
       registry: this.callbacks.statusRegistry,
+      interactive: !isForecastCalendarTask(task),
       onLeftClick: () => this.callbacks.onToggle(task),
       onContextMenu: (e) => this.callbacks.onContextMenu(e, task),
     });
 
     if (task.recurrence) {
-      renderRecurrenceBadge(row, recurrenceBadgeInput(task.recurrence));
+      renderRecurrenceBadge(
+        row,
+        recurrenceBadgeInput(task.recurrence, isForecastCalendarTask(task)),
+      );
     }
 
     let statusClass = '';

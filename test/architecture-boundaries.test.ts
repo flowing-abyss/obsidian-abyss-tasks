@@ -60,7 +60,10 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
 };
 
 const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
+  CalendarProjectionSources: ['src/views/calendarOccurrences.ts'],
+  CalendarTaskSource: ['src/views/calendarOccurrences.ts'],
   CommentRef: ['src/panels/RightPanel.ts'],
+  DateRange: ['src/views/calendarOccurrences.ts'],
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   PlanningTarget: ['src/panels/RightPanel.ts'],
@@ -75,6 +78,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskNodeRef: ['src/panels/RightPanel.ts'],
+  TaskPlanning: ['src/views/calendarOccurrences.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts'],
   TaskPriority: ['src/panels/CenterPanel.ts'],
@@ -86,6 +90,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskTextTarget: ['src/panels/RightPanel.ts'],
   daysBetweenLocalDates: ['src/panels/CenterPanel.ts', 'src/views/timegrid/dragGeometry.ts'],
   durationMinutes: ['src/panels/CenterPanel.ts'],
+  expandRecurrenceReferences: ['src/views/calendarOccurrences.ts'],
   localDate: ['src/main.ts'],
   localTime: ['src/panels/CenterPanel.ts'],
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
@@ -95,7 +100,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
-  'TaskQueryApi.forCalendarDates': 'src/panels/CenterPanel.ts',
+  'TaskQueryApi.forCalendarProjection': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',

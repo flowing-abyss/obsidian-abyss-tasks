@@ -11,6 +11,7 @@ import {
   createAppWithFiles,
   makeStubStore,
   task,
+  taskQueryApi,
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
@@ -30,12 +31,7 @@ function taskApi(ref: TaskRef): { tasks: TaskApplicationApi; execute: ReturnType
   return {
     execute,
     tasks: {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     },
   };

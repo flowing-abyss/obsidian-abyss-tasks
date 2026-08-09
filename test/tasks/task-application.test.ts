@@ -14,6 +14,7 @@ import type {
   TaskSnapshot,
 } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
+import { taskQueryApi } from '../helpers';
 
 const ref: TaskRef = { filePath: 'tasks.md', line: 0, revision: 'block:test' };
 
@@ -42,12 +43,7 @@ function snapshot(): TaskSnapshot {
 }
 
 function queries(): TaskQueryApi {
-  return {
-    list: () => [],
-    forCalendarDates: () => [],
-    resolve: (target) => ({ type: 'not-found', ref: target }),
-    subscribe: () => () => {},
-  };
+  return taskQueryApi();
 }
 
 function exactQueries(task: TaskSnapshot): TaskQueryApi {

@@ -1,4 +1,6 @@
 export type {
+  CalendarProjectionSources,
+  CalendarTaskSource,
   TaskApplicationApi,
   TaskIndexEvent,
   TaskQueryApi,
@@ -15,17 +17,20 @@ export type {
 } from './domain/commands';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
 export {
+  expandRecurrenceReferences,
   parseRecurrenceRule,
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
 export type {
   CommentRef,
+  DateRange,
   LocalDate,
   SubtaskRef,
   SubtaskSnapshot,
   TaskCommentSnapshot,
   TaskNodeRef,
+  TaskPlanning,
   TaskPriority,
   TaskRef,
   TaskSnapshot,

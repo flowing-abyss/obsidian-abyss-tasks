@@ -16,7 +16,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles, makeStubStore, task, useRealMoment } from './helpers';
+import { createAppWithFiles, makeStubStore, task, taskQueryApi, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -52,20 +52,26 @@ async function makePanel(
   const snapshots = Object.entries(files).flatMap(([path, content]) =>
     index.snapshotsFromContent(path, content),
   );
-  const queries: TaskApplicationApi['queries'] = {
+  const queries: TaskApplicationApi['queries'] = taskQueryApi({
     list: (query) =>
       snapshots.filter(
         (snapshot) => query?.filePath === undefined || snapshot.ref.filePath === query.filePath,
       ),
-    forCalendarDates: () => snapshots,
+    forCalendarProjection: () => ({
+      materialized: snapshots.map((root) => ({
+        root,
+        target: { type: 'task' as const, ref: root.ref },
+        node: root,
+      })),
+      recurringSources: [],
+    }),
     resolve: (ref) => {
       const found = snapshots.find(
         (snapshot) => snapshot.ref.filePath === ref.filePath && snapshot.ref.line === ref.line,
       );
       return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
     },
-    subscribe: () => () => {},
-  };
+  });
   const repository = new ObsidianTaskRepository(app, {
     codec: new TaskMarkdownCodec(statusCatalog),
     editor: new TaskBlockEditor(),

@@ -5,7 +5,7 @@ import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { TaskMoveRecoveryModal } from '../src/ui/TaskMoveRecoveryModal';
 import { moveTaskToProjectWithRecovery } from '../src/ui/moveTaskToProject';
 import { presentTaskMoveResult } from '../src/ui/taskCommandResult';
-import { createAppWithFiles, flushMicrotasks } from './helpers';
+import { createAppWithFiles, flushMicrotasks, taskQueryApi } from './helpers';
 
 const source: TaskRef = { filePath: 'source.md', line: 2, revision: 'old-revision' };
 
@@ -59,12 +59,7 @@ function taskApi(
   const resolve = vi.fn().mockReturnValue(resolveResult);
   const execute = vi.fn().mockResolvedValue(executeResult);
   return {
-    queries: {
-      list: () => [],
-      forCalendarDates: () => [],
-      resolve,
-      subscribe: () => () => {},
-    },
+    queries: taskQueryApi({ resolve }),
     execute,
   } as never;
 }

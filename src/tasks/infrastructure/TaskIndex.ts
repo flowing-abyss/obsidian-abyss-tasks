@@ -7,6 +7,8 @@ import {
   type TAbstractFile,
 } from 'obsidian';
 import type {
+  CalendarProjectionSources,
+  CalendarTaskSource,
   TaskIndexEvent,
   TaskQuery,
   TaskQueryApi,
@@ -97,6 +99,87 @@ function stableTaskOrder(left: TaskSnapshot, right: TaskSnapshot): number {
     left.source.filePath.localeCompare(right.source.filePath) ||
     left.source.line - right.source.line
   );
+}
+
+function targetPath(target: TaskNodeRef): readonly number[] {
+  if (target.type === 'task') return [];
+  return [...targetPath(target.ref.parent), target.ref.relativeLine];
+}
+
+function stableCalendarSourceOrder(left: CalendarTaskSource, right: CalendarTaskSource): number {
+  const rootOrder = stableTaskOrder(left.root, right.root);
+  if (rootOrder !== 0) return rootOrder;
+  const leftPath = targetPath(left.target);
+  const rightPath = targetPath(right.target);
+  const shared = Math.min(leftPath.length, rightPath.length);
+  for (let index = 0; index < shared; index++) {
+    const order = leftPath[index]! - rightPath[index]!;
+    if (order !== 0) return order;
+  }
+  return leftPath.length - rightPath.length;
+}
+
+function calendarSources(tasks: readonly TaskSnapshot[]): readonly CalendarTaskSource[] {
+  const sources: CalendarTaskSource[] = [];
+  const visit = (root: TaskSnapshot, subtasks: readonly SubtaskSnapshot[]): void => {
+    for (const node of subtasks) {
+      const target: TaskNodeRef = { type: 'subtask', ref: node.ref };
+      if (node.recurrence !== undefined) sources.push({ root, target, node });
+      visit(root, node.subtasks);
+    }
+  };
+  for (const root of tasks) {
+    sources.push({ root, target: { type: 'task', ref: root.ref }, node: root });
+    visit(root, root.subtasks);
+  }
+  return sources;
+}
+
+interface ClonedCalendarRoot {
+  readonly root: TaskSnapshot;
+  readonly nodes: ReadonlyMap<TaskSnapshot | SubtaskSnapshot, TaskSnapshot | SubtaskSnapshot>;
+}
+
+function cloneCalendarRoot(original: TaskSnapshot): ClonedCalendarRoot {
+  const root = cloneTaskSnapshot(original);
+  const nodes = new Map<TaskSnapshot | SubtaskSnapshot, TaskSnapshot | SubtaskSnapshot>([
+    [original, root],
+  ]);
+  const pending: Array<{
+    readonly originals: readonly SubtaskSnapshot[];
+    readonly clones: readonly SubtaskSnapshot[];
+  }> = [{ originals: original.subtasks, clones: root.subtasks }];
+  while (pending.length > 0) {
+    const pair = pending.pop()!;
+    if (pair.originals.length !== pair.clones.length) {
+      throw new Error('calendar-source-clone-shape-mismatch');
+    }
+    for (let index = 0; index < pair.originals.length; index++) {
+      const sourceNode = pair.originals[index]!;
+      const clonedNode = pair.clones[index]!;
+      nodes.set(sourceNode, clonedNode);
+      pending.push({ originals: sourceNode.subtasks, clones: clonedNode.subtasks });
+    }
+  }
+  return { root, nodes };
+}
+
+function cloneCalendarTaskSource(
+  source: CalendarTaskSource,
+  roots: Map<TaskSnapshot, ClonedCalendarRoot>,
+): CalendarTaskSource {
+  let graph = roots.get(source.root);
+  if (graph === undefined) {
+    graph = cloneCalendarRoot(source.root);
+    roots.set(source.root, graph);
+  }
+  const node = graph.nodes.get(source.node);
+  if (node === undefined) throw new Error('calendar-source-node-missing');
+  const target: TaskNodeRef =
+    source.target.type === 'task'
+      ? { type: 'task', ref: graph.root.ref }
+      : { type: 'subtask', ref: (node as SubtaskSnapshot).ref };
+  return { root: graph.root, target, node };
 }
 
 function immutableEvent(event: TaskIndexEvent): TaskIndexEvent {
@@ -356,10 +439,11 @@ function relocateSnapshot(
 
 export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private readonly taskMap = new Map<string, readonly TaskSnapshot[]>();
-  private readonly dateIndex = new TaskDateIndex<TaskSnapshot>(
-    (task) => calendarDatesForPlanning(task.planning),
-    (task) => calendarRangeForPlanning(task.planning),
+  private readonly calendarDateIndex = new TaskDateIndex<CalendarTaskSource>(
+    (source) => calendarDatesForPlanning(source.node.planning),
+    (source) => calendarRangeForPlanning(source.node.planning),
   );
+  private readonly recurringSourcesByFile = new Map<string, readonly CalendarTaskSource[]>();
   private listeners: Listener[] = [];
   private readonly pendingFiles = new Set<string>();
   private fileLifecycles = new WeakMap<TFile, FileLifecycle>();
@@ -446,12 +530,21 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     return [...filtered].sort(stableTaskOrder).map(cloneTaskSnapshot);
   }
 
-  forCalendarDates(dates: readonly LocalDate[]): readonly TaskSnapshot[] {
-    const seen = new Set<TaskSnapshot>();
+  forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources {
+    const seen = new Set<CalendarTaskSource>();
     for (const date of dates) {
-      for (const task of this.dateIndex.get(date)) seen.add(task);
+      for (const source of this.calendarDateIndex.get(date)) seen.add(source);
     }
-    return [...seen].sort(stableTaskOrder).map(cloneTaskSnapshot);
+    const clonedRoots = new Map<TaskSnapshot, ClonedCalendarRoot>();
+    const cloneSource = (source: CalendarTaskSource): CalendarTaskSource =>
+      cloneCalendarTaskSource(source, clonedRoots);
+    return {
+      materialized: [...seen].sort(stableCalendarSourceOrder).map(cloneSource),
+      recurringSources: [...this.recurringSourcesByFile.values()]
+        .flat()
+        .sort(stableCalendarSourceOrder)
+        .map(cloneSource),
+    };
   }
 
   resolve(ref: TaskRef): TaskResolution {
@@ -502,7 +595,8 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.fileLifecycles = new WeakMap();
     this.pendingReads.clear();
     this.taskMap.clear();
-    this.dateIndex.clear();
+    this.calendarDateIndex.clear();
+    this.recurringSourcesByFile.clear();
   }
 
   private async loadFile(
@@ -716,7 +810,14 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     if (!changed) return false;
     if (tasks.length > 0) this.taskMap.set(filePath, tasks);
     else this.taskMap.delete(filePath);
-    this.dateIndex.updateFile(filePath, tasks);
+    const sources = calendarSources(tasks);
+    this.calendarDateIndex.updateFile(filePath, sources);
+    const recurringSources = sources.filter(
+      ({ node }) =>
+        node.recurrence !== undefined && (node.status === 'open' || node.status === 'in-progress'),
+    );
+    if (recurringSources.length > 0) this.recurringSourcesByFile.set(filePath, recurringSources);
+    else this.recurringSourcesByFile.delete(filePath);
     return true;
   }
 

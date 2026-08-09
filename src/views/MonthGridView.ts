@@ -14,6 +14,7 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { statusTitleClass } from '../ui/statusTitleClass';
 import { BaseView } from './BaseView';
+import { calendarRootTaskRef, isForecastCalendarTask } from './calendarOccurrences';
 import {
   layoutVisibleMonth,
   layoutVisibleMonthWithReplacement,
@@ -305,7 +306,9 @@ export class MonthGridView extends BaseView {
       item.style.gridRow = String(slot + 1);
       this.applyTagFill(item, t, tagGroups);
       this.renderMarker(item, t);
-      if (t.recurrence) renderRecurrenceBadge(item, recurrenceBadgeInput(t.recurrence));
+      if (t.recurrence) {
+        renderRecurrenceBadge(item, recurrenceBadgeInput(t.recurrence, isForecastCalendarTask(t)));
+      }
       if (kind === 'timed')
         item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
@@ -351,6 +354,7 @@ export class MonthGridView extends BaseView {
     renderStatusMarker(el, {
       task: t,
       registry: this.callbacks.statusRegistry,
+      interactive: !isForecastCalendarTask(t),
       onLeftClick: () => this.callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -375,6 +379,7 @@ export class MonthGridView extends BaseView {
   // while down) fires `dragstart`. Deadline markers are deliberately excluded — they
   // stay non-draggable per the existing structural rule (Task 2).
   private makeDraggable(el: HTMLElement, t: TaskSnapshot): void {
+    if (calendarRootTaskRef(t) === undefined) return;
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', `${t.source.filePath}:::${t.source.line}`);

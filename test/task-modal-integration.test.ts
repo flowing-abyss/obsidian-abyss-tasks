@@ -9,7 +9,13 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { TaskModal } from '../src/ui/TaskModal';
-import { createAppWithFiles, flushMicrotasks, task, testStatusRegistry } from './helpers';
+import {
+  createAppWithFiles,
+  flushMicrotasks,
+  task,
+  taskQueryApi,
+  testStatusRegistry,
+} from './helpers';
 
 function click(element: HTMLElement): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -53,9 +59,8 @@ describe('TaskModal with real RightPanel', () => {
     });
     let listener: ((event: TaskIndexEvent) => void) | undefined;
     let resolution: TaskResolution = { type: 'exact', task: current };
-    const queries: TaskQueryApi = {
+    const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
-      forCalendarDates: () => [current],
       resolve: () => resolution,
       subscribe: (next) => {
         listener = next;
@@ -63,7 +68,7 @@ describe('TaskModal with real RightPanel', () => {
           listener = undefined;
         };
       },
-    };
+    });
     let revision = 0;
     const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
       revision += 1;
@@ -181,12 +186,10 @@ describe('TaskModal with real RightPanel', () => {
         originalBlock: '- [ ] Modal repeat 📅 2026-08-09',
       },
     });
-    const queries: TaskQueryApi = {
+    const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
-      forCalendarDates: () => [current],
       resolve: () => ({ type: 'exact', task: current }),
-      subscribe: () => () => {},
-    };
+    });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
       type: 'ok',
       changed: false,

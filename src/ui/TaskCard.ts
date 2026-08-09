@@ -2,6 +2,7 @@ import { Notice, Platform, type App, type Component } from 'obsidian';
 import type { LinkToken } from '../parser/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
+import { isForecastCalendarTask } from '../views/calendarOccurrences';
 import { attachLongPress } from './MobileTouch';
 import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderTaskText } from './renderTaskText';
@@ -84,6 +85,7 @@ export function createTaskCard(
     renderStatusMarker(inner, {
       task,
       registry: options.statusRegistry,
+      interactive: !isForecastCalendarTask(task),
       onLeftClick: () => onToggle?.(task),
       onContextMenu: (e) => options.onContextMenu?.(e, task),
     });
@@ -96,7 +98,10 @@ export function createTaskCard(
   const iconEl = activeDocument.createElement('div');
   iconEl.className = 'icon';
   if (task.recurrence) {
-    renderRecurrenceBadge(iconEl, recurrenceBadgeInput(task.recurrence));
+    renderRecurrenceBadge(
+      iconEl,
+      recurrenceBadgeInput(task.recurrence, isForecastCalendarTask(task)),
+    );
   } else {
     iconEl.textContent = taskIcon;
   }

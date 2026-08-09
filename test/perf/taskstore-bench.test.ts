@@ -11,7 +11,7 @@
 // eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
 import moment from 'moment';
 import { App as ObsidianApp } from 'obsidian';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import type { LocalDate } from '../../src/tasks';
 import { configuredTaskApplication } from '../helpers';
@@ -207,7 +207,7 @@ async function runScenario(fileCount: number, tasksPerFile: number): Promise<Sce
     });
   }, QUERY_RUNS);
   const queryCalendarDateMs = await avgMs(() => {
-    queries.forCalendarDates(CALENDAR_DATES as LocalDate[]);
+    queries.forCalendarProjection(CALENDAR_DATES as LocalDate[]);
   }, QUERY_RUNS);
   const queryFileMs = await avgMs(() => {
     queries.list({ filePath: 'file-0.md' });
@@ -256,6 +256,25 @@ function expectWithinBudget(metrics: ScenarioMetrics, budget: PerformanceBudget)
 // ---------------------------------------------------------------------------
 
 describe('TaskIndex performance benchmark', () => {
+  it('serves calendar projection sources without list queries or vault rescans', async () => {
+    const app = await createApp({
+      'recurring.md': '- [ ] repeat 🔁 every day 📅 2026-08-01',
+      'plain.md': '- [ ] plain 📅 2026-08-08',
+    });
+    const application = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    await application.index.initialize();
+    const list = vi.spyOn(application.index, 'list');
+    const vaultScan = vi.spyOn(app.vault, 'getMarkdownFiles');
+
+    const projection = application.index.forCalendarProjection(['2026-08-08' as LocalDate]);
+
+    expect(projection.materialized).toHaveLength(1);
+    expect(projection.recurringSources).toHaveLength(1);
+    expect(list).not.toHaveBeenCalled();
+    expect(vaultScan).not.toHaveBeenCalled();
+    application.index.destroy();
+  });
+
   it('uses the exact fixed workload and absolute budget matrix', () => {
     expect(SCENARIOS).toEqual({
       '1k': {

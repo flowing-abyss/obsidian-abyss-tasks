@@ -107,7 +107,7 @@ describe('TaskSnapshot contract', () => {
     (task.source as unknown as { filePath: string }).filePath = 'bad.md';
     (task.subtasks as unknown as unknown[]).length = 0;
     (task.comments as unknown as unknown[]).length = 0;
-    const bucket = index.forCalendarDates(['2026-07-13' as never]);
+    const bucket = index.forCalendarProjection(['2026-07-13' as never]).materialized;
     (bucket as unknown as unknown[]).length = 0;
 
     const fresh = index.list()[0]!;
@@ -117,7 +117,7 @@ describe('TaskSnapshot contract', () => {
     expect(fresh.source.filePath).toBe('tasks.md');
     expect(fresh.subtasks).toHaveLength(1);
     expect(fresh.comments).toHaveLength(1);
-    expect(index.forCalendarDates(['2026-07-13' as never])).toHaveLength(1);
+    expect(index.forCalendarProjection(['2026-07-13' as never]).materialized).toHaveLength(1);
     index.destroy();
   });
 

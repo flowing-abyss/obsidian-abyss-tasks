@@ -14,6 +14,7 @@ import type {
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
+import { localTime } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
@@ -26,6 +27,7 @@ import {
   freshContainer,
   seedTaskCache,
   task,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 
@@ -53,24 +55,31 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
         return dates.some((date) => date >= query.dateRange!.from && date <= query.dateRange!.to);
       });
 
-  return {
+  return taskQueryApi({
     list,
-    forCalendarDates: (dates) => {
+    forCalendarProjection: (dates) => {
       const wanted = new Set(dates);
-      return getTasks().filter((item) => {
-        const exactDate = [
-          item.planning.due,
-          item.planning.scheduled,
-          item.planning.start,
-          item.presentation.dailyNoteDate,
-        ].some((date) => date !== undefined && wanted.has(date));
-        if (exactDate) return true;
-        return (
-          item.planning.start !== undefined &&
-          item.planning.due !== undefined &&
-          dates.some((date) => date >= item.planning.start! && date <= item.planning.due!)
-        );
-      });
+      const materialized = getTasks()
+        .filter((item) => {
+          const exactDate = [
+            item.planning.due,
+            item.planning.scheduled,
+            item.planning.start,
+            item.presentation.dailyNoteDate,
+          ].some((date) => date !== undefined && wanted.has(date));
+          if (exactDate) return true;
+          return (
+            item.planning.start !== undefined &&
+            item.planning.due !== undefined &&
+            dates.some((date) => date >= item.planning.start! && date <= item.planning.due!)
+          );
+        })
+        .map((root) => ({
+          root,
+          target: { type: 'task' as const, ref: root.ref },
+          node: root,
+        }));
+      return { materialized, recurringSources: [] };
     },
     resolve: (ref) => {
       const found = getTasks().find(
@@ -78,8 +87,7 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
       );
       return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
     },
-    subscribe: () => () => {},
-  };
+  });
 }
 
 function makeStaticPanel(
@@ -977,6 +985,168 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   it('defaults to Month and mounts MonthGridView', async () => {
     const { el } = await makeCalendarPanel();
     expect(el.querySelector('.tc-mg-grid')).not.toBeNull();
+  });
+
+  it('renders forecast occurrences as inert, non-draggable calendar items', () => {
+    const root = task({
+      title: 'Repeat source',
+      recurrence: 'every day',
+      planning: { due: '2026-08-08', time: '09:00', duration: 60 },
+    });
+    const source = {
+      root,
+      target: { type: 'task' as const, ref: root.ref },
+      node: root,
+    };
+    const spanRoot = task({
+      title: 'Span repeat',
+      recurrence: 'every day',
+      planning: { start: '2026-08-07', due: '2026-08-08' },
+    });
+    const spanSource = {
+      root: spanRoot,
+      target: { type: 'task' as const, ref: spanRoot.ref },
+      node: spanRoot,
+    };
+    const queries = taskQueryApi({
+      list: () => [root, spanRoot],
+      forCalendarProjection: () => ({
+        materialized: [],
+        recurringSources: [source, spanSource],
+      }),
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      { queries, execute },
+    );
+    const el = freshContainer();
+    panel.mount(el);
+    (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
+
+    state.set('mode', 'calendar');
+
+    const forecastBadge = el.querySelector<HTMLElement>("[data-recurrence-forecast='true']");
+    expect(forecastBadge).not.toBeNull();
+    const item = forecastBadge?.parentElement;
+    expect(item?.getAttribute('draggable')).toBeNull();
+    item
+      ?.querySelector<HTMLElement>('.tc-status-marker')
+      ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+
+    clickCalendarView(el, 'Day');
+    const timedForecastBadge = el.querySelector<HTMLElement>(
+      ".tc-tg-block [data-recurrence-forecast='true']",
+    );
+    expect(timedForecastBadge).not.toBeNull();
+    const timedBlock = timedForecastBadge?.closest<HTMLElement>('.tc-tg-block');
+    expect(timedBlock?.querySelector('.tc-status-marker--inert')).not.toBeNull();
+    expect(timedBlock?.getAttribute('tabindex')).toBeNull();
+    expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
+    timedBlock?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(execute).not.toHaveBeenCalled();
+    const spanBadge = el.querySelector<HTMLElement>(
+      ".tc-tg-body [data-recurrence-forecast='true']",
+    );
+    const spanBody = spanBadge?.closest<HTMLElement>('.tc-tg-body');
+    expect(spanBody).not.toBeNull();
+    expect(spanBody?.getAttribute('draggable')).toBeNull();
+    expect(spanBody?.querySelector('[data-resize-edge]')).toBeNull();
+  });
+
+  it('routes a materialized nested recurrence owner through its subtask target', () => {
+    const baseRoot = task({ title: 'Root' });
+    const child = {
+      ref: {
+        parent: { type: 'task' as const, ref: baseRoot.ref },
+        relativeLine: 1,
+        originalBlock: '  - [ ] Nested repeat 🔁 every day 📅 2026-08-09',
+      },
+      title: 'Nested repeat',
+      markdownTitle: 'Nested repeat',
+      status: 'open' as const,
+      statusSymbol: ' ',
+      priority: 'D' as const,
+      planning: { due: '2026-08-09' as LocalDate, time: localTime('09:00') },
+      tags: [],
+      recurrence: 'every day',
+      onCompletion: 'keep' as const,
+      onCompletionExplicit: false,
+      subtasks: [],
+      comments: [],
+    };
+    const root = { ...baseRoot, subtasks: [child] };
+    const source = {
+      root,
+      target: { type: 'subtask' as const, ref: child.ref },
+      node: child,
+    };
+    const queries = taskQueryApi({
+      list: () => [root],
+      forCalendarProjection: () => ({ materialized: [source], recurringSources: [] }),
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      { queries, execute },
+    );
+    const el = freshContainer();
+    panel.mount(el);
+    const openModal = vi.spyOn(
+      (panel as unknown as { taskModal: { open(task: TaskSnapshot): void } }).taskModal,
+      'open',
+    );
+    (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
+    state.set('mode', 'calendar');
+
+    const item = el.querySelector<HTMLElement>('.tc-mg-block-dot');
+    expect(item).not.toBeNull();
+    expect(item?.getAttribute('draggable')).toBeNull();
+    item?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(openModal).not.toHaveBeenCalled();
+    const marker = item?.querySelector<HTMLElement>('.tc-status-marker');
+    marker?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
+    expect(activeDocument.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.disabled).toBe(
+      false,
+    );
+    Array.from(activeDocument.querySelectorAll<HTMLButtonElement>('.tc-recurrence-popover button'))
+      .find((button) => button.textContent === 'Cancel')
+      ?.click();
+    marker?.click();
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'toggle-completion',
+      target: source.target,
+    });
+
+    clickCalendarView(el, 'Day');
+    const timedBlock = el.querySelector<HTMLElement>('.tc-tg-block');
+    expect(timedBlock?.getAttribute('tabindex')).toBeNull();
+    expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
   });
 
   it('clicking Today switches to TodayView', async () => {

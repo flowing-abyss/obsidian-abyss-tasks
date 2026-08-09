@@ -36,7 +36,7 @@ export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
   onSubscribe?: (listener: (event: TaskIndexEvent) => void) => () => void,
 ): TaskQueryApi {
-  return {
+  return taskQueryApi({
     list: (query) =>
       getTasks()
         .filter((task) => query?.filePath === undefined || task.source.filePath === query.filePath)
@@ -54,16 +54,27 @@ export function queryApiForTasks(
             task.presentation.dailyNoteDate;
           return date !== undefined && date >= query.dateRange.from && date <= query.dateRange.to;
         }),
-    forCalendarDates: (dates) => {
+    forCalendarProjection: (dates) => {
       const wanted = new Set<string>(dates);
-      return getTasks().filter((task) =>
-        [
-          task.planning.due,
-          task.planning.scheduled,
-          task.planning.start,
-          task.presentation.dailyNoteDate,
-        ].some((date) => date !== undefined && wanted.has(date)),
-      );
+      const sources = getTasks().map((root) => ({
+        root,
+        target: { type: 'task' as const, ref: root.ref },
+        node: root,
+      }));
+      return {
+        materialized: sources.filter(({ node }) => {
+          const { start, scheduled, due } = node.planning;
+          if (start && due) return dates.some((date) => date >= start && date <= due);
+          return [scheduled, due, rootDailyNoteDate(node)].some(
+            (date) => date !== undefined && wanted.has(date),
+          );
+        }),
+        recurringSources: sources.filter(
+          ({ node }) =>
+            node.recurrence !== undefined &&
+            (node.status === 'open' || node.status === 'in-progress'),
+        ),
+      };
     },
     resolve: (ref) => {
       const found = getTasks().find(
@@ -71,7 +82,21 @@ export function queryApiForTasks(
       );
       return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
     },
-    subscribe: onSubscribe ?? (() => () => {}),
+    ...(onSubscribe && { subscribe: onSubscribe }),
+  });
+}
+
+function rootDailyNoteDate(task: TaskSnapshot): TaskSnapshot['presentation']['dailyNoteDate'] {
+  return task.presentation.dailyNoteDate;
+}
+
+export function taskQueryApi(overrides: Partial<TaskQueryApi> = {}): TaskQueryApi {
+  return {
+    list: () => [],
+    forCalendarProjection: () => ({ materialized: [], recurringSources: [] }),
+    resolve: (ref) => ({ type: 'not-found', ref: { ...ref } }),
+    subscribe: () => () => {},
+    ...overrides,
   };
 }
 

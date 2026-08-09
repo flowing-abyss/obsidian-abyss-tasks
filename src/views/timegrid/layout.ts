@@ -1,4 +1,5 @@
 import type { TaskSnapshot } from '../../tasks';
+import { calendarOccurrenceForTask } from '../calendarOccurrences';
 
 export const PIXELS_PER_HOUR = 48;
 
@@ -19,6 +20,8 @@ export interface TimedDayLayout {
 }
 
 export function taskLayoutIdentity(task: TaskSnapshot): string {
+  const occurrence = calendarOccurrenceForTask(task);
+  if (occurrence !== undefined) return occurrence.key;
   return `${task.source.filePath}\u0000${String(task.source.line).padStart(12, '0')}`;
 }
 

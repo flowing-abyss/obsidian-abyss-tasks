@@ -2,7 +2,7 @@ import type { App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { TaskApplicationApi } from '../src/tasks';
-import { task, testStatusRegistry } from './helpers';
+import { task, taskQueryApi, testStatusRegistry } from './helpers';
 
 // vi.hoisted runs BEFORE vi.mock factory execution, avoiding TDZ.
 // The factory captures these refs by closure.
@@ -84,15 +84,12 @@ describe('TaskModal', () => {
 
     it('passes the shared task API into the modal RightPanel', () => {
       const tasks = {
-        queries: {
-          list: () => [],
-          forCalendarDates: () => [],
+        queries: taskQueryApi({
           resolve: (ref: import('../src/tasks/domain/types').TaskRef) => ({
             type: 'not-found' as const,
             ref,
           }),
-          subscribe: () => () => {},
-        },
+        }),
         execute: vi.fn(),
       } satisfies TaskApplicationApi;
       modal = new TaskModal(app, testStatusRegistry(), undefined, tasks.queries, tasks);

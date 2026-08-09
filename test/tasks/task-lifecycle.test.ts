@@ -19,7 +19,7 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { ObsidianTaskDestinationProvider } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
-import { createAppWithFiles, useRealMoment } from '../helpers';
+import { createAppWithFiles, taskQueryApi, useRealMoment } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 
 vi.mock('obsidian', async () => {
@@ -301,12 +301,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 }
 
 describe('TaskApplicationService lifecycle routing', () => {
-  const queries: TaskQueryApi = {
-    list: () => [],
-    forCalendarDates: () => [],
-    resolve: (ref) => ({ type: 'not-found', ref }),
-    subscribe: () => () => {},
-  };
+  const queries: TaskQueryApi = taskQueryApi();
   const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
   const clock = { today: () => localDate('2026-07-14') };
   const committedTask = {
@@ -484,12 +479,7 @@ describe('TaskApplicationService lifecycle routing', () => {
 });
 
 describe('TaskApplicationService lifecycle settings', () => {
-  const queries: TaskQueryApi = {
-    list: () => [],
-    forCalendarDates: () => [],
-    resolve: (ref) => ({ type: 'not-found', ref }),
-    subscribe: () => () => {},
-  };
+  const queries: TaskQueryApi = taskQueryApi();
 
   it('snapshots lifecycle settings once per command for root and subtask creation/completion dates', async () => {
     const harness = await makeHarness('in-memory', '');

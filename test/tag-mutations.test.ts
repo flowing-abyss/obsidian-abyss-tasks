@@ -12,7 +12,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles } from './helpers';
+import { createAppWithFiles, taskQueryApi } from './helpers';
 import { InMemoryTaskRepository } from './support/InMemoryTaskRepository';
 
 type Adapter = 'in-memory' | 'obsidian';
@@ -46,17 +46,15 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
           locator: new TaskLocator(),
           snapshotsFromContent: (_path, content) => snapshots(content),
         });
-  const queries: TaskApplicationApi['queries'] = {
+  const queries: TaskApplicationApi['queries'] = taskQueryApi({
     list: () => snapshots(source),
-    forCalendarDates: () => snapshots(source),
     resolve: (ref) => {
       const current = snapshots(source).find(
         (task) => task.ref.filePath === ref.filePath && task.ref.line === ref.line,
       );
       return current ? { type: 'exact', task: current } : { type: 'not-found', ref };
     },
-    subscribe: () => () => {},
-  };
+  });
   return {
     tasks: new TaskApplicationService(queries, repository, statusCatalog, {
       today: () => localDate('2026-07-14'),

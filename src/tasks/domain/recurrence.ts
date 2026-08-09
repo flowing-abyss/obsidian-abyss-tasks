@@ -57,11 +57,37 @@ type RecurrenceExpansionResult =
       readonly limit: 512 | 4096;
     };
 
-const compiledRules = new Map<string, RRule>();
+interface CompiledRuleEntry {
+  readonly canonical: string;
+  readonly whenDone: boolean;
+  readonly rule: RRule;
+}
+
+const MAX_COMPILED_RULES = 256;
+const compiledRulesByRaw = new Map<string, CompiledRuleEntry>();
 const DATE_FIELDS = ['start', 'scheduled', 'due'] as const;
 
 function normalizedRuleText(value: string): string {
   return value.trim().replace(/\s+/gu, ' ');
+}
+
+function compiledRule(raw: string): CompiledRuleEntry | undefined {
+  const key = normalizedRuleText(raw);
+  const cached = compiledRulesByRaw.get(key);
+  if (!cached) return undefined;
+  compiledRulesByRaw.delete(key);
+  compiledRulesByRaw.set(key, cached);
+  return cached;
+}
+
+function cacheCompiledRule(raw: string, entry: CompiledRuleEntry): void {
+  const key = normalizedRuleText(raw);
+  compiledRulesByRaw.set(key, entry);
+  while (compiledRulesByRaw.size > MAX_COMPILED_RULES) {
+    const oldest = compiledRulesByRaw.keys().next().value;
+    if (oldest === undefined) break;
+    compiledRulesByRaw.delete(oldest);
+  }
 }
 
 const WORD_ORDINALS: Readonly<Record<string, number>> = {
@@ -283,6 +309,15 @@ function hasOnlySupportedOptions(options: Partial<Options>): boolean {
 
 export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   const normalized = normalizedRuleText(raw);
+  const cached = compiledRule(normalized);
+  if (cached !== undefined) {
+    return {
+      type: 'valid',
+      raw,
+      canonical: cached.canonical,
+      whenDone: cached.whenDone,
+    };
+  }
   if (!/^every\b/iu.test(normalized)) {
     return { type: 'invalid', code: 'must-start-with-every' };
   }
@@ -319,7 +354,7 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
     if (supportedGrammarKey(canonical) !== inputGrammar) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
-    compiledRules.set(canonical, compiled);
+    cacheCompiledRule(normalized, { canonical, whenDone, rule: compiled });
     return { type: 'valid', raw, canonical, whenDone };
   } catch {
     return { type: 'invalid', code: 'unparseable-rule' };
@@ -419,7 +454,7 @@ function parsedRule(raw: string):
   | { readonly type: 'invalid'; readonly code: RecurrenceIssueCode } {
   const parsed = parseRecurrenceRule(raw);
   if (parsed.type === 'invalid') return parsed;
-  const rule = compiledRules.get(parsed.canonical);
+  const rule = compiledRule(raw)?.rule;
   if (!rule) return { type: 'invalid', code: 'unparseable-rule' };
   return { type: 'valid', parsed, rule };
 }

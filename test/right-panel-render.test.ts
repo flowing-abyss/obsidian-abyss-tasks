@@ -23,6 +23,7 @@ import {
   subtask,
   task,
   taskComment,
+  taskQueryApi,
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
@@ -801,12 +802,7 @@ describe('RightPanel popovers', () => {
       outcome: { type: 'task', task: fresh },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const { state, el } = await makePanel({ 'f.md': '- [ ] Scheduled ⏳ 2026-07-05\n' }, tasks);
@@ -873,12 +869,7 @@ describe('RightPanel popovers', () => {
       target: { type: 'task', ref },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -1255,12 +1246,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       target: { type: 'task', ref },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const { state, app, el } = await makePanel({ 'f.md': '- [ ] Dated 📅 2026-06-25\n' }, tasks);

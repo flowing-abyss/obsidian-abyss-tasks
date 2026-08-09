@@ -32,6 +32,7 @@ import {
   subtask,
   task,
   taskComment,
+  taskQueryApi,
   testStatusRegistry,
   useRealMoment,
 } from './helpers';
@@ -262,12 +263,7 @@ describe('RightPanel planning API delegation', () => {
       target: { type: 'task', ref },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -320,12 +316,7 @@ describe('RightPanel planning API delegation', () => {
       target: { type: 'task', ref },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -385,12 +376,7 @@ describe('RightPanel planning API delegation', () => {
       target: { type: 'task', ref: rootRef },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -499,12 +485,7 @@ describe('RightPanel planning API delegation', () => {
       outcome: { type: 'task', task: freshRoot },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -561,12 +542,7 @@ describe('RightPanel planning API delegation', () => {
           }),
       );
       const tasks: TaskApplicationApi = {
-        queries: {
-          list: () => [],
-          forCalendarDates: () => [],
-          resolve: (target) => ({ type: 'not-found', ref: target }),
-          subscribe: () => () => {},
-        },
+        queries: taskQueryApi(),
         execute,
       };
       const panel = new RightPanel(
@@ -709,12 +685,7 @@ describe('RightPanel.updateTaskTitle', () => {
       target: { type: 'task', ref: rootRef },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(
@@ -1548,12 +1519,7 @@ describe('RightPanel.removeTag', () => {
       target: { type: 'task', ref: rootRef },
     });
     const tasks: TaskApplicationApi = {
-      queries: {
-        list: () => [],
-        forCalendarDates: () => [],
-        resolve: (target) => ({ type: 'not-found', ref: target }),
-        subscribe: () => () => {},
-      },
+      queries: taskQueryApi(),
       execute,
     };
     const panel = new RightPanel(

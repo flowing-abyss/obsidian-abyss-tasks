@@ -7,6 +7,7 @@ import type { TaskRepository, TaskRepositoryResult } from '../src/tasks/applicat
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskRef, TaskSnapshot } from '../src/tasks/domain/types';
 import { localDate } from '../src/tasks/domain/validation';
+import { taskQueryApi } from './helpers';
 
 const ref: TaskRef = { filePath: 'source.md', line: 3, revision: 'source-revision' };
 const destination = {
@@ -39,12 +40,7 @@ function snapshot(filePath: string): TaskSnapshot {
 }
 
 function service(move: TaskRepository['move']): TaskApplicationService {
-  const queries: TaskQueryApi = {
-    list: () => [],
-    forCalendarDates: () => [],
-    resolve: (candidate) => ({ type: 'not-found', ref: candidate }),
-    subscribe: () => () => {},
-  };
+  const queries: TaskQueryApi = taskQueryApi();
   return new TaskApplicationService(
     queries,
     {

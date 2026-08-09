@@ -5,7 +5,7 @@ export type CalViewType = 'today' | 'week' | 'month';
 /**
  * The exact set of dates a calendar view will render for the given
  * view type/date/first-day-of-week, mirroring TodayView/WeekTimeGridView/
- * MonthGridView's own date math. Used to scope a TaskQueryApi.forCalendarDates
+ * MonthGridView's own date math. Used to scope a TaskQueryApi calendar-projection
  * query to only the visible range, instead of scanning every task in the vault.
  */
 export function visibleCalendarDates(

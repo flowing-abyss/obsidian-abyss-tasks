@@ -428,6 +428,41 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
+    it('renders forecast badges without counting or mutating projected occurrences', () => {
+      const store = new StubStore();
+      const root = freshContainer();
+      const current = task({
+        title: 'Repeat source',
+        recurrence: 'every day',
+        planning: { due: '2026-08-01' },
+      });
+      store.setTasks([current]);
+      const r = makeRenderer(
+        root,
+        store,
+        resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+        fakeApp(),
+      );
+
+      r.mount();
+
+      const forecastBadge = root.querySelector<HTMLElement>("[data-recurrence-forecast='true']");
+      expect(forecastBadge).not.toBeNull();
+      const forecastCard = forecastBadge?.closest<HTMLElement>('.task');
+      expect(forecastCard?.getAttribute('draggable')).toBeNull();
+      forecastCard?.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      forecastCard
+        ?.querySelector<HTMLElement>('.tc-status-marker')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(store.execute).not.toHaveBeenCalled();
+      expect(
+        root.querySelector('.statisticPopup li[data-group="recurrence"] .stat-count')?.textContent,
+      ).toBe('1');
+      r.destroy();
+    });
+
     it('opens the shared anchored recurrence editor from the ordinary task context menu', () => {
       const store = new StubStore();
       const root = freshContainer();

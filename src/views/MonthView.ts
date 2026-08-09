@@ -6,6 +6,7 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { createTaskCard } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
+import { calendarRootTaskRef } from './calendarOccurrences';
 import { getTasksForDate, renderTaskGroup } from './taskGrouping';
 
 export interface MonthViewCallbacks {
@@ -153,13 +154,15 @@ export class MonthView extends BaseView {
       });
 
       // Drag source
-      card.setAttribute('draggable', 'true');
-      card.addEventListener('dragstart', (e) => {
-        e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-        card.addClass('is-dragging');
-      });
-      card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+      if (calendarRootTaskRef(task) !== undefined) {
+        card.setAttribute('draggable', 'true');
+        card.addEventListener('dragstart', (e) => {
+          e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+          card.addClass('is-dragging');
+        });
+        card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+      }
 
       // Open modal on click (stop propagation so cell click doesn't fire)
       card.addEventListener('click', (e) => {

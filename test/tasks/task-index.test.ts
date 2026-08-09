@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import * as taskTypes from '../../src/tasks/domain/types';
+import { localDate } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import {
   TaskRefAuthority,
@@ -865,6 +867,83 @@ describe('TaskIndex lifecycle and events', () => {
       'quoted boundary',
       'plain after boundary',
     ]);
+    index.destroy();
+  });
+
+  it('replaces recurrence-owner sources atomically with the owning file snapshot', async () => {
+    const initial = ['- [ ] root', '  - [ ] repeating 🔁 every day 📅 2026-08-01'].join('\n');
+    const { app, index, fireChanged } = await setup({ 'owners.md': initial });
+    await index.initialize();
+
+    expect(
+      index
+        .forCalendarProjection([localDate('2026-08-08')])
+        .recurringSources.map(({ node }) => node.title),
+    ).toEqual(['repeating']);
+
+    const replacement = ['- [ ] root', '  - [ ] no longer repeating 📅 2026-08-08'].join('\n');
+    fireChanged(mdFile(app, 'owners.md'), replacement, taskCache());
+
+    const projection = index.forCalendarProjection([localDate('2026-08-08')]);
+    expect(projection.recurringSources).toEqual([]);
+    expect(projection.materialized.map(({ node }) => node.title)).toEqual([]);
+    index.destroy();
+  });
+
+  it('relocates and deletes flattened recurrence-owner sources with their file', async () => {
+    const content = '- [ ] owner 🔁 every week 📅 2026-07-01';
+    const { app, index } = await setup({ 'old.md': content });
+    await index.initialize();
+
+    await app.vault.rename(mdFile(app, 'old.md'), 'new.md');
+    const renamed = index.forCalendarProjection([localDate('2026-08-08')]).recurringSources[0]!;
+    expect(renamed.root.source.filePath).toBe('new.md');
+    expect(renamed.target).toMatchObject({ type: 'task', ref: { filePath: 'new.md' } });
+
+    await app.vault.delete(mdFile(app, 'new.md'));
+    expect(index.forCalendarProjection([localDate('2026-08-08')])).toEqual({
+      materialized: [],
+      recurringSources: [],
+    });
+    index.destroy();
+  });
+
+  it('returns detached calendar source graphs with matching root and subtask navigation identity', async () => {
+    const content = ['- [ ] root', '  - [ ] nested 🔁 every day 📅 2026-08-08'].join('\n');
+    const { index } = await setup({ 'owners.md': content });
+    await index.initialize();
+
+    const compareNodeRefs = vi.spyOn(taskTypes, 'sameTaskNodeRef');
+    compareNodeRefs.mockClear();
+    const first = index.forCalendarProjection([localDate('2026-08-08')]);
+    const breadthSearchOperations = compareNodeRefs.mock.calls.length;
+    compareNodeRefs.mockRestore();
+    expect(breadthSearchOperations).toBe(0);
+    const source = first.materialized[0]!;
+    expect(source.target.type).toBe('subtask');
+    expect(source.node).toBe(source.root.subtasks[0]);
+    if (source.target.type !== 'subtask') throw new Error('expected nested source');
+    expect(source.target.ref).toBe(source.node.ref);
+    expect(first.recurringSources[0]?.root).toBe(source.root);
+    expect(first.recurringSources[0]?.node).toBe(source.node);
+
+    (first.materialized as unknown as unknown[]).length = 0;
+    (first.recurringSources as unknown as unknown[]).length = 0;
+    (source.root as unknown as { title: string }).title = 'mutated root';
+    (source.node as unknown as { title: string }).title = 'mutated nested';
+    (source.root.subtasks as unknown as unknown[]).length = 0;
+    (source.target.ref as unknown as { originalBlock: string }).originalBlock = 'mutated target';
+
+    const fresh = index.forCalendarProjection([localDate('2026-08-08')]);
+    expect(fresh.materialized[0]?.root).not.toBe(source.root);
+    expect(fresh.recurringSources[0]?.root).toBe(fresh.materialized[0]?.root);
+    expect(fresh.materialized[0]?.root.title).toBe('root');
+    expect(fresh.materialized[0]?.node.title).toBe('nested');
+    expect(fresh.materialized[0]?.root.subtasks).toHaveLength(1);
+    expect(fresh.materialized[0]?.target).toMatchObject({
+      type: 'subtask',
+      ref: { originalBlock: expect.stringContaining('nested') },
+    });
     index.destroy();
   });
 });
