@@ -1,5 +1,6 @@
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot, TaskStatusType } from '../tasks';
+import { calendarOccurrenceForRender, type CalendarOccurrence } from './calendarOccurrences';
 
 export interface TaskGroup {
   due: TaskSnapshot[];
@@ -27,7 +28,12 @@ export function getTasksForDate(tasks: TaskSnapshot[], date: string, today: stri
     ),
     due: tasks.filter((t) => open(t) && !t.recurrence && isSame(t.planning.due)),
     recurrence: tasks.filter((t) => open(t) && t.recurrence && isSame(t.planning.due)),
-    overdue: tasks.filter((t) => open(t) && isBefore(t.planning.due)),
+    overdue: tasks.filter(
+      (t) =>
+        open(t) &&
+        calendarOccurrenceForRender(t).kind === 'materialized' &&
+        isBefore(t.planning.due),
+    ),
     start: tasks.filter((t) => open(t) && isSame(t.planning.start) && !isSame(t.planning.due)),
     scheduled: tasks.filter((t) => open(t) && isSame(t.planning.scheduled)),
     inProcess: tasks.filter(
@@ -238,10 +244,12 @@ export function renderTaskGroup(
   groups: TaskGroup,
   date: string,
   today: string,
-  renderCard: (task: TaskSnapshot, cls: string) => HTMLElement,
+  renderCard: (task: TaskSnapshot, cls: string, occurrence: CalendarOccurrence) => HTMLElement,
 ): void {
   const show = (group: TaskSnapshot[], cls: string) => {
-    for (const t of sortTasks(group)) container.appendChild(renderCard(t, cls));
+    for (const t of sortTasks(group)) {
+      container.appendChild(renderCard(t, cls, calendarOccurrenceForRender(t)));
+    }
   };
   if (date === today) show(groups.overdue, 'overdue');
   show(groups.due, 'due');

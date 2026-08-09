@@ -13,7 +13,6 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
-import { calendarRootTaskRef, isForecastCalendarTask } from '../calendarOccurrences';
 import {
   attachSpanInteractions,
   type InteractiveSpanBoundaryTarget,
@@ -21,9 +20,19 @@ import {
   type SpanMoveTarget,
 } from '../spanInteractions';
 import type { VisibleSpanLayout, VisibleSpanRow, VisibleSpanSegment } from '../spanLayout';
-import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
+import {
+  applyOccurrenceDomState,
+  bindForecastInteractions,
+  bindMaterializedInteractions,
+  hasCountBadges,
+  renderCountBadges,
+  type CalendarContinuity,
+  type CalendarOccurrenceLookup,
+  type ForecastInteractionCallbacks,
+} from './renderTaskMeta';
 
-export interface AllDayCallbacks {
+export interface AllDayCallbacks extends ForecastInteractionCallbacks {
+  occurrenceFor: CalendarOccurrenceLookup;
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
@@ -162,16 +171,20 @@ function renderAllDayBody(
   tagGroups: TagGroup[],
   interactive: boolean,
   nativeDraggable = interactive,
+  continuity: CalendarContinuity = 'single',
+  spanRole = 'body',
 ): HTMLElement {
   const el = cellEl.createDiv({ cls: `tc-tg-body ${cls}` });
+  const occurrence = callbacks.occurrenceFor(task);
+  applyOccurrenceDomState(el, occurrence, continuity, spanRole);
   // Status marker first: lets a user mark the item done without opening the modal. Its own
   // contextmenu handler stops propagation and opens the status/priority popover instead —
   // distinct from right-clicking this element's body below (opens the task modal).
-  if (interactive) {
+  if (occurrence.kind === 'materialized' && interactive) {
     renderStatusMarker(el, {
       task,
       registry: callbacks.statusRegistry,
-      interactive: !isForecastCalendarTask(task),
+      interactive: true,
       onLeftClick: () => callbacks.onToggle(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -189,7 +202,10 @@ function renderAllDayBody(
     });
   }
   if (task.recurrence) {
-    renderRecurrenceBadge(el, recurrenceBadgeInput(task.recurrence, isForecastCalendarTask(task)));
+    renderRecurrenceBadge(
+      el,
+      recurrenceBadgeInput(task.recurrence, occurrence.kind === 'forecast'),
+    );
   }
   // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
@@ -199,7 +215,7 @@ function renderAllDayBody(
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
   const titleEl = el.createSpan({ cls: `tc-tg-body-title${statusTitleClass(task.status)}` });
-  if (interactive) {
+  if (occurrence.kind === 'materialized' && interactive) {
     renderTaskText(titleEl, task.markdownTitle, {
       app: callbacks.app,
       sourcePath: task.source.filePath,
@@ -234,20 +250,23 @@ function renderAllDayBody(
     const textColorVar = tagFillTextColorVar(el, tagColor);
     if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
   }
-  if (nativeDraggable && calendarRootTaskRef(task) !== undefined) {
-    el.setAttribute('draggable', 'true');
-    el.addEventListener('dragstart', (e) => {
-      e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-      el.addClass('is-dragging');
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (nativeDraggable && target.type === 'task') {
+      el.setAttribute('draggable', 'true');
+      el.addEventListener('dragstart', (e) => {
+        e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        el.addClass('is-dragging');
+      });
+      el.addEventListener('dragend', () => el.removeClass('is-dragging'));
+    }
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      callbacks.onTaskClick(task);
     });
-    el.addEventListener('dragend', () => el.removeClass('is-dragging'));
-  }
-  el.addEventListener('contextmenu', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    callbacks.onTaskClick(task);
   });
+  bindForecastInteractions(el, occurrence, callbacks);
   return el;
 }
 
@@ -288,9 +307,10 @@ function renderAllDaySpanSegment(
     tagGroups,
     segment.kind === 'terminal',
     false,
+    segment.kind === 'terminal' ? 'terminal' : 'continuation',
+    segment.kind === 'terminal' ? 'span-terminal' : 'span-continuation',
   );
-  const rootInteractive = calendarRootTaskRef(segment.task) !== undefined;
-  if (rootInteractive) body.setAttribute('tabindex', '0');
+  const occurrence = callbacks.occurrenceFor(segment.task);
   body.setAttribute('data-span-kind', segment.kind);
   body.dataset['spanDate'] = segment.date;
   body.dataset['continuesBefore'] = String(segment.continuesBefore);
@@ -310,44 +330,46 @@ function renderAllDaySpanSegment(
     }
   }
 
-  if (!rootInteractive) return;
-
-  const boundaryHandles: {
-    element: HTMLElement;
-    boundary: 'start' | 'due';
-  }[] = [];
-  // Every Week/Month ghost is an interaction proxy for the same semantic range. Limiting handles
-  // to the literal start/due dates made clipped spans start a whole-task move when the user grabbed
-  // a visible edge. Do not add proxies to a one-day Today surface (it has no adjacent target date),
-  // or to a checkbox-bearing terminal piece: those retain only their literal boundary ownership.
-  const exposesRangeProxy = indexByDate.size > 1 && segment.kind === 'ghost';
-  const proxyClass = exposesRangeProxy ? ' tc-tg-span-edge--proxy' : '';
-  if (segment.ownsStartBoundary || exposesRangeProxy) {
-    const leftHandle = body.createDiv({
-      cls: `tc-tg-span-edge tc-tg-span-edge--left${proxyClass}`,
+  bindMaterializedInteractions(occurrence, (target) => {
+    if (target.type !== 'task') return;
+    body.setAttribute('tabindex', '0');
+    const boundaryHandles: {
+      element: HTMLElement;
+      boundary: 'start' | 'due';
+    }[] = [];
+    // Every Week/Month ghost is an interaction proxy for the same semantic range. Limiting handles
+    // to the literal start/due dates made clipped spans start a whole-task move when the user grabbed
+    // a visible edge. Do not add proxies to a one-day Today surface (it has no adjacent target date),
+    // or to a checkbox-bearing terminal piece: those retain only their literal boundary ownership.
+    const exposesRangeProxy = indexByDate.size > 1 && segment.kind === 'ghost';
+    const proxyClass = exposesRangeProxy ? ' tc-tg-span-edge--proxy' : '';
+    if (segment.ownsStartBoundary || exposesRangeProxy) {
+      const leftHandle = body.createDiv({
+        cls: `tc-tg-span-edge tc-tg-span-edge--left${proxyClass}`,
+      });
+      leftHandle.setAttribute('data-boundary', 'start');
+      leftHandle.setAttribute('data-resize-edge', 'start-date');
+      boundaryHandles.push({ element: leftHandle, boundary: 'start' });
+    }
+    if (segment.ownsDueBoundary || exposesRangeProxy) {
+      const rightHandle = body.createDiv({
+        cls: `tc-tg-span-edge tc-tg-span-edge--right${proxyClass}`,
+      });
+      rightHandle.setAttribute('data-boundary', 'due');
+      rightHandle.setAttribute('data-resize-edge', 'due-date');
+      boundaryHandles.push({ element: rightHandle, boundary: 'due' });
+    }
+    attachSpanInteractions({
+      source: body,
+      task: segment.task,
+      segmentStart: segment.date,
+      segmentEnd: segment.date,
+      owner: interactionOwner,
+      previewLayoutFor: callbacks.spanPreviewLayoutFor,
+      boundaryHandles,
+      onMove: (task, target) => callbacks.onSpanMove?.(task, target),
+      onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
     });
-    leftHandle.setAttribute('data-boundary', 'start');
-    leftHandle.setAttribute('data-resize-edge', 'start-date');
-    boundaryHandles.push({ element: leftHandle, boundary: 'start' });
-  }
-  if (segment.ownsDueBoundary || exposesRangeProxy) {
-    const rightHandle = body.createDiv({
-      cls: `tc-tg-span-edge tc-tg-span-edge--right${proxyClass}`,
-    });
-    rightHandle.setAttribute('data-boundary', 'due');
-    rightHandle.setAttribute('data-resize-edge', 'due-date');
-    boundaryHandles.push({ element: rightHandle, boundary: 'due' });
-  }
-  attachSpanInteractions({
-    source: body,
-    task: segment.task,
-    segmentStart: segment.date,
-    segmentEnd: segment.date,
-    owner: interactionOwner,
-    previewLayoutFor: callbacks.spanPreviewLayoutFor,
-    boundaryHandles,
-    onMove: (task, target) => callbacks.onSpanMove?.(task, target),
-    onBoundary: (task, target) => callbacks.onSpanBoundary?.(task, target),
   });
 }
 
@@ -386,8 +408,9 @@ function renderDraggableBody(
   task: TaskSnapshot,
   callbacks: AllDayCallbacks,
   tagGroups: TagGroup[],
+  spanRole: string,
 ): HTMLElement {
-  return renderAllDayBody(cellEl, cls, task, callbacks, tagGroups, true);
+  return renderAllDayBody(cellEl, cls, task, callbacks, tagGroups, true, true, 'single', spanRole);
 }
 
 function renderSpanContinuation(
@@ -396,7 +419,17 @@ function renderSpanContinuation(
   callbacks: AllDayCallbacks,
   tagGroups: TagGroup[],
 ): HTMLElement {
-  return renderAllDayBody(cellEl, 'tc-tg-span-continuation', task, callbacks, tagGroups, false);
+  return renderAllDayBody(
+    cellEl,
+    'tc-tg-span-continuation',
+    task,
+    callbacks,
+    tagGroups,
+    false,
+    false,
+    'continuation',
+    'span-continuation',
+  );
 }
 
 /**
@@ -514,79 +547,106 @@ export function renderAllDayCell(
       renderSpanContinuation(cellEl, t, callbacks, tagGroups);
       continue;
     }
-    const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups);
-    if (calendarRootTaskRef(t) === undefined) continue;
-    const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
-    leftEdge.setAttribute('data-boundary', 'start');
-    leftEdge.setAttribute('data-resize-edge', 'start-date');
-    attachEdgeResize(leftEdge, cellEl, t, callbacks.onStartChange, callbacks.spanInteractionOwner);
-    const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    rightEdge.setAttribute('data-boundary', 'due');
-    rightEdge.setAttribute('data-resize-edge', 'due-date');
-    attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
+    const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups, 'span-terminal');
+    const occurrence = callbacks.occurrenceFor(t);
+    applyOccurrenceDomState(bar, occurrence, 'terminal', 'span-terminal');
+    bindMaterializedInteractions(occurrence, (target) => {
+      if (target.type !== 'task') return;
+      const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+      leftEdge.setAttribute('data-boundary', 'start');
+      leftEdge.setAttribute('data-resize-edge', 'start-date');
+      attachEdgeResize(
+        leftEdge,
+        cellEl,
+        t,
+        callbacks.onStartChange,
+        callbacks.spanInteractionOwner,
+      );
+      const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      rightEdge.setAttribute('data-boundary', 'due');
+      rightEdge.setAttribute('data-resize-edge', 'due-date');
+      attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
+    });
   }
   for (const t of plain) {
-    const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups);
-    if (calendarRootTaskRef(t) === undefined) continue;
+    const role =
+      t.planning.scheduled && t.planning.scheduled !== t.planning.due
+        ? 'scheduled-body'
+        : 'all-day-body';
+    const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups, role);
     // A plain task has no `start` yet: dragging this handle doesn't just move `due`
     // (there'd be nothing anchoring the other end) — it extends the task into a real
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
-    const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
-    rightEdge.setAttribute('data-boundary', 'create-span');
-    rightEdge.setAttribute('data-resize-edge', 'due-date');
-    if (callbacks.spanInteractionOwner) {
-      attachSpanInteractions({
-        source: chip,
-        task: t,
-        segmentStart: date,
-        segmentEnd: date,
-        owner: callbacks.spanInteractionOwner,
-        previewLayoutFor: callbacks.spanPreviewLayoutFor,
-        boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
-        onMove: () => {},
-        onBoundary: (task, target) => callbacks.onExtendToSpan(task, target.date),
-        enableMove: false,
-      });
-    } else {
-      attachEdgeResize(rightEdge, cellEl, t, callbacks.onExtendToSpan);
-    }
+    bindMaterializedInteractions(callbacks.occurrenceFor(t), (target) => {
+      if (target.type !== 'task') return;
+      const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      rightEdge.setAttribute('data-boundary', 'create-span');
+      rightEdge.setAttribute('data-resize-edge', 'due-date');
+      if (callbacks.spanInteractionOwner) {
+        attachSpanInteractions({
+          source: chip,
+          task: t,
+          segmentStart: date,
+          segmentEnd: date,
+          owner: callbacks.spanInteractionOwner,
+          previewLayoutFor: callbacks.spanPreviewLayoutFor,
+          boundaryHandles: [{ element: rightEdge, boundary: 'create-span' }],
+          onMove: () => {},
+          onBoundary: (task, target) => callbacks.onExtendToSpan(task, target.date),
+          enableMove: false,
+        });
+      } else {
+        attachEdgeResize(rightEdge, cellEl, t, callbacks.onExtendToSpan);
+      }
+    });
   }
   for (const t of deadlines) {
     const marker = cellEl.createDiv({ cls: 'tc-tg-deadline-marker' });
+    const occurrence = callbacks.occurrenceFor(t);
+    applyOccurrenceDomState(marker, occurrence, 'single', 'due-deadline');
     // Priority-colored border (color = priority convention); no tag fill — deadline
     // markers stay a compact pill, not a filled colored body (structural distinction).
     if (t.priority !== 'D') marker.setAttribute('data-priority', t.priority);
-    renderStatusMarker(marker, {
-      task: t,
-      registry: callbacks.statusRegistry,
-      interactive: !isForecastCalendarTask(t),
-      onLeftClick: () => callbacks.onToggle(t),
-      onContextMenu: (ev) => {
-        ev.stopPropagation();
-        const anchor = ev.currentTarget as HTMLElement;
-        showStatusMenuAt(ev, {
-          task: t,
-          registry: callbacks.statusRegistry,
-          onPickStatus: (c) => callbacks.onSetStatus(t, c),
-          onPickPriority: (p) => callbacks.onSetPriority(t, p),
-          ...(callbacks.onEditRepeat && {
-            onEditRepeat: () => callbacks.onEditRepeat?.(t, anchor),
-          }),
-        });
-      },
+    bindMaterializedInteractions(occurrence, () => {
+      renderStatusMarker(marker, {
+        task: t,
+        registry: callbacks.statusRegistry,
+        interactive: true,
+        onLeftClick: () => callbacks.onToggle(t),
+        onContextMenu: (ev) => {
+          ev.stopPropagation();
+          const anchor = ev.currentTarget as HTMLElement;
+          showStatusMenuAt(ev, {
+            task: t,
+            registry: callbacks.statusRegistry,
+            onPickStatus: (c) => callbacks.onSetStatus(t, c),
+            onPickPriority: (p) => callbacks.onSetPriority(t, p),
+            ...(callbacks.onEditRepeat && {
+              onEditRepeat: () => callbacks.onEditRepeat?.(t, anchor),
+            }),
+          });
+        },
+      });
     });
     if (t.recurrence) {
-      renderRecurrenceBadge(marker, recurrenceBadgeInput(t.recurrence, isForecastCalendarTask(t)));
+      renderRecurrenceBadge(
+        marker,
+        recurrenceBadgeInput(t.recurrence, occurrence.kind === 'forecast'),
+      );
     }
     marker.createSpan({ text: '📅 ' });
     // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
     // and all-day span/plain items above — previously this title had no status class at all.
     const titleEl = marker.createSpan({ cls: `tc-tg-deadline-title${statusTitleClass(t.status)}` });
-    renderTaskText(titleEl, t.markdownTitle, {
-      app: callbacks.app,
-      sourcePath: t.source.filePath,
-      component: callbacks.component,
-    });
+    if (occurrence.kind === 'forecast') {
+      titleEl.setText(plainGhostTaskTitle(t));
+    } else {
+      renderTaskText(titleEl, t.markdownTitle, {
+        app: callbacks.app,
+        sourcePath: t.source.filePath,
+        component: callbacks.component,
+      });
+    }
     // Count badges only (no tag chips) — deadline markers deliberately stay a compact
     // pill with no tag fill (see comment above), so tag chips would fight that convention.
     if (
@@ -597,11 +657,14 @@ export function renderAllDayCell(
       const meta = marker.createSpan({ cls: 'tc-tg-body-meta' });
       renderCountBadges(meta, t);
     }
-    marker.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      callbacks.onTaskClick(t);
+    bindMaterializedInteractions(occurrence, () => {
+      marker.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        callbacks.onTaskClick(t);
+      });
     });
+    bindForecastInteractions(marker, occurrence, callbacks);
   }
 
   cellEl.addEventListener('dragover', (e) => {

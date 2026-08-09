@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
   renderTimedBlocksForDay,
@@ -67,6 +68,7 @@ const fakeApp = {} as App;
 
 function callbacks() {
   return {
+    occurrenceFor: calendarOccurrenceForRender,
     app: fakeApp,
     component: new Component(),
     onTaskClick: vi.fn(),
@@ -992,6 +994,7 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ priority: 'A', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1150,6 +1153,7 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ priority: 'D', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1178,6 +1182,7 @@ describe('renderTimedBlocksForDay', () => {
       container,
       [t],
       {
+        occurrenceFor: calendarOccurrenceForRender,
         app: fakeApp,
         component: new Component(),
         onTaskClick: vi.fn(),
@@ -1235,6 +1240,7 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ title: 'Gym', planning: { time: '15:00', duration: 120 } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1259,6 +1265,7 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1281,6 +1288,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTaskClick = vi.fn();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick,
@@ -1304,6 +1312,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTaskClick = vi.fn();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick,
@@ -1327,6 +1336,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTaskClick = vi.fn();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick,
@@ -1350,6 +1360,7 @@ describe('renderTimedBlocksForDay', () => {
     const a = task({ planning: { time: '09:00', duration: 60 }, source: { line: 0 } });
     const b = task({ planning: { time: '09:30', duration: 60 }, source: { line: 1 } });
     renderTimedBlocksForDay(container, [a, b], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1375,6 +1386,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTimeChange = vi.fn();
     const t = task({ planning: { time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1405,6 +1417,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTimeChange = vi.fn();
     const t = task({ planning: { time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1435,6 +1448,7 @@ describe('renderTimedBlocksForDay', () => {
     const onTimeChange = vi.fn();
     const t = task({ planning: { time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),
@@ -1607,6 +1621,7 @@ describe('renderTimedBlocksForDay', () => {
     const onDurationChange = vi.fn();
     const t = task({ planning: { time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(container, [t], {
+      occurrenceFor: calendarOccurrenceForRender,
       app: fakeApp,
       component: new Component(),
       onTaskClick: vi.fn(),

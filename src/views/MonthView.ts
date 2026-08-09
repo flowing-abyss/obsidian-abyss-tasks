@@ -6,8 +6,13 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { createTaskCard } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
-import { calendarRootTaskRef } from './calendarOccurrences';
+import type { CalendarTaskSource } from './calendarOccurrences';
 import { getTasksForDate, renderTaskGroup } from './taskGrouping';
+import {
+  applyOccurrenceDomState,
+  bindMaterializedInteractions,
+  createForecastTaskCard,
+} from './timegrid/renderTaskMeta';
 
 export interface MonthViewCallbacks {
   app: App;
@@ -20,6 +25,14 @@ export interface MonthViewCallbacks {
   onEditLink?: (task: TaskSnapshot, occurrenceIndex: number, token: LinkToken) => void;
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
+  onForecastClick?: (
+    source: CalendarTaskSource,
+    referenceDate: import('../tasks').LocalDate,
+  ) => void;
+  onForecastContextMenu?: (
+    source: CalendarTaskSource,
+    referenceDate: import('../tasks').LocalDate,
+  ) => void;
 }
 
 export class MonthView extends BaseView {
@@ -142,7 +155,10 @@ export class MonthView extends BaseView {
   ): void {
     const groups = getTasksForDate(tasks, date, today);
     const onEditLink = this.callbacks.onEditLink;
-    renderTaskGroup(container, groups, date, today, (task, cls) => {
+    renderTaskGroup(container, groups, date, today, (task, cls, occurrence) => {
+      if (occurrence.kind === 'forecast') {
+        return createForecastTaskCard(task, cls, occurrence, this.callbacks);
+      }
       const card = createTaskCard(task, cls, {
         app: this.callbacks.app,
         component: this.md,
@@ -152,22 +168,21 @@ export class MonthView extends BaseView {
         statusRegistry: this.callbacks.statusRegistry,
         onContextMenu: this.callbacks.onContextMenu,
       });
-
-      // Drag source
-      if (calendarRootTaskRef(task) !== undefined) {
-        card.setAttribute('draggable', 'true');
-        card.addEventListener('dragstart', (e) => {
-          e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-          card.addClass('is-dragging');
+      applyOccurrenceDomState(card, occurrence, 'single', `${cls}-body`);
+      bindMaterializedInteractions(occurrence, (target) => {
+        if (target.type === 'task') {
+          card.setAttribute('draggable', 'true');
+          card.addEventListener('dragstart', (e) => {
+            e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
+            if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+            card.addClass('is-dragging');
+          });
+          card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+        }
+        card.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.callbacks.onTaskClick(task);
         });
-        card.addEventListener('dragend', () => card.removeClass('is-dragging'));
-      }
-
-      // Open modal on click (stop propagation so cell click doesn't fire)
-      card.addEventListener('click', (e) => {
-        e.stopPropagation();
-        this.callbacks.onTaskClick(task);
       });
 
       return card;

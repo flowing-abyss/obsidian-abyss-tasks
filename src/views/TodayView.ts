@@ -23,6 +23,10 @@ import {
   type AllDayCallbacks,
 } from './timegrid/renderAllDay';
 import {
+  calendarOccurrenceLookup,
+  type ForecastInteractionCallbacks,
+} from './timegrid/renderTaskMeta';
+import {
   renderTimedBlocksForDay,
   toTimedBlockInputs,
   type TimedBlockCallbacks,
@@ -31,7 +35,7 @@ import {
 import type { TimedBoundaryTarget } from './timegrid/timedInteractions';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 
-export interface TimeGridCallbacks {
+export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
   app: App;
   onTaskClick: (task: TaskSnapshot) => void;
   onDrop: (dragData: string, targetDate: string) => void;
@@ -271,10 +275,12 @@ export class TodayView extends BaseView {
     installCellBindings: boolean,
   ): void {
     const day = handles.days[0]!;
+    const occurrenceFor = calendarOccurrenceLookup(tasks);
     const { timed, spans, timedSpans, plain, deadlines } = bucketTasksForDate(tasks, date);
     // Terminal and continuation timed segments share one renderer/packing pass. Terminal status
     // ownership is decided from `date`; interactivity is intentionally identical on every root.
     const timedCallbacks: TimedBlockCallbacks = {
+      occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
@@ -292,6 +298,12 @@ export class TodayView extends BaseView {
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
+      ...(this.callbacks.onForecastClick && {
+        onForecastClick: this.callbacks.onForecastClick,
+      }),
+      ...(this.callbacks.onForecastContextMenu && {
+        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
     };
     const previewPositionFor = (
@@ -315,6 +327,7 @@ export class TodayView extends BaseView {
 
     const spanTasks = tasks.filter((task) => !task.planning.time);
     const allDayCallbacks: AllDayCallbacks = {
+      occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
@@ -331,6 +344,12 @@ export class TodayView extends BaseView {
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
+      ...(this.callbacks.onForecastClick && {
+        onForecastClick: this.callbacks.onForecastClick,
+      }),
+      ...(this.callbacks.onForecastContextMenu && {
+        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };

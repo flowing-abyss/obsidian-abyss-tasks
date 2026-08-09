@@ -13,6 +13,7 @@ import {
   renderAllDaySpanLayer,
   type AllDayCallbacks,
 } from './timegrid/renderAllDay';
+import { calendarOccurrenceLookup } from './timegrid/renderTaskMeta';
 import { renderTimedBlocksForDay, type TimedBlockCallbacks } from './timegrid/renderTimedBlocks';
 import { createTimedInteractionOwner } from './timegrid/timedInteractions';
 import {
@@ -151,7 +152,9 @@ export class WeekTimeGridView extends BaseView {
     handles: HourGridHandles,
     installCellBindings: boolean,
   ): void {
+    const occurrenceFor = calendarOccurrenceLookup(tasks);
     const timedCallbacks: TimedBlockCallbacks = {
+      occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
@@ -169,6 +172,12 @@ export class WeekTimeGridView extends BaseView {
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
+      ...(this.callbacks.onForecastClick && {
+        onForecastClick: this.callbacks.onForecastClick,
+      }),
+      ...(this.callbacks.onForecastContextMenu && {
+        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
     };
     const previewPositionFor = (
@@ -178,6 +187,7 @@ export class WeekTimeGridView extends BaseView {
     ): PositionedBlock | undefined => previewTimedPositionFor(tasks, task, planning, previewDate);
     const spanTasks = tasks.filter((task) => !task.planning.time);
     const allDayCallbacks: AllDayCallbacks = {
+      occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
@@ -194,6 +204,12 @@ export class WeekTimeGridView extends BaseView {
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
+      ...(this.callbacks.onForecastClick && {
+        onForecastClick: this.callbacks.onForecastClick,
+      }),
+      ...(this.callbacks.onForecastContextMenu && {
+        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };

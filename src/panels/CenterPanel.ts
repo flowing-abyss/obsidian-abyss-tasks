@@ -66,10 +66,12 @@ import {
   calendarOccurrenceForTask,
   calendarPatchCommand,
   calendarRootTaskRef,
+  calendarSourcePatchCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
+  type CalendarTaskSource,
 } from '../views/calendarOccurrences';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
@@ -678,6 +680,19 @@ export class CenterPanel {
       if (calendarRootTaskRef(t) === undefined) return;
       this.taskModal?.open(t);
     };
+    const handleForecastClick = (source: CalendarTaskSource, referenceDate: LocalDate): void => {
+      this.taskModal?.open(source.root);
+      const modal = activeDocument.querySelector<HTMLElement>('.tc-modal');
+      if (!modal) return;
+      const context = modal.createDiv({
+        cls: 'tc-forecast-source-context',
+        text: `Forecast for ${referenceDate}`,
+      });
+      modal.prepend(context);
+    };
+    const handleForecastContextMenu = (source: CalendarTaskSource): void => {
+      this.openForecastRecurrenceEditor(viewContainer, source);
+    };
     const handleDrop = (dragData: string, targetDate: string): void => {
       void this.rescheduleTask(dragData, targetDate);
     };
@@ -865,6 +880,8 @@ export class CenterPanel {
         this.calViewInstance = new TodayView({
           app: this.app,
           onTaskClick: handleTaskClick,
+          onForecastClick: handleForecastClick,
+          onForecastContextMenu: handleForecastContextMenu,
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -897,6 +914,8 @@ export class CenterPanel {
         this.calViewInstance = new WeekTimeGridView({
           app: this.app,
           onTaskClick: handleTaskClick,
+          onForecastClick: handleForecastClick,
+          onForecastContextMenu: handleForecastContextMenu,
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -942,6 +961,8 @@ export class CenterPanel {
           },
           onCreateAtDate: handleCreateAtDate,
           onTaskClick: handleTaskClick,
+          onForecastClick: handleForecastClick,
+          onForecastContextMenu: handleForecastContextMenu,
           onDrop: handleDrop,
           onSpanMove: handleSpanMove,
           onSpanBoundary: handleSpanBoundary,
@@ -3277,6 +3298,42 @@ export class CenterPanel {
           return Promise.resolve({
             type: 'io-error' as const,
             cause: 'application-unavailable',
+            contentState: 'unchanged' as const,
+          });
+        }
+        return this.tasks.execute(command);
+      },
+      onClose: () => {
+        if (this.recurrenceEditorCleanup === cleanup) {
+          this.recurrenceEditorCleanup = null;
+        }
+      },
+    });
+    cleanup = () => handle.dismiss();
+    this.recurrenceEditorCleanup = cleanup;
+  }
+
+  private openForecastRecurrenceEditor(anchor: HTMLElement, source: CalendarTaskSource): void {
+    this.dismissRecurrenceEditor();
+    let cleanup: () => void;
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source,
+      policy: { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
+      onSubmit: (patch) => {
+        if (!this.tasks) {
+          return Promise.resolve({
+            type: 'io-error' as const,
+            cause: 'application-unavailable',
+            contentState: 'unchanged' as const,
+          });
+        }
+        const command = calendarSourcePatchCommand(source, patch);
+        if (!command) {
+          return Promise.resolve({
+            type: 'io-error' as const,
+            cause: 'unsupported-calendar-patch',
             contentState: 'unchanged' as const,
           });
         }

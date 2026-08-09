@@ -14,7 +14,6 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { statusTitleClass } from '../ui/statusTitleClass';
 import { BaseView } from './BaseView';
-import { calendarRootTaskRef, isForecastCalendarTask } from './calendarOccurrences';
 import {
   layoutVisibleMonth,
   layoutVisibleMonthWithReplacement,
@@ -28,6 +27,14 @@ import {
   type SpanMoveTarget,
 } from './spanInteractions';
 import { renderAllDaySpanLayer, type AllDayCallbacks } from './timegrid/renderAllDay';
+import {
+  applyOccurrenceDomState,
+  bindForecastInteractions,
+  bindMaterializedInteractions,
+  calendarOccurrenceLookup,
+  type CalendarOccurrenceLookup,
+  type ForecastInteractionCallbacks,
+} from './timegrid/renderTaskMeta';
 
 function monthCompactClass(kind: MonthCompactKind): string {
   if (kind === 'timed') return 'tc-mg-block-dot';
@@ -35,7 +42,15 @@ function monthCompactClass(kind: MonthCompactKind): string {
   return 'tc-mg-deadline-marker';
 }
 
-export interface MonthGridViewCallbacks {
+function monthCompactSpanRole(task: TaskSnapshot, kind: MonthCompactKind): string {
+  if (kind === 'deadline') return 'due-deadline';
+  if (task.planning.scheduled && task.planning.scheduled !== task.planning.due) {
+    return 'scheduled-body';
+  }
+  return kind === 'timed' ? 'timed-body' : 'all-day-body';
+}
+
+export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   app: App;
   onDayClick: (date: string) => void;
   onCreateAtDate: (date: string) => void;
@@ -97,8 +112,9 @@ export class MonthGridView extends BaseView {
         .format('YYYY-MM-DD'),
     );
     this.visibleDates = visibleDates;
+    const occurrenceFor = calendarOccurrenceLookup(tasks);
     const monthRows = layoutVisibleMonth(tasks, visibleDates).rows;
-    const spanCallbacks = this.buildSpanCallbacks(tasks);
+    const spanCallbacks = this.buildSpanCallbacks(tasks, occurrenceFor);
 
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
@@ -164,7 +180,7 @@ export class MonthGridView extends BaseView {
         });
 
         const items = cell.createDiv({ cls: 'tc-mg-cell-items' });
-        this.renderCompactCell(items, monthRow.compactByDate.get(currentDate) ?? []);
+        this.renderCompactCell(items, monthRow.compactByDate.get(currentDate) ?? [], occurrenceFor);
         cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
 
         if (inCurrentMonth) {
@@ -220,8 +236,9 @@ export class MonthGridView extends BaseView {
     this.md = new Component();
     this.md.load();
 
+    const occurrenceFor = calendarOccurrenceLookup(tasks);
     const monthRows = layoutVisibleMonth(tasks, this.visibleDates).rows;
-    const spanCallbacks = this.buildSpanCallbacks(tasks);
+    const spanCallbacks = this.buildSpanCallbacks(tasks, occurrenceFor);
     const rows = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-row'));
     for (const [rowIndex, row] of rows.entries()) {
       const monthRow: MonthVisibleRow | undefined = monthRows[rowIndex];
@@ -233,7 +250,7 @@ export class MonthGridView extends BaseView {
         const items = cell?.querySelector<HTMLElement>(':scope > .tc-mg-cell-items');
         if (!cell || !items) continue;
         items.empty();
-        this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? []);
+        this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? [], occurrenceFor);
         cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
       }
       const layer = row.querySelector<HTMLElement>(':scope > .tc-mg-span-layer');
@@ -259,8 +276,12 @@ export class MonthGridView extends BaseView {
     ].join('|');
   }
 
-  private buildSpanCallbacks(tasks: readonly TaskSnapshot[]): AllDayCallbacks {
+  private buildSpanCallbacks(
+    tasks: readonly TaskSnapshot[],
+    occurrenceFor: CalendarOccurrenceLookup,
+  ): AllDayCallbacks {
     return {
+      occurrenceFor,
       app: this.callbacks.app,
       component: this.md,
       onTaskClick: this.callbacks.onTaskClick,
@@ -294,31 +315,50 @@ export class MonthGridView extends BaseView {
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
+      ...(this.callbacks.onForecastClick && {
+        onForecastClick: this.callbacks.onForecastClick,
+      }),
+      ...(this.callbacks.onForecastContextMenu && {
+        onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
     };
   }
 
-  private renderCompactCell(cell: HTMLElement, entries: readonly MonthCompactSlot[]): void {
+  private renderCompactCell(
+    cell: HTMLElement,
+    entries: readonly MonthCompactSlot[],
+    occurrenceFor: CalendarOccurrenceLookup,
+  ): void {
     const tagGroups = this.callbacks.tagGroups ?? [];
 
     for (const { task: t, kind, slot } of entries) {
       const item = cell.createDiv({ cls: monthCompactClass(kind) });
+      const occurrence = occurrenceFor(t);
+      const spanRole = monthCompactSpanRole(t, kind);
+      applyOccurrenceDomState(item, occurrence, 'single', spanRole);
       item.style.gridRow = String(slot + 1);
       this.applyTagFill(item, t, tagGroups);
-      this.renderMarker(item, t);
+      bindMaterializedInteractions(occurrence, () => this.renderMarker(item, t));
       if (t.recurrence) {
-        renderRecurrenceBadge(item, recurrenceBadgeInput(t.recurrence, isForecastCalendarTask(t)));
+        renderRecurrenceBadge(
+          item,
+          recurrenceBadgeInput(t.recurrence, occurrence.kind === 'forecast'),
+        );
       }
       if (kind === 'timed')
         item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
-      this.renderTitle(item, t);
-      item.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        this.callbacks.onTaskClick(t);
+      this.renderTitle(item, t, occurrence.kind === 'forecast');
+      bindMaterializedInteractions(occurrence, () => {
+        item.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.callbacks.onTaskClick(t);
+        });
+        if (kind !== 'deadline') this.makeDraggable(item, t, occurrence.source.target.type);
       });
-      if (kind !== 'deadline') this.makeDraggable(item, t);
+      bindForecastInteractions(item, occurrence, this.callbacks);
     }
   }
 
@@ -338,8 +378,12 @@ export class MonthGridView extends BaseView {
    * timedSpan, plain, AND deadline markers, see renderCompactCell above), so one change here
    * covers all of them.
    */
-  private renderTitle(container: HTMLElement, t: TaskSnapshot): void {
+  private renderTitle(container: HTMLElement, t: TaskSnapshot, forecast: boolean): void {
     const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
+    if (forecast) {
+      titleEl.setText(t.title);
+      return;
+    }
     renderTaskText(titleEl, t.markdownTitle, {
       app: this.callbacks.app,
       sourcePath: t.source.filePath,
@@ -354,7 +398,7 @@ export class MonthGridView extends BaseView {
     renderStatusMarker(el, {
       task: t,
       registry: this.callbacks.statusRegistry,
-      interactive: !isForecastCalendarTask(t),
+      interactive: true,
       onLeftClick: () => this.callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -378,8 +422,8 @@ export class MonthGridView extends BaseView {
   // child's own click handler undisturbed — only an actual drag gesture (pointer moves
   // while down) fires `dragstart`. Deadline markers are deliberately excluded — they
   // stay non-draggable per the existing structural rule (Task 2).
-  private makeDraggable(el: HTMLElement, t: TaskSnapshot): void {
-    if (calendarRootTaskRef(t) === undefined) return;
+  private makeDraggable(el: HTMLElement, t: TaskSnapshot, targetType: 'task' | 'subtask'): void {
+    if (targetType !== 'task') return;
     el.setAttribute('draggable', 'true');
     el.addEventListener('dragstart', (e) => {
       e.dataTransfer?.setData('text/plain', `${t.source.filePath}:::${t.source.line}`);

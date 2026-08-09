@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
@@ -108,6 +109,7 @@ function callbacks() {
 
 function allDayCallbacks() {
   return {
+    occurrenceFor: calendarOccurrenceForRender,
     ...callbacks(),
     component: new Component(),
     onStartChange: vi.fn(),

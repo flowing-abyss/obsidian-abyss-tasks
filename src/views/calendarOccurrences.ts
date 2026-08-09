@@ -353,6 +353,30 @@ export function calendarOccurrenceForTask(task: TaskSnapshot): CalendarOccurrenc
   return occurrenceBySnapshot.get(task);
 }
 
+/**
+ * Resolves the explicit occurrence contract at a renderer boundary. Calendar projections already
+ * register their derived snapshots in `occurrenceBySnapshot`; direct materialized snapshots (used
+ * by non-projected callers and renderer unit tests) receive the same revision-free root contract
+ * without inventing a persisted identity.
+ */
+export function calendarOccurrenceForRender(task: TaskSnapshot): CalendarOccurrence {
+  const projected = occurrenceBySnapshot.get(task);
+  if (projected !== undefined) return projected;
+  const reference = task.planning.due ?? task.planning.scheduled ?? task.planning.start;
+  const source: CalendarTaskSource = {
+    root: task,
+    node: task,
+    target: { type: 'task', ref: task.ref },
+  };
+  return {
+    kind: 'materialized',
+    key: `${semanticSourceKey(source)}:${reference ?? 'undated'}`,
+    source,
+    planning: task.planning,
+    recurring: task.recurrence !== undefined,
+  };
+}
+
 export function isForecastCalendarTask(task: TaskSnapshot): boolean {
   return occurrenceBySnapshot.get(task)?.kind === 'forecast';
 }
@@ -373,6 +397,18 @@ export function calendarPatchCommand(
   if (target.type === 'task') return { type: 'patch', target, patch };
   if (patch.duration !== undefined) return undefined;
   return { type: 'patch', target, patch };
+}
+
+/** Builds the source-owner patch used by the forecast's explicit Edit repeat action. */
+export function calendarSourcePatchCommand(
+  source: CalendarTaskSource,
+  patch: TaskPatch,
+): TaskCommand | undefined {
+  if (source.target.type === 'task') {
+    return { type: 'patch', target: source.target, patch };
+  }
+  if (patch.duration !== undefined) return undefined;
+  return { type: 'patch', target: source.target, patch };
 }
 
 export function calendarRootTaskRef(task: TaskSnapshot): TaskRef | undefined {

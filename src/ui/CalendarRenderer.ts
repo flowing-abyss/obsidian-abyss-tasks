@@ -15,10 +15,12 @@ import {
   calendarMutationTarget,
   calendarOccurrenceForTask,
   calendarPatchCommand,
+  calendarSourcePatchCommand,
   hasOtherCalendarRecurrenceOwner,
   isForecastCalendarTask,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
+  type CalendarTaskSource,
 } from '../views/calendarOccurrences';
 import { ListView } from '../views/ListView';
 import { MonthView } from '../views/MonthView';
@@ -234,6 +236,34 @@ export class CalendarRenderer {
     this.recurrenceEditorCleanup = cleanup;
   }
 
+  private openForecastRecurrenceEditor(source: CalendarTaskSource): void {
+    this.dismissRecurrenceEditor();
+    let cleanup: () => void;
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor: this.rootEl,
+      source,
+      policy: this.recurrencePolicy,
+      ownershipConflict: hasOtherCalendarRecurrenceOwner(source),
+      onSubmit: (patch) => {
+        const command = calendarSourcePatchCommand(source, patch);
+        return command
+          ? this.tasks.execute(command)
+          : Promise.resolve({
+              type: 'io-error',
+              cause: 'unsupported-calendar-patch',
+              contentState: 'unchanged',
+            });
+      },
+      onClose: () => {
+        if (this.recurrenceEditorCleanup === cleanup) {
+          this.recurrenceEditorCleanup = null;
+        }
+      },
+    });
+    cleanup = () => handle.dismiss();
+    this.recurrenceEditorCleanup = cleanup;
+  }
+
   private dismissRecurrenceEditor(): void {
     const cleanup = this.recurrenceEditorCleanup;
     this.recurrenceEditorCleanup = null;
@@ -289,6 +319,8 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
+          onForecastClick: (source) => void openInFile(this.app, source.root),
+          onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
           onContextMenu: cb.onContextMenu,
         });
@@ -300,6 +332,8 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
+          onForecastClick: (source) => void openInFile(this.app, source.root),
+          onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
           onContextMenu: cb.onContextMenu,
         });

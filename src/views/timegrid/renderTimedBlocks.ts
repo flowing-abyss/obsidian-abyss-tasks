@@ -14,7 +14,7 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
-import { calendarRootTaskRef, isForecastCalendarTask } from '../calendarOccurrences';
+import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
   capContinuationMinHeightsPx,
@@ -27,7 +27,15 @@ import {
   type PositionedBlock,
   type TimedBlockInput,
 } from './layout';
-import { hasCountBadges, renderCountBadges } from './renderTaskMeta';
+import {
+  applyOccurrenceDomState,
+  bindForecastInteractions,
+  bindMaterializedInteractions,
+  hasCountBadges,
+  renderCountBadges,
+  type CalendarOccurrenceLookup,
+  type ForecastInteractionCallbacks,
+} from './renderTaskMeta';
 import {
   attachTimedInteractions,
   createTimedInteractionOwner,
@@ -42,7 +50,8 @@ export type TimedBlockKeyboardIntent =
   | { readonly type: 'extend-start'; readonly days: -1 }
   | { readonly type: 'extend-due'; readonly days: 1 };
 
-export interface TimedBlockCallbacks {
+export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
+  occurrenceFor: CalendarOccurrenceLookup;
   app: App;
   component: Component;
   onTaskClick: (task: TaskSnapshot) => void;
@@ -141,6 +150,74 @@ export function toTimedBlockInputs(tasks: readonly TaskSnapshot[]): TimedBlockIn
   }));
 }
 
+function timedContinuity(
+  task: TaskSnapshot,
+  terminal: boolean,
+): 'single' | 'continuation' | 'terminal' {
+  if (!task.planning.start || !task.planning.due) return 'single';
+  return terminal ? 'terminal' : 'continuation';
+}
+
+function timedSpanRole(
+  task: TaskSnapshot,
+  continuity: 'single' | 'continuation' | 'terminal',
+): string {
+  if (task.planning.scheduled && task.planning.scheduled !== task.planning.due) {
+    return 'scheduled-body';
+  }
+  if (continuity !== 'single') return `timed-${continuity}`;
+  return 'timed-body';
+}
+
+function renderTimedBlockHead(
+  head: HTMLElement,
+  task: TaskSnapshot,
+  occurrence: CalendarOccurrence,
+  terminal: boolean,
+  callbacks: TimedBlockCallbacks,
+): void {
+  if (occurrence.kind === 'materialized' && terminal) {
+    renderStatusMarker(head, {
+      task,
+      registry: callbacks.statusRegistry,
+      interactive: true,
+      onLeftClick: () => callbacks.onToggle(task),
+      onContextMenu: (event) => {
+        event.stopPropagation();
+        const anchor = event.currentTarget as HTMLElement;
+        showStatusMenuAt(event, {
+          task,
+          registry: callbacks.statusRegistry,
+          onPickStatus: (status) => callbacks.onSetStatus(task, status),
+          onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
+          ...(callbacks.onEditRepeat && {
+            onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
+          }),
+        });
+      },
+    });
+  }
+  if (task.recurrence) {
+    renderRecurrenceBadge(
+      head,
+      recurrenceBadgeInput(task.recurrence, occurrence.kind === 'forecast'),
+    );
+  }
+  if (terminal && occurrence.kind === 'materialized') {
+    const title = head.createDiv({ cls: `tc-tg-block-title${statusTitleClass(task.status)}` });
+    renderTaskText(title, task.markdownTitle, {
+      app: callbacks.app,
+      sourcePath: task.source.filePath,
+      component: callbacks.component,
+    });
+    return;
+  }
+  head.createDiv({
+    cls: `${terminal ? 'tc-tg-block-title' : 'tc-tg-block-continuation-title'}${statusTitleClass(task.status)}`,
+    text: plainGhostTaskTitle(task),
+  });
+}
+
 export function renderTimedBlocksForDay(
   hourColumnEl: HTMLElement,
   tasksWithTime: TaskSnapshot[],
@@ -155,8 +232,7 @@ export function renderTimedBlocksForDay(
   // doc comment for why a same-column neighbor can still need that growth clamped back down so
   // the two blocks never visually cross.
   for (const p of positioned) {
-    const forecast = isForecastCalendarTask(p.task);
-    const rootInteractive = calendarRootTaskRef(p.task) !== undefined;
+    const occurrence = callbacks.occurrenceFor(p.task);
     const widthPct = 100 / p.columns;
     const terminal = options
       ? (options.terminal ?? (!p.task.planning.due || p.task.planning.due === options.date))
@@ -164,13 +240,18 @@ export function renderTimedBlocksForDay(
     const block = hourColumnEl.createDiv({
       cls: `tc-tg-block${terminal ? '' : ' tc-tg-block-continuation'}`,
     });
+    const continuity = timedContinuity(p.task, terminal);
+    const spanRole = timedSpanRole(p.task, continuity);
+    applyOccurrenceDomState(block, occurrence, continuity, spanRole);
     block.setAttribute('data-tc-task-file', p.task.source.filePath);
     block.setAttribute('data-tc-task-line', String(p.task.source.line));
     block.setAttribute('data-tc-start-minutes', String(p.startMinutes));
     if (options) block.setAttribute('data-tg-segment-date', options.date);
     // Keep each block as the stable focus root used by relative arrow intents and same-day
     // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
-    if (rootInteractive) block.setAttribute('tabindex', '0');
+    bindMaterializedInteractions(occurrence, (target) => {
+      if (target.type === 'task') block.setAttribute('tabindex', '0');
+    });
     block.style.top = `${minutesToPixels(p.startMinutes)}px`;
     const heightPx = minutesToPixels(p.durationMinutes);
     block.style.height = `${heightPx}px`;
@@ -222,52 +303,9 @@ export function renderTimedBlocksForDay(
     // same line instead of stacking (the title div is block-level, which previously
     // forced a line break after the inline marker span).
     const head = block.createDiv({ cls: 'tc-tg-block-head' });
-    // Status marker first: lets a user mark the block done without opening the modal.
-    // Its own contextmenu handler stops propagation and opens the status/priority popover
-    // instead — distinct from right-clicking the block body below (opens the task modal).
-    if (terminal) {
-      renderStatusMarker(head, {
-        task: p.task,
-        registry: callbacks.statusRegistry,
-        interactive: !forecast,
-        onLeftClick: () => callbacks.onToggle(p.task),
-        onContextMenu: (ev) => {
-          ev.stopPropagation();
-          const anchor = ev.currentTarget as HTMLElement;
-          showStatusMenuAt(ev, {
-            task: p.task,
-            registry: callbacks.statusRegistry,
-            onPickStatus: (c) => callbacks.onSetStatus(p.task, c),
-            onPickPriority: (pr) => callbacks.onSetPriority(p.task, pr),
-            ...(callbacks.onEditRepeat && {
-              onEditRepeat: () => callbacks.onEditRepeat?.(p.task, anchor),
-            }),
-          });
-        },
-      });
-    }
-    if (p.task.recurrence) {
-      renderRecurrenceBadge(head, recurrenceBadgeInput(p.task.recurrence, forecast));
-    }
-    // Task 38: a completed/cancelled task stays a full, visible block (checkbox showing its
-    // checked state via the marker above), communicating completion purely through this
-    // strikethrough title instead of disappearing.
-    if (terminal) {
-      const titleEl = head.createDiv({
-        cls: `tc-tg-block-title${statusTitleClass(p.task.status)}`,
-      });
-      renderTaskText(titleEl, p.task.markdownTitle, {
-        app: callbacks.app,
-        sourcePath: p.task.source.filePath,
-        component: callbacks.component,
-      });
-    } else {
-      head.createDiv({
-        cls: `tc-tg-block-continuation-title${statusTitleClass(p.task.status)}`,
-        text: plainGhostTaskTitle(p.task),
-      });
-    }
-    if (rootInteractive) {
+    renderTimedBlockHead(head, p.task, occurrence, terminal, callbacks);
+    bindMaterializedInteractions(occurrence, (target) => {
+      if (target.type !== 'task') return;
       attachTimedBlockControls(
         block,
         hourColumnEl,
@@ -278,7 +316,8 @@ export function renderTimedBlocksForDay(
         callbacks,
         options,
       );
-    }
+    });
+    bindForecastInteractions(block, occurrence, callbacks);
   }
 }
 
@@ -466,6 +505,8 @@ export function renderTimedSpanContinuation(
     const continuationInput = continuationInputs[i]!;
     const { startMinutes, durationMinutes } = continuationInput;
     const seg = hourColumnEl.createDiv({ cls: 'tc-tg-block-continuation' });
+    const occurrence = calendarOccurrenceForRender(t);
+    applyOccurrenceDomState(seg, occurrence, 'continuation', 'timed-continuation');
     seg.style.top = `${minutesToPixels(startMinutes)}px`;
     const heightPx = minutesToPixels(durationMinutes);
     seg.style.height = `${heightPx}px`;
@@ -500,10 +541,12 @@ export function renderTimedSpanContinuation(
       text: plainGhostTaskTitle(t),
     });
     if (onTaskClick) {
-      seg.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onTaskClick(t);
+      bindMaterializedInteractions(occurrence, () => {
+        seg.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onTaskClick(t);
+        });
       });
     }
   }
@@ -560,7 +603,7 @@ function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
     block.closest<HTMLElement>('.tc-tg-hour-column');
   if (!scope) return;
 
-  const domBlocks = Array.from(scope.querySelectorAll<HTMLElement>('.tc-tg-block'));
+  const domBlocks = Array.from(scope.querySelectorAll<HTMLElement>('.tc-tg-block[tabindex="0"]'));
   const domIndex = new Map(domBlocks.map((candidate, index) => [candidate, index]));
   const visualBlocks = [...domBlocks].sort((a, b) => {
     const startDifference =

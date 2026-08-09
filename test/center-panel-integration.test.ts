@@ -1052,7 +1052,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     );
     expect(timedForecastBadge).not.toBeNull();
     const timedBlock = timedForecastBadge?.closest<HTMLElement>('.tc-tg-block');
-    expect(timedBlock?.querySelector('.tc-status-marker--inert')).not.toBeNull();
+    expect(timedBlock?.querySelector('.tc-status-marker')).toBeNull();
     expect(timedBlock?.getAttribute('tabindex')).toBeNull();
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
     timedBlock?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));

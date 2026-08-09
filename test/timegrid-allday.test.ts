@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
 import { renderAllDayCell, renderAllDaySpanLayer } from '../src/views/timegrid/renderAllDay';
@@ -68,6 +69,7 @@ function contrastRatio(left: string, right: string): number {
 }
 
 const callbacks = () => ({
+  occurrenceFor: calendarOccurrenceForRender,
   app: fakeApp,
   component: new Component(),
   onTaskClick: vi.fn(),

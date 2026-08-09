@@ -6,8 +6,13 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { createTaskCard } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
-import { calendarRootTaskRef } from './calendarOccurrences';
+import type { CalendarTaskSource } from './calendarOccurrences';
 import { getTasksForDate, renderTaskGroup } from './taskGrouping';
+import {
+  applyOccurrenceDomState,
+  bindMaterializedInteractions,
+  createForecastTaskCard,
+} from './timegrid/renderTaskMeta';
 
 export interface WeekViewCallbacks {
   app: App;
@@ -19,6 +24,14 @@ export interface WeekViewCallbacks {
   onEditLink?: (task: TaskSnapshot, occurrenceIndex: number, token: LinkToken) => void;
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
+  onForecastClick?: (
+    source: CalendarTaskSource,
+    referenceDate: import('../tasks').LocalDate,
+  ) => void;
+  onForecastContextMenu?: (
+    source: CalendarTaskSource,
+    referenceDate: import('../tasks').LocalDate,
+  ) => void;
 }
 
 export class WeekView extends BaseView {
@@ -65,7 +78,10 @@ export class WeekView extends BaseView {
       const cellContent = cell.createDiv('cellContent');
       const groups = getTasksForDate(tasks, currentDate, today);
       const onEditLink = this.callbacks.onEditLink;
-      renderTaskGroup(cellContent, groups, currentDate, today, (task, cls) => {
+      renderTaskGroup(cellContent, groups, currentDate, today, (task, cls, occurrence) => {
+        if (occurrence.kind === 'forecast') {
+          return createForecastTaskCard(task, cls, occurrence, this.callbacks);
+        }
         const card = createTaskCard(task, cls, {
           app: this.callbacks.app,
           component: this.md,
@@ -75,20 +91,24 @@ export class WeekView extends BaseView {
           statusRegistry: this.callbacks.statusRegistry,
           onContextMenu: this.callbacks.onContextMenu,
         });
-
-        if (calendarRootTaskRef(task) !== undefined) {
-          card.setAttribute('draggable', 'true');
-          card.addEventListener('dragstart', (e) => {
-            e.dataTransfer?.setData('text/plain', `${task.source.filePath}:::${task.source.line}`);
-            if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
-            card.addClass('is-dragging');
+        applyOccurrenceDomState(card, occurrence, 'single', `${cls}-body`);
+        bindMaterializedInteractions(occurrence, (target) => {
+          if (target.type === 'task') {
+            card.setAttribute('draggable', 'true');
+            card.addEventListener('dragstart', (e) => {
+              e.dataTransfer?.setData(
+                'text/plain',
+                `${task.source.filePath}:::${task.source.line}`,
+              );
+              if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+              card.addClass('is-dragging');
+            });
+            card.addEventListener('dragend', () => card.removeClass('is-dragging'));
+          }
+          card.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.callbacks.onTaskClick(task);
           });
-          card.addEventListener('dragend', () => card.removeClass('is-dragging'));
-        }
-
-        card.addEventListener('click', (e) => {
-          e.stopPropagation();
-          this.callbacks.onTaskClick(task);
         });
 
         return card;
