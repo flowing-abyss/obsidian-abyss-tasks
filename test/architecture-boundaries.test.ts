@@ -64,6 +64,8 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   PlanningTarget: ['src/panels/RightPanel.ts'],
+  RecurrenceParseResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
+  RecurrencePolicy: ['src/ui/recurrence/RecurrenceEditor.ts'],
   SubtaskPatch: ['src/panels/RightPanel.ts'],
   SubtaskRef: ['src/panels/RightPanel.ts'],
   SubtaskSnapshot: ['src/panels/RightPanel.ts'],
@@ -73,6 +75,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskNodeRef: ['src/panels/RightPanel.ts'],
+  TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
   TaskPatch: ['src/panels/RightPanel.ts'],
   TaskPriority: ['src/panels/CenterPanel.ts'],
   TaskQueryApi: ['src/main.ts'],
@@ -85,6 +88,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   durationMinutes: ['src/panels/CenterPanel.ts'],
   localDate: ['src/main.ts'],
   localTime: ['src/panels/CenterPanel.ts'],
+  parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
 };
 

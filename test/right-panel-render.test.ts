@@ -34,6 +34,51 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+describe('RightPanel recurrence editor integration', () => {
+  it('renders a + repeat chip and mounts one anchored shared editor', async () => {
+    const { state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+
+    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+    expect(chip.textContent).toBe('+ repeat');
+
+    click(chip);
+
+    expect(el.querySelectorAll('.tc-recurrence-popover')).toHaveLength(1);
+    expect(el.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
+    expect(el.querySelector('.tc-recurrence-popover')?.classList).toContain('tc-popover-anchored');
+
+    el.querySelector<HTMLElement>('.tc-recurrence-editor')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    expect(el.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(chip);
+    el.remove();
+  });
+
+  it('renders the current repeat value and detects recurrence ownership conflicts', async () => {
+    const { state, el } = await makePanel();
+    const child = subtask({ title: 'Child', recurrence: 'every day' });
+    const root = task({
+      title: 'Root',
+      planning: { due: '2026-08-09' },
+      recurrence: 'every week',
+      subtasks: [child],
+    });
+    state.set('taskStack', [root]);
+
+    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+    expect(chip.textContent).toBe('🔁 every week');
+    click(chip);
+
+    expect(el.querySelector('.tc-recurrence-status')?.textContent).toBe(
+      'Remove the nested repeat conflict first.',
+    );
+    expect(el.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.disabled).toBe(true);
+  });
+});
+
 /** Read a markdown file's current content via the vault. */
 async function readMd(app: App, path: string): Promise<string> {
   const f = app.vault.getAbstractFileByPath(path);

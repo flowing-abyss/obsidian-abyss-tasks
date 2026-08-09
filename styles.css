@@ -3805,6 +3805,263 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-medium);
   line-height: 1.25;
 }
+
+/* Shared recurrence editor: an anchored planning instrument whose strongest visual line is the
+   parser-canonical rule itself. All concrete colors remain owned by the active Obsidian theme. */
+.tc-repeat-chip:not(.tc-chip-empty) {
+  border-color: var(--interactive-accent);
+}
+
+.tc-repeat-chip:focus-visible,
+.tc-recurrence-editor button:focus-visible,
+.tc-recurrence-editor input:focus-visible,
+.tc-recurrence-editor select:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.tc-recurrence-popover {
+  box-sizing: border-box;
+  inline-size: min(22rem, calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2)));
+  min-inline-size: min(18rem, calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2)));
+  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+  padding: 0.625rem;
+  background: var(--background-secondary);
+}
+
+.tc-recurrence-editor {
+  display: grid;
+  gap: 0.5rem;
+  inline-size: 100%;
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  font-size: var(--font-ui-smaller);
+}
+
+.tc-recurrence-heading,
+.tc-recurrence-completed-row,
+.tc-recurrence-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.tc-recurrence-title {
+  flex: 1;
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold, 600);
+}
+
+.tc-recurrence-advanced {
+  min-height: 1.75rem;
+  padding: 0 0.5rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+  font-size: inherit;
+}
+
+.tc-recurrence-advanced:hover,
+.tc-recurrence-advanced.is-selected {
+  border-color: var(--background-modifier-border);
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.tc-recurrence-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.tc-recurrence-presets button {
+  min-height: 1.75rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  box-shadow: none;
+  font-size: inherit;
+}
+
+.tc-recurrence-presets button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.tc-recurrence-presets button[aria-pressed='true'] {
+  border-color: var(--interactive-accent);
+  background: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+  font-weight: var(--font-medium, 500);
+}
+
+.tc-recurrence-controls {
+  min-block-size: 4.5rem;
+}
+
+.tc-recurrence-cadence {
+  display: grid;
+  grid-template-columns: auto 4.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.tc-recurrence-inline-label {
+  color: var(--text-muted);
+}
+
+.tc-recurrence-editor input[type='number'],
+.tc-recurrence-editor input[type='text'],
+.tc-recurrence-editor select {
+  box-sizing: border-box;
+  min-width: 0;
+  height: var(--input-height, 30px);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.tc-recurrence-editor input[type='number'],
+.tc-recurrence-editor input[type='text'] {
+  padding-inline: 0.5rem;
+}
+
+.tc-recurrence-raw {
+  inline-size: 100%;
+}
+
+.tc-recurrence-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 0.2rem;
+  margin-block-start: 0.375rem;
+}
+
+.tc-recurrence-weekday {
+  display: grid;
+  grid-template-rows: auto auto;
+  place-items: center;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.2rem 0.1rem;
+  border-radius: var(--radius-s);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tc-recurrence-weekday:has(input:checked) {
+  background: var(--background-modifier-active-hover);
+  color: var(--text-normal);
+}
+
+.tc-recurrence-weekday input {
+  margin: 0;
+}
+
+.tc-recurrence-detail-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 4.25rem;
+  gap: 0.375rem;
+  margin-block-start: 0.375rem;
+}
+
+.tc-recurrence-check-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.tc-recurrence-check-row input {
+  margin: 0;
+}
+
+.tc-recurrence-completed-row > span {
+  flex: 1;
+  color: var(--text-muted);
+}
+
+.tc-recurrence-completed-row select {
+  max-inline-size: 12rem;
+}
+
+.tc-recurrence-delete-warning,
+.tc-recurrence-status {
+  min-block-size: 2.4em;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.2;
+}
+
+.tc-recurrence-delete-warning {
+  color: var(--text-warning, var(--color-orange));
+}
+
+.tc-recurrence-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.5rem 0.625rem;
+  border-inline-start: 2px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+}
+
+.tc-recurrence-preview-label {
+  color: var(--text-faint);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium, 500);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.tc-recurrence-preview-rule {
+  min-width: 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-medium, 500);
+  overflow-wrap: anywhere;
+}
+
+.tc-recurrence-status {
+  color: var(--text-error);
+}
+
+.tc-recurrence-actions-spacer {
+  flex: 1;
+}
+
+.tc-recurrence-actions button {
+  min-height: 1.75rem;
+  font-size: inherit;
+}
+
+.tc-recurrence-clear {
+  padding-inline: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-muted);
+  box-shadow: none;
+}
+
+.tc-recurrence-clear:hover {
+  color: var(--text-normal);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-recurrence-editor *,
+  .tc-repeat-chip {
+    scroll-behavior: auto;
+    transition: none !important;
+  }
+}
 .tc-priority-option-flag {
   width: 0.9em;
   display: inline-flex;

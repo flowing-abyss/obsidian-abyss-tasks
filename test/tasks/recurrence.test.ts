@@ -42,6 +42,15 @@ function expandedDates(
 }
 
 describe('parseRecurrenceRule', () => {
+  it('accepts the parser-canonical last calendar day binding used by the editor', () => {
+    expect(parseRecurrenceRule('every month on the last')).toEqual({
+      type: 'valid',
+      raw: 'every month on the last',
+      canonical: 'every month on the last',
+      whenDone: false,
+    });
+  });
+
   it.each([
     ['every day', 'every day', false],
     ['every 2 weeks on Tuesday, Friday', 'every 2 weeks on Tuesday, Friday', false],

@@ -188,6 +188,7 @@ function optionalLeadingThe(value: string): string | undefined {
 function monthlyClauseKey(value: string): string | undefined {
   const clause = optionalLeadingThe(value);
   if (clause === undefined) return undefined;
+  if (clause === 'last') return 'dates:-1';
 
   const tokens = clause.split(' ');
   const weekday = WEEKDAYS.get(tokens[tokens.length - 1] ?? '');

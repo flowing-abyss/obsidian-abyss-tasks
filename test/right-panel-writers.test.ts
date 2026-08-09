@@ -26,6 +26,7 @@ import { openInFile } from '../src/ui/taskNavigation';
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
+  flushMicrotasks,
   freshContainer,
   seedTaskCache,
   subtask,
@@ -218,6 +219,36 @@ describe('RightPanel.getTagColor', () => {
     const state = new AppState();
     const panel = new RightPanel(state, app, testStatusRegistry(), undefined);
     expect(call<string | undefined>(panel, 'getTagColor', '#anything')).toBeUndefined();
+  });
+});
+
+describe('RightPanel recurrence writer', () => {
+  it('saves recurrence and completion policy through one application patch', async () => {
+    const source = '- [ ] Task 📅 2026-08-09\n';
+    const { panel, state, app } = await makePanel({ 't.md': source }, DEFAULT_SETTINGS, [
+      { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
+    ]);
+    const current = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+      filePath: 't.md',
+    })[0]!;
+    const el = freshContainer();
+    panel.mount(el);
+    state.set('taskStack', [current]);
+    const process = vi.spyOn(app.vault, 'process');
+
+    el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!.click();
+    const weekdays = Array.from(el.querySelectorAll<HTMLButtonElement>('button')).find(
+      (candidate) => candidate.textContent === 'Weekdays',
+    )!;
+    weekdays.click();
+    const completed = el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!;
+    completed.value = 'delete';
+    completed.dispatchEvent(new Event('change', { bubbles: true }));
+    el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!.click();
+    await flushMicrotasks();
+
+    expect(process).toHaveBeenCalledOnce();
+    expect(await readMd(app, 't.md')).toBe('- [ ] Task 🔁 every weekday 🏁 delete 📅 2026-08-09\n');
   });
 });
 

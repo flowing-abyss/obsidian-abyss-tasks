@@ -169,4 +169,39 @@ describe('TaskModal with real RightPanel', () => {
     click(closeButton!);
     expect(activeDocument.querySelector('.tc-modal-backdrop')).toBeNull();
   });
+
+  it('inherits the one shared recurrence editor through RightPanel reuse', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal repeat 📅 2026-08-09\n' });
+    const current = task({
+      title: 'Modal repeat',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Modal repeat 📅 2026-08-09',
+        originalBlock: '- [ ] Modal repeat 📅 2026-08-09',
+      },
+    });
+    const queries: TaskQueryApi = {
+      list: () => [current],
+      forCalendarDates: () => [current],
+      resolve: () => ({ type: 'exact', task: current }),
+      subscribe: () => () => {},
+    };
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: current },
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(current);
+
+    click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-repeat-chip')!);
+
+    expect(activeDocument.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
+    expect(activeDocument.querySelectorAll('.tc-modal .tc-recurrence-editor')).toHaveLength(1);
+    expect(activeDocument.querySelector('.tc-modal .tc-recurrence-popover')).not.toBeNull();
+  });
 });

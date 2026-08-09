@@ -10,9 +10,15 @@ export type {
   SubtaskPatch,
   TaskCommand,
   TaskCommandResult,
+  TaskOccurrenceResult,
   TaskPatch,
 } from './domain/commands';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
+export {
+  parseRecurrenceRule,
+  type RecurrenceParseResult,
+  type RecurrencePolicy,
+} from './domain/recurrence';
 export type {
   CommentRef,
   LocalDate,

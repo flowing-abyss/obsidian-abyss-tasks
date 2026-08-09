@@ -35,6 +35,7 @@ import {
   whenPasteSettled,
 } from '../ui/attachmentDrop';
 import { LinkEditModal } from '../ui/LinkEditModal';
+import { mountRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
@@ -358,6 +359,9 @@ export class RightPanel {
 
       // Priority chip
       this.renderPriorityChip(chips, task);
+
+      // Repeat chip and its one shared editor. TaskModal inherits this through RightPanel reuse.
+      this.renderRecurrenceChip(chips, task, stack);
 
       // Scheduled ("Plan") and Start chips — once SET, rendered as a normal round-pill,
       // same style as the date/time/priority chips above; clicking it opens the same small
@@ -879,6 +883,73 @@ export class RightPanel {
     });
   }
 
+  private renderRecurrenceChip(
+    container: HTMLElement,
+    task: TaskLike,
+    stack: readonly TaskLike[],
+  ): void {
+    const chip = container.createEl('button', {
+      cls: `tc-chip tc-repeat-chip${task.recurrence ? '' : ' tc-chip-add tc-chip-empty'}`,
+      text: task.recurrence ? `🔁 ${task.recurrence}` : '+ repeat',
+      attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
+    });
+    chip.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.showRecurrencePopover(chip, task, stack);
+    });
+  }
+
+  private showRecurrencePopover(
+    anchor: HTMLElement,
+    task: TaskLike,
+    stack: readonly TaskLike[],
+  ): void {
+    const existing = this.el.querySelector<HTMLElement>('.tc-recurrence-popover');
+    this.clearPopovers();
+    if (existing) return;
+    anchor.focus();
+    const root = stack[0];
+    const target = this.planningTarget(task);
+    if (!root || !('source' in root) || !target) return;
+
+    const popover = this.el.createDiv({
+      cls: 'tc-popover tc-recurrence-popover tc-popover-anchored',
+    });
+    const handle = mountRecurrenceEditor({
+      container: popover,
+      source: { root, target },
+      policy: {
+        removeScheduledDate: this.settings?.recurrence.removeScheduledDate ?? false,
+      },
+      ownershipConflict: this.hasRecurrenceOwnershipConflict(task, stack),
+      onSubmit: (patch) => this.executePlanningPatch(task, patch),
+      onClose: () => this.removeAnchoredSurface(popover),
+    });
+    this.positionAnchoredSurface(popover, anchor, 'below-start');
+    const placementCleanup = this.anchoredSurfaceCleanups.get(popover);
+    const editorCleanup = (): void => {
+      handle.destroy();
+      placementCleanup?.();
+      if (this.anchoredSurfaceCleanups.get(popover) === editorCleanup) {
+        this.anchoredSurfaceCleanups.delete(popover);
+      }
+    };
+    this.anchoredSurfaceCleanups.set(popover, editorCleanup);
+    this.dismissMenuOnOutsideClick(popover, anchor);
+    this.el.ownerDocument.defaultView?.setTimeout(() => handle.focus(), 0);
+  }
+
+  private hasRecurrenceOwnershipConflict(task: TaskLike, stack: readonly TaskLike[]): boolean {
+    if (stack.slice(0, -1).some((ancestor) => ancestor.recurrence !== undefined)) return true;
+    const queue = [...task.subtasks];
+    while (queue.length > 0) {
+      const descendant = queue.shift()!;
+      if (descendant.recurrence !== undefined) return true;
+      queue.push(...descendant.subtasks);
+    }
+    return false;
+  }
+
   private renderTagChip(container: HTMLElement, task: TaskLike, tag: string): void {
     const chip = container.createEl('span', { cls: 'tc-chip tc-chip-tag' });
     const color = this.getTagColor(tag);
@@ -1274,22 +1345,27 @@ export class RightPanel {
     return taskNodeRef(task);
   }
 
-  private async executePlanningPatch(task: TaskLike, patch: TaskPatch): Promise<void> {
+  private async executePlanningPatch(task: TaskLike, patch: TaskPatch): Promise<TaskCommandResult> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (!target || !this.tasks) {
+      return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
+    }
     let result: TaskCommandResult;
     try {
       if (target.type === 'task') {
         result = await this.tasks.execute({ type: 'patch', target, patch });
       } else {
-        if (patch.duration !== undefined) return;
+        if (patch.duration !== undefined) {
+          return { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
+        }
         const subtaskPatch: SubtaskPatch = patch;
         result = await this.tasks.execute({ type: 'patch', target, patch: subtaskPatch });
       }
     } catch {
-      return;
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
     this.applyPlanningResult(result, target);
+    return result;
   }
 
   private applyPlanningResult(
