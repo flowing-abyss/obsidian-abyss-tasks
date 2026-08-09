@@ -12,8 +12,12 @@ import {
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { BaseView } from './BaseView';
-import { isForecastCalendarTask } from './calendarOccurrences';
+import { calendarOccurrenceForTask, isForecastCalendarTask } from './calendarOccurrences';
 import { getTasksForDate, sortTasks } from './taskGrouping';
+
+function taskPresentationIdentity(task: TaskSnapshot): string {
+  return calendarOccurrenceForTask(task)?.key ?? `${task.source.filePath}:${task.source.line}`;
+}
 
 export interface ListViewCallbacks {
   app: App;
@@ -58,7 +62,7 @@ export class ListView extends BaseView {
     const overdueTasks = tasks.filter(
       (t) => t.status === 'open' && t.planning.due && t.planning.due < today,
     );
-    const overdueIds = new Set(overdueTasks.map((t) => `${t.source.filePath}:${t.source.line}`));
+    const overdueIds = new Set(overdueTasks.map(taskPresentationIdentity));
     if (overdueTasks.length > 0) {
       const section = grid.createDiv({ cls: 'tc-list-section' });
       const overdueHeader = section.createDiv({
@@ -89,14 +93,14 @@ export class ListView extends BaseView {
       // Deduplicate: a task may appear in multiple groups (e.g. due + scheduled on same day)
       const seen = new Set<string>();
       const uniqueTasks = allTasks.filter((t) => {
-        const id = `${t.source.filePath}:${t.source.line}`;
+        const id = taskPresentationIdentity(t);
         if (seen.has(id)) return false;
         seen.add(id);
         return true;
       });
       // Filter to only open tasks; also exclude tasks already shown in the overdue section
       const openDayTasks = uniqueTasks.filter(
-        (t) => t.status === 'open' && !overdueIds.has(`${t.source.filePath}:${t.source.line}`),
+        (t) => t.status === 'open' && !overdueIds.has(taskPresentationIdentity(t)),
       );
       if (openDayTasks.length === 0) continue;
 

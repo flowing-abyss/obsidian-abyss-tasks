@@ -148,16 +148,17 @@ function shiftedPlanning(
 }
 
 function intersectsVisible(planning: TaskPlanning, visible: DateRange): boolean {
+  const pointIntersects = [planning.start, planning.scheduled, planning.due].some(
+    (date) => date !== undefined && date >= visible.from && date <= visible.to,
+  );
   if (
     planning.start !== undefined &&
     planning.due !== undefined &&
     planning.start <= planning.due
   ) {
-    return planning.start <= visible.to && planning.due >= visible.from;
+    return pointIntersects || (planning.start <= visible.to && planning.due >= visible.from);
   }
-  return [planning.start, planning.scheduled, planning.due].some(
-    (date) => date !== undefined && date >= visible.from && date <= visible.to,
-  );
+  return pointIntersects;
 }
 
 function expansionBounds(
@@ -166,14 +167,11 @@ function expansionBounds(
   visible: DateRange,
   policy: RecurrencePolicy,
 ): DateRange | undefined {
-  const dates =
-    planning.start !== undefined && planning.due !== undefined
-      ? [planning.start, planning.due]
-      : [
-          planning.start,
-          policy.removeScheduledDate ? undefined : planning.scheduled,
-          planning.due,
-        ].filter((date): date is LocalDate => date !== undefined);
+  const dates = [
+    planning.start,
+    policy.removeScheduledDate ? undefined : planning.scheduled,
+    planning.due,
+  ].filter((date): date is LocalDate => date !== undefined);
   if (dates.length === 0) return undefined;
   const offsets = dates.map((date) => daysBetweenLocalDates(reference, date));
   const earliestOffset = Math.min(...offsets);

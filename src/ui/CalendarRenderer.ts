@@ -261,7 +261,13 @@ export class CalendarRenderer {
     );
     const projected = projection.occurrences.map(taskSnapshotForCalendarOccurrence);
     if (this.activeViewType !== 'list') return projected;
-    return [...this.queries.list(), ...projected.filter((task) => isForecastCalendarTask(task))];
+    return [
+      ...this.queries.list(),
+      ...projected.filter((task) => {
+        const occurrence = calendarOccurrenceForTask(task);
+        return occurrence?.kind === 'forecast' || occurrence?.source.target.type === 'subtask';
+      }),
+    ];
   }
 
   private renderView(): void {

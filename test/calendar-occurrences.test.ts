@@ -170,6 +170,51 @@ describe('projectCalendarOccurrences', () => {
     ]);
   });
 
+  it.each([
+    { removeScheduledDate: false, forecastReferences: ['2026-08-09'] },
+    { removeScheduledDate: true, forecastReferences: [] },
+  ])(
+    'keeps scheduled intersections alongside a start/due span when removeScheduledDate=$removeScheduledDate',
+    ({ removeScheduledDate, forecastReferences }) => {
+      const combined = rootSource('combined planning', {
+        planning: {
+          start: localDate('2026-08-01'),
+          due: localDate('2026-08-02'),
+          scheduled: localDate('2026-08-10'),
+        },
+        recurrence: 'every week',
+      });
+      const policy = { removeScheduledDate };
+
+      const materialized = projectCalendarOccurrences(
+        { materialized: [combined], recurringSources: [] },
+        range('2026-08-10', '2026-08-10'),
+        policy,
+      );
+      const forecasts = projectCalendarOccurrences(
+        { materialized: [], recurringSources: [combined] },
+        range('2026-08-17', '2026-08-17'),
+        policy,
+      );
+
+      expect({
+        materializedPlanning: materialized.occurrences.map((occurrence) => occurrence.planning),
+        forecastReferences: forecasts.occurrences.map((occurrence) =>
+          occurrence.kind === 'forecast' ? occurrence.referenceDate : undefined,
+        ),
+      }).toEqual({
+        materializedPlanning: [
+          {
+            start: '2026-08-01',
+            due: '2026-08-02',
+            scheduled: '2026-08-10',
+          },
+        ],
+        forecastReferences,
+      });
+    },
+  );
+
   it('ignores removed scheduled offsets when seeking a distant visible due forecast', () => {
     const daily = rootSource('remove scheduled bounds', {
       planning: {

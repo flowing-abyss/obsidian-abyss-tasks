@@ -2,7 +2,12 @@ import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi, TaskIndexEvent, TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskIndexEvent,
+  type TaskSnapshot,
+} from '../src/tasks';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 import {
   configuredTaskApplication,
@@ -461,6 +466,71 @@ describe('CalendarRenderer', () => {
         root.querySelector('.statisticPopup li[data-group="recurrence"] .stat-count')?.textContent,
       ).toBe('1');
       r.destroy();
+    });
+
+    it('keeps a materialized nested recurrence owner with its exact target and ordinary overdue tasks', async () => {
+      const nestedDate = window.moment().format('YYYY-MM-DD');
+      const overdueDate = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
+      const app = await createAppWithFiles({
+        'list.md': [
+          '- [ ] Parent',
+          `  - [ ] Nested repeat 🔁 every week ⏰ 07:31 📅 ${nestedDate}`,
+        ].join('\n'),
+        'overdue.md': `- [ ] Legacy overdue ⏰ 06:11 📅 ${overdueDate}`,
+      });
+      const configured = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await configured.index.initialize();
+      expect(
+        configured.tasks.queries.list().map(({ title, planning }) => ({ title, planning })),
+      ).toEqual([
+        { title: 'Parent', planning: {} },
+        { title: 'Legacy overdue', planning: { due: overdueDate, time: '06:11' } },
+      ]);
+      const nestedSource = configured.tasks.queries
+        .forCalendarProjection([localDate(nestedDate)])
+        .materialized.find(({ node }) => node.title === 'Nested repeat')!;
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target' }],
+      });
+      const root = freshContainer();
+      const r = new CalendarRenderer(
+        root,
+        resolvedConfig({
+          defaultView: 'list',
+          startPosition: window.moment().format('YYYY-MM'),
+        }),
+        app,
+        configured.tasks.queries,
+        { queries: configured.tasks.queries, execute },
+        configured.statusRegistry,
+      );
+
+      r.mount();
+
+      const overdueSection = root.querySelector('.tc-list-overdue-header')?.parentElement;
+      expect(
+        overdueSection?.querySelector('.tc-list-date-count')?.textContent,
+        'the ordinary root retains legacy overdue rendering',
+      ).toBe('1');
+      expect(overdueSection?.querySelector('.tc-task-time')?.textContent).toBe('06:11');
+      const todaySection = Array.from(root.querySelectorAll<HTMLElement>('.tc-list-section')).find(
+        (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
+      );
+      const nestedRow = Array.from(
+        todaySection?.querySelectorAll<HTMLElement>('.tc-list-task') ?? [],
+      ).find((row) => row.querySelector('.tc-task-time')?.textContent === '07:31');
+      expect(nestedRow, 'the materialized nested owner is present').toBeDefined();
+      nestedRow
+        ?.querySelector<HTMLElement>('.tc-status-marker')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(execute).toHaveBeenCalledWith({
+        type: 'toggle-completion',
+        target: nestedSource.target,
+      });
+
+      r.destroy();
+      configured.index.destroy();
     });
 
     it('opens the shared anchored recurrence editor from the ordinary task context menu', () => {
