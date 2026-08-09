@@ -16,6 +16,7 @@ import {
   type Weekday,
   type YearlyChoice,
 } from './recurrenceEditorModel';
+import { recurrenceIssueText } from './renderRecurrenceBadge';
 
 export interface RecurrenceEditorOptions {
   readonly container: HTMLElement;
@@ -29,6 +30,14 @@ export interface RecurrenceEditorOptions {
 export interface RecurrenceEditorHandle {
   destroy(): void;
   focus(): void;
+}
+
+export interface AnchoredRecurrenceEditorOptions extends Omit<
+  RecurrenceEditorOptions,
+  'container' | 'onClose'
+> {
+  readonly anchor: HTMLElement;
+  readonly onClose?: () => void;
 }
 
 type Preset = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly';
@@ -121,16 +130,6 @@ function addOption(
   select.createEl('option', { text: label, attr: { value } }).selected = selected;
 }
 
-function parserMessage(result: Extract<RecurrenceParseResult, { type: 'invalid' }>): string {
-  if (result.code === 'must-start-with-every') return 'Start the rule with “every”.';
-  if (result.code === 'unsupported-recurrence-count')
-    return 'Repeating a fixed number of times is not supported.';
-  if (result.code === 'unsupported-recurrence-until')
-    return 'Repeating until a date is not supported.';
-  if (result.code === 'invalid-when-done') return 'Put “when done” once, at the end of the rule.';
-  return 'Enter a supported repeat rule.';
-}
-
 function withoutTerminalWhenDone(raw: string): string {
   let base = raw.trim().replace(/\s+/gu, ' ');
   const suffix = 'when done';
@@ -190,7 +189,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       return 'Use a whole number greater than zero.';
     }
     if (state.submissionError) return state.submissionError;
-    return parsed.type === 'invalid' ? parserMessage(parsed) : '';
+    return parsed.type === 'invalid' ? recurrenceIssueText(parsed.code) : '';
   };
 
   const refresh = (): void => {
@@ -623,4 +622,63 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       focusTarget?.focus();
     },
   };
+}
+
+export function mountAnchoredRecurrenceEditor(
+  options: AnchoredRecurrenceEditorOptions,
+): RecurrenceEditorHandle {
+  const ownerDocument = options.anchor.ownerDocument;
+  const ownerWindow = ownerDocument.defaultView;
+  const popover = ownerDocument.body.createDiv({
+    cls: 'tc-popover tc-recurrence-popover tc-popover-anchored tc-recurrence-popover-floating',
+  });
+  let destroyed = false;
+  let outsideTimer: number | undefined;
+  let editor: RecurrenceEditorHandle | undefined;
+
+  const position = (): void => {
+    const anchorRect = options.anchor.getBoundingClientRect();
+    const floatingRect = popover.getBoundingClientRect();
+    const width = floatingRect.width || popover.offsetWidth || 352;
+    const height = floatingRect.height || popover.offsetHeight;
+    const edge = 8;
+    const viewportWidth = ownerWindow?.innerWidth ?? width + edge * 2;
+    const viewportHeight = ownerWindow?.innerHeight ?? anchorRect.bottom + height + edge;
+    const left = Math.min(
+      Math.max(anchorRect.left, edge),
+      Math.max(edge, viewportWidth - width - edge),
+    );
+    const below = anchorRect.bottom + 4;
+    const preferredTop =
+      below + height > viewportHeight - edge ? anchorRect.top - height - 4 : below;
+    popover.style.left = `${left}px`;
+    popover.style.top = `${Math.max(edge, preferredTop)}px`;
+  };
+  const onOutside = (event: MouseEvent): void => {
+    const target = event.target as Node;
+    if (!popover.contains(target) && !options.anchor.contains(target)) destroy();
+  };
+  const destroy = (): void => {
+    if (destroyed) return;
+    destroyed = true;
+    if (outsideTimer !== undefined) ownerWindow?.clearTimeout(outsideTimer);
+    ownerDocument.removeEventListener('mousedown', onOutside, true);
+    ownerDocument.removeEventListener('scroll', position, true);
+    ownerWindow?.removeEventListener('resize', position);
+    editor?.destroy();
+    popover.remove();
+    options.onClose?.();
+  };
+
+  editor = mountRecurrenceEditor({ ...options, container: popover, onClose: destroy });
+  position();
+  ownerDocument.addEventListener('scroll', position, true);
+  ownerWindow?.addEventListener('resize', position);
+  outsideTimer = ownerWindow?.setTimeout(() => {
+    outsideTimer = undefined;
+    if (!destroyed) ownerDocument.addEventListener('mousedown', onOutside, true);
+  }, 0);
+  ownerWindow?.setTimeout(() => editor?.focus(), 0);
+
+  return { destroy, focus: () => editor?.focus() };
 }

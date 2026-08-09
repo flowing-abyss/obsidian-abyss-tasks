@@ -5,6 +5,10 @@ import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { BaseView } from './BaseView';
@@ -125,6 +129,10 @@ export class ListView extends BaseView {
       onLeftClick: () => this.callbacks.onToggle(task),
       onContextMenu: (e) => this.callbacks.onContextMenu(e, task),
     });
+
+    if (task.recurrence) {
+      renderRecurrenceBadge(row, recurrenceBadgeInput(task.recurrence));
+    }
 
     let statusClass = '';
     if (task.status === 'done') {

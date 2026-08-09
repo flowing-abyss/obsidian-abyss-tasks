@@ -1,11 +1,14 @@
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { buildDefaultTaskStatuses } from '../src/settings/defaults';
+import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskApplicationApi, TaskIndexEvent, TaskSnapshot } from '../src/tasks';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 import {
+  configuredTaskApplication,
+  createAppWithFiles,
   fixedToday,
+  flushMicrotasks,
   freshContainer,
   queryApiForTasks,
   resolvedConfig,
@@ -423,6 +426,74 @@ describe('CalendarRenderer', () => {
         },
       });
       r.destroy();
+    });
+
+    it('opens the shared anchored recurrence editor from the ordinary task context menu', () => {
+      const store = new StubStore();
+      const root = freshContainer();
+      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      store.setTasks([
+        task({ status: 'open', recurrence: 'every week', planning: { due: todayStr } }),
+      ]);
+      r.mount();
+
+      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const edit = activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
+      expect(edit).not.toBeNull();
+      expect(edit?.textContent ?? '').toContain('Edit repeat…');
+      edit?.click();
+
+      const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
+      expect(popover?.classList.contains('tc-popover-anchored')).toBe(true);
+      expect(popover?.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
+      expect(popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+        'every week',
+      );
+      r.destroy();
+    });
+
+    it('requires a real confirmation click before invalid Delete completion removes the subtree', async () => {
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      const app = await createAppWithFiles({
+        'repeat.md': `- [ ] Invalid repeat 🔁 tomorrow 🏁 delete 📅 ${todayStr}\n  - [ ] Child\n`,
+      });
+      const settings = resolvedConfig({ defaultView: 'month' });
+      const configured = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await configured.index.initialize();
+      const root = freshContainer();
+      const r = new CalendarRenderer(
+        root,
+        settings,
+        app,
+        configured.tasks.queries,
+        configured.tasks,
+        configured.statusRegistry,
+      );
+      r.mount();
+
+      root
+        .querySelector<HTMLElement>('.task .tc-status-marker')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+      const confirmation = activeDocument.querySelector<HTMLElement>(
+        '.tc-recurrence-delete-confirm',
+      );
+      expect(confirmation?.getAttribute('role')).toBe('alertdialog');
+      expect(confirmation?.textContent).toContain(
+        'The complete task and its sub-tasks will be deleted. No next occurrence will be created.',
+      );
+      expect(configured.tasks.queries.list()).toHaveLength(1);
+
+      confirmation
+        ?.querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm-button')
+        ?.click();
+      await flushMicrotasks();
+
+      expect(configured.tasks.queries.list()).toHaveLength(0);
+      r.destroy();
+      configured.index.destroy();
     });
   });
 

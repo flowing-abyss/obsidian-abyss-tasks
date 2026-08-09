@@ -3808,6 +3808,54 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Shared recurrence editor: an anchored planning instrument whose strongest visual line is the
    parser-canonical rule itself. All concrete colors remain owned by the active Obsidian theme. */
+.tc-recurrence-badge {
+  --tc-recurrence-badge-height: 1rem;
+  --tc-recurrence-badge-radius: var(--radius-s);
+  --tc-recurrence-badge-padding: 0 var(--size-2-1);
+  --tc-recurrence-badge-icon-size: 0.7rem;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: var(--tc-recurrence-badge-height);
+  min-width: var(--tc-recurrence-badge-height);
+  padding: var(--tc-recurrence-badge-padding);
+  border-radius: var(--tc-recurrence-badge-radius);
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.tc-recurrence-badge-icon {
+  display: inline-flex;
+  flex: 0 0 var(--tc-recurrence-badge-icon-size);
+  align-items: center;
+  justify-content: center;
+  width: var(--tc-recurrence-badge-icon-size);
+  height: var(--tc-recurrence-badge-icon-size);
+}
+
+.tc-recurrence-badge-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.tc-recurrence-badge[data-recurrence-validity='invalid'] {
+  color: var(--text-warning, var(--color-orange));
+}
+
+.tc-recurrence-badge[data-recurrence-forecast='true'] {
+  outline: 1px dotted var(--text-faint);
+  outline-offset: 1px;
+}
+
+.tc-repeat-chip .tc-recurrence-badge,
+.tc-status-popover-edit-repeat .tc-recurrence-badge {
+  margin-inline-end: var(--size-2-1);
+}
+
 .tc-repeat-chip:not(.tc-chip-empty) {
   border-color: var(--interactive-accent);
 }
@@ -3827,6 +3875,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
   padding: 0.625rem;
   background: var(--background-secondary);
+}
+
+.tc-popover-anchored.tc-recurrence-popover-floating {
+  position: fixed;
+  z-index: var(--layer-menu);
 }
 
 .tc-recurrence-editor {
@@ -4053,6 +4106,46 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .tc-recurrence-clear:hover {
   color: var(--text-normal);
+}
+
+.tc-recurrence-delete-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--size-4-6);
+  background: var(--modal-scrim-background);
+}
+
+.tc-recurrence-delete-confirm-dialog {
+  box-sizing: border-box;
+  inline-size: min(26rem, 100%);
+  padding: var(--size-4-5);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
+  color: var(--text-normal);
+}
+
+.tc-recurrence-delete-confirm-title {
+  margin-block: 0 var(--size-4-2);
+  color: var(--text-error);
+  font-size: var(--font-ui-medium);
+}
+
+.tc-recurrence-delete-confirm-description {
+  margin-block: 0 var(--size-4-4);
+  color: var(--text-muted);
+  line-height: var(--line-height-normal);
+}
+
+.tc-recurrence-delete-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--size-4-2);
 }
 
 @media (prefers-reduced-motion: reduce) {

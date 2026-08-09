@@ -58,6 +58,7 @@ export interface TimeGridCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
+  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   statusRegistry: StatusRegistry;
   tagGroups?: TagGroup[];
 }
@@ -290,6 +291,7 @@ export class TodayView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
+      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       statusRegistry: this.callbacks.statusRegistry,
     };
     const previewPositionFor = (
@@ -328,6 +330,7 @@ export class TodayView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
+      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,
     };

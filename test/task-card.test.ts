@@ -169,7 +169,6 @@ describe('createTaskCard', () => {
         done: '✅',
         due: '📅',
         scheduled: '⏳',
-        recurrence: '🔁',
         overdue: '⚠️',
         process: '⏺️',
         cancelled: '🚫',
@@ -180,6 +179,16 @@ describe('createTaskCard', () => {
         const el = createTaskCard(task(), cls, baseOptions());
         expect(el.querySelector('.icon')?.textContent).toBe(icon);
       }
+    });
+
+    it('uses the shared recurrence badge instead of a repeat emoji for a recurring task', () => {
+      const el = createTaskCard(task({ recurrence: 'every week' }), 'recurrence', baseOptions());
+
+      const badge = el.querySelector<HTMLElement>('.tc-recurrence-badge');
+      expect(badge?.dataset['recurrenceValidity']).toBe('valid');
+      expect(badge?.getAttribute('aria-label')).toBe('Repeats: every week');
+      expect(el.textContent).not.toContain('🔁');
+      expect(el.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
     });
 
     it('uses empty string for an unknown taskClass', () => {

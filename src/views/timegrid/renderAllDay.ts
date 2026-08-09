@@ -36,6 +36,7 @@ export interface AllDayCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
+  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   statusRegistry: StatusRegistry;
   /** Click-to-create: fires when the user clicks genuinely empty space in this all-day cell
    * (not an existing span/plain/deadline item, and not the quick-add popover CenterPanel renders
@@ -168,11 +169,15 @@ function renderAllDayBody(
       onLeftClick: () => callbacks.onToggle(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
+        const anchor = ev.currentTarget as HTMLElement;
         showStatusMenuAt(ev, {
           task,
           registry: callbacks.statusRegistry,
           onPickStatus: (c) => callbacks.onSetStatus(task, c),
           onPickPriority: (p) => callbacks.onSetPriority(task, p),
+          ...(callbacks.onEditRepeat && {
+            onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
+          }),
         });
       },
     });
@@ -543,11 +548,15 @@ export function renderAllDayCell(
       onLeftClick: () => callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
+        const anchor = ev.currentTarget as HTMLElement;
         showStatusMenuAt(ev, {
           task: t,
           registry: callbacks.statusRegistry,
           onPickStatus: (c) => callbacks.onSetStatus(t, c),
           onPickPriority: (p) => callbacks.onSetPriority(t, p),
+          ...(callbacks.onEditRepeat && {
+            onEditRepeat: () => callbacks.onEditRepeat?.(t, anchor),
+          }),
         });
       },
     });

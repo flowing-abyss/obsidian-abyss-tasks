@@ -13,6 +13,7 @@ import type {
 } from '../../src/tasks/domain/commands';
 import {
   nextOccurrencePlanning,
+  parseRecurrenceRule,
   type RecurrenceIssueCode,
 } from '../../src/tasks/domain/recurrence';
 import { prepareRecurrenceIteration } from '../../src/tasks/domain/recurrenceIteration';
@@ -334,14 +335,18 @@ function invalidRecurrence(
   return { type: 'invalid', issues: [{ code, field: 'recurrence' }] };
 }
 
-function hasAuthoredRecurrence(
+function blocksOrdinaryDeleteCompletion(
   parsed: NonNullable<ReturnType<TaskMarkdownCodec['parseLine']>>,
+  rawRule: string | undefined,
 ): boolean {
-  return parsed.spans.some(
+  const recurrenceSpans = parsed.spans.filter(
     (span) =>
       span.kind === 'recurrence' ||
       (span.kind === 'malformed-known' && span.malformedKind === 'recurrence'),
   );
+  if (recurrenceSpans.length === 0) return false;
+  if (recurrenceSpans.length !== 1 || rawRule === undefined) return true;
+  return parseRecurrenceRule(rawRule).type === 'valid';
 }
 
 export class InMemoryTaskRepository implements TaskRepository {
@@ -968,7 +973,7 @@ export class InMemoryTaskRepository implements TaskRepository {
       !owner ||
       !parsed ||
       owner.onCompletion !== 'delete' ||
-      hasAuthoredRecurrence(parsed)
+      blocksOrdinaryDeleteCompletion(parsed, owner.recurrence)
     ) {
       return undefined;
     }

@@ -63,6 +63,7 @@ export interface TimedBlockCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
+  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   statusRegistry: StatusRegistry;
 }
 
@@ -224,11 +225,15 @@ export function renderTimedBlocksForDay(
         onLeftClick: () => callbacks.onToggle(p.task),
         onContextMenu: (ev) => {
           ev.stopPropagation();
+          const anchor = ev.currentTarget as HTMLElement;
           showStatusMenuAt(ev, {
             task: p.task,
             registry: callbacks.statusRegistry,
             onPickStatus: (c) => callbacks.onSetStatus(p.task, c),
             onPickPriority: (pr) => callbacks.onSetPriority(p.task, pr),
+            ...(callbacks.onEditRepeat && {
+              onEditRepeat: () => callbacks.onEditRepeat?.(p.task, anchor),
+            }),
           });
         },
       });

@@ -36,11 +36,15 @@ import {
 } from '../ui/attachmentDrop';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import { mountRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
-import { presentTaskCommandResult } from '../ui/taskCommandResult';
+import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 
@@ -306,11 +310,14 @@ export class RightPanel {
       onLeftClick: () => void this.toggleTaskLike(task),
       onContextMenu: (event) => {
         event.stopPropagation();
+        const anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : header;
         showStatusMenuAt(event, {
           task,
           registry: this.statusRegistry,
           onPickStatus: (symbol) => void this.setStatus(task, symbol),
           onPickPriority: (priority) => void this.updatePriority(task, priority),
+          onEditRepeat: () =>
+            this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task)),
         });
       },
     });
@@ -634,11 +641,13 @@ export class RightPanel {
       onLeftClick: () => void this.toggleSubTask(sub),
       onContextMenu: (ev) => {
         ev.stopPropagation();
+        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : row;
         showStatusMenuAt(ev, {
           task: sub,
           registry: this.statusRegistry,
           onPickStatus: (c) => void this.setStatus(sub, c),
           onPickPriority: (p) => void this.updatePriority(sub, p),
+          onEditRepeat: () => this.showRecurrencePopover(anchor, sub, this.recurrenceStackFor(sub)),
         });
       },
     });
@@ -890,9 +899,14 @@ export class RightPanel {
   ): void {
     const chip = container.createEl('button', {
       cls: `tc-chip tc-repeat-chip${task.recurrence ? '' : ' tc-chip-add tc-chip-empty'}`,
-      text: task.recurrence ? `🔁 ${task.recurrence}` : '+ repeat',
       attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
     });
+    if (task.recurrence) {
+      renderRecurrenceBadge(chip, recurrenceBadgeInput(task.recurrence));
+      chip.createSpan({ cls: 'tc-repeat-chip-label', text: task.recurrence });
+    } else {
+      chip.setText('+ repeat');
+    }
     chip.addEventListener('click', (event) => {
       event.stopPropagation();
       this.showRecurrencePopover(chip, task, stack);
@@ -1236,11 +1250,15 @@ export class RightPanel {
     return this.executeBlockCommand({ type: 'add-subtask', parent, text }, parent);
   }
 
-  private async toggleSubTask(sub: SubtaskSnapshot): Promise<void> {
-    await this.toggleTaskLike(sub);
+  private toggleSubTask(sub: SubtaskSnapshot): Promise<void> {
+    return this.toggleTaskLike(sub);
   }
 
-  private async toggleTaskLike(task: TaskLike): Promise<void> {
+  private toggleTaskLike(task: TaskLike): Promise<void> {
+    return requestTaskCompletion(task, () => this.commitTaskToggle(task));
+  }
+
+  private async commitTaskToggle(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
     const result = await this.tasks.execute({ type: 'toggle-completion', target });
@@ -1408,7 +1426,14 @@ export class RightPanel {
     await this.executePlanningPatch(task, { duration: { type: 'clear' } });
   }
 
-  private async setStatus(task: TaskLike, symbol: string): Promise<void> {
+  private setStatus(task: TaskLike, symbol: string): Promise<void> {
+    if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
+      return requestTaskCompletion(task, () => this.commitStatus(task, symbol));
+    }
+    return this.commitStatus(task, symbol);
+  }
+
+  private async commitStatus(task: TaskLike, symbol: string): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
     const result = await this.tasks.execute({ type: 'set-status', target, symbol });
@@ -1524,6 +1549,12 @@ export class RightPanel {
       cls: 'tc-context-menu tc-task-context-menu tc-popover-anchored',
     });
 
+    const editRepeat = menu.createDiv({ cls: 'tc-context-item', text: 'Edit repeat…' });
+    editRepeat.addEventListener('click', () => {
+      this.removeAnchoredSurface(menu);
+      this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task));
+    });
+
     const deleteItem = menu.createDiv({
       cls: 'tc-context-item tc-context-danger',
       text: this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
@@ -1545,6 +1576,13 @@ export class RightPanel {
 
     this.positionAnchoredSurface(menu, anchor, 'below-end');
     this.dismissMenuOnOutsideClick(menu, anchor);
+  }
+
+  private recurrenceStackFor(task: TaskLike): readonly TaskLike[] {
+    const root = this.state.get('taskStack')[0];
+    const target = this.planningTarget(task);
+    if (!root || !('source' in root) || !target) return [];
+    return rebuildPlanningTargetStack(root, target);
   }
 
   /** Shared outside-click dismissal for small anchored menus (context menu, add-date menu). */

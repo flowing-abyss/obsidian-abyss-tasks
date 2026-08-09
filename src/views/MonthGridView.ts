@@ -41,6 +41,7 @@ export interface MonthGridViewCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
+  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   onWeekClick: (weekNr: string, year: string) => void;
   statusRegistry: StatusRegistry;
   tagGroups?: TagGroup[];
@@ -287,6 +288,7 @@ export class MonthGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
+      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       statusRegistry: this.callbacks.statusRegistry,
     };
   }
@@ -347,11 +349,15 @@ export class MonthGridView extends BaseView {
       onLeftClick: () => this.callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
+        const anchor = ev.currentTarget as HTMLElement;
         showStatusMenuAt(ev, {
           task: t,
           registry: this.callbacks.statusRegistry,
           onPickStatus: (c) => this.callbacks.onSetStatus(t, c),
           onPickPriority: (p) => this.callbacks.onSetPriority(t, p),
+          ...(this.callbacks.onEditRepeat && {
+            onEditRepeat: () => this.callbacks.onEditRepeat?.(t, anchor),
+          }),
         });
       },
     });

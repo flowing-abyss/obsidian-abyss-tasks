@@ -69,13 +69,60 @@ describe('RightPanel recurrence editor integration', () => {
     state.set('taskStack', [root]);
 
     const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
-    expect(chip.textContent).toBe('🔁 every week');
+    expect(chip.textContent).toBe('every week');
+    expect(chip.querySelector('.tc-recurrence-badge')?.getAttribute('aria-label')).toBe(
+      'Repeats: every week',
+    );
+    expect(chip.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
     click(chip);
 
     expect(el.querySelector('.tc-recurrence-status')?.textContent).toBe(
       'Remove the nested repeat conflict first.',
     );
     expect(el.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.disabled).toBe(true);
+  });
+
+  it('opens the shared editor for the exact selected sub-task from its context menu', async () => {
+    const child = subtask({
+      title: 'Child',
+      recurrence: 'every weekday',
+      planning: { due: '2026-08-10' },
+    });
+    const root = task({ title: 'Root', subtasks: [child] });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'io-error',
+      cause: 'test',
+      contentState: 'unchanged',
+    });
+    const { state, el } = await makePanel({}, { queries: queryApiForTasks(() => [root]), execute });
+    state.set('taskStack', [root, child]);
+
+    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
+      (button) => button.textContent === '⋯',
+    )!;
+    click(more);
+    const edit = Array.from(
+      el.querySelectorAll<HTMLElement>('.tc-task-context-menu .tc-context-item'),
+    ).find((item) => item.textContent === 'Edit repeat…');
+    expect(edit).not.toBeUndefined();
+    click(edit!);
+
+    expect(el.querySelectorAll('.tc-recurrence-popover .tc-recurrence-editor')).toHaveLength(1);
+    expect(el.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe('every weekday');
+    const raw = el.querySelector<HTMLInputElement>('.tc-recurrence-raw')!;
+    raw.value = 'every month';
+    raw.dispatchEvent(new Event('input', { bubbles: true }));
+    click(el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!);
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'patch',
+      target: { type: 'subtask', ref: child.ref },
+      patch: {
+        recurrence: { type: 'set', value: 'every month' },
+        onCompletion: { type: 'set', value: 'keep' },
+      },
+    });
   });
 });
 
@@ -338,9 +385,9 @@ describe('RightPanel.renderTask', () => {
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
       const popover = activeDocument.body.querySelector<HTMLElement>('.tc-status-popover')!;
-      expect(popover.querySelectorAll('.tc-status-popover-row')).toHaveLength(
-        registry.all().length,
-      );
+      expect(
+        popover.querySelectorAll('.tc-status-popover-list .tc-status-popover-row'),
+      ).toHaveLength(registry.all().length);
       expect(popover.querySelectorAll('.tc-status-popover-flag')).toHaveLength(6);
       const waiting = Array.from(
         popover.querySelectorAll<HTMLElement>('.tc-status-popover-row'),

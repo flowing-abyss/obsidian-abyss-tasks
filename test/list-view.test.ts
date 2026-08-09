@@ -171,6 +171,23 @@ describe('ListView', () => {
       const times = Array.from(c.querySelectorAll('.tc-task-time')).map((el) => el.textContent);
       expect(times).toEqual(['09:00', '10:00', '23:00']);
     });
+
+    it('renders parser-invalid recurrence with the shared warning badge', () => {
+      const { view } = makeView();
+      const c = freshContainer();
+      view.render(
+        c,
+        [task({ status: 'open', recurrence: 'tomorrow', planning: { due: today() } })],
+        resolvedConfig(),
+      );
+
+      const badge = c.querySelector<HTMLElement>('.tc-recurrence-badge');
+      expect(badge?.dataset['recurrenceValidity']).toBe('invalid');
+      expect(badge?.getAttribute('title')).toBe(
+        'Invalid repeat rule: Start the rule with “every”.',
+      );
+      expect(c.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
+    });
   });
 
   describe('interactions', () => {

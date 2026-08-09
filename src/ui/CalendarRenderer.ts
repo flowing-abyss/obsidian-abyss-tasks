@@ -2,13 +2,24 @@ import { Modal, type App } from 'obsidian';
 import { firstVisibleWeekDate, resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import { localDate, type TaskApplicationApi, type TaskQueryApi, type TaskSnapshot } from '../tasks';
+import {
+  localDate,
+  type RecurrencePolicy,
+  type TaskApplicationApi,
+  type TaskQueryApi,
+  type TaskSnapshot,
+} from '../tasks';
 import { BaseView } from '../views/BaseView';
 import { ListView } from '../views/ListView';
 import { MonthView } from '../views/MonthView';
 import { WeekView } from '../views/WeekView';
+import { mountAnchoredRecurrenceEditor } from './recurrence/RecurrenceEditor';
 import { showStatusMenuAt } from './statusMenu';
-import { presentTaskCommandResult, presentTaskCreationResult } from './taskCommandResult';
+import {
+  presentTaskCommandResult,
+  presentTaskCreationResult,
+  requestTaskCompletion,
+} from './taskCommandResult';
 import { openInFile } from './taskNavigation';
 import { Toolbar, type ViewEntry } from './Toolbar';
 
@@ -30,6 +41,7 @@ export class CalendarRenderer {
   private overdueHighlightActive = false;
   private activeStatGroup: string | null = null;
   private unsubscribe: (() => void) | null = null;
+  private recurrenceEditorCleanup: (() => void) | null = null;
 
   constructor(
     private rootEl: HTMLElement,
@@ -39,6 +51,7 @@ export class CalendarRenderer {
     private tasks: TaskApplicationApi,
     private statusRegistry: StatusRegistry,
     private taskPrefix = '',
+    private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
   ) {
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
@@ -126,9 +139,11 @@ export class CalendarRenderer {
   private buildCallbacks() {
     return {
       onToggle: (task: TaskSnapshot) => {
-        void this.tasks
-          .execute({ type: 'toggle-completion', target: { type: 'task', ref: task.ref } })
-          .then(presentTaskCommandResult);
+        void requestTaskCompletion(task, () =>
+          this.tasks
+            .execute({ type: 'toggle-completion', target: { type: 'task', ref: task.ref } })
+            .then(presentTaskCommandResult),
+        );
       },
       onCellClick: (date: string) => this.openAddTaskModal(date),
       onWeekClick: (weekNr: string, year: string) => {
@@ -141,13 +156,20 @@ export class CalendarRenderer {
       },
       onDateClick: (date: string) => this.openAddTaskModal(date),
       onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => {
+        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : this.rootEl;
         showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
           onPickStatus: (symbol) => {
-            void this.tasks
-              .execute({ type: 'set-status', target: { type: 'task', ref: task.ref }, symbol })
-              .then(presentTaskCommandResult);
+            const apply = (): Promise<void> =>
+              this.tasks
+                .execute({ type: 'set-status', target: { type: 'task', ref: task.ref }, symbol })
+                .then(presentTaskCommandResult);
+            if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
+              void requestTaskCompletion(task, apply);
+            } else {
+              void apply();
+            }
           },
           onPickPriority: (priority) => {
             void this.tasks
@@ -158,9 +180,44 @@ export class CalendarRenderer {
               })
               .then(presentTaskCommandResult);
           },
+          onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
         });
       },
     };
+  }
+
+  private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+    this.recurrenceEditorCleanup?.();
+    let cleanup: () => void;
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root: task, target: { type: 'task', ref: task.ref } },
+      policy: this.recurrencePolicy,
+      ownershipConflict: this.hasNestedRecurrence(task),
+      onSubmit: (patch) =>
+        this.tasks.execute({
+          type: 'patch',
+          target: { type: 'task', ref: task.ref },
+          patch,
+        }),
+      onClose: () => {
+        if (this.recurrenceEditorCleanup === cleanup) {
+          this.recurrenceEditorCleanup = null;
+        }
+      },
+    });
+    cleanup = () => handle.destroy();
+    this.recurrenceEditorCleanup = cleanup;
+  }
+
+  private hasNestedRecurrence(task: TaskSnapshot): boolean {
+    const queue = [...task.subtasks];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current.recurrence !== undefined) return true;
+      queue.push(...current.subtasks);
+    }
+    return false;
   }
 
   private buildConfig(): ResolvedConfig {
@@ -289,6 +346,7 @@ export class CalendarRenderer {
   }
 
   destroy(): void {
+    this.recurrenceEditorCleanup?.();
     this.unsubscribe?.();
     this.activeView?.destroy();
     this.toolbar?.destroy();

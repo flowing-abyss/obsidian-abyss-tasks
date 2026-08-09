@@ -42,10 +42,19 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
+import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { buildStatusSubmenu, showStatusMenuAt } from '../ui/statusMenu';
-import { presentTaskCommandResult, presentTaskCreationResult } from '../ui/taskCommandResult';
+import {
+  presentTaskCommandResult,
+  presentTaskCreationResult,
+  requestTaskCompletion,
+} from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
@@ -128,6 +137,7 @@ export class CenterPanel {
   private calUnsubscribe: (() => void) | null = null;
   private calendarPickerCleanup: (() => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
+  private recurrenceEditorCleanup: (() => void) | null = null;
   // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
   // Query notifications use the incremental patch path and never consult this state.
   private lastScrolledCalKey: string | null = null;
@@ -389,6 +399,7 @@ export class CenterPanel {
     this.cancelKeyboardInteraction();
     this.clearSearchShell();
     this.clearTaskDatePicker();
+    this.recurrenceEditorCleanup?.();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
@@ -494,6 +505,7 @@ export class CenterPanel {
 
   private render(): void {
     this.clearTaskDatePicker();
+    this.recurrenceEditorCleanup?.();
     this.clearSearchShell();
 
     const mode = this.state.get('mode');
@@ -843,6 +855,7 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
+          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -880,6 +893,7 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
+          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -906,6 +920,7 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
+          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           onWeekClick: (wk, yr) => {
             this.cancelKeyboardInteraction();
             this.calViewType = 'week';
@@ -1446,11 +1461,13 @@ export class CenterPanel {
       onLeftClick: () => void this.toggleTask(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
+        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card;
         showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
           onPickStatus: (c) => void this.setTaskStatus(task, c),
           onPickPriority: (p) => void this.setPriority(task, p),
+          onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
         });
       },
     });
@@ -1467,6 +1484,10 @@ export class CenterPanel {
 
     const body = card.createDiv({ cls: 'tc-task-body' });
     const titleRow = body.createDiv({ cls: 'tc-task-title-row' });
+
+    if (task.recurrence) {
+      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
+    }
 
     // Count badges BEFORE title text so they're seen while reading left-to-right
     if (subtaskCount > 0) {
@@ -1803,6 +1824,18 @@ export class CenterPanel {
           .setSection('actions')
           .onClick(() => this.openTagPicker(task)),
       );
+
+      menu.addItem((item) => {
+        item
+          .setTitle('Edit repeat…')
+          .setSection('actions')
+          .onClick(() => this.openRecurrenceEditor(card, task));
+        const dom = (item as unknown as { dom?: HTMLElement }).dom;
+        const iconSlot = dom?.querySelector<HTMLElement>('.menu-item-icon');
+        if (task.recurrence && iconSlot) {
+          renderRecurrenceBadge(iconSlot, recurrenceBadgeInput(task.recurrence));
+        }
+      });
 
       // ── Open in note ──────────────────────────────────────
       menu.addItem((item) =>
@@ -3170,7 +3203,11 @@ export class CenterPanel {
     );
   }
 
-  private async toggleTask(task: TaskSnapshot): Promise<void> {
+  private toggleTask(task: TaskSnapshot): Promise<void> {
+    return requestTaskCompletion(task, () => this.commitTaskToggle(task));
+  }
+
+  private async commitTaskToggle(task: TaskSnapshot): Promise<void> {
     const ref = task.ref;
     if (!ref || !this.tasks) return;
     presentTaskCommandResult(
@@ -3181,7 +3218,14 @@ export class CenterPanel {
     );
   }
 
-  private async setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+  private setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+    if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
+      return requestTaskCompletion(task, () => this.commitTaskStatus(task, symbol));
+    }
+    return this.commitTaskStatus(task, symbol);
+  }
+
+  private async commitTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
     const ref = task.ref;
     if (!ref || !this.tasks) return;
     presentTaskCommandResult(
@@ -3191,5 +3235,47 @@ export class CenterPanel {
         symbol,
       }),
     );
+  }
+
+  private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
+    this.recurrenceEditorCleanup?.();
+    let cleanup: () => void;
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root: task, target: { type: 'task', ref: task.ref } },
+      policy: { removeScheduledDate: this.settings.recurrence.removeScheduledDate },
+      ownershipConflict: this.hasNestedRecurrence(task),
+      onSubmit: (patch) => {
+        if (!this.tasks) {
+          return Promise.resolve({
+            type: 'io-error' as const,
+            cause: 'application-unavailable',
+            contentState: 'unchanged' as const,
+          });
+        }
+        return this.tasks.execute({
+          type: 'patch',
+          target: { type: 'task', ref: task.ref },
+          patch,
+        });
+      },
+      onClose: () => {
+        if (this.recurrenceEditorCleanup === cleanup) {
+          this.recurrenceEditorCleanup = null;
+        }
+      },
+    });
+    cleanup = () => handle.destroy();
+    this.recurrenceEditorCleanup = cleanup;
+  }
+
+  private hasNestedRecurrence(task: TaskSnapshot): boolean {
+    const queue = [...task.subtasks];
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      if (current.recurrence !== undefined) return true;
+      queue.push(...current.subtasks);
+    }
+    return false;
   }
 }

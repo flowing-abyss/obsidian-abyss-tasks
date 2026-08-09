@@ -13,7 +13,11 @@ import type {
   TaskOccurrenceResult,
   TaskResolutionCandidate,
 } from '../../domain/commands';
-import { nextOccurrencePlanning, type RecurrenceIssueCode } from '../../domain/recurrence';
+import {
+  nextOccurrencePlanning,
+  parseRecurrenceRule,
+  type RecurrenceIssueCode,
+} from '../../domain/recurrence';
 import { prepareRecurrenceIteration } from '../../domain/recurrenceIteration';
 import type {
   CommentRef,
@@ -369,14 +373,18 @@ function prepareRecurrenceCandidate(
   };
 }
 
-function hasAuthoredRecurrence(
+function blocksOrdinaryDeleteCompletion(
   parsed: NonNullable<ReturnType<TaskMarkdownCodec['parseLine']>>,
+  rawRule: string | undefined,
 ): boolean {
-  return parsed.spans.some(
+  const recurrenceSpans = parsed.spans.filter(
     (span) =>
       span.kind === 'recurrence' ||
       (span.kind === 'malformed-known' && span.malformedKind === 'recurrence'),
   );
+  if (recurrenceSpans.length === 0) return false;
+  if (recurrenceSpans.length !== 1 || rawRule === undefined) return true;
+  return parseRecurrenceRule(rawRule).type === 'valid';
 }
 
 function blockTarget(
@@ -1311,7 +1319,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       !owner ||
       !parsed ||
       owner.onCompletion !== 'delete' ||
-      hasAuthoredRecurrence(parsed)
+      blocksOrdinaryDeleteCompletion(parsed, owner.recurrence)
     ) {
       return undefined;
     }

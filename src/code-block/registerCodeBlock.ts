@@ -83,6 +83,7 @@ export function registerCodeBlock(
       tasks,
       statusRegistry,
       settings.taskPrefix,
+      settings.recurrence,
     );
 
     // MarkdownRenderChild ensures cleanup when the block leaves the DOM

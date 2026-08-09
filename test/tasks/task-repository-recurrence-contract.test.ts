@@ -343,7 +343,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       expect(harness.index.list()).toEqual([]);
     });
 
-    it('completes an invalid raw recurrence normally even when Delete is authored', async () => {
+    it('applies ordinary Delete completion to an invalid raw recurrence subtree', async () => {
       const source = '- [ ] Invalid repeat 🔁 tomorrow 🏁 delete\n  - [ ] Child\n';
       const harness = await makeHarness(adapter, source);
 
@@ -355,10 +355,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         addCompletionDate: true,
       });
 
-      expect(result).toMatchObject({ type: 'committed', outcome: { type: 'task' } });
-      expect(await harness.read()).toBe(
-        '- [x] Invalid repeat 🔁 tomorrow 🏁 delete ✅ 2026-08-01\n  - [ ] Child\n',
-      );
+      expect(result).toMatchObject({ type: 'committed', outcome: { type: 'deleted' } });
+      expect(await harness.read()).toBe('');
     });
 
     it.each([

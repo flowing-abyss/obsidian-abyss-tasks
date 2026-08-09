@@ -1,6 +1,96 @@
 import { Notice, type App } from 'obsidian';
-import type { TaskApplicationApi, TaskCommandResult } from '../tasks';
+import { parseRecurrenceRule, type TaskApplicationApi, type TaskCommandResult } from '../tasks';
 import { TaskMoveRecoveryModal } from './TaskMoveRecoveryModal';
+
+interface CompletionConfirmationTask {
+  readonly status: string;
+  readonly recurrence?: string;
+  readonly onCompletion: 'keep' | 'delete';
+}
+
+let dismissActiveCompletionConfirmation: (() => void) | undefined;
+
+export function requestTaskCompletion(
+  task: CompletionConfirmationTask,
+  onConfirm: () => void | Promise<unknown>,
+): Promise<void> {
+  const recurrence = task.recurrence;
+  if (
+    task.status === 'done' ||
+    task.onCompletion !== 'delete' ||
+    recurrence === undefined ||
+    parseRecurrenceRule(recurrence).type === 'valid'
+  ) {
+    try {
+      return Promise.resolve(onConfirm()).then(() => undefined);
+    } catch (error) {
+      return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    dismissActiveCompletionConfirmation?.();
+    activeDocument.querySelector('.tc-recurrence-delete-confirm')?.remove();
+    const previousFocus = activeDocument.activeElement;
+    const surface = activeDocument.body.createDiv({
+      cls: 'tc-recurrence-delete-confirm',
+      attr: {
+        role: 'alertdialog',
+        'aria-modal': 'true',
+        'aria-labelledby': 'tc-recurrence-delete-confirm-title',
+        'aria-describedby': 'tc-recurrence-delete-confirm-description',
+      },
+    });
+    const dialog = surface.createDiv({ cls: 'tc-recurrence-delete-confirm-dialog' });
+    dialog.createEl('h3', {
+      cls: 'tc-recurrence-delete-confirm-title',
+      text: 'Delete completed task?',
+      attr: { id: 'tc-recurrence-delete-confirm-title' },
+    });
+    dialog.createEl('p', {
+      cls: 'tc-recurrence-delete-confirm-description',
+      text: 'The complete task and its sub-tasks will be deleted. No next occurrence will be created.',
+      attr: { id: 'tc-recurrence-delete-confirm-description' },
+    });
+    const actions = dialog.createDiv({ cls: 'tc-recurrence-delete-confirm-actions' });
+    const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
+    const confirm = actions.createEl('button', {
+      cls: 'mod-warning tc-recurrence-delete-confirm-button',
+      text: 'Delete completed task',
+      attr: { type: 'button' },
+    });
+
+    const remove = (): void => {
+      surface.remove();
+      activeDocument.removeEventListener('keydown', onKeyDown, true);
+      dismissActiveCompletionConfirmation = undefined;
+    };
+    const cancelCompletion = (restoreFocus: boolean): void => {
+      remove();
+      if (restoreFocus && previousFocus instanceof HTMLElement) previousFocus.focus();
+      resolve();
+    };
+    const confirmCompletion = (): void => {
+      remove();
+      Promise.resolve()
+        .then(onConfirm)
+        .then(() => resolve(), reject);
+    };
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      cancelCompletion(true);
+    };
+    cancel.addEventListener('click', () => cancelCompletion(true));
+    confirm.addEventListener('click', confirmCompletion);
+    surface.addEventListener('click', (event) => {
+      if (event.target === surface) cancelCompletion(true);
+    });
+    activeDocument.addEventListener('keydown', onKeyDown, true);
+    dismissActiveCompletionConfirmation = () => cancelCompletion(false);
+    cancel.focus();
+  });
+}
 
 export function presentTaskCommandResult(result: TaskCommandResult): void {
   if (result.type === 'ok') return;

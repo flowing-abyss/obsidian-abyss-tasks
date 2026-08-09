@@ -3,6 +3,7 @@ import type { LinkToken } from '../parser/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { attachLongPress } from './MobileTouch';
+import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderTaskText } from './renderTaskText';
 import { renderStatusMarker } from './StatusMarker';
 
@@ -24,7 +25,6 @@ const TASK_ICONS: Record<string, string> = {
   done: '✅',
   due: '📅',
   scheduled: '⏳',
-  recurrence: '🔁',
   overdue: '⚠️',
   process: '⏺️',
   cancelled: '🚫',
@@ -95,7 +95,11 @@ export function createTaskCard(
 
   const iconEl = activeDocument.createElement('div');
   iconEl.className = 'icon';
-  iconEl.textContent = taskIcon;
+  if (task.recurrence) {
+    renderRecurrenceBadge(iconEl, recurrenceBadgeInput(task.recurrence));
+  } else {
+    iconEl.textContent = taskIcon;
+  }
 
   const descEl = activeDocument.createElement('div');
   descEl.className = 'description';

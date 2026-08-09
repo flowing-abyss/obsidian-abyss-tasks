@@ -78,6 +78,7 @@ function callbacks() {
     onToggle: vi.fn(),
     onSetStatus: vi.fn(),
     onSetPriority: vi.fn(),
+    onEditRepeat: vi.fn(),
     statusRegistry: registry,
   };
 }
@@ -1057,6 +1058,21 @@ describe('renderTimedBlocksForDay', () => {
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(document.querySelector('.tc-status-popover')).not.toBeNull();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
+  });
+
+  it('offers Edit repeat in a timed task context menu and returns the exact task and marker anchor', () => {
+    const container = freshContainer();
+    const cbs = callbacks();
+    const t = task({ recurrence: 'every week', planning: { time: '09:00' } });
+    renderTimedBlocksForDay(container, [t], cbs);
+    const marker = container.querySelector<HTMLElement>('.tc-status-marker')!;
+
+    marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const editRepeat = document.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
+    expect(editRepeat).not.toBeNull();
+    editRepeat?.click();
+
+    expect(cbs.onEditRepeat).toHaveBeenCalledWith(t, marker);
   });
 
   it('picking a status from the popover fires onSetStatus with the task and chosen symbol', () => {

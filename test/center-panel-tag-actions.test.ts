@@ -23,6 +23,54 @@ afterEach(() => {
   activeDocument
     .querySelectorAll('.tc-test-center-attached')
     .forEach((element) => element.remove());
+  activeDocument
+    .querySelectorAll('.tc-status-popover, .tc-recurrence-popover, .tc-recurrence-delete-confirm')
+    .forEach((element) => element.remove());
+});
+
+describe('CenterPanel recurrence context action', () => {
+  it('opens one shared anchored editor and submits against the exact card task', async () => {
+    const recurring = task({
+      title: 'Repeat from card',
+      status: 'open',
+      tags: ['#task/inbox'],
+      recurrence: 'every week',
+      planning: { due: '2026-08-09' },
+      source: {
+        originalMarkdown: '- [ ] Repeat from card #task/inbox 🔁 every week 📅 2026-08-09',
+        originalBlock: '- [ ] Repeat from card #task/inbox 🔁 every week 📅 2026-08-09',
+      },
+    });
+    const { el, execute } = makeCenter([recurring]);
+
+    el.querySelector<HTMLElement>('.tc-task-card .tc-status-marker')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    const edit = activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
+    expect(edit).not.toBeNull();
+    edit?.click();
+
+    const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
+    expect(popover?.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
+    expect(popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+      'every week',
+    );
+    const raw = popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw');
+    if (!raw) throw new Error('missing recurrence input');
+    raw.value = 'every month';
+    raw.dispatchEvent(new Event('input', { bubbles: true }));
+    popover?.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.click();
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'patch',
+      target: { type: 'task', ref: recurring.ref },
+      patch: {
+        recurrence: { type: 'set', value: 'every month' },
+        onCompletion: { type: 'set', value: 'keep' },
+      },
+    });
+  });
 });
 
 interface CapturedMenuItem {

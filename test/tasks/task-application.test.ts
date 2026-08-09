@@ -1248,25 +1248,22 @@ describe('TaskApplicationService recurrence completion routing', () => {
     });
   });
 
-  it('lets an invalid raw recurrence complete normally without materializing a copy', async () => {
-    const current = recurringSnapshot({ recurrence: 'tomorrow' });
-    const done = recurringSnapshot({
-      recurrence: 'tomorrow',
-      status: 'done',
-      statusSymbol: 'x',
-    });
+  it('routes invalid recurrence with Delete through ordinary destructive completion', async () => {
+    const current = recurringSnapshot({ recurrence: 'tomorrow', onCompletion: 'delete' });
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',
-      outcome: { type: 'task', task: done },
+      outcome: { type: 'deleted', ref },
       changed: true,
     });
     const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>();
 
-    await service({ edit, completeRecurrence }, exactQueries(current)).execute({
-      type: 'set-status',
-      target: { type: 'task', ref },
-      symbol: 'x',
-    });
+    await expect(
+      service({ edit, completeRecurrence }, exactQueries(current)).execute({
+        type: 'set-status',
+        target: { type: 'task', ref },
+        symbol: 'x',
+      }),
+    ).resolves.toEqual({ type: 'ok', outcome: { type: 'deleted', ref }, changed: true });
 
     expect(completeRecurrence).not.toHaveBeenCalled();
     expect(edit).toHaveBeenCalledWith({

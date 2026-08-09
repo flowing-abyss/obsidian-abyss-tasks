@@ -2,6 +2,7 @@ import { setIcon, type Menu } from 'obsidian';
 import { PRIORITY_LEVELS } from '../priority';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { SubtaskSnapshot, TaskPriority, TaskSnapshot } from '../tasks';
+import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderStatusMarker } from './StatusMarker';
 
 export interface StatusMenuOpts {
@@ -9,6 +10,7 @@ export interface StatusMenuOpts {
   registry: StatusRegistry;
   onPickStatus: (char: string) => void;
   onPickPriority: (p: TaskPriority) => void;
+  onEditRepeat?: () => void;
 }
 
 const PRIORITY_OPTIONS: Array<{ p: TaskPriority; label: string }> = PRIORITY_LEVELS.map((l) => ({
@@ -85,7 +87,7 @@ function positionPopoverAt(pop: HTMLElement, ev: MouseEvent): void {
  * float above any panel; dismissed on outside click, Escape, or after a pick.
  */
 export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): void {
-  const { task, registry, onPickStatus, onPickPriority } = opts;
+  const { task, registry, onPickStatus, onPickPriority, onEditRepeat } = opts;
 
   // Only one status popover at a time.
   activeDocument.querySelectorAll('.tc-status-popover').forEach((el) => el.remove());
@@ -152,6 +154,21 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): void {
       list.createDiv({ cls: 'tc-status-popover-divider' });
     }
   });
+
+  if (onEditRepeat) {
+    pop.createDiv({ cls: 'tc-status-popover-divider' });
+    const editRepeat = pop.createDiv({
+      cls: 'tc-status-popover-row tc-status-popover-edit-repeat',
+    });
+    if (task.recurrence) {
+      renderRecurrenceBadge(editRepeat, recurrenceBadgeInput(task.recurrence));
+    }
+    editRepeat.createSpan({ cls: 'tc-status-popover-name', text: 'Edit repeat…' });
+    editRepeat.addEventListener('click', () => {
+      close();
+      onEditRepeat();
+    });
+  }
 
   positionPopoverAt(pop, ev);
   window.setTimeout(() => {

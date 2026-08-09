@@ -120,6 +120,7 @@ export default class TaskCalendarPlugin extends Plugin {
         this.tasks,
         this.statusRegistry,
         this.settings.taskPrefix,
+        this.settings.recurrence,
       );
       renderer.mount();
     };
