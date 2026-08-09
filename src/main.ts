@@ -18,6 +18,7 @@ import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownC
 import { ObsidianTaskDestinationProvider } from './tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { TaskIndex } from './tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
@@ -34,19 +35,23 @@ export default class TaskCalendarPlugin extends Plugin {
     await this.loadSettings();
     this.statusCatalog = new StatusCatalog(toStatusRules(this.settings.taskStatuses));
     this.statusRegistry = new StatusRegistry(this.settings.taskStatuses);
+    const refAuthority = new TaskRefAuthority();
     this.taskIndex = new TaskIndex(this.app, {
       statusCatalog: this.statusCatalog,
       dailyNoteFormat: this.settings.desktop.dailyNoteFormat,
       ...(this.settings.desktop.globalTaskFilter && {
         globalTaskFilter: this.settings.desktop.globalTaskFilter,
       }),
+      refAuthority,
     });
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
       editor: new TaskBlockEditor(),
-      locator: new TaskLocator(),
+      locator: new TaskLocator(refAuthority),
       snapshotsFromContent: (path, content) => this.taskIndex.snapshotsFromContent(path, content),
+      refAuthority,
+      snapshotState: this.taskIndex,
     });
     const destinationProvider = new ObsidianTaskDestinationProvider(
       this.app,

@@ -307,6 +307,29 @@ export class TaskBlockEditor {
     return content.slice(0, from) + content.slice(last.to);
   }
 
+  replaceOwnedTaskSubtree(
+    content: string,
+    block: TaskRootBlock,
+    ownerRelativeLine: number,
+    replacements: readonly string[],
+  ): string | undefined {
+    const ownership = this.ownedTaskSubtree(block.source, ownerRelativeLine);
+    if (!ownership || replacements.some((replacement) => replacement.length === 0)) {
+      return undefined;
+    }
+    const lines = sourceLines(content);
+    const first = lines[block.line + ownership.fromLine];
+    const last = lines[block.line + ownership.toLine];
+    if (!first || !last || block.line + ownership.toLine > block.toLine) return undefined;
+
+    if (replacements.length === 0) {
+      return content.slice(0, first.from) + content.slice(last.to);
+    }
+    const ending = preferredEnding(lines, block.line + ownership.fromLine);
+    const replacement = replacements.join(ending) + last.ending;
+    return content.slice(0, first.from) + replacement + content.slice(last.to);
+  }
+
   replaceLine(
     content: string,
     block: TaskRootBlock,

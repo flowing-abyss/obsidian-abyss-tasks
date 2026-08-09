@@ -347,7 +347,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     };
     const application = new TaskApplicationService(
       queries,
-      { edit, create, move: vi.fn() },
+      { edit, completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       destinationProvider,
@@ -393,7 +393,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     };
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       provider,
@@ -449,7 +449,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
     );

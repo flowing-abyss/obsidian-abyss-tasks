@@ -1,4 +1,5 @@
 import type { TaskRef } from '../../domain/types';
+import { TaskRefAuthority } from '../TaskRefAuthority';
 import type { TaskRootBlock } from './TaskBlockEditor';
 
 type LocateResult =
@@ -17,13 +18,23 @@ function defaultFingerprint(source: string): string {
 }
 
 export class TaskLocator {
-  constructor(private readonly fingerprint: (source: string) => string = defaultFingerprint) {}
+  private readonly authority: TaskRefAuthority | undefined;
+  private readonly fingerprint: (source: string) => string;
+
+  constructor(authorityOrFingerprint?: TaskRefAuthority | ((source: string) => string)) {
+    this.authority =
+      authorityOrFingerprint instanceof TaskRefAuthority ? authorityOrFingerprint : undefined;
+    this.fingerprint =
+      typeof authorityOrFingerprint === 'function' ? authorityOrFingerprint : defaultFingerprint;
+  }
 
   revision(source: string): string {
+    if (this.authority) return this.authority.revision(source);
     return `block:${this.fingerprint(source)}:${JSON.stringify(source)}`;
   }
 
   exactSource(revision: string): string | undefined {
+    if (this.authority) return this.authority.evidence(revision)?.source;
     if (!revision.startsWith('block:')) return undefined;
     const payload = revision.slice('block:'.length);
     const separator = payload.indexOf(':');

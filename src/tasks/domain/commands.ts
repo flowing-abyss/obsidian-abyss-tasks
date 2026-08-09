@@ -126,9 +126,19 @@ export type TaskCommand =
   | { readonly type: 'delete'; readonly ref: TaskRef }
   | { readonly type: 'move'; readonly ref: TaskRef; readonly destination: TaskDestination };
 
+export interface TaskOccurrenceResult {
+  readonly root: TaskSnapshot;
+  readonly target: TaskNodeRef;
+}
+
 export type TaskCommandOutcome =
   | { readonly type: 'task'; readonly task: TaskSnapshot }
-  | { readonly type: 'deleted'; readonly ref: TaskRef };
+  | { readonly type: 'deleted'; readonly ref: TaskRef }
+  | {
+      readonly type: 'recurrence';
+      readonly active: TaskOccurrenceResult;
+      readonly completed?: TaskOccurrenceResult;
+    };
 
 export interface TaskResolutionCandidate {
   readonly root: TaskSnapshot;

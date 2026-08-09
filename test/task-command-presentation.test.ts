@@ -33,12 +33,16 @@ describe('task command result presentation', () => {
     expect(noticeCalls()).toHaveLength(1);
   });
 
-  it('keeps successful commands silent', () => {
-    presentTaskCommandResult({
-      type: 'ok',
-      changed: false,
-      outcome: { type: 'task', task: {} as never },
-    });
+  it.each([
+    { type: 'task', task: {} as never },
+    { type: 'deleted', ref: {} as never },
+    {
+      type: 'recurrence',
+      active: { root: {} as never, target: {} as never },
+      completed: { root: {} as never, target: {} as never },
+    },
+  ] as const)('keeps a successful $type command silent', (outcome) => {
+    presentTaskCommandResult({ type: 'ok', changed: false, outcome });
     expect(noticeCalls()).toHaveLength(0);
   });
 

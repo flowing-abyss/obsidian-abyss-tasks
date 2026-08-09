@@ -1,6 +1,7 @@
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { Clock, TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
 import { shiftLocalDate } from '../domain/localDateMath';
+import { parseRecurrenceRule } from '../domain/recurrence';
 import { StatusCatalog } from '../domain/StatusCatalog';
 import type {
   SubtaskRef,
@@ -10,12 +11,17 @@ import type {
   TaskRef,
   TaskSnapshot,
   TaskStatus,
+  TaskStatusRule,
 } from '../domain/types';
 import { isSingleLineText } from '../domain/validation';
 import type { TaskApplicationApi, TaskQueryApi } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import type { TaskDestinationProvider } from './TaskDestinationProvider';
-import type { TaskEditCommand, TaskRepository } from './TaskRepository';
+import type {
+  RecurrenceCompletionRequest,
+  TaskEditCommand,
+  TaskRepository,
+} from './TaskRepository';
 
 const TAG_RE = /^#[\w/-]+$/u;
 
@@ -97,6 +103,10 @@ const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
 };
 type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
+type PreparedTaskCommand =
+  | { readonly command: TaskEditCommand }
+  | { readonly recurrence: RecurrenceCompletionRequest }
+  | { readonly result: TaskCommandResult };
 type MoveScheduleCommand = Extract<
   TaskCommand,
   { readonly type: 'move-time-slot' | 'move-to-all-day' }
@@ -199,9 +209,16 @@ export class TaskApplicationService implements TaskApplicationApi {
       if (command.type === 'move') return await this.move(command);
       const prepared = this.prepare(command, settings);
       if ('result' in prepared) return prepared.result;
-      const result = await this.repository.edit(prepared.command);
+      const result =
+        'recurrence' in prepared
+          ? await this.repository.completeRecurrence(prepared.recurrence)
+          : await this.repository.edit(prepared.command);
       if (result.type === 'committed') {
         if (result.outcome.type === 'task') this.remember(result.outcome.task);
+        if (result.outcome.type === 'recurrence') {
+          if ('recurrence' in prepared) this.forget(rootRefOf(prepared.recurrence.target));
+          this.remember(result.outcome.active.root);
+        }
         return { type: 'ok', outcome: result.outcome, changed: result.changed };
       }
       return result;
@@ -282,7 +299,7 @@ export class TaskApplicationService implements TaskApplicationApi {
   private prepare(
     command: EditableTaskCommand,
     settings: TaskBehaviorSettings,
-  ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
+  ): PreparedTaskCommand {
     const inputIssue = multilineInputIssue(command);
     if (inputIssue !== undefined) return { result: inputIssue };
     if (isBlockCommand(command)) return prepareBlockCommand(command, this.clock);
@@ -380,9 +397,18 @@ export class TaskApplicationService implements TaskApplicationApi {
     }
 
     const sameConfiguredStatus = currentRule?.symbol === rule.symbol;
+    const requestedSemanticStatus = statusForRuleType(rule.type);
     const entersStampedState =
-      currentSemanticStatus !== statusForRuleType(rule.type) &&
+      currentSemanticStatus !== requestedSemanticStatus &&
       (rule.type === 'done' || rule.type === 'cancelled');
+    const recurrence = this.prepareRecurrenceCompletion(
+      current,
+      command.target,
+      currentSemanticStatus,
+      rule,
+      settings,
+    );
+    if (recurrence !== undefined) return recurrence;
     return {
       command: {
         type: 'set-status',
@@ -392,6 +418,44 @@ export class TaskApplicationService implements TaskApplicationApi {
         ...(rule.type === 'done' && {
           addCompletionDate: settings.taskLifecycle.addCompletionDate,
         }),
+      },
+    };
+  }
+
+  private prepareRecurrenceCompletion(
+    current: TaskSnapshot | SubtaskSnapshot,
+    target: TaskStatusTarget,
+    currentSemanticStatus: TaskStatus,
+    requestedRule: TaskStatusRule,
+    settings: TaskBehaviorSettings,
+  ): Exclude<PreparedTaskCommand, { readonly command: TaskEditCommand }> | undefined {
+    if (
+      currentSemanticStatus === 'done' ||
+      requestedRule.type !== 'done' ||
+      current.recurrence === undefined ||
+      parseRecurrenceRule(current.recurrence).type !== 'valid'
+    ) {
+      return undefined;
+    }
+    const todoRule = this.statusCatalog.defaultForType('todo');
+    if (!todoRule) {
+      return {
+        result: {
+          type: 'invalid',
+          issues: [{ code: 'invalid-status', field: 'status' }],
+        },
+      };
+    }
+    return {
+      recurrence: {
+        target,
+        doneSymbol: requestedRule.symbol,
+        today: this.clock.today(),
+        todoSymbol: todoRule.symbol,
+        addCreatedDate: settings.taskLifecycle.addCreatedDate,
+        addCompletionDate: settings.taskLifecycle.addCompletionDate,
+        placement: settings.recurrence.newOccurrencePlacement,
+        policy: { removeScheduledDate: settings.recurrence.removeScheduledDate },
       },
     };
   }
@@ -421,5 +485,13 @@ export class TaskApplicationService implements TaskApplicationApi {
     if (this.recentOutcomes.size <= RECENT_OUTCOME_LIMIT) return;
     const oldest = this.recentOutcomes.keys().next().value;
     if (oldest !== undefined) this.recentOutcomes.delete(oldest);
+  }
+
+  private forget(ref: TaskRef): void {
+    for (const [key, task] of this.recentOutcomes) {
+      if (task.ref.filePath === ref.filePath && task.ref.revision === ref.revision) {
+        this.recentOutcomes.delete(key);
+      }
+    }
   }
 }

@@ -49,6 +49,7 @@ function service(move: TaskRepository['move']): TaskApplicationService {
     queries,
     {
       edit: vi.fn(),
+      completeRecurrence: vi.fn(),
       create: vi.fn(),
       move,
     },

@@ -28,11 +28,17 @@ import { TaskLocator } from './markdown/TaskLocator';
 import { TaskMarkdownCodec } from './markdown/TaskMarkdownCodec';
 import { projectTaskSnapshot } from './markdown/TaskSnapshotProjector';
 import { calendarDatesForPlanning, calendarRangeForPlanning, TaskDateIndex } from './TaskDateIndex';
+import {
+  TaskRefAuthority,
+  type RootRevisionOverride,
+  type TaskSnapshotState,
+} from './TaskRefAuthority';
 
 export interface TaskIndexOptions {
   readonly statusCatalog: StatusCatalog;
   readonly dailyNoteFormat: string;
   readonly globalTaskFilter?: string;
+  readonly refAuthority?: TaskRefAuthority;
 }
 
 type Listener = (event: TaskIndexEvent) => void;
@@ -348,7 +354,7 @@ function relocateSnapshot(
   };
 }
 
-export class TaskIndex implements TaskQueryApi {
+export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private readonly taskMap = new Map<string, readonly TaskSnapshot[]>();
   private readonly dateIndex = new TaskDateIndex<TaskSnapshot>(
     (task) => calendarDatesForPlanning(task.planning),
@@ -366,13 +372,14 @@ export class TaskIndex implements TaskQueryApi {
   private destroyed = false;
   private statusCatalog: StatusCatalog;
   private readonly blockEditor = new TaskBlockEditor();
-  private readonly locator = new TaskLocator();
+  private readonly locator: TaskLocator;
 
   constructor(
     private readonly app: App,
     private readonly options: TaskIndexOptions,
   ) {
     this.statusCatalog = options.statusCatalog;
+    this.locator = new TaskLocator(options.refAuthority);
   }
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
@@ -450,6 +457,14 @@ export class TaskIndex implements TaskQueryApi {
   resolve(ref: TaskRef): TaskResolution {
     const tasks = this.taskMap.get(ref.filePath) ?? [];
     const current = tasks.find((task) => task.source.line === ref.line);
+    const expectedSource = this.locator.exactSource(ref.revision);
+    const sourceMatches =
+      expectedSource === undefined
+        ? []
+        : tasks.filter((task) => task.source.originalBlock === expectedSource);
+    if (this.options.refAuthority && sourceMatches.length > 1) {
+      return { type: 'ambiguous', candidates: sourceMatches.map(cloneCandidate) };
+    }
     const matches = tasks.filter((task) => task.ref.revision === ref.revision);
     if (matches.length > 1) {
       return { type: 'ambiguous', candidates: matches.map(cloneCandidate) };
@@ -458,6 +473,12 @@ export class TaskIndex implements TaskQueryApi {
       return { type: 'exact', task: cloneTaskSnapshot(current) };
     }
     if (matches.length === 1) return { type: 'exact', task: cloneTaskSnapshot(matches[0]!) };
+    if (sourceMatches.length > 1) {
+      return { type: 'ambiguous', candidates: sourceMatches.map(cloneCandidate) };
+    }
+    if (sourceMatches.length === 1) {
+      return { type: 'conflict', current: cloneTaskSnapshot(sourceMatches[0]!) };
+    }
     if (current) return { type: 'conflict', current: cloneTaskSnapshot(current) };
     return { type: 'not-found', ref: { ...ref } };
   }
@@ -493,6 +514,15 @@ export class TaskIndex implements TaskQueryApi {
     if (!observation) return false;
     const cache = this.app.metadataCache.getFileCache(file);
     if (!forceContentFallback && !cache?.listItems?.some((item) => item.task !== undefined)) {
+      try {
+        if (this.options.refAuthority) {
+          const content = await this.app.vault.cachedRead(file);
+          if (!this.isCurrent(observation)) return false;
+          this.options.refAuthority.observe(path, content);
+        }
+      } catch {
+        // The empty replacement still wins for the observed lifecycle generation.
+      }
       if (!this.isCurrent(observation)) return false;
       this.replaceFile(path, []);
       return true;
@@ -506,6 +536,7 @@ export class TaskIndex implements TaskQueryApi {
           path,
           content,
           forceContentFallback ? cacheWithContentFallback(content, cache) : cache!,
+          true,
         ),
       );
       return true;
@@ -520,7 +551,9 @@ export class TaskIndex implements TaskQueryApi {
     filePath: string,
     content: string,
     cache: CachedMetadata,
+    allocateSuccessor = false,
   ): readonly TaskSnapshot[] {
+    const overrides = this.options.refAuthority?.observe(filePath, content) ?? [];
     if (!cache.listItems) return [];
     // Preserve the legacy raw-line shape (`\r` stays attached under CRLF) for compatibility
     // consumers while TaskBlockEditor independently owns exact block revision bytes.
@@ -528,6 +561,20 @@ export class TaskIndex implements TaskQueryApi {
     const blockByLine = new Map(
       this.blockEditor.rootBlocks(content).map((block) => [block.line, block] as const),
     );
+    const sourceCounts = new Map<string, number>();
+    for (const block of blockByLine.values()) {
+      sourceCounts.set(block.source, (sourceCounts.get(block.source) ?? 0) + 1);
+    }
+    const overrideByLine = new Map(overrides.map((override) => [override.line, override] as const));
+    const priorByLine = new Map(
+      (this.taskMap.get(filePath) ?? []).map((task) => [task.source.line, task] as const),
+    );
+    const priorBySource = new Map<string, TaskSnapshot[]>();
+    for (const task of this.taskMap.get(filePath) ?? []) {
+      const matches = priorBySource.get(task.source.originalBlock) ?? [];
+      matches.push(task);
+      priorBySource.set(task.source.originalBlock, matches);
+    }
     const dailyNoteDate = dailyNoteDateForPath(filePath, this.options.dailyNoteFormat);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const frontmatter = cache.frontmatter;
@@ -559,7 +606,20 @@ export class TaskIndex implements TaskQueryApi {
       const parsed = codec.parseLine(originalMarkdown, { filePath, line });
       if (!parsed) continue;
       const exactBlock = blockByLine.get(line)?.source ?? originalMarkdown;
-      const ref: TaskRef = { filePath, line, revision: this.locator.revision(exactBlock) };
+      const ref: TaskRef = {
+        filePath,
+        line,
+        revision: this.reconciledRevision(
+          line,
+          exactBlock,
+          sourceCounts.get(exactBlock) ?? 1,
+          overrideByLine,
+          priorByLine,
+          priorBySource,
+          sourceCounts,
+          allocateSuccessor,
+        ),
+      };
       const presentation = {
         linkCount: 0,
         ...(dailyNoteDate && { dailyNoteDate }),
@@ -584,6 +644,19 @@ export class TaskIndex implements TaskQueryApi {
 
   /** Pure infrastructure collaborator used by the repository for immediate command outcomes. */
   snapshotsFromContent(filePath: string, content: string): readonly TaskSnapshot[] {
+    return this.previewContent(filePath, content);
+  }
+
+  currentRoot(filePath: string, line: number, source: string): TaskRef | undefined {
+    const tasks = this.taskMap.get(filePath) ?? [];
+    const sourceMatches = tasks.filter((task) => task.source.originalBlock === source);
+    if (sourceMatches.length > 1) return undefined;
+    const hinted = tasks.find((task) => task.source.line === line);
+    const current = hinted?.source.originalBlock === source ? hinted : (sourceMatches[0] ?? hinted);
+    return current ? { ...current.ref } : undefined;
+  }
+
+  previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
     return this.parseFile(filePath, content, {
@@ -592,10 +665,59 @@ export class TaskIndex implements TaskQueryApi {
     });
   }
 
-  private replaceFile(filePath: string, tasks: readonly TaskSnapshot[]): void {
+  /** Installs authoritative content after an atomic repository transition. */
+  installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[] {
+    const cache = cacheWithContentFallback(content, null);
+    const frontmatter = frontmatterFromContent(content);
+    const tasks = this.parseFile(
+      filePath,
+      content,
+      { ...cache, ...(frontmatter && { frontmatter }) },
+      true,
+    );
+    if (this.replaceFile(filePath, tasks)) this.queueChanged(filePath);
+    return tasks.map(cloneTaskSnapshot);
+  }
+
+  private reconciledRevision(
+    line: number,
+    source: string,
+    sourceCount: number,
+    overrides: ReadonlyMap<number, RootRevisionOverride>,
+    priorByLine: ReadonlyMap<number, TaskSnapshot>,
+    priorBySource: ReadonlyMap<string, readonly TaskSnapshot[]>,
+    currentSourceCounts: ReadonlyMap<string, number>,
+    allocateSuccessor: boolean,
+  ): string {
+    const override = overrides.get(line);
+    if (override?.source === source) return override.revision;
+    if (this.options.refAuthority) {
+      const hinted = priorByLine.get(line);
+      if (hinted?.source.originalBlock === source) return hinted.ref.revision;
+      const prior = priorBySource.get(source) ?? [];
+      if (sourceCount === 1 && prior.length === 1) return prior[0]!.ref.revision;
+      const hintedRelocated =
+        hinted !== undefined &&
+        (currentSourceCounts.get(hinted.source.originalBlock) ?? 0) === 1 &&
+        (priorBySource.get(hinted.source.originalBlock)?.length ?? 0) === 1;
+      if (hinted && !hintedRelocated && allocateSuccessor) {
+        return (
+          this.options.refAuthority.successor(hinted.ref.revision, source) ??
+          this.locator.revision(source)
+        );
+      }
+    }
+    return this.locator.revision(source);
+  }
+
+  private replaceFile(filePath: string, tasks: readonly TaskSnapshot[]): boolean {
+    const current = this.taskMap.get(filePath) ?? [];
+    const changed = JSON.stringify(current) !== JSON.stringify(tasks);
+    if (!changed) return false;
     if (tasks.length > 0) this.taskMap.set(filePath, tasks);
     else this.taskMap.delete(filePath);
     this.dateIndex.updateFile(filePath, tasks);
+    return true;
   }
 
   private registerEvents(): void {
@@ -610,8 +732,11 @@ export class TaskIndex implements TaskQueryApi {
           return;
         }
         this.advance(file, path);
-        this.replaceFile(path, this.parseFile(path, data, cacheWithContentFallback(data, cache)));
-        this.queueChanged(path);
+        const changed = this.replaceFile(
+          path,
+          this.parseFile(path, data, cacheWithContentFallback(data, cache), true),
+        );
+        if (changed) this.queueChanged(path);
       }),
     );
     this.vaultRefs.push(

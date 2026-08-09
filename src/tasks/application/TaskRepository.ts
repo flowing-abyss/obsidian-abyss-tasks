@@ -5,6 +5,7 @@ import type {
   TaskResolutionCandidate,
   TaskStatusTarget,
 } from '../domain/commands';
+import type { RecurrencePolicy } from '../domain/recurrence';
 import type {
   LocalDate,
   TaskDestination,
@@ -53,6 +54,17 @@ export interface TaskDraft {
   readonly addCreatedDate?: boolean;
 }
 
+export interface RecurrenceCompletionRequest {
+  readonly target: TaskStatusTarget;
+  readonly doneSymbol: string;
+  readonly today: LocalDate;
+  readonly todoSymbol: string;
+  readonly addCreatedDate: boolean;
+  readonly addCompletionDate: boolean;
+  readonly placement: 'before' | 'after';
+  readonly policy: RecurrencePolicy;
+}
+
 export type TaskRepositoryResult =
   | { readonly type: 'committed'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
@@ -69,6 +81,7 @@ export type TaskRepositoryResult =
 
 export interface TaskRepository {
   edit(command: TaskEditCommand): Promise<TaskRepositoryResult>;
+  completeRecurrence(request: RecurrenceCompletionRequest): Promise<TaskRepositoryResult>;
   create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult>;
   move(ref: TaskRef, destination: TaskDestination): Promise<TaskRepositoryResult>;
 }

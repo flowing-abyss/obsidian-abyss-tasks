@@ -61,12 +61,13 @@ const statuses = new StatusCatalog([
 const clock = { today: vi.fn(() => localDate('2026-07-14')) };
 
 function service(
-  repository: Pick<TaskRepository, 'edit'> & Partial<Pick<TaskRepository, 'create'>>,
+  repository: Pick<TaskRepository, 'edit'> &
+    Partial<Pick<TaskRepository, 'create' | 'completeRecurrence'>>,
   taskQueries: TaskQueryApi = queries(),
 ) {
   return new TaskApplicationService(
     taskQueries,
-    { create: vi.fn(), move: vi.fn(), ...repository },
+    { completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn(), ...repository },
     statuses,
     clock,
   );
@@ -81,7 +82,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const application = new TaskApplicationService(
       queries(),
-      { edit, create: vi.fn(), move: vi.fn() },
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
       undefined,
@@ -533,7 +534,7 @@ describe('TaskApplicationService planning commands', () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
     const service = new TaskApplicationService(
       queries(),
-      { edit, create: vi.fn(), move: vi.fn() },
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -565,6 +566,7 @@ describe('TaskApplicationService planning commands', () => {
   ])('preserves the structured repository result $type', async (result) => {
     const repository: TaskRepository = {
       edit: vi.fn().mockResolvedValue(result),
+      completeRecurrence: vi.fn(),
       create: vi.fn(),
       move: vi.fn(),
     };
@@ -578,6 +580,7 @@ describe('TaskApplicationService planning commands', () => {
   it('maps an unexpected adapter rejection without leaking task Markdown', async () => {
     const repository: TaskRepository = {
       edit: vi.fn().mockRejectedValue(new Error('- [ ] secret task')),
+      completeRecurrence: vi.fn(),
       create: vi.fn(),
       move: vi.fn(),
     };
@@ -617,7 +620,7 @@ describe('TaskApplicationService planning commands', () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
     const service = new TaskApplicationService(
       queries(),
-      { edit, create: vi.fn(), move: vi.fn() },
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -1103,7 +1106,7 @@ describe('TaskApplicationService planning commands', () => {
     clock.today.mockClear();
     const application = new TaskApplicationService(
       exactQueries,
-      { edit, create: vi.fn(), move: vi.fn() },
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       custom,
       clock,
     );
@@ -1164,5 +1167,289 @@ describe('TaskApplicationService planning commands', () => {
       ],
     });
     expect(edit).not.toHaveBeenCalled();
+  });
+});
+
+describe('TaskApplicationService recurrence completion routing', () => {
+  function recurringSnapshot(overrides: Partial<TaskSnapshot> = {}): TaskSnapshot {
+    return {
+      ...snapshot(),
+      recurrence: 'every day',
+      onCompletion: 'keep',
+      onCompletionExplicit: false,
+      ...overrides,
+    };
+  }
+
+  it('snapshots behavior and Clock once and intercepts only first semantic entry into Done', async () => {
+    const current = recurringSnapshot();
+    const active = recurringSnapshot({
+      ref: { ...ref, revision: 'active' },
+      planning: { due: localDate('2026-07-21') },
+    });
+    const completed = recurringSnapshot({
+      ref: { ...ref, line: 1, revision: 'completed' },
+      status: 'done',
+      statusSymbol: 'x',
+      planning: { due: localDate('2026-07-20'), completion: localDate('2026-07-14') },
+    });
+    const outcome = {
+      type: 'recurrence' as const,
+      active: { root: active, target: { type: 'task' as const, ref: active.ref } },
+      completed: {
+        root: completed,
+        target: { type: 'task' as const, ref: completed.ref },
+      },
+    };
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>().mockResolvedValue({
+      type: 'committed',
+      outcome,
+      changed: true,
+    });
+    const edit = vi.fn<TaskRepository['edit']>();
+    const today = vi.fn(() => localDate('2026-07-14'));
+    const behavior = vi.fn(() => ({
+      taskLifecycle: { addCreatedDate: false, addCompletionDate: true },
+      recurrence: { newOccurrencePlacement: 'after' as const, removeScheduledDate: true },
+    }));
+    const application = new TaskApplicationService(
+      exactQueries(current),
+      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      statuses,
+      { today },
+      undefined,
+      behavior,
+    );
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: { type: 'task', ref },
+        symbol: 'x',
+      }),
+    ).resolves.toEqual({ type: 'ok', outcome, changed: true });
+    expect(behavior).toHaveBeenCalledOnce();
+    expect(today).toHaveBeenCalledOnce();
+    expect(edit).not.toHaveBeenCalled();
+    expect(completeRecurrence).toHaveBeenCalledWith({
+      target: { type: 'task', ref },
+      doneSymbol: 'x',
+      today: localDate('2026-07-14'),
+      todoSymbol: ' ',
+      addCreatedDate: false,
+      addCompletionDate: true,
+      placement: 'after',
+      policy: { removeScheduledDate: true },
+    });
+  });
+
+  it('lets an invalid raw recurrence complete normally without materializing a copy', async () => {
+    const current = recurringSnapshot({ recurrence: 'tomorrow' });
+    const done = recurringSnapshot({
+      recurrence: 'tomorrow',
+      status: 'done',
+      statusSymbol: 'x',
+    });
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: done },
+      changed: true,
+    });
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>();
+
+    await service({ edit, completeRecurrence }, exactQueries(current)).execute({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'x',
+    });
+
+    expect(completeRecurrence).not.toHaveBeenCalled();
+    expect(edit).toHaveBeenCalledWith({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'x',
+      stamp: localDate('2026-07-14'),
+      addCompletionDate: true,
+    });
+  });
+
+  it('does not iterate a valid recurrence for Done-to-Done status changes', async () => {
+    const current = recurringSnapshot({ status: 'done', statusSymbol: 'x' });
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: current },
+      changed: false,
+    });
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>();
+    clock.today.mockClear();
+
+    await service({ edit, completeRecurrence }, exactQueries(current)).execute({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'd',
+    });
+
+    expect(completeRecurrence).not.toHaveBeenCalled();
+    expect(clock.today).not.toHaveBeenCalled();
+    expect(edit).toHaveBeenCalledWith({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'd',
+      addCompletionDate: true,
+    });
+  });
+
+  it('rejects a recurring completion when no default To-do status exists', async () => {
+    const catalog = new StatusCatalog([
+      { id: 'done', symbol: 'x', type: 'done', defaultForType: true },
+    ]);
+    const edit = vi.fn<TaskRepository['edit']>();
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>();
+    const today = vi.fn(() => localDate('2026-07-14'));
+    const application = new TaskApplicationService(
+      exactQueries(recurringSnapshot()),
+      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      catalog,
+      { today },
+    );
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: { type: 'task', ref },
+        symbol: 'x',
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-status', field: 'status' }],
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(completeRecurrence).not.toHaveBeenCalled();
+    expect(today).not.toHaveBeenCalled();
+  });
+
+  it('bridges index lag only through the active occurrence and never caches completed history', async () => {
+    const current = recurringSnapshot();
+    const active = recurringSnapshot({ ref: { ...ref, revision: 'active' } });
+    const completed = recurringSnapshot({
+      ref: { ...ref, line: 1, revision: 'completed' },
+      status: 'done',
+      statusSymbol: 'x',
+    });
+    const recurrenceOutcome = {
+      type: 'recurrence' as const,
+      active: { root: active, target: { type: 'task' as const, ref: active.ref } },
+      completed: {
+        root: completed,
+        target: { type: 'task' as const, ref: completed.ref },
+      },
+    };
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>().mockResolvedValue({
+      type: 'committed',
+      outcome: recurrenceOutcome,
+      changed: true,
+    });
+    const inProgress = { ...active, status: 'in-progress' as const, statusSymbol: '/' };
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: inProgress },
+      changed: true,
+    });
+    const laggingQueries: TaskQueryApi = {
+      ...queries(),
+      resolve: (target) =>
+        target.revision === ref.revision
+          ? { type: 'exact', task: current }
+          : { type: 'conflict', current },
+    };
+    const application = new TaskApplicationService(
+      laggingQueries,
+      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      statuses,
+      clock,
+    );
+
+    const first = await application.execute({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'x',
+    });
+    if (first.type !== 'ok' || first.outcome.type !== 'recurrence') {
+      throw new Error('missing recurrence outcome');
+    }
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: first.outcome.active.target,
+        symbol: '/',
+      }),
+    ).resolves.toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+    expect(edit).toHaveBeenCalledWith({
+      type: 'set-status',
+      target: first.outcome.active.target,
+      symbol: '/',
+    });
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: first.outcome.completed!.target,
+        symbol: 'x',
+      }),
+    ).resolves.toEqual({ type: 'conflict', current });
+    expect(edit).toHaveBeenCalledOnce();
+    expect(completeRecurrence).toHaveBeenCalledOnce();
+  });
+
+  it('evicts a primed consumed-ref alias before caching the active recurrence during index lag', async () => {
+    const current = recurringSnapshot();
+    const active = recurringSnapshot({ ref: { ...ref, revision: 'active' } });
+    const outcome = {
+      type: 'recurrence' as const,
+      active: { root: active, target: { type: 'task' as const, ref: active.ref } },
+    };
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: current },
+      changed: false,
+    });
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>().mockResolvedValue({
+      type: 'committed',
+      outcome,
+      changed: true,
+    });
+    const laggingQueries: TaskQueryApi = {
+      ...queries(),
+      resolve: (target) =>
+        target.revision === ref.revision
+          ? { type: 'conflict', current }
+          : { type: 'exact', task: active },
+    };
+    const application = new TaskApplicationService(
+      laggingQueries,
+      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      statuses,
+      clock,
+    );
+
+    await application.execute({
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { priority: { type: 'set', value: 'A' } },
+    });
+    await application.execute({
+      type: 'set-status',
+      target: { type: 'task', ref },
+      symbol: 'x',
+    });
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: { type: 'task', ref },
+        symbol: 'x',
+      }),
+    ).resolves.toEqual({ type: 'conflict', current });
+    expect(completeRecurrence).toHaveBeenCalledOnce();
   });
 });

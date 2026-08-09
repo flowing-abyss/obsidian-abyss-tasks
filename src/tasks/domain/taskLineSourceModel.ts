@@ -1,6 +1,6 @@
 import type { OnCompletion, TaskPriority } from './types';
 
-export type TaskLineSourceSpanKind =
+type TaskLineSourceSpanKind =
   | 'prefix'
   | 'title'
   | 'tag'
@@ -22,7 +22,7 @@ export type TaskLineSourceSpanKind =
   | 'separator'
   | 'unknown';
 
-export interface TaskLineSourceSpan {
+interface TaskLineSourceSpan {
   readonly kind: TaskLineSourceSpanKind;
   readonly from: number;
   readonly to: number;

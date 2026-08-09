@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
+import {
+  TaskRefAuthority,
+  taskRefContentFingerprint,
+} from '../../src/tasks/infrastructure/TaskRefAuthority';
 import {
   canonicalStatusCatalog,
   captureChangedCallback,
@@ -27,7 +31,10 @@ function taskCache(line = 0, frontmatter?: Record<string, unknown>): CachedMetad
   } as CachedMetadata;
 }
 
-async function setup(files: Record<string, string>): Promise<{
+async function setup(
+  files: Record<string, string>,
+  refAuthority?: TaskRefAuthority,
+): Promise<{
   app: Awaited<ReturnType<typeof createAppWithFiles>>;
   index: TaskIndex;
   fireChanged: (file: TFile, data: string, cache: CachedMetadata) => void;
@@ -39,6 +46,7 @@ async function setup(files: Record<string, string>): Promise<{
   const index = new TaskIndex(app, {
     statusCatalog: canonicalStatusCatalog(),
     dailyNoteFormat: 'YYYY-MM-DD',
+    ...(refAuthority && { refAuthority }),
   });
   return { app, index, fireChanged };
 }
@@ -99,6 +107,161 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('installs a committed byte-identical successor and preserves it across line drift', async () => {
+    const source = '- [ ] task\n';
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const initial = index.list()[0]!;
+    const rootSource = initial.source.originalBlock;
+    const successor = authority.successor(initial.ref.revision, rootSource);
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: 'task.md',
+        candidateFingerprint: taskRefContentFingerprint(source),
+        candidateLength: source.length,
+        expectedRevision: initial.ref.revision,
+        roots: [{ line: 0, source: rootSource, revision: successor }],
+      },
+      initial.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transition');
+    authority.commit(staged.token);
+
+    const installed = index.installCommittedContent('task.md', source);
+
+    expect(installed[0]?.ref.revision).toBe(successor);
+    expect(index.list()[0]?.ref.revision).toBe(successor);
+    authority.acknowledge('task.md', source);
+    expect(authority.observe('task.md', source)).toEqual([]);
+
+    const drifted = `heading\n${source}`;
+    fireChanged(mdFile(app, 'task.md'), drifted, taskCache(1));
+
+    expect(index.list()[0]?.ref).toMatchObject({ line: 1, revision: successor });
+    index.destroy();
+  });
+
+  it('keeps duplicate exact source ambiguous after a generated revision', async () => {
+    const source = '- [ ] duplicate\n';
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const initial = index.list()[0]!;
+    const rootSource = initial.source.originalBlock;
+    const successor = authority.successor(initial.ref.revision, rootSource);
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: 'task.md',
+        candidateFingerprint: taskRefContentFingerprint(source),
+        candidateLength: source.length,
+        expectedRevision: initial.ref.revision,
+        roots: [{ line: 0, source: rootSource, revision: successor }],
+      },
+      initial.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transition');
+    authority.commit(staged.token);
+    index.installCommittedContent('task.md', source);
+    authority.acknowledge('task.md', source);
+
+    fireChanged(mdFile(app, 'task.md'), `${source}${source}`, {
+      listItems: [
+        { task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } },
+        { task: ' ', parent: -1, position: { start: { line: 1 }, end: { line: 1 } } },
+      ],
+    } as CachedMetadata);
+
+    expect(index.resolve({ ...initial.ref, line: 99, revision: successor })).toMatchObject({
+      type: 'ambiguous',
+      candidates: [{ root: { source: { line: 0 } } }, { root: { source: { line: 1 } } }],
+    });
+    index.destroy();
+  });
+
+  it('advances a known root generation across an external A-to-B-to-A mutation', async () => {
+    const sourceA = '- [ ] alpha\n';
+    const sourceB = '- [ ] beta\n';
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': sourceA }, authority);
+    await index.initialize();
+    const initialRevision = index.list()[0]!.ref.revision;
+
+    fireChanged(mdFile(app, 'task.md'), sourceB, taskCache());
+    const intermediateRevision = index.list()[0]!.ref.revision;
+    fireChanged(mdFile(app, 'task.md'), sourceA, taskCache());
+    const restoredRevision = index.list()[0]!.ref.revision;
+
+    expect(intermediateRevision).not.toBe(initialRevision);
+    expect(restoredRevision).not.toBe(initialRevision);
+    expect(restoredRevision).not.toBe(intermediateRevision);
+    index.destroy();
+  });
+
+  it('lets an event observe staging before commit and keeps post-commit installation idempotent', async () => {
+    const source = '- [ ] task\n';
+    const candidate = '- [ ] changed\n';
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const initial = index.list()[0]!;
+    const candidateRoot = candidate.trimEnd();
+    const successor = authority.successor(initial.ref.revision, candidateRoot);
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: 'task.md',
+        candidateFingerprint: taskRefContentFingerprint(candidate),
+        candidateLength: candidate.length,
+        expectedRevision: initial.ref.revision,
+        roots: [{ line: 0, source: candidateRoot, revision: successor }],
+      },
+      initial.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transition token');
+
+    fireChanged(mdFile(app, 'task.md'), candidate, taskCache());
+    expect(index.list()[0]?.ref.revision).toBe(successor);
+    authority.commit(staged.token);
+    expect(index.installCommittedContent('task.md', candidate)[0]?.ref.revision).toBe(successor);
+    authority.acknowledge('task.md', candidate);
+    expect(authority.observe('task.md', candidate)).toEqual([]);
+    index.destroy();
+  });
+
+  it('creates one authority revision for a root with one thousand subtasks', async () => {
+    const source = [
+      '- [ ] root',
+      ...Array.from({ length: 1_000 }, (_, index) => `  - [ ] child ${index}`),
+    ].join('\n');
+    const authority = new TaskRefAuthority('index-session');
+    const revision = vi.spyOn(authority, 'revision');
+    const { index } = await setup({ 'task.md': source }, authority);
+
+    const roots = index.snapshotsFromContent('task.md', source);
+
+    expect(roots).toHaveLength(1);
+    expect(roots[0]?.subtasks).toHaveLength(1_000);
+    expect(revision).toHaveBeenCalledOnce();
+    index.destroy();
+  });
+
+  it('previews changed content without allocating a successor generation', async () => {
+    const authority = new TaskRefAuthority('index-session');
+    const { index } = await setup({ 'task.md': '- [ ] alpha\n' }, authority);
+    await index.initialize();
+    const successor = vi.spyOn(authority, 'successor');
+
+    const first = index.previewContent('task.md', '- [ ] beta\n');
+    const second = index.previewContent('task.md', '- [ ] beta\n');
+
+    expect(successor).not.toHaveBeenCalled();
+    expect(first[0]?.ref.revision).toBe(second[0]?.ref.revision);
+    index.destroy();
+  });
+
   it('holds file lifecycle generations by weak identity', async () => {
     const { index } = await setup({ 'task.md': '- [ ] task' });
     expect((index as unknown as { fileLifecycles: unknown }).fileLifecycles).toBeInstanceOf(
