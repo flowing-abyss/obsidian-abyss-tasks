@@ -1,4 +1,5 @@
 import { localDate, type LocalDate, type TaskSnapshot } from '../tasks';
+import { calendarTaskWithPlanning } from './calendarOccurrences';
 import { taskLayoutIdentity } from './timegrid/layout';
 
 export interface VisibleSpanSegment {
@@ -179,7 +180,9 @@ export function layoutVisibleSpansWithReplacement(
   const identity = taskLayoutIdentity(source);
   return layoutVisibleSpans(
     tasks.map((candidate) =>
-      taskLayoutIdentity(candidate) === identity ? { ...candidate, planning } : candidate,
+      taskLayoutIdentity(candidate) === identity
+        ? calendarTaskWithPlanning(candidate, planning)
+        : candidate,
     ),
     dates,
   );

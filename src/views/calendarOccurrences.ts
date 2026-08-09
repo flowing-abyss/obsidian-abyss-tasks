@@ -354,6 +354,18 @@ export function calendarOccurrenceForTask(task: TaskSnapshot): CalendarOccurrenc
 }
 
 /**
+ * Copies one calendar snapshot for a transient planning preview while preserving its semantic
+ * occurrence registration. The identity stays non-enumerable and process-local in the existing
+ * WeakMap; no persisted ref/id or second metadata grammar is introduced.
+ */
+export function calendarTaskWithPlanning(task: TaskSnapshot, planning: TaskPlanning): TaskSnapshot {
+  const preview = { ...task, planning };
+  const occurrence = occurrenceBySnapshot.get(task);
+  if (occurrence !== undefined) occurrenceBySnapshot.set(preview, occurrence);
+  return preview;
+}
+
+/**
  * Resolves the explicit occurrence contract at a renderer boundary. Calendar projections already
  * register their derived snapshots in `occurrenceBySnapshot`; direct materialized snapshots (used
  * by non-projected callers and renderer unit tests) receive the same revision-free root contract

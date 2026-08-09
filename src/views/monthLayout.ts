@@ -1,7 +1,8 @@
 import type { TaskSnapshot } from '../tasks';
-import { bucketTasksForDate } from './TodayView';
+import { calendarTaskWithPlanning } from './calendarOccurrences';
 import { layoutVisibleSpans, type VisibleSpanRow, type VisibleSpanSegment } from './spanLayout';
 import { taskLayoutIdentity } from './timegrid/layout';
+import { bucketTasksForDate } from './TodayView';
 
 export type MonthCompactKind = 'plain' | 'timed' | 'deadline';
 
@@ -142,7 +143,9 @@ export function layoutVisibleMonthWithReplacement(
   const identity = taskLayoutIdentity(source);
   return layoutVisibleMonth(
     tasks.map((candidate) =>
-      taskLayoutIdentity(candidate) === identity ? { ...candidate, planning } : candidate,
+      taskLayoutIdentity(candidate) === identity
+        ? calendarTaskWithPlanning(candidate, planning)
+        : candidate,
     ),
     dates,
   );

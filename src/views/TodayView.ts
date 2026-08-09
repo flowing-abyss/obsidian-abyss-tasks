@@ -3,6 +3,7 @@ import type { ResolvedConfig, TagGroup } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
 import { BaseView } from './BaseView';
+import { calendarTaskWithPlanning } from './calendarOccurrences';
 import {
   createSpanInteractionOwner,
   type InteractiveSpanBoundaryTarget,
@@ -149,7 +150,9 @@ export function previewTimedPositionFor(
 ): PositionedBlock | undefined {
   const identity = taskLayoutIdentity(source);
   const prospectiveTasks = tasks.map((candidate) =>
-    taskLayoutIdentity(candidate) === identity ? { ...candidate, planning } : candidate,
+    taskLayoutIdentity(candidate) === identity
+      ? calendarTaskWithPlanning(candidate, planning)
+      : candidate,
   );
   const { timed, timedSpans } = bucketTasksForDate(prospectiveTasks, date);
   return layoutTimedDay(toTimedBlockInputs([...timed, ...timedSpans])).positioned.find(

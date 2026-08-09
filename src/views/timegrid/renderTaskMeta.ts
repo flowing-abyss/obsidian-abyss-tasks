@@ -7,6 +7,7 @@ import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
+import { taskCardVisualStyle } from '../../ui/TaskCard';
 import {
   calendarOccurrenceForRender,
   type CalendarOccurrence,
@@ -58,6 +59,14 @@ export function applyOccurrenceDomState(
   element.setAttribute('data-occurrence-key', occurrence.key);
   element.setAttribute('data-span-role', spanRole);
   element.setAttribute('data-segment-identity', `${occurrence.key}:${spanRole}`);
+  element.setAttribute(
+    'data-control-slot',
+    element.querySelector('.tc-status-marker') === null ? 'reserved' : 'occupied',
+  );
+  element.setAttribute(
+    'data-recurrence-slot',
+    element.querySelector('.tc-recurrence-badge') === null ? 'reserved' : 'occupied',
+  );
 }
 
 /**
@@ -172,6 +181,7 @@ export function createForecastTaskCard(
 ): HTMLElement {
   const card = activeDocument.createElement('div');
   card.className = `task ${taskClass} noNoteIcon`;
+  card.setAttribute('style', taskCardVisualStyle(task));
   card.setAttribute('data-task-text', task.title);
   card.setAttribute('title', task.title);
   if (task.planning.due) card.setAttribute('data-due', task.planning.due);

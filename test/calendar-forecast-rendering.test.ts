@@ -9,17 +9,22 @@ import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defa
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
-import { MonthGridView } from '../src/views/MonthGridView';
-import { MonthView } from '../src/views/MonthView';
-import { TodayView } from '../src/views/TodayView';
-import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
-import { WeekView } from '../src/views/WeekView';
 import {
+  calendarOccurrenceForTask,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
   type CalendarOccurrence,
   type CalendarTaskSource,
 } from '../src/views/calendarOccurrences';
+import { MonthGridView } from '../src/views/MonthGridView';
+import { layoutVisibleMonth, layoutVisibleMonthWithReplacement } from '../src/views/monthLayout';
+import { MonthView } from '../src/views/MonthView';
+import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from '../src/views/spanLayout';
+import { layoutTimedDay, taskLayoutIdentity } from '../src/views/timegrid/layout';
+import { toTimedBlockInputs } from '../src/views/timegrid/renderTimedBlocks';
+import { previewTimedPositionFor, TodayView } from '../src/views/TodayView';
+import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import { WeekView } from '../src/views/WeekView';
 import {
   createAppWithFiles,
   freshContainer,
@@ -50,6 +55,109 @@ function declarationsForRuleContaining(...selectors: string[]): string {
   return '';
 }
 
+interface StyleRuleLike {
+  readonly selectorText: string;
+  readonly style: CSSStyleDeclaration;
+}
+
+interface WinningDeclaration {
+  readonly selector: string;
+  readonly value: string;
+  readonly specificity: readonly [number, number, number];
+  readonly order: number;
+}
+
+function calendarStyleRules(style: HTMLStyleElement): readonly StyleRuleLike[] {
+  const collected: StyleRuleLike[] = [];
+  const visit = (rules: CSSRuleList): void => {
+    for (const rule of Array.from(rules)) {
+      const candidate = rule as CSSRule & {
+        readonly cssRules?: CSSRuleList;
+        readonly selectorText?: string;
+        readonly style?: CSSStyleDeclaration;
+      };
+      if (candidate.selectorText !== undefined && candidate.style !== undefined) {
+        collected.push({ selectorText: candidate.selectorText, style: candidate.style });
+      }
+      if (candidate.cssRules !== undefined) visit(candidate.cssRules);
+    }
+  };
+  if (style.sheet) visit(style.sheet.cssRules);
+  return collected;
+}
+
+function selectorSpecificity(selector: string): readonly [number, number, number] {
+  const withoutNot = selector.replace(/:not\(([^)]*)\)/gu, '$1');
+  const ids = withoutNot.match(/#[\w-]+/gu)?.length ?? 0;
+  const classes = withoutNot.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+(?:\([^)]*\))?/gu)?.length ?? 0;
+  const types = withoutNot
+    .replace(/#[\w-]+|\.[\w-]+|\[[^\]]+\]|:{1,2}[\w-]+(?:\([^)]*\))?/gu, ' ')
+    .split(/[\s>+~]+/u)
+    .filter((part) => part !== '' && part !== '*').length;
+  return [ids, classes, types];
+}
+
+function compareSpecificity(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number],
+): number {
+  return left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
+}
+
+function winningDeclaration(
+  style: HTMLStyleElement,
+  element: HTMLElement,
+  property: string,
+  pseudo: 'none' | 'hover' | 'before' = 'none',
+): WinningDeclaration | undefined {
+  const matches: Array<WinningDeclaration & { readonly important: boolean }> = [];
+  calendarStyleRules(style).forEach((rule, order) => {
+    const value = rule.style.getPropertyValue(property).trim();
+    if (value === '') return;
+    for (const selector of rule.selectorText.split(',').map((part) => part.trim())) {
+      const hasHover = selector.includes(':hover');
+      const hasBefore = selector.includes('::before');
+      if (pseudo === 'none' && (hasHover || hasBefore)) continue;
+      if (pseudo === 'hover' && hasBefore) continue;
+      if (pseudo === 'before' && !hasBefore) continue;
+      const matchable = selector.replace(/:hover/gu, '').replace(/::before/gu, '');
+      try {
+        if (!element.matches(matchable)) continue;
+      } catch {
+        continue;
+      }
+      matches.push({
+        selector,
+        value,
+        specificity: selectorSpecificity(selector),
+        order,
+        important: rule.style.getPropertyPriority(property) === 'important',
+      });
+    }
+  });
+  const winner = matches.sort(
+    (left, right) =>
+      Number(left.important) - Number(right.important) ||
+      compareSpecificity(left.specificity, right.specificity) ||
+      left.order - right.order,
+  )[matches.length - 1];
+  if (!winner) return undefined;
+  return {
+    selector: winner.selector,
+    value: winner.value,
+    specificity: winner.specificity,
+    order: winner.order,
+  };
+}
+
+function installCalendarStyles(): HTMLStyleElement {
+  const style = activeDocument.createElement('style');
+  style.dataset['tcCalendarContract'] = 'true';
+  style.textContent = css;
+  activeDocument.head.appendChild(style);
+  return style;
+}
+
 interface ForecastFixture {
   readonly occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>;
   readonly task: TaskSnapshot;
@@ -58,15 +166,18 @@ interface ForecastFixture {
 function rootSource(options: {
   readonly title: string;
   readonly planning: TaskFixtureInput['planning'];
-  readonly recurrence: string;
+  readonly recurrence?: string;
+  readonly filePath?: string;
   readonly line?: number;
+  readonly presentation?: TaskFixtureInput['presentation'];
 }): CalendarTaskSource {
   const root = task({
     title: options.title,
     markdownTitle: options.title,
     recurrence: options.recurrence,
     planning: options.planning,
-    source: { filePath: 'Recurring.md', line: options.line ?? 0 },
+    source: { filePath: options.filePath ?? 'Recurring.md', line: options.line ?? 0 },
+    presentation: options.presentation,
   });
   return { root, node: root, target: { type: 'task', ref: root.ref } };
 }
@@ -124,6 +235,42 @@ function materialized(source: CalendarTaskSource): {
   const occurrence = projection.occurrences[0];
   if (occurrence?.kind !== 'materialized') throw new Error('Expected a materialized occurrence');
   return { occurrence, task: taskSnapshotForCalendarOccurrence(occurrence) };
+}
+
+function nestedMaterializedPair(
+  planning: TaskFixtureInput['planning'],
+): readonly [ReturnType<typeof materialized>, ReturnType<typeof materialized>] {
+  const root = task({
+    title: 'Shared projected root',
+    source: { filePath: 'Shared.md', line: 7 },
+  });
+  const first = subtask({
+    title: 'First projected child',
+    recurrence: 'every week',
+    planning,
+    ref: {
+      parent: { type: 'task', ref: root.ref },
+      relativeLine: 1,
+      originalBlock: '  - [ ] First projected child',
+    },
+  });
+  const second = subtask({
+    title: 'Second projected child',
+    recurrence: 'every week',
+    planning,
+    ref: {
+      parent: { type: 'task', ref: root.ref },
+      relativeLine: 2,
+      originalBlock: '  - [ ] Second projected child',
+    },
+  });
+  const rooted = task({ ...root, subtasks: [first, second] });
+  const source = (node: typeof first): CalendarTaskSource => ({
+    root: rooted,
+    node,
+    target: { type: 'subtask', ref: node.ref },
+  });
+  return [materialized(source(first)), materialized(source(second))];
 }
 
 function forecastCallbacks() {
@@ -185,6 +332,133 @@ function legacyCallbacks() {
   };
 }
 
+interface LegacyVisualFixture {
+  readonly root: HTMLElement;
+  readonly style: HTMLStyleElement;
+  readonly ordinary: HTMLElement;
+  readonly recurring: HTMLElement;
+  readonly forecast: HTMLElement;
+}
+
+function renderLegacyVisualFixture(view: 'week' | 'month'): LegacyVisualFixture {
+  const visibleDate = localDate('2026-08-05');
+  const ordinarySource = rootSource({
+    title: 'Legacy ordinary',
+    planning: { due: visibleDate },
+    filePath: 'Ordinary.md',
+    presentation: { noteColor: '#225588' },
+  });
+  const recurringSource = rootSource({
+    title: 'Legacy materialized repeat',
+    recurrence: 'every week',
+    planning: { due: visibleDate },
+    filePath: 'Materialized.md',
+    presentation: { noteColor: '#884422' },
+  });
+  const forecastSource = rootSource({
+    title: 'Legacy colored forecast',
+    recurrence: 'every week',
+    planning: { due: localDate('2026-07-29') },
+    filePath: 'Forecast.md',
+    presentation: { noteColor: '#336699', noteTextColor: '#f5f5f5' },
+  });
+  const ordinary = materialized(ordinarySource).task;
+  const recurring = materialized(recurringSource).task;
+  const forecast = forecasts(forecastSource, visibleDate, visibleDate)[0]!.task;
+  const root = freshContainer();
+  root.className = 'tasksCalendar';
+  root.dataset['tcLegacyVisualFixture'] = 'true';
+  root.setAttribute('view', view);
+  activeDocument.body.appendChild(root);
+  const style = installCalendarStyles();
+  const tasks = [forecast, recurring, ordinary];
+  if (view === 'week') {
+    new WeekView(legacyCallbacks()).render(
+      root,
+      tasks,
+      resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
+    );
+  } else {
+    new MonthView(legacyCallbacks()).render(
+      root,
+      tasks,
+      resolvedConfig({ startPosition: '2026-08', firstDayOfWeek: 1 }),
+    );
+  }
+  const card = (title: string): HTMLElement =>
+    Array.from(root.querySelectorAll<HTMLElement>('.task')).find(
+      (candidate) => candidate.dataset['taskText'] === title,
+    )!;
+  return {
+    root,
+    style,
+    ordinary: card('Legacy ordinary'),
+    recurring: card('Legacy materialized repeat'),
+    forecast: card('Legacy colored forecast'),
+  };
+}
+
+function expectLegacyVisualContract(fixture: LegacyVisualFixture): void {
+  const { root, style, ordinary, recurring, forecast } = fixture;
+  const host = getComputedStyle(root);
+  for (const token of [
+    '--tc-calendar-surface',
+    '--tc-calendar-surface-forecast',
+    '--tc-calendar-border',
+    '--tc-calendar-border-forecast',
+    '--tc-calendar-foreground',
+    '--tc-calendar-now',
+    '--tc-calendar-border-width',
+  ]) {
+    expect(host.getPropertyValue(token).trim(), `${token} on legacy host`).not.toBe('');
+  }
+
+  expect(forecast.style.getPropertyValue('--task-color')).toBe('#336699');
+  const forecastStyle = getComputedStyle(forecast);
+  expect(forecastStyle.getPropertyValue('--tc-tag-color')).toContain('--task-color');
+  expect(forecastStyle.getPropertyValue('--tc-calendar-surface-forecast')).toContain('color-mix');
+  expect(winningDeclaration(style, forecast, 'border-inline-start')?.value).toContain(
+    '--tc-tag-color',
+  );
+
+  expect(forecast.dataset['controlSlot']).toBe('reserved');
+  expect(forecast.querySelector('.tc-status-marker')).toBeNull();
+  expect(forecast.querySelector('input[type="checkbox"]')).toBeNull();
+  expect(forecast.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+  const forecastInner = forecast.querySelector<HTMLElement>(':scope > .inner')!;
+  expect(winningDeclaration(style, forecastInner, 'content', 'before')?.value).toBe('""');
+
+  for (const materialized of [ordinary, recurring]) {
+    expect(materialized.dataset['controlSlot']).toBe('occupied');
+    expect(materialized.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    const inner = materialized.querySelector<HTMLElement>(':scope > .inner')!;
+    expect(winningDeclaration(style, inner, 'content', 'before')).toBeUndefined();
+  }
+  expect(recurring.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+
+  const forecastBackground = winningDeclaration(style, forecast, 'background');
+  expect(forecastBackground).toMatchObject({
+    selector: ".tc-calendar-item[data-occurrence-state='forecast']",
+    value: 'var(--tc-calendar-surface-forecast)',
+    specificity: [0, 2, 0],
+  });
+  expect(winningDeclaration(style, forecast, 'background', 'hover')).toEqual(forecastBackground);
+  expect(winningDeclaration(style, forecast, 'color')?.value).toBe('var(--tc-calendar-foreground)');
+  expect(winningDeclaration(style, forecast, 'outline')?.value).toBe(
+    'var(--tc-calendar-border-width) dotted var(--tc-calendar-border-forecast)',
+  );
+  expect(winningDeclaration(style, forecast, 'opacity')).toBeUndefined();
+  expect(forecastStyle.opacity).not.toBe('0.8');
+
+  for (const property of ['padding', 'border-radius', 'font-size', 'line-height']) {
+    const values = [ordinary, recurring, forecast].map(
+      (card) => winningDeclaration(style, card, property)?.value,
+    );
+    expect(new Set(values).size, `${property} geometry`).toBe(1);
+    expect(values[0], `${property} geometry`).toBeTruthy();
+  }
+}
+
 function expectAxes(
   element: HTMLElement,
   state: 'materialized' | 'forecast',
@@ -206,6 +480,9 @@ function expectForecastInert(element: HTMLElement): void {
 afterEach(() => {
   activeDocument
     .querySelectorAll('.tc-forecast-context-menu')
+    .forEach((element) => element.remove());
+  activeDocument
+    .querySelectorAll('[data-tc-calendar-contract], [data-tc-legacy-visual-fixture]')
     .forEach((element) => element.remove());
 });
 
@@ -491,6 +768,14 @@ describe('forecast rendering contract', () => {
 });
 
 describe('forecast visual system', () => {
+  it('keeps legacy Week forecast cards on the complete shared DOM and winning cascade contract', () => {
+    expectLegacyVisualContract(renderLegacyVisualFixture('week'));
+  });
+
+  it('keeps legacy Month forecast cards on the complete shared DOM and winning cascade contract', () => {
+    expectLegacyVisualContract(renderLegacyVisualFixture('month'));
+  });
+
   it('reserves one control and recurrence slot for ordinary, recurring, and forecast month items', () => {
     const ordinary = task({
       title: 'Ordinary item',
@@ -720,6 +1005,79 @@ describe('forecast visual system', () => {
     expect(diagnostics[0]?.getAttribute('aria-live')).toBe('polite');
 
     panel.destroy();
+  });
+});
+
+describe('projected preview semantic identity', () => {
+  const weekDates = [
+    '2026-08-03',
+    '2026-08-04',
+    '2026-08-05',
+    '2026-08-06',
+    '2026-08-07',
+    '2026-08-08',
+    '2026-08-09',
+  ];
+
+  it('keeps a timed replacement preview in the same semantic lane as the committed projection', () => {
+    const pair = nestedMaterializedPair({
+      due: localDate('2026-08-05'),
+      time: '09:00',
+      duration: 60,
+    });
+    const tasks = pair.map(({ task: snapshot }) => snapshot);
+    const source = pair[0].task;
+    const sourceIdentity = pair[0].occurrence.key;
+    const committed = layoutTimedDay(toTimedBlockInputs(tasks)).positioned.find(
+      ({ task: positionedTask }) =>
+        calendarOccurrenceForTask(positionedTask)?.key === sourceIdentity,
+    );
+    expect(committed).toMatchObject({ column: 0, columns: 2 });
+
+    const preview = previewTimedPositionFor(tasks, source, { ...source.planning }, '2026-08-05');
+    expect(preview).toBeDefined();
+    expect(calendarOccurrenceForTask(preview!.task)?.key).toBe(sourceIdentity);
+    expect(taskLayoutIdentity(preview!.task)).toBe(sourceIdentity);
+    expect({ column: preview!.column, columns: preview!.columns }).toEqual({
+      column: committed!.column,
+      columns: committed!.columns,
+    });
+  });
+
+  it('keeps Month replacement ordering and slots identical to the committed projection', () => {
+    const pair = nestedMaterializedPair({ due: localDate('2026-08-05') });
+    const tasks = pair.map(({ task: snapshot }) => snapshot);
+    const source = pair[0].task;
+    const expected = pair.map(({ occurrence }, slot) => ({ identity: occurrence.key, slot }));
+    const entries = (layout: ReturnType<typeof layoutVisibleMonth>) =>
+      (layout.rows[0]?.compactByDate.get('2026-08-05') ?? []).map((entry) => ({
+        identity: calendarOccurrenceForTask(entry.task)?.key,
+        slot: entry.slot,
+      }));
+
+    expect(entries(layoutVisibleMonth(tasks, weekDates))).toEqual(expected);
+    expect(
+      entries(layoutVisibleMonthWithReplacement(tasks, weekDates, source, { ...source.planning })),
+    ).toEqual(expected);
+  });
+
+  it('keeps span replacement identities and lanes identical to the committed projection', () => {
+    const pair = nestedMaterializedPair({
+      start: localDate('2026-08-04'),
+      due: localDate('2026-08-06'),
+    });
+    const tasks = pair.map(({ task: snapshot }) => snapshot);
+    const source = pair[0].task;
+    const expected = pair.map(({ occurrence }, lane) => ({ identity: occurrence.key, lane }));
+    const entries = (layout: ReturnType<typeof layoutVisibleSpans>) =>
+      (layout.rows[0]?.segments ?? [])
+        .filter((segment) => segment.date === '2026-08-05')
+        .map((segment) => ({ identity: segment.identity, lane: segment.lane }));
+
+    expect(entries(layoutVisibleSpans(tasks, weekDates))).toEqual(expected);
+    expect(
+      entries(layoutVisibleSpansWithReplacement(tasks, weekDates, source, { ...source.planning })),
+    ).toEqual(expected);
   });
 });
 

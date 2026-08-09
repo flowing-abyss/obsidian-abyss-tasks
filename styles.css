@@ -70,7 +70,13 @@
    the same occurrence DOM axis. Give that host the semantic recurrence tokens without imposing a
    palette or typography outside the active Obsidian theme. */
 .tasksCalendar {
+  --tc-calendar-item-rail: 3px;
+  --tc-calendar-control-slot: 19px;
+  --tc-calendar-slot-gap: 4px;
+  --tc-calendar-border-width: 1px;
   --tc-calendar-forecast-fill-strength: 6%;
+  --tc-event-fill-strength: 11%;
+  --tc-event-outline-strength: 24%;
   --tc-calendar-surface: color-mix(
     in srgb,
     var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength, 11%),
@@ -97,6 +103,8 @@
 
 .theme-dark .tasksCalendar {
   --tc-calendar-forecast-fill-strength: 9%;
+  --tc-event-fill-strength: 14%;
+  --tc-event-outline-strength: 32%;
 }
 
 /* ============================================================
@@ -463,16 +471,19 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   opacity: 1;
 }
 .tasksCalendar .task {
+  --tc-tag-color: var(--task-color, var(--interactive-accent));
   display: flex;
   align-items: baseline;
   gap: 4px;
+  box-sizing: border-box;
   padding: 2px 4px;
-  background: var(--task-background);
+  background: var(--tc-calendar-surface);
+  border-inline-start: var(--tc-calendar-item-rail) solid var(--tc-tag-color);
   border-radius: 3px;
+  box-shadow: inset 0 0 0 var(--tc-calendar-border-width) var(--tc-calendar-border);
   margin: 1px 1px 2px 1px;
   font-size: var(--font-smallest, 11px);
   line-height: 1.4;
-  opacity: 0.8;
   cursor: pointer;
   transition: background 0.1s;
   white-space: nowrap;
@@ -486,8 +497,7 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   color: var(--text-muted);
 }
 body:not(.is-mobile) .tasksCalendar .task:hover {
-  opacity: 1;
-  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 var(--tc-calendar-border-width) var(--background-modifier-hover);
 }
 .tasksCalendar .task[draggable='true'] {
   cursor: grab;
@@ -511,6 +521,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   text-decoration: none !important;
   border-radius: 3px;
   overflow: hidden;
+}
+.tasksCalendar .task.tc-calendar-item[data-control-slot='reserved'] > .inner::before {
+  content: '';
+  display: inline-block;
+  box-sizing: border-box;
+  inline-size: var(--tc-calendar-control-slot);
+  block-size: var(--tc-calendar-control-slot);
+  margin-inline-end: var(--tc-calendar-slot-gap);
+  vertical-align: middle;
+}
+.tasksCalendar .task.tc-calendar-item > .inner > .tc-status-marker {
+  display: inline-grid;
+  margin-inline-end: var(--tc-calendar-slot-gap);
+  vertical-align: middle;
 }
 .tasksCalendar a {
   text-decoration: none !important;

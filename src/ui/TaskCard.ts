@@ -42,27 +42,28 @@ function transColor(hex: string, percent: number): string {
   return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
+/** Shared item-local color variables for the legacy Month/Week/List card silhouette. */
+export function taskCardVisualStyle(task: TaskSnapshot): string {
+  const lighter = 25;
+  const darker = -40;
+  if (task.presentation.noteColor && task.presentation.noteTextColor) {
+    return `--task-background:${task.presentation.noteColor}33;--task-color:${task.presentation.noteColor};--dark-task-text-color:${task.presentation.noteTextColor};--light-task-text-color:${task.presentation.noteTextColor}`;
+  }
+  if (task.presentation.noteColor) {
+    return `--task-background:${task.presentation.noteColor}33;--task-color:${task.presentation.noteColor};--dark-task-text-color:${transColor(task.presentation.noteColor, darker)};--light-task-text-color:${transColor(task.presentation.noteColor, lighter)}`;
+  }
+  if (task.presentation.noteTextColor) {
+    return `--task-background:#7D7D7D33;--task-color:#7D7D7D;--dark-task-text-color:${transColor(task.presentation.noteTextColor, darker)};--light-task-text-color:${transColor(task.presentation.noteTextColor, lighter)}`;
+  }
+  return '--task-background:#7D7D7D33;--task-color:#7D7D7D;--dark-task-text-color:#4d4d4d;--light-task-text-color:#a8a8a8';
+}
+
 export function createTaskCard(
   task: TaskSnapshot,
   taskClass: string,
   options: TaskCardOptions,
 ): HTMLElement {
   const { mode = 'default', onToggle } = options;
-  const lighter = 25;
-  const darker = -40;
-
-  // Compute color style
-  let style: string;
-  if (task.presentation.noteColor && task.presentation.noteTextColor) {
-    style = `--task-background:${task.presentation.noteColor}33;--task-color:${task.presentation.noteColor};--dark-task-text-color:${task.presentation.noteTextColor};--light-task-text-color:${task.presentation.noteTextColor}`;
-  } else if (task.presentation.noteColor) {
-    style = `--task-background:${task.presentation.noteColor}33;--task-color:${task.presentation.noteColor};--dark-task-text-color:${transColor(task.presentation.noteColor, darker)};--light-task-text-color:${transColor(task.presentation.noteColor, lighter)}`;
-  } else if (task.presentation.noteTextColor) {
-    style = `--task-background:#7D7D7D33;--task-color:#7D7D7D;--dark-task-text-color:${transColor(task.presentation.noteTextColor, darker)};--light-task-text-color:${transColor(task.presentation.noteTextColor, lighter)}`;
-  } else {
-    style =
-      '--task-background:#7D7D7D33;--task-color:#7D7D7D;--dark-task-text-color:#4d4d4d;--light-task-text-color:#a8a8a8';
-  }
 
   const taskIcon = TASK_ICONS[taskClass] ?? '';
   const relative = task.planning.due ? window.moment(task.planning.due).fromNow() : '';
@@ -71,7 +72,7 @@ export function createTaskCard(
   // Root div
   const div = activeDocument.createElement('div');
   div.className = `task ${cls}`;
-  div.setAttribute('style', style);
+  div.setAttribute('style', taskCardVisualStyle(task));
   div.setAttribute('data-task-text', task.title);
   div.setAttribute('title', task.title);
   if (task.planning.due) div.setAttribute('data-due', task.planning.due);
