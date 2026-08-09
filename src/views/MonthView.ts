@@ -157,7 +157,13 @@ export class MonthView extends BaseView {
     const onEditLink = this.callbacks.onEditLink;
     renderTaskGroup(container, groups, date, today, (task, cls, occurrence) => {
       if (occurrence.kind === 'forecast') {
-        return createForecastTaskCard(task, cls, occurrence, this.callbacks);
+        return createForecastTaskCard(
+          task,
+          cls,
+          occurrence,
+          date as import('../tasks').LocalDate,
+          this.callbacks,
+        );
       }
       const card = createTaskCard(task, cls, {
         app: this.callbacks.app,

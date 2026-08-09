@@ -32,7 +32,7 @@ export class TaskModal {
     private tasks?: TaskApplicationApi,
   ) {}
 
-  open(task: TaskSnapshot): void {
+  open(task: TaskSnapshot, context?: string): void {
     this.close();
     // Capture the active document at open time so close() removes from the same document
     this.ownerDoc = activeDocument;
@@ -60,6 +60,9 @@ export class TaskModal {
 
     const modal = backdrop.createDiv({ cls: 'tc-modal' });
     this.modalEl = modal;
+    if (context) {
+      modal.createDiv({ cls: 'tc-forecast-source-context', text: context });
+    }
 
     const panelEl = modal.createDiv({ cls: 'tc-right tc-modal-body' });
     this.innerPanel = new RightPanel(

@@ -308,7 +308,7 @@ function renderAllDaySpanSegment(
     segment.kind === 'terminal',
     false,
     segment.kind === 'terminal' ? 'terminal' : 'continuation',
-    segment.kind === 'terminal' ? 'span-terminal' : 'span-continuation',
+    `${segment.kind === 'terminal' ? 'span-terminal' : 'span-continuation'}:${segment.date}`,
   );
   const occurrence = callbacks.occurrenceFor(segment.task);
   body.setAttribute('data-span-kind', segment.kind);

@@ -14,10 +14,9 @@ import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
-import { calendarOccurrenceForRender, type CalendarOccurrence } from '../calendarOccurrences';
+import type { CalendarOccurrence } from '../calendarOccurrences';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
-  capContinuationMinHeightsPx,
   layoutTimedDay,
   MIN_BLOCK_HEIGHT_PX,
   minutesToPixels,
@@ -139,8 +138,7 @@ function tryReleasePointer(el: HTMLElement, pointerId: number): void {
 }
 
 /**
- * Shared `TaskSnapshot[]` -> `TimedBlockInput[]` conversion used by the production renderer and
- * retained legacy continuation tests/callers.
+ * Shared `TaskSnapshot[]` -> `TimedBlockInput[]` conversion used by the production renderer.
  */
 export function toTimedBlockInputs(tasks: readonly TaskSnapshot[]): TimedBlockInput[] {
   return tasks.map((t) => ({
@@ -161,12 +159,20 @@ function timedContinuity(
 function timedSpanRole(
   task: TaskSnapshot,
   continuity: 'single' | 'continuation' | 'terminal',
+  renderedDate?: string,
 ): string {
+  let baseRole: string;
   if (task.planning.scheduled && task.planning.scheduled !== task.planning.due) {
-    return 'scheduled-body';
+    baseRole = 'scheduled-body';
+  } else if (continuity === 'single') {
+    baseRole = 'timed-body';
+  } else {
+    baseRole = `timed-${continuity}`;
   }
-  if (continuity !== 'single') return `timed-${continuity}`;
-  return 'timed-body';
+  if (continuity === 'single') return baseRole;
+  const localDate =
+    renderedDate ?? (continuity === 'terminal' ? task.planning.due : task.planning.start);
+  return localDate ? `${baseRole}:${localDate}` : baseRole;
 }
 
 function renderTimedBlockHead(
@@ -241,7 +247,7 @@ export function renderTimedBlocksForDay(
       cls: `tc-tg-block${terminal ? '' : ' tc-tg-block-continuation'}`,
     });
     const continuity = timedContinuity(p.task, terminal);
-    const spanRole = timedSpanRole(p.task, continuity);
+    const spanRole = timedSpanRole(p.task, continuity, options?.date);
     applyOccurrenceDomState(block, occurrence, continuity, spanRole);
     block.setAttribute('data-tc-task-file', p.task.source.filePath);
     block.setAttribute('data-tc-task-line', String(p.task.source.line));
@@ -468,88 +474,6 @@ function attachOwnedInteractions(
       else callbacks.onExtendToSpan(resizedTask, target.date);
     },
   });
-}
-
-/**
- * Legacy no-date compatibility renderer for the old inert continuation shape. Production
- * Today/Week rendering no longer calls this function: both terminal and ghost segments now go
- * through one `renderTimedBlocksForDay` overlap pass and share the owned interaction contract.
- *
- * Deliberately minimal — no checkbox, no drag, no resize handles, no markdown-link-aware title
- * rendering (a plain textContent title, unlike the anchor block's renderTaskText) — visually
- * similar in spirit to MonthGridView's existing `.tc-mg-span-segment` continuation bars for
- * untimed spans: clearly linked to the task (same title, tag color, time-of-day position) but
- * unmistakably not a second interactive copy within this compatibility API. A contextmenu opens
- * the task modal (`onTaskClick`), same as a full block, since that's a read-only action.
- *
- * Task 35 (expanded scope): also shows the same time-range+duration subtitle and count badges
- * (subtasks/comments/links) the anchor block shows, so a continuation segment reads as more than
- * just a title bar — but this legacy shape stays purely presentational: no checkbox, and neither
- * the subtitle nor the badges container gets a click/drag handler.
- *
- * Task 37: like `.tc-tg-block`, `.tc-tg-block-continuation` has a CSS min-height that keeps a
- * short segment's title legible — but, unlike production ghosts, these compatibility segments
- * never go through `packOverlaps`. `capContinuationMinHeightsPx` retains their old collision cap.
- */
-export function renderTimedSpanContinuation(
-  hourColumnEl: HTMLElement,
-  tasks: TaskSnapshot[],
-  onTaskClick?: (task: TaskSnapshot) => void,
-  tagGroups: TagGroup[] = [],
-  otherBlocks: TimedBlockInput[] = [],
-): void {
-  const continuationInputs = toTimedBlockInputs(tasks);
-  const minHeightCaps = capContinuationMinHeightsPx(continuationInputs, otherBlocks);
-  for (let i = 0; i < tasks.length; i++) {
-    const t = tasks[i]!;
-    const continuationInput = continuationInputs[i]!;
-    const { startMinutes, durationMinutes } = continuationInput;
-    const seg = hourColumnEl.createDiv({ cls: 'tc-tg-block-continuation' });
-    const occurrence = calendarOccurrenceForRender(t);
-    applyOccurrenceDomState(seg, occurrence, 'continuation', 'timed-continuation');
-    seg.style.top = `${minutesToPixels(startMinutes)}px`;
-    const heightPx = minutesToPixels(durationMinutes);
-    seg.style.height = `${heightPx}px`;
-    // Mirrors renderTimedBlocksForDay's own use of capMinHeightsPx exactly: only intervene when
-    // the CSS min-height would otherwise cross into whatever's next in this day column.
-    const cap = minHeightCaps.get(continuationInput) ?? Infinity;
-    if (cap < MIN_BLOCK_HEIGHT_PX) {
-      seg.style.minHeight = `${Math.max(heightPx, cap)}px`;
-    }
-    const tagColor = tagColorFor(t.tags, tagGroups);
-    if (tagColor) {
-      seg.setCssProps({ '--tc-tag-color': tagColor });
-      // Task 40 (Round 4): same contrast-driven text-color fix as the anchor block above,
-      // applied to the continuation segment's shared committed fill.
-      const textColorVar = tagFillTextColorVar(seg, tagColor);
-      if (textColorVar) seg.setCssProps({ '--tc-tag-text-color': textColorVar });
-    }
-    const topRow = seg.createDiv({ cls: 'tc-tg-block-toprow' });
-    topRow.createDiv({
-      cls: 'tc-tg-block-subtitle',
-      text: `${minutesToTimeString(startMinutes)}–${minutesToTimeString(startMinutes + durationMinutes)} (${formatDurationFromMinutes(durationMinutes)})`,
-    });
-    if (hasCountBadges(t)) {
-      const badges = topRow.createDiv({ cls: 'tc-tg-block-badges' });
-      renderCountBadges(badges, t);
-    }
-    // Task 38: mirrors the anchor block's is-done/is-cancelled title convention above — a
-    // continuation segment renders the same underlying task, so it must reflect completion the
-    // same way rather than looking untouched while its anchor block elsewhere shows struck-through.
-    seg.createSpan({
-      cls: `tc-tg-block-continuation-title${statusTitleClass(t.status)}`,
-      text: plainGhostTaskTitle(t),
-    });
-    if (onTaskClick) {
-      bindMaterializedInteractions(occurrence, () => {
-        seg.addEventListener('contextmenu', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onTaskClick(t);
-        });
-      });
-    }
-  }
 }
 
 /**

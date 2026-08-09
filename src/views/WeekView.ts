@@ -80,7 +80,13 @@ export class WeekView extends BaseView {
       const onEditLink = this.callbacks.onEditLink;
       renderTaskGroup(cellContent, groups, currentDate, today, (task, cls, occurrence) => {
         if (occurrence.kind === 'forecast') {
-          return createForecastTaskCard(task, cls, occurrence, this.callbacks);
+          return createForecastTaskCard(
+            task,
+            cls,
+            occurrence,
+            currentDate as import('../tasks').LocalDate,
+            this.callbacks,
+          );
         }
         const card = createTaskCard(task, cls, {
           app: this.callbacks.app,

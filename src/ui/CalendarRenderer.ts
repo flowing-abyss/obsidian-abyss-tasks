@@ -5,6 +5,7 @@ import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   localDate,
+  type LocalDate,
   type RecurrencePolicy,
   type TaskApplicationApi,
   type TaskQueryApi,
@@ -32,6 +33,7 @@ import {
   presentTaskCreationResult,
   requestTaskCompletion,
 } from './taskCommandResult';
+import { TaskModal } from './TaskModal';
 import { openInFile } from './taskNavigation';
 import { Toolbar, type ViewEntry } from './Toolbar';
 
@@ -54,6 +56,7 @@ export class CalendarRenderer {
   private activeStatGroup: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
+  private taskModal: TaskModal;
 
   constructor(
     private rootEl: HTMLElement,
@@ -65,6 +68,7 @@ export class CalendarRenderer {
     private taskPrefix = '',
     private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
   ) {
+    this.taskModal = new TaskModal(app, statusRegistry, undefined, queries, tasks);
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
       this.selectedDate = resolveWeekStartPosition(
@@ -264,6 +268,10 @@ export class CalendarRenderer {
     this.recurrenceEditorCleanup = cleanup;
   }
 
+  private openForecastSource(source: CalendarTaskSource, referenceDate: LocalDate): void {
+    this.taskModal.open(source.root, `Forecast for ${referenceDate}`);
+  }
+
   private dismissRecurrenceEditor(): void {
     const cleanup = this.recurrenceEditorCleanup;
     this.recurrenceEditorCleanup = null;
@@ -319,7 +327,8 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
-          onForecastClick: (source) => void openInFile(this.app, source.root),
+          onForecastClick: (source, referenceDate) =>
+            this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
           onContextMenu: cb.onContextMenu,
@@ -332,7 +341,8 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
-          onForecastClick: (source) => void openInFile(this.app, source.root),
+          onForecastClick: (source, referenceDate) =>
+            this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
           onContextMenu: cb.onContextMenu,
@@ -422,6 +432,7 @@ export class CalendarRenderer {
 
   destroy(): void {
     this.dismissRecurrenceEditor();
+    this.taskModal.close();
     this.unsubscribe?.();
     this.activeView?.destroy();
     this.toolbar?.destroy();

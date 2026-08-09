@@ -51,7 +51,7 @@ export function snapMinutes(rawMinutes: number, stepMinutes: number): number {
   return result === 0 ? 0 : result;
 }
 
-// Task 36: minimum rendered height for a `.tc-tg-block`/`.tc-tg-block-continuation`, mirroring
+// Task 36: minimum rendered height for a `.tc-tg-block`, mirroring
 // styles.css's own `min-height` rule there (kept in sync by cross-referencing comments on both
 // sides, not read from the DOM — see the comment on `capMinHeightsPx` below for why this can't
 // just be measured). The value is derived, not guessed: `.tc-tg-block` sets `padding: 2px 6px`
@@ -107,55 +107,6 @@ export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBl
         : Infinity;
       caps.set(cur, gapPx);
     }
-  }
-  return caps;
-}
-
-/**
- * Task 37: `capMinHeightsPx`'s continuation-segment counterpart. `.tc-tg-block-continuation`
- * (the retained `renderTimedSpanContinuation` compatibility shape) got the same
- * CSS min-height treatment `.tc-tg-block` did (Task 36) — but continuation segments never go
- * through `packOverlaps`: they're always rendered full-width, one per task, with no column
- * packing at all. So the same growth-crossing-into-a-neighbor problem `capMinHeightsPx` solves for
- * anchor blocks can happen here too, just without a `column` to key off of.
- *
- * Rather than inventing column packing for these compatibility continuations (they're always
- * full-width), this treats every continuation segment for a day as occupying one shared "column"
- * with each other AND with that day's already-positioned anchor blocks (passed as `others`, e.g.
- * `renderTimedBlocksForDay`'s `positioned` array for the same day), so a continuation's
- * min-height can clamp against an anchor supplied by a legacy caller too.
- *
- * Only continuation segments are ever capped (returned in the map) — an anchor block's own cap
- * against OTHER anchor blocks is still `capMinHeightsPx`'s unchanged job; this function only ever
- * uses `others` as read-only context for what a continuation might grow into.
- */
-export function capContinuationMinHeightsPx(
-  continuations: TimedBlockInput[],
-  others: TimedBlockInput[] = [],
-): Map<TimedBlockInput, number> {
-  interface Item {
-    startMinutes: number;
-    input: TimedBlockInput;
-    isContinuation: boolean;
-  }
-  const items: Item[] = [
-    ...continuations.map((input) => ({
-      startMinutes: input.startMinutes,
-      input,
-      isContinuation: true,
-    })),
-    ...others.map((input) => ({ startMinutes: input.startMinutes, input, isContinuation: false })),
-  ].sort((a, b) => a.startMinutes - b.startMinutes);
-
-  const caps = new Map<TimedBlockInput, number>();
-  for (let i = 0; i < items.length; i++) {
-    const cur = items[i]!;
-    if (!cur.isContinuation) continue;
-    const next = items[i + 1];
-    const gapPx = next
-      ? minutesToPixels(next.startMinutes - cur.startMinutes) - MIN_BLOCK_GAP_MARGIN_PX
-      : Infinity;
-    caps.set(cur.input, gapPx);
   }
   return caps;
 }

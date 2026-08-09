@@ -263,6 +263,58 @@ describe('forecast rendering contract', () => {
     }
   });
 
+  it('reports legacy multi-day forecast start and middle cards as continuations and the due card as terminal', () => {
+    const source = rootSource({
+      title: 'Legacy forecast range',
+      recurrence: 'every week',
+      planning: {
+        start: localDate('2026-07-31'),
+        due: localDate('2026-08-02'),
+      },
+    });
+    const [forecast] = forecasts(source, '2026-08-07', '2026-08-09');
+    expect(forecast!.task.planning).toEqual({
+      start: localDate('2026-08-07'),
+      due: localDate('2026-08-09'),
+    });
+    const week = freshContainer();
+    const month = freshContainer();
+
+    new WeekView(legacyCallbacks()).render(
+      week,
+      [forecast!.task],
+      resolvedConfig({ startPosition: '2026-08-03', firstDayOfWeek: 1 }),
+    );
+    new MonthView(legacyCallbacks()).render(
+      month,
+      [forecast!.task],
+      resolvedConfig({ startPosition: '2026-08', firstDayOfWeek: 1 }),
+    );
+
+    for (const root of [week, month]) {
+      const start = root.querySelector<HTMLElement>(
+        '.task.start[data-occurrence-state="forecast"]',
+      );
+      const continuations = Array.from(
+        root.querySelectorAll<HTMLElement>('.task.process[data-occurrence-state="forecast"]'),
+      );
+      const terminal = root.querySelector<HTMLElement>(
+        '.task.recurrence[data-occurrence-state="forecast"]',
+      );
+
+      expect(start?.getAttribute('data-continuity')).toBe('continuation');
+      expect(continuations.length).toBeGreaterThan(0);
+      expect(continuations.every((card) => card.dataset['continuity'] === 'continuation')).toBe(
+        true,
+      );
+      expect(terminal?.getAttribute('data-continuity')).toBe('terminal');
+      for (const card of [start!, ...continuations, terminal!]) {
+        expect(card.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
+        expectForecastInert(card);
+      }
+    }
+  });
+
   it('keeps multi-day forecast continuity and occurrence segment identity in modern Week and Month', () => {
     const source = rootSource({
       title: 'Forecast range',
@@ -300,6 +352,14 @@ describe('forecast rendering contract', () => {
         'continuation',
         'terminal',
       ]);
+      expect(pieces.map((piece) => piece.getAttribute('data-span-role'))).toEqual([
+        'span-continuation:2026-08-10',
+        'span-continuation:2026-08-11',
+        'span-terminal:2026-08-12',
+      ]);
+      expect(new Set(pieces.map((piece) => piece.getAttribute('data-segment-identity'))).size).toBe(
+        3,
+      );
       for (const piece of pieces) {
         expectAxes(
           piece,
@@ -313,6 +373,57 @@ describe('forecast rendering contract', () => {
         );
         expectForecastInert(piece);
       }
+    }
+  });
+
+  it('gives each modern timed forecast segment a stable day-local role under one occurrence key', () => {
+    const source = rootSource({
+      title: 'Timed forecast range',
+      recurrence: 'every week',
+      planning: {
+        start: localDate('2026-08-03'),
+        due: localDate('2026-08-05'),
+        time: '09:00',
+        duration: 60,
+      },
+    });
+    const [forecast] = forecasts(source, '2026-08-10', '2026-08-16');
+    const container = freshContainer();
+
+    new WeekTimeGridView(timeGridCallbacks()).render(
+      container,
+      [forecast!.task],
+      resolvedConfig({ startPosition: '2026-08-10', firstDayOfWeek: 1 }),
+      false,
+    );
+
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-tg-block[data-occurrence-state="forecast"]'),
+    ).sort((left, right) =>
+      left.dataset['tgSegmentDate']!.localeCompare(right.dataset['tgSegmentDate']!),
+    );
+    expect(blocks.map((block) => block.dataset['tgSegmentDate'])).toEqual([
+      '2026-08-10',
+      '2026-08-11',
+      '2026-08-12',
+    ]);
+    expect(blocks.map((block) => block.dataset['continuity'])).toEqual([
+      'continuation',
+      'continuation',
+      'terminal',
+    ]);
+    expect(blocks.map((block) => block.dataset['spanRole'])).toEqual([
+      'timed-continuation:2026-08-10',
+      'timed-continuation:2026-08-11',
+      'timed-terminal:2026-08-12',
+    ]);
+    expect(new Set(blocks.map((block) => block.dataset['segmentIdentity'])).size).toBe(3);
+    for (const block of blocks) {
+      expect(block.dataset['occurrenceKey']).toBe(forecast!.occurrence.key);
+      expect(block.dataset['segmentIdentity']).toBe(
+        `${forecast!.occurrence.key}:${block.dataset['spanRole']}`,
+      );
+      expectForecastInert(block);
     }
   });
 
@@ -457,51 +568,58 @@ describe('forecast interaction contract', () => {
     expect(callbacks.onSetPriority).not.toHaveBeenCalled();
   });
 
-  it('wires legacy forecast actions to the source root and the exact shared recurrence editor', async () => {
-    const app = await createAppWithFiles({
-      'Recurring.md': '- [ ] Daily source 🔁 every day 📅 2026-08-01',
-    });
-    const sourceRoot = task({
-      title: 'Daily source',
-      recurrence: 'every day',
-      planning: { due: '2026-08-01' },
-      source: { filePath: 'Recurring.md', line: 0 },
-    });
-    const queries = queryApiForTasks(() => [sourceRoot]);
-    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
-      type: 'invalid',
-      issues: [{ code: 'invalid-target' }],
-    });
-    const openFile = vi.fn().mockResolvedValue(undefined);
-    vi.spyOn(app.workspace, 'getLeaf').mockReturnValue({
-      openFile,
-      view: { editor: { setCursor: vi.fn() } },
-    } as never);
-    const root = freshContainer();
-    const renderer = new CalendarRenderer(
-      root,
-      resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
-      app,
-      queries,
-      { queries, execute },
-      registry,
-    );
-    renderer.mount();
-    const forecast = root.querySelector<HTMLElement>(
-      '.task[data-occurrence-state="forecast"][data-due="2026-08-02"]',
-    )!;
+  it.each(['month', 'week'] as const)(
+    'opens a legacy %s forecast source modal with the visible literal date context',
+    async (defaultView) => {
+      const app = await createAppWithFiles({
+        'Recurring.md': '- [ ] Daily source 🔁 every day 📅 2026-08-01',
+      });
+      const sourceRoot = task({
+        title: 'Daily source',
+        recurrence: 'every day',
+        planning: { due: '2026-08-01' },
+        source: { filePath: 'Recurring.md', line: 0 },
+      });
+      const queries = queryApiForTasks(() => [sourceRoot]);
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target' }],
+      });
+      const root = freshContainer();
+      const renderer = new CalendarRenderer(
+        root,
+        resolvedConfig({
+          defaultView,
+          startPosition: defaultView === 'month' ? '2026-08' : '2026-07-27',
+          firstDayOfWeek: 1,
+        }),
+        app,
+        queries,
+        { queries, execute },
+        registry,
+      );
+      renderer.mount();
+      const forecast = root.querySelector<HTMLElement>(
+        '.task[data-occurrence-state="forecast"][data-due="2026-08-02"]',
+      )!;
 
-    forecast.click();
-    expect(openFile).toHaveBeenCalledWith(app.vault.getAbstractFileByPath('Recurring.md'));
+      forecast.click();
+      const sourceModal = activeDocument.querySelector<HTMLElement>('.tc-modal');
+      expect(sourceModal?.textContent).toContain('Daily source');
+      expect(sourceModal?.querySelector('.tc-forecast-source-context')?.textContent).toBe(
+        'Forecast for 2026-08-02',
+      );
 
-    forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
-    expect(activeDocument.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
-      'every day',
-    );
+      forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
+      expect(activeDocument.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+        'every day',
+      );
 
-    renderer.destroy();
-  });
+      renderer.destroy();
+      activeDocument.querySelector<HTMLElement>('.tc-modal-close-btn')?.click();
+    },
+  );
 
   it('opens the modern forecast source root with literal date context and edits its repeat owner', () => {
     const sourceRoot = task({

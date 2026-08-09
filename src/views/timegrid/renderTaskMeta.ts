@@ -124,6 +124,7 @@ export function createForecastTaskCard(
   task: TaskSnapshot,
   taskClass: string,
   occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>,
+  renderedDate: LocalDate,
   callbacks: ForecastInteractionCallbacks,
 ): HTMLElement {
   const card = activeDocument.createElement('div');
@@ -139,7 +140,13 @@ export function createForecastTaskCard(
   }
   content.createDiv({ cls: 'description', text: plainGhostTaskTitle(task) });
   const spanRole = taskClass === 'scheduled' ? 'scheduled-body' : `${taskClass}-body`;
-  applyOccurrenceDomState(card, occurrence, 'single', spanRole);
+  const multiDay = task.planning.start !== undefined && task.planning.due !== undefined;
+  const terminalRole = taskClass === 'due' || taskClass === 'recurrence';
+  let continuity: CalendarContinuity = 'single';
+  if (multiDay) {
+    continuity = renderedDate === task.planning.due || terminalRole ? 'terminal' : 'continuation';
+  }
+  applyOccurrenceDomState(card, occurrence, continuity, spanRole);
   bindForecastInteractions(card, occurrence, callbacks);
   return card;
 }

@@ -6,23 +6,12 @@ import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
-import {
-  renderTimedBlocksForDay,
-  renderTimedSpanContinuation,
-  toTimedBlockInputs,
-} from '../src/views/timegrid/renderTimedBlocks';
+import { renderTimedBlocksForDay } from '../src/views/timegrid/renderTimedBlocks';
 import {
   attachTimedInteractions,
   createTimedInteractionOwner,
 } from '../src/views/timegrid/timedInteractions';
-import {
-  dispatchDnD,
-  freshContainer,
-  task,
-  taskComment,
-  taskFromCodecLine,
-  useRealMoment,
-} from './helpers';
+import { dispatchDnD, freshContainer, task, taskComment, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -170,9 +159,6 @@ describe('Task 2 unified timed interaction contract', () => {
         date: '2026-07-07',
         terminal: false,
       });
-      const legacyGhostContainer = freshContainer();
-      renderTimedSpanContinuation(legacyGhostContainer, [spanTask], undefined, tagGroups);
-
       expect(
         (terminalContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
           '--tc-tag-text-color',
@@ -182,11 +168,6 @@ describe('Task 2 unified timed interaction contract', () => {
         (ghostContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
           '--tc-tag-text-color',
         ),
-      ).toBe('var(--tc-tag-text-dark)');
-      expect(
-        (
-          legacyGhostContainer.querySelector('.tc-tg-block-continuation') as HTMLElement
-        ).style.getPropertyValue('--tc-tag-text-color'),
       ).toBe('var(--tc-tag-text-dark)');
     } finally {
       document.body.style.setProperty('--background-primary', originalBackground);
@@ -2921,153 +2902,41 @@ describe('renderTimedBlocksForDay', () => {
     });
   });
 
-  describe('legacy renderTimedSpanContinuation compatibility API', () => {
-    it('renders a continuation segment positioned at the same time-of-day row as a full block would be', () => {
-      const container = freshContainer();
-      const t = task({
-        planning: { time: '15:00', duration: 90, start: '2026-07-01', due: '2026-07-03' },
-      });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg).not.toBeNull();
-      expect(seg.style.top).toBe(`${((15 * 60) / 60) * 48}px`);
-      expect(seg.style.height).toBe(`${(90 / 60) * 48}px`);
+  it('preserves continuation presentation and occurrence axes through the production timed renderer', () => {
+    const container = freshContainer();
+    const t = task({
+      title: 'Conference',
+      tags: ['#work'],
+      comments: [taskComment({ text: 'note' })],
+      planning: { time: '15:00', duration: 90, start: '2026-07-01', due: '2026-07-03' },
+      presentation: { linkCount: 1 },
+      source: {
+        originalMarkdown: '- [ ] Conference #work',
+        originalBlock: '- [ ] Conference #work',
+      },
     });
 
-    it('keeps the legacy shape inert and without resize handles', () => {
-      const container = freshContainer();
-      const t = task({ planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' } });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.getAttribute('draggable')).not.toBe('true');
-      expect(seg.querySelector('.tc-tg-resize-handle')).toBeNull();
-      expect(seg.querySelector('.tc-tg-span-edge')).toBeNull();
-    });
+    renderTimedBlocksForDay(
+      container,
+      [t],
+      callbacks(),
+      [{ id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' }],
+      { date: '2026-07-02', terminal: false },
+    );
 
-    it('shows the task title so the continuation reads as clearly linked to the anchor block, not an unrelated duplicate task', () => {
-      const container = freshContainer();
-      const t = task({
-        title: 'Conference',
-        planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' },
-      });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.textContent).toContain('Conference');
-    });
-
-    it('renders the same inert human-readable ghost title as the all-day and month continuations', () => {
-      const container = freshContainer();
-      const t = taskFromCodecLine(
-        '- [ ] Conference at [[Note]] with **bold**, ~~old~~ and `code` [site](https://example.test) 🛫 2026-07-01 📅 2026-07-03 ⏰ 09:00',
-      );
-      expect(t.title).toBe('Conference at 🔗 Note with **bold**, ~~old~~ and `code` 🌐 site');
-
-      renderTimedSpanContinuation(container, [t]);
-
-      const title = container.querySelector('.tc-tg-block-continuation-title');
-      expect(title?.textContent).toBe('Conference at 🔗 Note with bold, old and code 🌐 site');
-      expect(title?.querySelector('.tc-md')).toBeNull();
-      expect(title?.querySelector('a')).toBeNull();
-      expect(title?.textContent).not.toMatch(/\*\*|~~|`|\[\[/u);
-    });
-
-    it('preserves escaped emphasis markers as literal title characters', () => {
-      const container = freshContainer();
-      const t = taskFromCodecLine(
-        String.raw`- [ ] Keep \*literal\* and \_literal\_ with **bold** 🛫 2026-07-01 📅 2026-07-03 ⏰ 09:00`,
-      );
-
-      renderTimedSpanContinuation(container, [t]);
-
-      expect(container.querySelector('.tc-tg-block-continuation-title')?.textContent).toBe(
-        'Keep *literal* and _literal_ with bold',
-      );
-    });
-
-    it('a right-click fires onTaskClick, same as a full block', () => {
-      const container = freshContainer();
-      const onTaskClick = vi.fn();
-      const t = task({ planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' } });
-      renderTimedSpanContinuation(container, [t], onTaskClick);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      seg.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      expect(onTaskClick).toHaveBeenCalledWith(t);
-    });
-
-    it('renders one continuation segment per task, in tag color when a tag matches', () => {
-      const container = freshContainer();
-      const t = task({
-        tags: ['#work'],
-        planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' },
-        source: { originalMarkdown: '- [ ] t #work', originalBlock: '- [ ] t #work' },
-      });
-      renderTimedSpanContinuation(container, [t], undefined, [
-        { id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' },
-      ]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
-    });
-
-    // This compatibility shape retains its historical subtitle/badges while remaining inert.
-    it("shows the time range + duration subtitle, matching the anchor block's format", () => {
-      const container = freshContainer();
-      const t = task({
-        planning: { time: '15:00', duration: 90, start: '2026-07-01', due: '2026-07-03' },
-      });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      const subtitle = seg.querySelector('.tc-tg-block-subtitle') as HTMLElement;
-      expect(subtitle).not.toBeNull();
-      expect(subtitle.textContent).toBe('15:00–16:30 (1h30m)');
-    });
-
-    it('renders count badges in a .tc-tg-block-badges container when the task has subtasks/comments/links, and never a tag chip', () => {
-      const container = freshContainer();
-      const t = task({
-        tags: ['#work'],
-        planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' },
-        source: { originalMarkdown: '- [ ] t #work', originalBlock: '- [ ] t #work' },
-        presentation: { linkCount: 1 },
-      });
-      renderTimedSpanContinuation(container, [t], undefined, [
-        { id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' },
-      ]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      const badges = seg.querySelector('.tc-tg-block-badges') as HTMLElement;
-      expect(badges).not.toBeNull();
-      expect(badges.querySelectorAll('.tc-task-count-badge')).toHaveLength(1);
-      expect(seg.querySelector('.tc-task-tag')).toBeNull();
-    });
-
-    it('omits .tc-tg-block-badges entirely for a continuation task with no subtasks/comments/links', () => {
-      const container = freshContainer();
-      const t = task({ planning: { time: '09:00', start: '2026-07-01', due: '2026-07-03' } });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.querySelector('.tc-tg-block-badges')).toBeNull();
-    });
-
-    it('keeps the legacy subtitle/badges shape marker-free and inert', () => {
-      const container = freshContainer();
-      const t = task({
-        comments: [taskComment({ text: 'note' })],
-        planning: { time: '09:00', duration: 60, start: '2026-07-01', due: '2026-07-03' },
-      });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.querySelector('.tc-status-marker')).toBeNull();
-      expect(seg.getAttribute('draggable')).not.toBe('true');
-      expect(seg.querySelector('.tc-tg-resize-handle')).toBeNull();
-      expect(seg.querySelector('.tc-tg-span-edge')).toBeNull();
-      // This deprecated compatibility renderer intentionally has no move/resize wiring.
-      expect(() => {
-        seg.dispatchEvent(
-          new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
-        );
-        window.dispatchEvent(new PointerEvent('pointermove', { clientY: 148, pointerId: 1 }));
-        window.dispatchEvent(new PointerEvent('pointerup', { clientY: 148, pointerId: 1 }));
-      }).not.toThrow();
-    });
+    const block = container.querySelector<HTMLElement>('.tc-tg-block-continuation')!;
+    expect(block.style.top).toBe(`${((15 * 60) / 60) * 48}px`);
+    expect(block.style.height).toBe(`${(90 / 60) * 48}px`);
+    expect(block.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    expect(block.querySelector('.tc-tg-block-continuation-title')?.textContent).toBe('Conference');
+    expect(block.querySelector('.tc-tg-block-subtitle')?.textContent).toBe('15:00–16:30 (1h30m)');
+    expect(block.querySelectorAll('.tc-task-count-badge')).toHaveLength(2);
+    expect(block.dataset['occurrenceState']).toBe('materialized');
+    expect(block.dataset['continuity']).toBe('continuation');
+    expect(block.dataset['spanRole']).toBe('timed-continuation:2026-07-02');
+    expect(block.dataset['segmentIdentity']).toBe(
+      `${block.dataset['occurrenceKey']}:timed-continuation:2026-07-02`,
+    );
   });
 
   describe('Task 36: minimum block size so very-short-duration text never becomes invisible', () => {
@@ -3126,86 +2995,6 @@ describe('renderTimedBlocksForDay', () => {
       renderTimedBlocksForDay(container, [a, b], callbacks());
       const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
       expect(blocks[0]!.style.minHeight).toBe('');
-    });
-  });
-
-  // The retained compatibility renderer has its own min-height collision cap; production ghosts
-  // use the common packOverlaps/capMinHeightsPx path instead.
-  describe('legacy continuation min-height collision compatibility', () => {
-    it('a 10-minute continuation does not get an explicit inline min-height override when nothing follows it (the CSS rule alone is enough)', () => {
-      const container = freshContainer();
-      const t = task({
-        planning: { time: '09:00', duration: 10, start: '2026-07-01', due: '2026-07-03' },
-      });
-      renderTimedSpanContinuation(container, [t]);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      expect(seg.style.height).toBe(`${(10 / 60) * 48}px`);
-      expect(seg.style.minHeight).toBe('');
-    });
-
-    it('two 10-minute continuation segments scheduled back-to-back (09:00-09:10, 09:10-09:20): the earlier one gets an inline min-height clamped to the real gap, so it cannot visually cross into the next one', () => {
-      const container = freshContainer();
-      const a = task({
-        title: 'A',
-        planning: { time: '09:00', duration: 10, start: '2026-07-01', due: '2026-07-03' },
-        source: { line: 0 },
-      });
-      const b = task({
-        title: 'B',
-        planning: { time: '09:10', duration: 10, start: '2026-07-01', due: '2026-07-04' },
-        source: { line: 1 },
-      });
-      renderTimedSpanContinuation(container, [a, b]);
-      const segs = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block-continuation'));
-      expect(segs).toHaveLength(2);
-      const [segA, segB] = segs;
-      const topA = parseFloat(segA!.style.top);
-      const topB = parseFloat(segB!.style.top);
-      expect(segA!.style.minHeight).not.toBe('');
-      const clampedHeight = parseFloat(segA!.style.minHeight);
-      // The geometric invariant capMinHeightsPx already guarantees for anchor blocks: the
-      // clamped segment's bottom edge must never cross the next segment's top edge.
-      expect(topA + clampedHeight).toBeLessThanOrEqual(topB);
-    });
-
-    it('two continuation segments with a generous gap (09:00-09:10, then 11:00) get no inline min-height override', () => {
-      const container = freshContainer();
-      const a = task({
-        planning: { time: '09:00', duration: 10, start: '2026-07-01', due: '2026-07-03' },
-        source: { line: 0 },
-      });
-      const b = task({
-        planning: { time: '11:00', duration: 60, start: '2026-07-01', due: '2026-07-04' },
-        source: { line: 1 },
-      });
-      renderTimedSpanContinuation(container, [a, b]);
-      const segs = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block-continuation'));
-      expect(segs[0]!.style.minHeight).toBe('');
-    });
-
-    it('a short continuation segment immediately followed by an anchor block in the same day column is capped against the anchor block, not left to grow past its top', () => {
-      const container = freshContainer();
-      const continuationTask = task({
-        title: 'Continuation',
-        planning: { time: '09:00', duration: 10, start: '2026-07-01', due: '2026-07-03' },
-        source: { line: 0 },
-      });
-      const anchorTask = task({
-        title: 'Anchor',
-        planning: { time: '09:10', duration: 60 },
-        source: { line: 1 },
-      });
-      const anchorInputs = toTimedBlockInputs([anchorTask]);
-      renderTimedSpanContinuation(container, [continuationTask], undefined, [], anchorInputs);
-      const seg = container.querySelector('.tc-tg-block-continuation') as HTMLElement;
-      const topSeg = parseFloat(seg.style.top);
-      expect(seg.style.minHeight).not.toBe('');
-      const clampedHeight = parseFloat(seg.style.minHeight);
-      // The anchor block itself is not rendered by renderTimedSpanContinuation, but its start
-      // time (09:10, i.e. minutesToPixels(9*60+10)) is the boundary the continuation must not
-      // cross into.
-      const anchorTopPx = ((9 * 60 + 10) / 60) * 48;
-      expect(topSeg + clampedHeight).toBeLessThanOrEqual(anchorTopPx);
     });
   });
 });

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  capContinuationMinHeightsPx,
   capMinHeightsPx,
   MIN_BLOCK_HEIGHT_PX,
   minutesToPixels,
@@ -14,7 +13,7 @@ import {
 } from '../src/views/timegrid/layout';
 import { task } from './helpers';
 
-// Shared by packOverlaps/capMinHeightsPx/capContinuationMinHeightsPx below — they all just need a
+// Shared by packOverlaps/capMinHeightsPx below — both just need a
 // TimedBlockInput with a distinguishable task (line doubles as a cheap unique id for assertions).
 const timedBlockInput = (start: number, duration: number): TimedBlockInput => ({
   task: task({ source: { line: start } }),
@@ -131,60 +130,5 @@ describe('capMinHeightsPx', () => {
     const caps = capMinHeightsPx(positioned);
     expect(caps.get(positioned[0]!)).toBe(Infinity);
     expect(caps.get(positioned[1]!)).toBe(Infinity);
-  });
-});
-
-// Task 37: `.tc-tg-block-continuation` (the non-anchor-day segment of a multi-day timed span,
-// rendered by renderTimedSpanContinuation) picked up the same CSS min-height treatment as
-// `.tc-tg-block` (Task 36), but — unlike anchor blocks, which are column-packed via
-// `packOverlaps` and clamped via `capMinHeightsPx` — continuation segments never participate in
-// any collision-avoidance pass at all: they're always rendered full-width, one per task, with no
-// column packing. So a short continuation's min-height-inflated box can grow straight into a
-// temporally-adjacent continuation (or an anchor block sharing the same day column) below it.
-// `capContinuationMinHeightsPx` closes that gap: it treats every continuation segment for a given
-// day, plus (optionally) that day's already-positioned anchor blocks, as one combined time-sorted
-// sequence, and caps each continuation's growth to the real gap before whatever comes next.
-describe('capContinuationMinHeightsPx', () => {
-  it('two back-to-back 10-minute continuation segments: the earlier one is capped to the real gap between them, well under MIN_BLOCK_HEIGHT_PX', () => {
-    const first = timedBlockInput(9 * 60, 10);
-    const second = timedBlockInput(9 * 60 + 10, 10);
-    const caps = capContinuationMinHeightsPx([first, second]);
-    const firstCap = caps.get(first)!;
-    expect(firstCap).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
-    expect(firstCap).toBeCloseTo(minutesToPixels(10) - 2, 5);
-    // The last (only remaining) segment has nothing after it to crowd into.
-    expect(caps.get(second)).toBe(Infinity);
-  });
-
-  it('a lone continuation segment (no next occupant) is uncapped (Infinity)', () => {
-    const only = timedBlockInput(9 * 60, 60);
-    const caps = capContinuationMinHeightsPx([only]);
-    expect(caps.get(only)).toBe(Infinity);
-  });
-
-  it('a generous gap between two continuation segments yields a cap comfortably above MIN_BLOCK_HEIGHT_PX (no clamping needed)', () => {
-    const first = timedBlockInput(9 * 60, 10);
-    const second = timedBlockInput(11 * 60, 10);
-    const caps = capContinuationMinHeightsPx([first, second]);
-    expect(caps.get(first)!).toBeGreaterThan(MIN_BLOCK_HEIGHT_PX);
-  });
-
-  it('a short continuation immediately followed by an anchor block (passed as `others`) is capped to the gap before that anchor block, not left uncapped', () => {
-    const continuation = timedBlockInput(9 * 60, 10);
-    const anchor = timedBlockInput(9 * 60 + 10, 60);
-    const caps = capContinuationMinHeightsPx([continuation], [anchor]);
-    const cap = caps.get(continuation)!;
-    expect(cap).toBeLessThan(MIN_BLOCK_HEIGHT_PX);
-    expect(cap).toBeCloseTo(minutesToPixels(10) - 2, 5);
-    // Anchor blocks are never in the returned map — only continuation segments are capped here
-    // (the anchor's own clamping against OTHER anchors is capMinHeightsPx's job, unchanged).
-    expect(caps.has(anchor)).toBe(false);
-  });
-
-  it('an anchor block immediately followed by a continuation segment does not cap the continuation (the anchor is not "next" relative to it — the continuation has nothing after it)', () => {
-    const anchor = timedBlockInput(9 * 60, 10);
-    const continuation = timedBlockInput(9 * 60 + 10, 60);
-    const caps = capContinuationMinHeightsPx([continuation], [anchor]);
-    expect(caps.get(continuation)).toBe(Infinity);
   });
 });
