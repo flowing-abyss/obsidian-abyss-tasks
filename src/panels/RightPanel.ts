@@ -928,6 +928,7 @@ export class RightPanel {
 
     const popover = this.el.createDiv({
       cls: 'tc-popover tc-recurrence-popover tc-popover-anchored',
+      attr: { role: 'dialog', 'aria-modal': 'false' },
     });
     const handle = mountRecurrenceEditor({
       container: popover,
@@ -939,6 +940,8 @@ export class RightPanel {
       onSubmit: (patch) => this.executePlanningPatch(task, patch),
       onClose: () => this.removeAnchoredSurface(popover),
     });
+    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title');
+    if (title?.id) popover.setAttribute('aria-labelledby', title.id);
     this.positionAnchoredSurface(popover, anchor, 'below-start');
     const placementCleanup = this.anchoredSurfaceCleanups.get(popover);
     const editorCleanup = (): void => {

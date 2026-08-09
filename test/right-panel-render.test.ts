@@ -58,7 +58,7 @@ describe('RightPanel recurrence editor integration', () => {
     el.remove();
   });
 
-  it('dismisses an anchored editor outside through its focus-restoring handle', async () => {
+  it('labels its anchored editor host and dismisses outside through the focus-restoring handle', async () => {
     const { state, el } = await makePanel();
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
@@ -67,7 +67,12 @@ describe('RightPanel recurrence editor integration', () => {
 
     click(chip);
     await tick();
-    expect(el.querySelector('.tc-recurrence-popover')).not.toBeNull();
+    const popover = el.querySelector<HTMLElement>('.tc-recurrence-popover')!;
+    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title')!;
+    expect(popover.getAttribute('role')).toBe('dialog');
+    expect(popover.getAttribute('aria-modal')).toBe('false');
+    expect(popover.getAttribute('aria-labelledby')).toBe(title.id);
+    expect(popover.querySelector('[aria-modal="true"]')).toBeNull();
 
     click(outside);
 

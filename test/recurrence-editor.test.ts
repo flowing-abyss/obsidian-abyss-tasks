@@ -400,6 +400,44 @@ describe('mountRecurrenceEditor', () => {
     expect(raw.getAttribute('aria-invalid')).toBe('false');
   });
 
+  it('associates Month day validation with the stable diagnostic and only invalidates that field', () => {
+    const { container } = mount();
+    const diagnosticId = container.querySelector<HTMLElement>('.tc-recurrence-status')!.id;
+    click(button(container, 'Monthly'));
+    change(container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!, 'day');
+    const day = container.querySelector<HTMLInputElement>('[aria-label="Month day"]')!;
+    const interval = container.querySelector<HTMLInputElement>('[aria-label="Repeat interval"]')!;
+
+    expect(day.getAttribute('aria-describedby')).toBe(diagnosticId);
+    expect(day.getAttribute('aria-invalid')).toBe('false');
+    input(day, '0');
+    expect(day.getAttribute('aria-invalid')).toBe('true');
+    expect(interval.getAttribute('aria-invalid')).toBe('false');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    input(day, '31');
+    expect(day.getAttribute('aria-invalid')).toBe('false');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+  });
+
+  it('associates Yearly day validation with the stable diagnostic and only invalidates that field', () => {
+    const { container } = mount();
+    const diagnosticId = container.querySelector<HTMLElement>('.tc-recurrence-status')!.id;
+    click(button(container, 'Yearly'));
+    change(container.querySelector<HTMLSelectElement>('[aria-label="Yearly pattern"]')!, 'date');
+    const day = container.querySelector<HTMLInputElement>('[aria-label="Yearly day"]')!;
+    const interval = container.querySelector<HTMLInputElement>('[aria-label="Repeat interval"]')!;
+
+    expect(day.getAttribute('aria-describedby')).toBe(diagnosticId);
+    expect(day.getAttribute('aria-invalid')).toBe('false');
+    input(day, '32');
+    expect(day.getAttribute('aria-invalid')).toBe('true');
+    expect(interval.getAttribute('aria-invalid')).toBe('false');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    input(day, '29');
+    expect(day.getAttribute('aria-invalid')).toBe('false');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+  });
+
   it('labels an anchored editor as a non-modal dialog without nested modal semantics', () => {
     const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
     const root = task({ planning: { due: '2026-08-09' } });

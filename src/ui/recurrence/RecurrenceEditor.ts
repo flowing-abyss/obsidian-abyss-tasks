@@ -242,12 +242,35 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     }
     const save = options.container.querySelector<HTMLButtonElement>('.tc-recurrence-save');
     if (save) save.disabled = state.submitting || message.length > 0 || parsed.type === 'invalid';
-    const invalid = message.length > 0 || parsed.type === 'invalid';
-    for (const input of options.container.querySelectorAll<HTMLElement>(
-      '.tc-recurrence-interval, .tc-recurrence-raw',
-    )) {
-      input.setAttribute('aria-invalid', String(invalid));
-    }
+    const invalidInterval =
+      state.mode === 'controls' &&
+      state.preset !== 'weekdays' &&
+      (!Number.isSafeInteger(Number(state.intervalText)) || Number(state.intervalText) < 1);
+    const invalidMonthDay =
+      state.mode === 'controls' &&
+      state.unit === 'months' &&
+      state.monthly.type === 'day' &&
+      (!Number.isSafeInteger(state.monthly.day) || state.monthly.day < 1 || state.monthly.day > 31);
+    const invalidYearlyDay =
+      state.mode === 'controls' &&
+      state.unit === 'years' &&
+      state.yearly.type === 'date' &&
+      (!Number.isSafeInteger(state.yearly.day) || state.yearly.day < 1 || state.yearly.day > 31);
+    options.container
+      .querySelector<HTMLElement>('.tc-recurrence-interval')
+      ?.setAttribute('aria-invalid', String(invalidInterval));
+    options.container
+      .querySelector<HTMLElement>('.tc-recurrence-month-day')
+      ?.setAttribute('aria-invalid', String(invalidMonthDay));
+    options.container
+      .querySelector<HTMLElement>('.tc-recurrence-yearly-day')
+      ?.setAttribute('aria-invalid', String(invalidYearlyDay));
+    options.container
+      .querySelector<HTMLElement>('.tc-recurrence-raw')
+      ?.setAttribute(
+        'aria-invalid',
+        String(state.mode === 'advanced' && parsed.type === 'invalid'),
+      );
   };
 
   const submit = async (): Promise<void> => {
@@ -406,12 +429,15 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     });
     if (state.monthly.type === 'day') {
       const day = row.createEl('input', {
+        cls: 'tc-recurrence-month-day',
         attr: {
           type: 'number',
           min: '1',
           max: '31',
           value: String(state.monthly.day),
           'aria-label': 'Month day',
+          'aria-describedby': diagnosticId,
+          'aria-invalid': 'false',
         },
       });
       day.addEventListener('input', () => {
@@ -473,12 +499,15 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       );
     });
     const day = row.createEl('input', {
+      cls: 'tc-recurrence-yearly-day',
       attr: {
         type: 'number',
         min: '1',
         max: '31',
         value: String(state.yearly.day),
         'aria-label': 'Yearly day',
+        'aria-describedby': diagnosticId,
+        'aria-invalid': 'false',
       },
     });
     month.addEventListener('change', () => {
