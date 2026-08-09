@@ -115,10 +115,14 @@ describe('buildRecurrenceRule', () => {
     });
   });
 
-  it('returns the production parser validation result for unsupported advanced combinations', () => {
+  it('serializes the Tasks-compatible interval-year leap-day form', () => {
     expect(
       build({ interval: 2, unit: 'years', yearly: { type: 'date', month: 2, day: 29 } }),
-    ).toEqual({ type: 'invalid', code: 'unparseable-rule' });
+    ).toMatchObject({
+      type: 'valid',
+      raw: 'every 2 years on February 29th',
+      canonical: 'every 2 years February on the 29th',
+    });
   });
 
   it('appends when done before delegating to the production parser', () => {

@@ -5,10 +5,7 @@ import type { LinkToken } from '../src/parser/links';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import { localDate, type CalendarTaskSource, type TaskSnapshot as Task } from '../src/tasks';
-import {
-  projectCalendarOccurrences,
-  taskSnapshotForCalendarOccurrence,
-} from '../src/views/calendarOccurrences';
+import { projectCalendarOccurrences } from '../src/views/calendarOccurrences';
 import { ListView } from '../src/views/ListView';
 import { freshContainer, resolvedConfig, subtask, task, useRealMoment } from './helpers';
 
@@ -170,7 +167,7 @@ describe('ListView', () => {
       expect(c.querySelector("[data-recurrence-forecast='true']")).toBeNull();
     });
 
-    it('keeps two materialized nested recurrence owners that share root coordinates', () => {
+    it('represents nested recurrence owners through one persisted root row', () => {
       const d = today();
       const rootSeed = task({
         title: 'Parent',
@@ -198,69 +195,21 @@ describe('ListView', () => {
         title: rootSeed.title,
         ref: rootSeed.ref,
         source: rootSeed.source,
+        planning: { due: d },
         subtasks: [first, second],
       });
-      const sources: CalendarTaskSource[] = [
-        { root, target: { type: 'subtask', ref: first.ref }, node: first },
-        { root, target: { type: 'subtask', ref: second.ref }, node: second },
-      ];
-      const snapshots = projectCalendarOccurrences(
-        { materialized: sources, recurringSources: sources },
-        { from: localDate(d), to: localDate(d) },
-        { removeScheduledDate: false },
-      ).occurrences.map(taskSnapshotForCalendarOccurrence);
       const { view } = makeView();
       const c = freshContainer();
 
-      view.render(c, snapshots, resolvedConfig());
+      view.render(c, [root], resolvedConfig());
 
       const todaySection = Array.from(c.querySelectorAll<HTMLElement>('.tc-list-section')).find(
         (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
       );
-      expect(
-        Array.from(todaySection?.querySelectorAll('.tc-task-time') ?? []).map(
-          (element) => element.textContent,
-        ),
-      ).toEqual(['08:15', '09:45']);
-    });
-
-    it('keeps overlapping forecasts from one source distinct across overdue and daily dedupe', () => {
-      const current = window.moment();
-      const currentDate = current.format('YYYY-MM-DD');
-      const previousDate = window.moment(current).subtract(1, 'day').format('YYYY-MM-DD');
-      const anchorDue = window.moment(current).subtract(2, 'days');
-      const span = task({
-        title: 'Overlapping forecast',
-        recurrence: 'every day',
-        planning: {
-          start: window.moment(anchorDue).subtract(3, 'days').format('YYYY-MM-DD'),
-          due: anchorDue.format('YYYY-MM-DD'),
-        },
-        source: { filePath: 'forecast.md', line: 8 },
-      });
-      const source: CalendarTaskSource = {
-        root: span,
-        target: { type: 'task', ref: span.ref },
-        node: span,
-      };
-      const snapshots = projectCalendarOccurrences(
-        { materialized: [], recurringSources: [source] },
-        { from: localDate(previousDate), to: localDate(currentDate) },
-        { removeScheduledDate: false },
-      ).occurrences.map(taskSnapshotForCalendarOccurrence);
-      const { view } = makeView();
-      const c = freshContainer();
-
-      view.render(c, snapshots, resolvedConfig());
-
-      const overdueSection = c.querySelector('.tc-list-overdue-header')?.parentElement;
-      expect(overdueSection?.querySelector('.tc-list-date-count')?.textContent).toBe('1');
-      expect(overdueSection?.querySelectorAll('.tc-list-task')).toHaveLength(1);
-      const todaySection = Array.from(c.querySelectorAll<HTMLElement>('.tc-list-section')).find(
-        (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
-      );
-      expect(todaySection?.querySelector('.tc-list-date-count')?.textContent).toBe('4');
-      expect(todaySection?.querySelectorAll('.tc-list-task')).toHaveLength(4);
+      expect(todaySection?.querySelectorAll('.tc-list-task')).toHaveLength(1);
+      expect(todaySection?.querySelector('.tc-task-progress')?.textContent).toBe('0/2');
+      expect(todaySection?.querySelectorAll('.tc-task-time')).toHaveLength(0);
+      expect(todaySection?.querySelector("[data-recurrence-forecast='true']")).toBeNull();
     });
 
     it('tasks sorted by priority then time then text', () => {

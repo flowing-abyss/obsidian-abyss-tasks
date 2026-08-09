@@ -16,6 +16,7 @@ import {
 
 export interface WeekViewCallbacks {
   app: App;
+  forecastMenuOwner?: import('./timegrid/renderTaskMeta').ForecastContextMenuOwner;
   onToggle: (task: TaskSnapshot) => void;
   onCellClick: (date: string) => void;
   onTaskClick: (task: TaskSnapshot) => void;

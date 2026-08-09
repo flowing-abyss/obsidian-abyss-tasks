@@ -72,14 +72,30 @@ export function requestTaskCompletion(
     };
     const confirmCompletion = (): void => {
       remove();
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
       Promise.resolve()
         .then(onConfirm)
         .then(() => resolve(), reject);
     };
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      cancelCompletion(true);
+      if (event.key === 'Tab') {
+        const active = activeDocument.activeElement;
+        let target: HTMLButtonElement | undefined;
+        if (event.shiftKey && active === cancel) {
+          target = confirm;
+        } else if ((!event.shiftKey && active === confirm) || !surface.contains(active)) {
+          target = cancel;
+        }
+        if (target) {
+          event.preventDefault();
+          target.focus();
+        }
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        cancelCompletion(true);
+      }
     };
     cancel.addEventListener('click', () => cancelCompletion(true));
     confirm.addEventListener('click', confirmCompletion);

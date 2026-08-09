@@ -7,7 +7,12 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskIndexEvent,
+  type TaskSnapshot,
+} from '../src/tasks';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 import {
   calendarOccurrenceForTask,
@@ -21,6 +26,10 @@ import { layoutVisibleMonth, layoutVisibleMonthWithReplacement } from '../src/vi
 import { MonthView } from '../src/views/MonthView';
 import { layoutVisibleSpans, layoutVisibleSpansWithReplacement } from '../src/views/spanLayout';
 import { layoutTimedDay, taskLayoutIdentity } from '../src/views/timegrid/layout';
+import {
+  createForecastContextMenuOwner,
+  type ForecastContextMenuOwner,
+} from '../src/views/timegrid/renderTaskMeta';
 import { toTimedBlockInputs } from '../src/views/timegrid/renderTimedBlocks';
 import { previewTimedPositionFor, TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
@@ -41,6 +50,7 @@ useRealMoment();
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+const forecastMenuOwners: ForecastContextMenuOwner[] = [];
 
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
@@ -274,7 +284,10 @@ function nestedMaterializedPair(
 }
 
 function forecastCallbacks() {
+  const forecastMenuOwner = createForecastContextMenuOwner(activeDocument);
+  forecastMenuOwners.push(forecastMenuOwner);
   return {
+    forecastMenuOwner,
     onForecastClick: vi.fn(),
     onForecastContextMenu: vi.fn(),
   };
@@ -478,6 +491,7 @@ function expectForecastInert(element: HTMLElement): void {
 }
 
 afterEach(() => {
+  forecastMenuOwners.splice(0).forEach((owner) => owner.dismiss({ restoreFocus: false }));
   activeDocument
     .querySelectorAll('.tc-forecast-context-menu')
     .forEach((element) => element.remove());
@@ -1006,6 +1020,111 @@ describe('forecast visual system', () => {
 
     panel.destroy();
   });
+
+  it('keeps one live-region node and announces only projection issue signature transitions', async () => {
+    const limitSource = task({
+      title: 'Stable diagnostic source',
+      recurrence: 'every month',
+      planning: { due: '1000-01-31' },
+      source: { filePath: 'Stable.md', line: 0 },
+    });
+    let sources: TaskSnapshot[] = [limitSource];
+    let notify: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = queryApiForTasks(
+      () => sources,
+      (listener) => {
+        notify = listener;
+        return () => {
+          if (notify === listener) notify = undefined;
+        };
+      },
+    );
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      fakeApp,
+      DEFAULT_SETTINGS,
+      queries,
+      registry,
+      undefined,
+      null,
+      null,
+      { queries, execute: vi.fn() },
+    );
+    const root = freshContainer();
+    panel.mount(root);
+    (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
+    state.set('mode', 'calendar');
+    const diagnostic = root.querySelector<HTMLElement>('.tc-calendar-projection-diagnostic')!;
+    const announcements: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => announcements.push(...records));
+    observer.observe(diagnostic, { childList: true, characterData: true, subtree: true });
+
+    notify?.({ type: 'changed', files: ['Stable.md'] });
+    await Promise.resolve();
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(announcements).toHaveLength(0);
+
+    sources = [];
+    notify?.({ type: 'changed', files: ['Stable.md'] });
+    await Promise.resolve();
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(diagnostic.textContent).toBe('');
+
+    sources = [limitSource];
+    notify?.({ type: 'changed', files: ['Stable.md'] });
+    await Promise.resolve();
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(diagnostic.textContent).toBe('More repeating occurrences are not shown');
+    expect(announcements).toHaveLength(2);
+
+    observer.disconnect();
+    panel.destroy();
+    expect(diagnostic.isConnected).toBe(false);
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBeNull();
+  });
+
+  it('keeps the CalendarRenderer live region stable across query patches and tears it down', () => {
+    const limitSource = task({
+      title: 'Legacy stable diagnostic source',
+      recurrence: 'every month',
+      planning: { due: '1000-01-31' },
+      source: { filePath: 'Legacy-stable.md', line: 0 },
+    });
+    let sources: TaskSnapshot[] = [limitSource];
+    let notify: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = queryApiForTasks(
+      () => sources,
+      (listener) => {
+        notify = listener;
+        return () => {
+          if (notify === listener) notify = undefined;
+        };
+      },
+    );
+    const root = freshContainer();
+    const renderer = new CalendarRenderer(
+      root,
+      resolvedConfig({ defaultView: 'month', startPosition: '1400-08' }),
+      fakeApp,
+      queries,
+      { queries, execute: vi.fn() },
+      registry,
+    );
+    renderer.mount();
+    const diagnostic = root.querySelector<HTMLElement>('.tc-calendar-projection-diagnostic')!;
+
+    notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+
+    sources = [];
+    notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
+    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(diagnostic.textContent).toBe('');
+
+    renderer.destroy();
+    expect(diagnostic.isConnected).toBe(false);
+  });
 });
 
 describe('projected preview semantic identity', () => {
@@ -1184,6 +1303,165 @@ describe('forecast interaction contract', () => {
     expect(callbacks.onToggle).not.toHaveBeenCalled();
     expect(callbacks.onSetStatus).not.toHaveBeenCalled();
     expect(callbacks.onSetPriority).not.toHaveBeenCalled();
+  });
+
+  it('owns one dismissible forecast menu and ignores callbacks from superseded handles', () => {
+    const firstSource = rootSource({
+      title: 'First forecast source',
+      recurrence: 'every day',
+      planning: { due: localDate('2026-08-08') },
+      line: 10,
+    });
+    const secondSource = rootSource({
+      title: 'Second forecast source',
+      recurrence: 'every day',
+      planning: { due: localDate('2026-08-08') },
+      line: 11,
+    });
+    const first = forecasts(firstSource, '2026-08-09', '2026-08-09')[0]!;
+    const second = forecasts(secondSource, '2026-08-09', '2026-08-09')[0]!;
+    const callbacks = monthCallbacks();
+    const container = freshContainer();
+    const trigger = activeDocument.body.createEl('button', { text: 'Calendar trigger' });
+    trigger.focus();
+    new MonthGridView(callbacks).render(
+      container,
+      [first.task, second.task],
+      resolvedConfig({ startPosition: '2026-08' }),
+    );
+    const items = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-mg-date="2026-08-09"] .tc-mg-plain[data-occurrence-state="forecast"]',
+      ),
+    );
+
+    items[0]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const staleEdit = activeDocument.querySelector<HTMLButtonElement>(
+      '.tc-forecast-context-menu-edit-repeat',
+    )!;
+    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(activeDocument.querySelectorAll('.tc-forecast-context-menu')).toHaveLength(1);
+
+    staleEdit.click();
+    expect(callbacks.onForecastContextMenu).not.toHaveBeenCalled();
+    activeDocument.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.activeElement).toBe(trigger);
+
+    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    activeDocument.body.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+    );
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.activeElement).toBe(trigger);
+
+    items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(callbacks.onForecastContextMenu).toHaveBeenCalledOnce();
+    expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
+      secondSource,
+      localDate('2026-08-09'),
+    );
+    trigger.remove();
+  });
+
+  it('CalendarRenderer patches and destroy close its owned forecast menu', () => {
+    const sourceRoot = task({
+      title: 'Legacy lifecycle source',
+      recurrence: 'every day',
+      planning: { due: '2026-08-08' },
+      source: { filePath: 'Legacy.md', line: 4 },
+    });
+    let notify: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = queryApiForTasks(
+      () => [sourceRoot],
+      (listener) => {
+        notify = listener;
+        return () => {
+          if (notify === listener) notify = undefined;
+        };
+      },
+    );
+    const root = freshContainer();
+    const renderer = new CalendarRenderer(
+      root,
+      resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+      fakeApp,
+      queries,
+      { queries, execute: vi.fn() },
+      registry,
+    );
+    renderer.mount();
+    const openMenu = (): void => {
+      root
+        .querySelector<HTMLElement>(
+          '.task[data-occurrence-state="forecast"][data-due="2026-08-09"]',
+        )!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    };
+
+    openMenu();
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).not.toBeNull();
+    notify?.({ type: 'changed', files: ['Legacy.md'] });
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+
+    openMenu();
+    renderer.destroy();
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+  });
+
+  it('CenterPanel patches and destroy close its owned forecast menu', () => {
+    const sourceRoot = task({
+      title: 'Modern lifecycle source',
+      recurrence: 'every day',
+      planning: { due: '2026-08-08' },
+      source: { filePath: 'Modern.md', line: 5 },
+    });
+    let notify: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = queryApiForTasks(
+      () => [sourceRoot],
+      (listener) => {
+        notify = listener;
+        return () => {
+          if (notify === listener) notify = undefined;
+        };
+      },
+    );
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      fakeApp,
+      DEFAULT_SETTINGS,
+      queries,
+      registry,
+      undefined,
+      null,
+      null,
+      { queries, execute: vi.fn() },
+    );
+    const root = freshContainer();
+    panel.mount(root);
+    (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
+    state.set('mode', 'calendar');
+    const openMenu = (): void => {
+      root
+        .querySelector<HTMLElement>(
+          '[data-mg-date="2026-08-09"] [data-occurrence-state="forecast"]',
+        )!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    };
+
+    openMenu();
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).not.toBeNull();
+    notify?.({ type: 'changed', files: ['Modern.md'] });
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+
+    openMenu();
+    panel.destroy();
+    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
   });
 
   it.each(['month', 'week'] as const)(

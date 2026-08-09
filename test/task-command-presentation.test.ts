@@ -71,6 +71,36 @@ describe('task command result presentation', () => {
     },
   );
 
+  it('contains bidirectional Tab focus and restores the trigger on Escape', async () => {
+    const trigger = activeDocument.body.createEl('button', { text: 'Complete task' });
+    trigger.focus();
+    const completion = requestTaskCompletion(invalidDeleteTask, vi.fn());
+    const surface = activeDocument.querySelector<HTMLElement>('.tc-recurrence-delete-confirm')!;
+    const [cancel, confirm] = Array.from(surface.querySelectorAll<HTMLButtonElement>('button'));
+
+    expect(activeDocument.activeElement).toBe(cancel);
+    cancel!.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'Tab',
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    expect(activeDocument.activeElement).toBe(confirm);
+    confirm!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }),
+    );
+    expect(activeDocument.activeElement).toBe(cancel);
+
+    activeDocument.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await completion;
+    expect(activeDocument.activeElement).toBe(trigger);
+    trigger.remove();
+  });
+
   it('keeps an ordinary completion pending until its application command settles', async () => {
     const pending = deferred();
     const mutation = vi.fn().mockReturnValue(pending.promise);
@@ -91,6 +121,8 @@ describe('task command result presentation', () => {
   it('keeps a confirmed invalid Delete completion pending until its application command settles', async () => {
     const pending = deferred();
     const mutation = vi.fn().mockReturnValue(pending.promise);
+    const trigger = activeDocument.body.createEl('button', { text: 'Complete task' });
+    trigger.focus();
     const completion = requestTaskCompletion(invalidDeleteTask, mutation);
     activeDocument
       .querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm-button')
@@ -103,9 +135,12 @@ describe('task command result presentation', () => {
     await Promise.resolve();
     expect(mutation).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
+    expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+    expect(activeDocument.activeElement).toBe(trigger);
     pending.resolve();
     await completion;
     expect(settled).toBe(true);
+    trigger.remove();
   });
 
   it.each([

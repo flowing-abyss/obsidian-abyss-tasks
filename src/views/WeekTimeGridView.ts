@@ -171,6 +171,9 @@ export class WeekTimeGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
+      ...(this.callbacks.forecastMenuOwner && {
+        forecastMenuOwner: this.callbacks.forecastMenuOwner,
+      }),
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       ...(this.callbacks.onForecastClick && {
         onForecastClick: this.callbacks.onForecastClick,
@@ -203,6 +206,9 @@ export class WeekTimeGridView extends BaseView {
       onToggle: this.callbacks.onToggle,
       onSetStatus: this.callbacks.onSetStatus,
       onSetPriority: this.callbacks.onSetPriority,
+      ...(this.callbacks.forecastMenuOwner && {
+        forecastMenuOwner: this.callbacks.forecastMenuOwner,
+      }),
       ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       ...(this.callbacks.onForecastClick && {
         onForecastClick: this.callbacks.onForecastClick,

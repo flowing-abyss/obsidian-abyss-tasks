@@ -58,6 +58,25 @@ describe('RightPanel recurrence editor integration', () => {
     el.remove();
   });
 
+  it('dismisses an anchored editor outside through its focus-restoring handle', async () => {
+    const { state, el } = await makePanel();
+    activeDocument.body.append(el);
+    state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+
+    click(chip);
+    await tick();
+    expect(el.querySelector('.tc-recurrence-popover')).not.toBeNull();
+
+    click(outside);
+
+    expect(el.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(chip);
+    el.remove();
+    outside.remove();
+  });
+
   it('renders the current repeat value and detects recurrence ownership conflicts', async () => {
     const { state, el } = await makePanel();
     const child = subtask({ title: 'Child', recurrence: 'every day' });
@@ -121,7 +140,6 @@ describe('RightPanel recurrence editor integration', () => {
       target: { type: 'subtask', ref: child.ref },
       patch: {
         recurrence: { type: 'set', value: 'every month' },
-        onCompletion: { type: 'set', value: 'keep' },
       },
     });
   });

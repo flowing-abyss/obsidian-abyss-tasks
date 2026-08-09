@@ -141,6 +141,26 @@ describe('parseRecurrenceRule', () => {
   });
 
   it.each([
+    ['every February on the last', 'every February on the last'],
+    [
+      'every April and December on the 1st and 24th',
+      'every April and December on the 1st and 24th',
+    ],
+    ['every 2 years on February 29th', 'every 2 years February on the 29th'],
+    [
+      'every December and April on the 24th and 1st',
+      'every December and April on the 1st and 24th',
+    ],
+  ] as const)('accepts and canonicalizes Tasks yearly grammar %s', (raw, canonical) => {
+    expect(parseRecurrenceRule(raw)).toEqual({
+      type: 'valid',
+      raw,
+      canonical,
+      whenDone: false,
+    });
+  });
+
+  it.each([
     ['weekly', 'must-start-with-every'],
     ['every day for 4 times', 'unsupported-recurrence-count'],
     ['every day until 2026-09-01', 'unsupported-recurrence-until'],
@@ -161,6 +181,9 @@ describe('parseRecurrenceRule', () => {
     ['every week on Tuesday and Tuesday', 'unparseable-rule'],
     ['every month on the 1st and and 15th', 'unparseable-rule'],
     ['every month on the 1st and 1st', 'unparseable-rule'],
+    ['every April and April on the 1st', 'unparseable-rule'],
+    ['every April and December on the 1st and 1st', 'unparseable-rule'],
+    ['every 2 years on February 29th trailing', 'unparseable-rule'],
   ] as const)('rejects %s', (raw, code) => {
     expect(parseRecurrenceRule(raw)).toEqual({ type: 'invalid', code });
   });
@@ -191,6 +214,15 @@ describe('nextOccurrencePlanning', () => {
     ['nth weekdays', 'every month on the 2nd Tuesday', '2026-01-13', '2026-02-10', 28],
     ['last weekdays', 'every month on the last Friday', '2026-01-30', '2026-02-27', 28],
     ['explicit leap dates', 'every February on the 29th', '2024-02-29', '2028-02-29', 1461],
+    ['last February day', 'every February on the last', '2024-02-29', '2025-02-28', 365],
+    [
+      'multiple yearly months and days',
+      'every April and December on the 1st and 24th',
+      '2026-04-01',
+      '2026-04-24',
+      23,
+    ],
+    ['biennial leap date', 'every 2 years on February 29th', '2024-02-29', '2028-02-29', 1461],
   ] as const)('advances %s', (_name, rule, reference, expected, dayDelta) => {
     expect(next(rule, { due: localDate(reference) })).toEqual({
       type: 'next',

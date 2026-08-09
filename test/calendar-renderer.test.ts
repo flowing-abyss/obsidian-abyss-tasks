@@ -217,6 +217,32 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
+    it('renders List from persisted snapshots without requesting or merging forecasts', () => {
+      const store = new StubStore();
+      const persisted = task({
+        title: 'Persisted daily repeat',
+        recurrence: 'every day',
+        planning: { due: window.moment().format('YYYY-MM-DD') },
+      });
+      store.setTasks([persisted]);
+      const projection = vi.spyOn(store.taskQueries, 'forCalendarProjection');
+      const root = freshContainer();
+      const r = makeRenderer(
+        root,
+        store,
+        resolvedConfig({ defaultView: 'list', startPosition: window.moment().format('YYYY-MM') }),
+        fakeApp(),
+      );
+
+      r.mount();
+
+      expect(projection).not.toHaveBeenCalled();
+      expect(root.querySelectorAll('.tc-list-task')).toHaveLength(1);
+      expect(root.querySelector('.tc-list-date-count')?.textContent).toBe('1');
+      expect(root.querySelector("[data-recurrence-forecast='true']")).toBeNull();
+      r.destroy();
+    });
+
     it('switchView back to month restores month grid', () => {
       const store = new StubStore();
       const root = freshContainer();
@@ -671,12 +697,12 @@ describe('CalendarRenderer', () => {
       }
     });
 
-    it('keeps a materialized nested recurrence owner with its exact target and ordinary overdue tasks', async () => {
+    it('keeps a nested owner represented through its persisted root alongside ordinary overdue tasks', async () => {
       const nestedDate = window.moment().format('YYYY-MM-DD');
       const overdueDate = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
       const app = await createAppWithFiles({
         'list.md': [
-          '- [ ] Parent',
+          `- [ ] Parent 📅 ${nestedDate}`,
           `  - [ ] Nested repeat 🔁 every week ⏰ 07:31 📅 ${nestedDate}`,
         ].join('\n'),
         'overdue.md': `- [ ] Legacy overdue ⏰ 06:11 📅 ${overdueDate}`,
@@ -686,12 +712,10 @@ describe('CalendarRenderer', () => {
       expect(
         configured.tasks.queries.list().map(({ title, planning }) => ({ title, planning })),
       ).toEqual([
-        { title: 'Parent', planning: {} },
+        { title: 'Parent', planning: { due: nestedDate } },
         { title: 'Legacy overdue', planning: { due: overdueDate, time: '06:11' } },
       ]);
-      const nestedSource = configured.tasks.queries
-        .forCalendarProjection([localDate(nestedDate)])
-        .materialized.find(({ node }) => node.title === 'Nested repeat')!;
+      const persistedRoot = configured.tasks.queries.list()[0]!;
       const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
         type: 'invalid',
         issues: [{ code: 'invalid-target' }],
@@ -720,16 +744,18 @@ describe('CalendarRenderer', () => {
       const todaySection = Array.from(root.querySelectorAll<HTMLElement>('.tc-list-section')).find(
         (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
       );
-      const nestedRow = Array.from(
+      const persistedRow = Array.from(
         todaySection?.querySelectorAll<HTMLElement>('.tc-list-task') ?? [],
-      ).find((row) => row.querySelector('.tc-task-time')?.textContent === '07:31');
-      expect(nestedRow, 'the materialized nested owner is present').toBeDefined();
-      nestedRow
+      ).find((row) => row.querySelector('.tc-task-progress')?.textContent === '0/1');
+      expect(persistedRow, 'the persisted root represents its nested owner').toBeDefined();
+      expect(persistedRow?.querySelector('.tc-task-time')).toBeNull();
+      expect(root.textContent).not.toContain('07:31');
+      persistedRow
         ?.querySelector<HTMLElement>('.tc-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(execute).toHaveBeenCalledWith({
         type: 'toggle-completion',
-        target: nestedSource.target,
+        target: { type: 'task', ref: persistedRoot.ref },
       });
 
       r.destroy();

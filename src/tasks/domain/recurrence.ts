@@ -235,6 +235,13 @@ function monthlyClauseKey(value: string): string | undefined {
   return dates === undefined ? undefined : `dates:${unorderedListKey(dates)}`;
 }
 
+function annualDateClause(value: string): readonly number[] | undefined {
+  const clause = optionalLeadingThe(value);
+  if (clause === undefined) return undefined;
+  if (clause === 'last') return [-1];
+  return grammarList(clause, (item) => grammarOrdinal(item, 31));
+}
+
 function intervalKey(
   rawInterval: string | undefined,
   unit: string,
@@ -247,20 +254,57 @@ function intervalKey(
   return interval;
 }
 
-function supportedGrammarKey(value: string): string | undefined {
+interface SupportedGrammar {
+  readonly key: string;
+  readonly yearlyDates?: {
+    readonly months: readonly number[];
+    readonly monthDays: readonly number[];
+  };
+}
+
+function annualGrammar(body: string): SupportedGrammar | undefined {
+  const authoredInterval = /^(?:(\d+) )?(year|years) on (\w+) (.+)$/u.exec(body);
+  if (authoredInterval !== null) {
+    const interval = intervalKey(authoredInterval[1], authoredInterval[2]!, 'year');
+    const month = MONTHS.get(authoredInterval[3]!);
+    const monthDays = annualDateClause(authoredInterval[4]!);
+    if (interval === undefined || month === undefined || monthDays === undefined) return undefined;
+    return {
+      key: `annual:${interval}:${month}:${unorderedListKey(monthDays)}`,
+      yearlyDates: { months: [month], monthDays },
+    };
+  }
+
+  const canonicalInterval = /^(?:(\d+) )?(year|years) (.+) on (.+)$/u.exec(body);
+  if (canonicalInterval !== null) {
+    const interval = intervalKey(canonicalInterval[1], canonicalInterval[2]!, 'year');
+    const months = grammarList(canonicalInterval[3]!, (item) => MONTHS.get(item));
+    const monthDays = annualDateClause(canonicalInterval[4]!);
+    if (interval === undefined || months === undefined || monthDays === undefined) return undefined;
+    return {
+      key: `annual:${interval}:${unorderedListKey(months)}:${unorderedListKey(monthDays)}`,
+      yearlyDates: { months, monthDays },
+    };
+  }
+
+  const namedMonths = /^(.+) on (.+)$/u.exec(body);
+  if (namedMonths === null) return undefined;
+  const months = grammarList(namedMonths[1]!, (item) => MONTHS.get(item));
+  const monthDays = annualDateClause(namedMonths[2]!);
+  if (months === undefined || monthDays === undefined) return undefined;
+  return {
+    key: `annual:1:${unorderedListKey(months)}:${unorderedListKey(monthDays)}`,
+    yearlyDates: { months, monthDays },
+  };
+}
+
+function supportedGrammar(value: string): SupportedGrammar | undefined {
   const text = normalizedRuleText(value).toLowerCase();
   if (!text.startsWith('every ')) return undefined;
   const body = text.slice('every '.length);
 
-  const namedMonth = /^(\w+) on (.+)$/u.exec(body);
-  if (namedMonth !== null) {
-    const month = MONTHS.get(namedMonth[1]!);
-    if (month !== undefined) {
-      const clause = optionalLeadingThe(namedMonth[2]!);
-      const date = clause === undefined ? undefined : grammarOrdinal(clause, 31);
-      return date === undefined ? undefined : `annual:${month}:${date}`;
-    }
-  }
+  const annual = annualGrammar(body);
+  if (annual !== undefined) return annual;
 
   const unitRule =
     /^(?:(\d+) )?(day|days|weekday|weekdays|week|weeks|month|months|year|years)(?: on (.+))?$/u.exec(
@@ -273,17 +317,19 @@ function supportedGrammarKey(value: string): string | undefined {
   if (interval === undefined) return undefined;
 
   if (singular === 'day' || singular === 'weekday' || singular === 'year') {
-    return clause === undefined ? `${singular}:${interval}` : undefined;
+    return clause === undefined ? { key: `${singular}:${interval}` } : undefined;
   }
   if (singular === 'week') {
-    if (clause === undefined) return `week:${interval}`;
+    if (clause === undefined) return { key: `week:${interval}` };
     const weekdays = grammarList(clause, (item) => WEEKDAYS.get(item));
-    return weekdays === undefined ? undefined : `week:${interval}:${unorderedListKey(weekdays)}`;
+    return weekdays === undefined
+      ? undefined
+      : { key: `week:${interval}:${unorderedListKey(weekdays)}` };
   }
   if (singular === 'month') {
-    if (clause === undefined) return `month:${interval}`;
+    if (clause === undefined) return { key: `month:${interval}` };
     const monthlyClause = monthlyClauseKey(clause);
-    return monthlyClause === undefined ? undefined : `month:${interval}:${monthlyClause}`;
+    return monthlyClause === undefined ? undefined : { key: `month:${interval}:${monthlyClause}` };
   }
   return undefined;
 }
@@ -339,19 +385,23 @@ export function parseRecurrenceRule(raw: string): RecurrenceParseResult {
   const ruleText = whenDone
     ? normalized.slice(0, normalized.length - ' when done'.length)
     : normalized;
-  const inputGrammar = supportedGrammarKey(ruleText);
+  const inputGrammar = supportedGrammar(ruleText);
   if (inputGrammar === undefined) {
     return { type: 'invalid', code: 'unparseable-rule' };
   }
 
   try {
     const options = RRule.parseText(parserGrammarText(ruleText));
+    if (inputGrammar.yearlyDates !== undefined) {
+      options.bymonth = [...inputGrammar.yearlyDates.months];
+      options.bymonthday = [...inputGrammar.yearlyDates.monthDays];
+    }
     if (!hasOnlySupportedOptions(options)) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
     const compiled = new RRule({ ...options, dtstart: utcDate(localDate('2000-01-01')) });
     const canonical = compiled.toText();
-    if (supportedGrammarKey(canonical) !== inputGrammar) {
+    if (supportedGrammar(canonical)?.key !== inputGrammar.key) {
       return { type: 'invalid', code: 'unparseable-rule' };
     }
     cacheCompiledRule(normalized, { canonical, whenDone, rule: compiled });

@@ -207,6 +207,58 @@ describe('mountRecurrenceEditor', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    {
+      name: 'default Keep',
+      root: task({ planning: { due: '2026-08-09' } }),
+      prepare: (container: HTMLElement) => click(button(container, 'Weekdays')),
+      expected: { recurrence: { type: 'set', value: 'every weekday' } },
+    },
+    {
+      name: 'Delete changed to Keep',
+      root: task({
+        recurrence: 'every day',
+        onCompletion: 'delete',
+        onCompletionExplicit: true,
+        planning: { due: '2026-08-09' },
+      }),
+      prepare: (container: HTMLElement) =>
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!,
+          'keep',
+        ),
+      expected: {
+        recurrence: { type: 'set', value: 'every day' },
+        onCompletion: { type: 'clear' },
+      },
+    },
+    {
+      name: 'authored explicit Keep during a recurrence-only edit',
+      root: task({
+        recurrence: 'every day',
+        onCompletion: 'keep',
+        onCompletionExplicit: true,
+        planning: { due: '2026-08-09' },
+      }),
+      prepare: (container: HTMLElement) =>
+        input(
+          container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!,
+          'every week',
+        ),
+      expected: { recurrence: { type: 'set', value: 'every week' } },
+    },
+  ])('preserves omission semantics for $name', async ({ root, prepare, expected }) => {
+    const { container, onSubmit } = mount({
+      source: { root, target: { type: 'task', ref: root.ref } },
+    });
+
+    prepare(container);
+    click(button(container, 'Save repeat'));
+    await flushMicrotasks();
+
+    expect(onSubmit).toHaveBeenCalledWith(expected);
+  });
+
   it('submits an advanced rule with Enter', async () => {
     const { container, onSubmit } = mount();
     click(button(container, 'Advanced'));
@@ -218,7 +270,6 @@ describe('mountRecurrenceEditor', () => {
 
     expect(onSubmit).toHaveBeenCalledWith({
       recurrence: { type: 'set', value: 'every month on the last Friday' },
-      onCompletion: { type: 'set', value: 'keep' },
     });
   });
 
@@ -240,7 +291,6 @@ describe('mountRecurrenceEditor', () => {
     await flushMicrotasks();
     expect(onSubmit).toHaveBeenCalledWith({
       recurrence: { type: 'set', value: 'every day when done' },
-      onCompletion: { type: 'set', value: 'keep' },
     });
   });
 
@@ -316,6 +366,62 @@ describe('mountRecurrenceEditor', () => {
       onCompletion: { type: 'clear' },
     });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it('keeps one diagnostic id wired to dynamic validity across controls and advanced rerenders', () => {
+    const { container } = mount();
+    const editor = container.querySelector<HTMLElement>('.tc-recurrence-editor')!;
+    const title = container.querySelector<HTMLElement>('.tc-recurrence-title')!;
+    const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const diagnosticId = status.id;
+    const interval = container.querySelector<HTMLInputElement>('[aria-label="Repeat interval"]')!;
+
+    expect(editor.getAttribute('role')).toBe('region');
+    expect(title.id).not.toBe('');
+    expect(editor.getAttribute('aria-labelledby')).toBe(title.id);
+    expect(diagnosticId).not.toBe('');
+    expect(interval.getAttribute('aria-describedby')).toBe(diagnosticId);
+    expect(interval.getAttribute('aria-invalid')).toBe('false');
+
+    input(interval, '0');
+    expect(interval.getAttribute('aria-invalid')).toBe('true');
+    input(interval, '2');
+    expect(interval.getAttribute('aria-invalid')).toBe('false');
+
+    click(button(container, 'Advanced'));
+    const advancedStatus = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+    expect(advancedStatus.id).toBe(diagnosticId);
+    expect(raw.getAttribute('aria-describedby')).toBe(diagnosticId);
+    expect(raw.getAttribute('aria-invalid')).toBe('false');
+    input(raw, 'weekly');
+    expect(raw.getAttribute('aria-invalid')).toBe('true');
+    input(raw, 'every week');
+    expect(raw.getAttribute('aria-invalid')).toBe('false');
+  });
+
+  it('labels an anchored editor as a non-modal dialog without nested modal semantics', () => {
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    const root = task({ planning: { due: '2026-08-09' } });
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit: vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: root },
+      }),
+    });
+    mounted.push(handle);
+
+    const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover')!;
+    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title')!;
+    expect(popover.getAttribute('role')).toBe('dialog');
+    expect(popover.getAttribute('aria-modal')).toBe('false');
+    expect(popover.getAttribute('aria-labelledby')).toBe(title.id);
+    expect(popover.querySelector('[aria-modal="true"]')).toBeNull();
   });
 
   it('restores the previously focused anchor when Escape closes the editor', () => {

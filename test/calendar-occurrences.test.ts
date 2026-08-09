@@ -142,6 +142,44 @@ describe('projectCalendarOccurrences', () => {
     ).toEqual(want);
   });
 
+  it.each([
+    {
+      name: 'last day of February',
+      rule: 'every February on the last',
+      anchor: '2024-02-29',
+      visible: range('2025-02-01', '2025-02-28'),
+      want: ['2025-02-28'],
+    },
+    {
+      name: 'multiple months and dates',
+      rule: 'every April and December on the 1st and 24th',
+      anchor: '2026-04-01',
+      visible: range('2026-04-02', '2026-12-31'),
+      want: ['2026-04-24', '2026-12-01', '2026-12-24'],
+    },
+    {
+      name: 'biennial leap date',
+      rule: 'every 2 years on February 29th',
+      anchor: '2024-02-29',
+      visible: range('2025-01-01', '2028-12-31'),
+      want: ['2028-02-29'],
+    },
+  ])('projects Tasks yearly grammar for $name', ({ name, rule, anchor, visible, want }) => {
+    const yearly = rootSource(name, {
+      planning: { due: localDate(anchor) },
+      recurrence: rule,
+    });
+
+    const result = project({ recurringSources: [yearly] }, visible);
+
+    expect(
+      result.occurrences.map((occurrence) =>
+        occurrence.kind === 'forecast' ? occurrence.referenceDate : undefined,
+      ),
+    ).toEqual(want);
+    expect(result.issues).toEqual([]);
+  });
+
   it('extends expansion bounds for scheduled and due offsets, then filters overlap candidates', () => {
     const offset = rootSource('offset', {
       planning: {

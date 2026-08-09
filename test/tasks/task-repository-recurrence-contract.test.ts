@@ -148,6 +148,46 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} recurrence repository contract`, () => {
     it.each([
       {
+        rule: 'every February on the last',
+        reference: '2024-02-29',
+        next: '2025-02-28',
+      },
+      {
+        rule: 'every April and December on the 1st and 24th',
+        reference: '2026-04-01',
+        next: '2026-04-24',
+      },
+      {
+        rule: 'every 2 years on February 29th',
+        reference: '2024-02-29',
+        next: '2028-02-29',
+      },
+    ])('materializes Tasks yearly grammar $rule', async ({ rule, reference, next }) => {
+      const source = `- [ ] Repeat 🔁 ${rule} 📅 ${reference}\n`;
+      const harness = await makeHarness(adapter, source);
+
+      const result = await harness.repository.completeRecurrence(
+        request(rootTarget(harness, source), {
+          addCreatedDate: false,
+          addCompletionDate: false,
+        }),
+      );
+
+      expect(await harness.read()).toBe(
+        `- [ ] Repeat 🔁 ${rule} 📅 ${next}\n` + `- [x] Repeat 🔁 ${rule} 📅 ${reference}\n`,
+      );
+      expect(result).toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: {
+          type: 'recurrence',
+          active: { root: { planning: { due: next } }, target: { type: 'task' } },
+        },
+      });
+    });
+
+    it.each([
+      {
         placement: 'before' as const,
         ending: '\n',
         policyToken: '',

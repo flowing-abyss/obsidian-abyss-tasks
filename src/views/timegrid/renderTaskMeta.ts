@@ -18,8 +18,19 @@ import {
 export type CalendarContinuity = 'single' | 'continuation' | 'terminal';
 
 export interface ForecastInteractionCallbacks {
+  readonly forecastMenuOwner?: ForecastContextMenuOwner;
   readonly onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
+}
+
+export interface ForecastContextMenuOwner {
+  open(
+    anchor: HTMLElement,
+    event: MouseEvent,
+    occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>,
+    callbacks: ForecastInteractionCallbacks,
+  ): void;
+  dismiss(options?: { readonly restoreFocus?: boolean }): void;
 }
 
 export type CalendarOccurrenceLookup = (task: TaskSnapshot) => CalendarOccurrence;
@@ -95,19 +106,43 @@ export function renderCalendarLeadingSlots(
   }
 }
 
-export function renderCalendarProjectionIssues(
-  container: HTMLElement,
-  issues: readonly CalendarProjectionIssue[],
-): void {
-  container
-    .querySelectorAll<HTMLElement>(':scope > .tc-calendar-projection-diagnostic')
-    .forEach((element) => element.remove());
-  if (!issues.some((issue) => issue.code === 'forecast-limit-reached')) return;
-  container.createDiv({
-    cls: 'tc-calendar-projection-diagnostic',
-    attr: { 'aria-live': 'polite' },
-    text: 'More repeating occurrences are not shown',
-  });
+export interface CalendarProjectionDiagnosticOwner {
+  update(container: HTMLElement, issues: readonly CalendarProjectionIssue[]): void;
+  destroy(): void;
+}
+
+function projectionIssueSignature(issues: readonly CalendarProjectionIssue[]): string {
+  return issues
+    .map(
+      (issue) =>
+        `${issue.code}:${issue.source.filePath}:${issue.source.line}:${issue.source.revision}:${issue.phase}:${issue.limit}`,
+    )
+    .sort((left, right) => left.localeCompare(right))
+    .join('|');
+}
+
+export function createCalendarProjectionDiagnosticOwner(
+  ownerDocument: Document,
+): CalendarProjectionDiagnosticOwner {
+  const diagnostic = ownerDocument.createElement('div');
+  diagnostic.addClass('tc-calendar-projection-diagnostic');
+  diagnostic.setAttribute('aria-live', 'polite');
+  diagnostic.setAttribute('aria-atomic', 'true');
+  let lastSignature: string | null = null;
+
+  return {
+    update(container, issues): void {
+      if (diagnostic.parentElement !== container) container.appendChild(diagnostic);
+      const signature = projectionIssueSignature(issues);
+      if (signature === lastSignature) return;
+      lastSignature = signature;
+      diagnostic.textContent = signature === '' ? '' : 'More repeating occurrences are not shown';
+    },
+    destroy(): void {
+      diagnostic.remove();
+      lastSignature = null;
+    },
+  };
 }
 
 export function bindMaterializedInteractions(
@@ -118,41 +153,81 @@ export function bindMaterializedInteractions(
   bind(occurrence.source.target);
 }
 
-function closeForecastMenus(): void {
-  activeDocument
-    .querySelectorAll<HTMLElement>('.tc-forecast-context-menu')
-    .forEach((menu) => menu.remove());
-}
+export function createForecastContextMenuOwner(ownerDocument: Document): ForecastContextMenuOwner {
+  interface ActiveMenu {
+    readonly menu: HTMLElement;
+    readonly restoreTarget: HTMLElement | null;
+    readonly onDocumentKeydown: (event: KeyboardEvent) => void;
+    readonly onDocumentMousedown: (event: MouseEvent) => void;
+  }
 
-function showForecastContextMenu(
-  event: MouseEvent,
-  occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>,
-  callbacks: ForecastInteractionCallbacks,
-): void {
-  closeForecastMenus();
-  const menu = activeDocument.body.createDiv({
-    cls: 'tc-status-popover tc-forecast-context-menu',
-  });
-  menu.style.left = `${event.clientX}px`;
-  menu.style.top = `${event.clientY}px`;
-  const edit = menu.createEl('button', {
-    cls: 'tc-forecast-context-menu-edit-repeat',
-    attr: { type: 'button' },
-    text: 'Edit repeat…',
-  });
-  const open = menu.createEl('button', {
-    cls: 'tc-forecast-context-menu-open-source',
-    attr: { type: 'button' },
-    text: 'Open source task',
-  });
-  edit.addEventListener('click', () => {
-    menu.remove();
-    callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
-  });
-  open.addEventListener('click', () => {
-    menu.remove();
-    callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
-  });
+  let active: ActiveMenu | null = null;
+  const realm = ownerDocument.defaultView;
+  const focusedElement = (): HTMLElement | null => {
+    const candidate = ownerDocument.activeElement;
+    return realm && candidate instanceof realm.HTMLElement ? candidate : null;
+  };
+  const dismiss = (options: { readonly restoreFocus?: boolean } = {}): void => {
+    const current = active;
+    if (!current) return;
+    active = null;
+    ownerDocument.removeEventListener('keydown', current.onDocumentKeydown, true);
+    ownerDocument.removeEventListener('mousedown', current.onDocumentMousedown, true);
+    current.menu.remove();
+    if (options.restoreFocus !== false && current.restoreTarget?.isConnected) {
+      current.restoreTarget.focus({ preventScroll: true });
+    }
+  };
+
+  return {
+    open(anchor, event, occurrence, callbacks): void {
+      const restoreTarget = active?.restoreTarget ?? focusedElement() ?? anchor;
+      dismiss({ restoreFocus: false });
+      const menu = ownerDocument.body.createDiv({
+        cls: 'tc-status-popover tc-forecast-context-menu',
+        attr: { role: 'menu' },
+      });
+      menu.style.left = `${event.clientX}px`;
+      menu.style.top = `${event.clientY}px`;
+      const edit = menu.createEl('button', {
+        cls: 'tc-forecast-context-menu-edit-repeat',
+        attr: { type: 'button', role: 'menuitem' },
+        text: 'Edit repeat…',
+      });
+      const open = menu.createEl('button', {
+        cls: 'tc-forecast-context-menu-open-source',
+        attr: { type: 'button', role: 'menuitem' },
+        text: 'Open source task',
+      });
+      let owned: ActiveMenu;
+      const onDocumentKeydown = (keyboardEvent: KeyboardEvent): void => {
+        if (keyboardEvent.key !== 'Escape' || active !== owned) return;
+        keyboardEvent.preventDefault();
+        keyboardEvent.stopPropagation();
+        dismiss();
+      };
+      const onDocumentMousedown = (mouseEvent: MouseEvent): void => {
+        if (active !== owned || menu.contains(mouseEvent.target as Node)) return;
+        dismiss();
+      };
+      owned = { menu, restoreTarget, onDocumentKeydown, onDocumentMousedown };
+      active = owned;
+      ownerDocument.addEventListener('keydown', onDocumentKeydown, true);
+      ownerDocument.addEventListener('mousedown', onDocumentMousedown, true);
+      edit.addEventListener('click', () => {
+        if (active !== owned) return;
+        dismiss({ restoreFocus: false });
+        callbacks.onForecastContextMenu?.(occurrence.source, occurrence.referenceDate);
+      });
+      open.addEventListener('click', () => {
+        if (active !== owned) return;
+        dismiss({ restoreFocus: false });
+        callbacks.onForecastClick?.(occurrence.source, occurrence.referenceDate);
+      });
+      edit.focus({ preventScroll: true });
+    },
+    dismiss,
+  };
 }
 
 export function bindForecastInteractions(
@@ -168,7 +243,7 @@ export function bindForecastInteractions(
   element.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
-    showForecastContextMenu(event, occurrence, callbacks);
+    callbacks.forecastMenuOwner?.open(element, event, occurrence, callbacks);
   });
 }
 

@@ -251,6 +251,55 @@ describe('RightPanel recurrence writer', () => {
     expect(process).toHaveBeenCalledOnce();
     expect(await readMd(app, 't.md')).toBe('- [ ] Task 🔁 every weekday 🏁 delete 📅 2026-08-09\n');
   });
+
+  it.each([
+    {
+      name: 'omits default Keep',
+      source: '- [ ] Task 📅 2026-08-09\n',
+      prepare: (el: HTMLElement) =>
+        Array.from(el.querySelectorAll<HTMLButtonElement>('button'))
+          .find((candidate) => candidate.textContent === 'Weekdays')!
+          .click(),
+      expected: '- [ ] Task 🔁 every weekday 📅 2026-08-09\n',
+    },
+    {
+      name: 'clears Delete when changed to Keep',
+      source: '- [ ] Task 🔁 every day 🏁 delete 📅 2026-08-09\n',
+      prepare: (el: HTMLElement) => {
+        const completed = el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!;
+        completed.value = 'keep';
+        completed.dispatchEvent(new Event('change', { bubbles: true }));
+      },
+      expected: '- [ ] Task 🔁 every day 📅 2026-08-09\n',
+    },
+    {
+      name: 'preserves authored Keep during a recurrence-only edit',
+      source: '- [ ] Task 🔁 every day 🏁 keep 📅 2026-08-09\n',
+      prepare: (el: HTMLElement) => {
+        const raw = el.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+        raw.value = 'every week';
+        raw.dispatchEvent(new Event('input', { bubbles: true }));
+      },
+      expected: '- [ ] Task 🔁 every week 🏁 keep 📅 2026-08-09\n',
+    },
+  ])('$name without rewriting policy bytes', async ({ source, prepare, expected }) => {
+    const { panel, state, app } = await makePanel({ 't.md': source }, DEFAULT_SETTINGS, [
+      { path: 't.md', items: [{ task: ' ', parent: -1, line: 0 }] },
+    ]);
+    const current = (panel as unknown as { tasks: TaskApplicationApi }).tasks.queries.list({
+      filePath: 't.md',
+    })[0]!;
+    const el = freshContainer();
+    panel.mount(el);
+    state.set('taskStack', [current]);
+
+    el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!.click();
+    prepare(el);
+    el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!.click();
+    await flushMicrotasks();
+
+    expect(await readMd(app, 't.md')).toBe(expected);
+  });
 });
 
 describe('RightPanel planning API delegation', () => {

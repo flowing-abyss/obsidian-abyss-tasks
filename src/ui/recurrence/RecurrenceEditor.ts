@@ -86,6 +86,8 @@ const MONTHS = [
   'December',
 ] as const;
 
+let nextEditorInstance = 0;
+
 function selectedTask(source: TaskOccurrenceResult): TaskSelectionNode | undefined {
   if (source.target.type === 'task') return source.root;
   const path = [];
@@ -145,6 +147,9 @@ function withoutTerminalWhenDone(raw: string): string {
 }
 
 export function mountRecurrenceEditor(options: RecurrenceEditorOptions): RecurrenceEditorHandle {
+  const instanceId = ++nextEditorInstance;
+  const titleId = `tc-recurrence-title-${instanceId}`;
+  const diagnosticId = `tc-recurrence-diagnostic-${instanceId}`;
   const task = selectedTask(options.source);
   const reference = referenceDate(options.source, options.policy);
   const previousFocus = options.container.ownerDocument.activeElement;
@@ -237,6 +242,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     }
     const save = options.container.querySelector<HTMLButtonElement>('.tc-recurrence-save');
     if (save) save.disabled = state.submitting || message.length > 0 || parsed.type === 'invalid';
+    const invalid = message.length > 0 || parsed.type === 'invalid';
+    for (const input of options.container.querySelectorAll<HTMLElement>(
+      '.tc-recurrence-interval, .tc-recurrence-raw',
+    )) {
+      input.setAttribute('aria-invalid', String(invalid));
+    }
   };
 
   const submit = async (): Promise<void> => {
@@ -247,9 +258,17 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     state.submissionError = undefined;
     refresh();
     try {
+      const initialOnCompletion = task?.onCompletion ?? 'keep';
+      let onCompletionPatch: Pick<TaskPatch, 'onCompletion'> = {};
+      if (state.onCompletion !== initialOnCompletion) {
+        onCompletionPatch =
+          state.onCompletion === 'delete'
+            ? { onCompletion: { type: 'set', value: 'delete' } }
+            : { onCompletion: { type: 'clear' } };
+      }
       const result = await options.onSubmit({
         recurrence: { type: 'set', value: parsed.raw },
-        onCompletion: { type: 'set', value: state.onCompletion },
+        ...onCompletionPatch,
       });
       if (result.type === 'ok') {
         options.onClose();
@@ -313,6 +332,8 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         step: '1',
         value: state.intervalText,
         'aria-label': 'Repeat interval',
+        'aria-describedby': diagnosticId,
+        'aria-invalid': 'false',
       },
     });
     interval.addEventListener('input', () => {
@@ -474,9 +495,16 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const render = (): void => {
     options.container.empty();
-    const editor = options.container.createDiv({ cls: 'tc-recurrence-editor' });
+    const editor = options.container.createDiv({
+      cls: 'tc-recurrence-editor',
+      attr: { role: 'region', 'aria-labelledby': titleId },
+    });
     const heading = editor.createDiv({ cls: 'tc-recurrence-heading' });
-    heading.createEl('span', { cls: 'tc-recurrence-title', text: 'Repeat' });
+    heading.createEl('span', {
+      cls: 'tc-recurrence-title',
+      text: 'Repeat',
+      attr: { id: titleId },
+    });
     const advanced = heading.createEl('button', {
       cls: `tc-recurrence-advanced${state.mode === 'advanced' ? ' is-selected' : ''}`,
       text: 'Advanced',
@@ -521,6 +549,8 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
           type: 'text',
           value: state.advancedRaw,
           'aria-label': 'Recurrence rule',
+          'aria-describedby': diagnosticId,
+          'aria-invalid': 'false',
           spellcheck: 'false',
         },
       });
@@ -572,7 +602,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     preview.createSpan({ cls: 'tc-recurrence-preview-rule' });
     editor.createDiv({
       cls: 'tc-recurrence-status',
-      attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
+      attr: { id: diagnosticId, 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
 
     const actions = editor.createDiv({ cls: 'tc-recurrence-actions' });
@@ -644,6 +674,7 @@ export function mountAnchoredRecurrenceEditor(
   const ownerWindow = ownerDocument.defaultView;
   const popover = ownerDocument.body.createDiv({
     cls: 'tc-popover tc-recurrence-popover tc-popover-anchored tc-recurrence-popover-floating',
+    attr: { role: 'dialog', 'aria-modal': 'false' },
   });
   let destroyed = false;
   let outsideTimer: number | undefined;
@@ -689,6 +720,8 @@ export function mountAnchoredRecurrenceEditor(
     dismissalFocus: options.anchor,
     onClose: destroy,
   });
+  const title = popover.querySelector<HTMLElement>('.tc-recurrence-title');
+  if (title?.id) popover.setAttribute('aria-labelledby', title.id);
   position();
   ownerDocument.addEventListener('scroll', position, true);
   ownerWindow?.addEventListener('resize', position);

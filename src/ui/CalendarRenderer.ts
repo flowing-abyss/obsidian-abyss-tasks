@@ -26,7 +26,12 @@ import {
 } from '../views/calendarOccurrences';
 import { ListView } from '../views/ListView';
 import { MonthView } from '../views/MonthView';
-import { renderCalendarProjectionIssues } from '../views/timegrid/renderTaskMeta';
+import {
+  createCalendarProjectionDiagnosticOwner,
+  createForecastContextMenuOwner,
+  type CalendarProjectionDiagnosticOwner,
+  type ForecastContextMenuOwner,
+} from '../views/timegrid/renderTaskMeta';
 import { WeekView } from '../views/WeekView';
 import { mountAnchoredRecurrenceEditor } from './recurrence/RecurrenceEditor';
 import { showStatusMenuAt } from './statusMenu';
@@ -59,6 +64,8 @@ export class CalendarRenderer {
   private activeStatGroup: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
+  private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
+  private forecastMenuOwner: ForecastContextMenuOwner;
   private taskModal: TaskModal;
 
   constructor(
@@ -71,6 +78,8 @@ export class CalendarRenderer {
     private taskPrefix = '',
     private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
   ) {
+    this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
+    this.forecastMenuOwner = createForecastContextMenuOwner(rootEl.ownerDocument);
     this.taskModal = new TaskModal(app, statusRegistry, undefined, queries, tasks);
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
@@ -123,10 +132,11 @@ export class CalendarRenderer {
     this.renderView();
 
     this.unsubscribe = this.queries.subscribe(() => {
+      this.forecastMenuOwner.dismiss();
       this.dismissRecurrenceEditor();
       const tasks = this.calendarTasks();
       this.activeView?.patch(this.viewContainer!, tasks, this.buildConfig());
-      renderCalendarProjectionIssues(this.viewContainer!, this.projectionIssues);
+      this.projectionDiagnosticOwner.update(this.viewContainer!, this.projectionIssues);
       this.updateToolbar();
     });
   }
@@ -294,6 +304,10 @@ export class CalendarRenderer {
   }
 
   private calendarTasks(): TaskSnapshot[] {
+    if (this.activeViewType === 'list') {
+      this.projectionIssues = [];
+      return [...this.queries.list()];
+    }
     const viewType = this.activeViewType === 'week' ? 'week' : 'month';
     const dates = visibleCalendarDates(viewType, this.selectedDate, this.config.firstDayOfWeek);
     const sources = this.queries.forCalendarProjection(dates.map(localDate));
@@ -303,19 +317,12 @@ export class CalendarRenderer {
       this.recurrencePolicy,
     );
     this.projectionIssues = projection.issues;
-    const projected = projection.occurrences.map(taskSnapshotForCalendarOccurrence);
-    if (this.activeViewType !== 'list') return projected;
-    return [
-      ...this.queries.list(),
-      ...projected.filter((task) => {
-        const occurrence = calendarOccurrenceForTask(task);
-        return occurrence?.kind === 'forecast' || occurrence?.source.target.type === 'subtask';
-      }),
-    ];
+    return projection.occurrences.map(taskSnapshotForCalendarOccurrence);
   }
 
   private renderView(): void {
     if (!this.viewContainer) return;
+    this.forecastMenuOwner.dismiss();
     this.dismissRecurrenceEditor();
     const tasks = this.calendarTasks();
     const config = this.buildConfig();
@@ -333,6 +340,7 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
+          forecastMenuOwner: this.forecastMenuOwner,
           onForecastClick: (source, referenceDate) =>
             this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
@@ -347,6 +355,7 @@ export class CalendarRenderer {
           onTaskClick: () => {},
           onDrop: () => {},
           onOpenNote: (t) => void openInFile(this.app, t),
+          forecastMenuOwner: this.forecastMenuOwner,
           onForecastClick: (source, referenceDate) =>
             this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
@@ -365,7 +374,7 @@ export class CalendarRenderer {
     }
 
     this.activeView.render(this.viewContainer, tasks, config);
-    renderCalendarProjectionIssues(this.viewContainer, this.projectionIssues);
+    this.projectionDiagnosticOwner.update(this.viewContainer, this.projectionIssues);
     this.updateToolbar();
   }
 
@@ -438,6 +447,8 @@ export class CalendarRenderer {
   }
 
   destroy(): void {
+    this.projectionDiagnosticOwner.destroy();
+    this.forecastMenuOwner.dismiss();
     this.dismissRecurrenceEditor();
     this.taskModal.close();
     this.unsubscribe?.();

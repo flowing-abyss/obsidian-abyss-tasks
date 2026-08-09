@@ -949,7 +949,7 @@ export class RightPanel {
       }
     };
     this.anchoredSurfaceCleanups.set(popover, editorCleanup);
-    this.dismissMenuOnOutsideClick(popover, anchor);
+    this.dismissMenuOnOutsideClick(popover, anchor, () => handle.dismiss());
     this.el.ownerDocument.defaultView?.setTimeout(() => handle.focus(), 0);
   }
 
@@ -1586,14 +1586,18 @@ export class RightPanel {
   }
 
   /** Shared outside-click dismissal for small anchored menus (context menu, add-date menu). */
-  private dismissMenuOnOutsideClick(menu: HTMLElement, anchor: HTMLElement): void {
+  private dismissMenuOnOutsideClick(
+    menu: HTMLElement,
+    anchor: HTMLElement,
+    dismissSurface: () => void = () => this.removeAnchoredSurface(menu),
+  ): void {
     const ownerDocument = this.el.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const placementCleanup = this.anchoredSurfaceCleanups.get(menu);
     let listening = false;
     const dismiss = (e: MouseEvent): void => {
       if (!menu.contains(e.target as Node) && e.target !== anchor) {
-        this.removeAnchoredSurface(menu);
+        dismissSurface();
       }
     };
     let registrationTimer = ownerWindow?.setTimeout(() => {

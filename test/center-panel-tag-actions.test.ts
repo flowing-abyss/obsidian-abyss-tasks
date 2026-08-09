@@ -67,7 +67,6 @@ describe('CenterPanel recurrence context action', () => {
       target: { type: 'task', ref: recurring.ref },
       patch: {
         recurrence: { type: 'set', value: 'every month' },
-        onCompletion: { type: 'set', value: 'keep' },
       },
     });
   });

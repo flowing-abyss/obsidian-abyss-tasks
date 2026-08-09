@@ -87,7 +87,12 @@ import {
   minutesToTimeString,
   timeStringToMinutes,
 } from '../views/timegrid/layout';
-import { renderCalendarProjectionIssues } from '../views/timegrid/renderTaskMeta';
+import {
+  createCalendarProjectionDiagnosticOwner,
+  createForecastContextMenuOwner,
+  type CalendarProjectionDiagnosticOwner,
+  type ForecastContextMenuOwner,
+} from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { ProjectsPanel } from './projects/ProjectsPanel';
@@ -152,6 +157,8 @@ export class CenterPanel {
   private calendarPickerCleanup: (() => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
+  private forecastMenuOwner: ForecastContextMenuOwner | null = null;
+  private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner | null = null;
   // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
   // Query notifications use the incremental patch path and never consult this state.
   private lastScrolledCalKey: string | null = null;
@@ -235,6 +242,7 @@ export class CenterPanel {
 
   mount(container: HTMLElement): void {
     this.el = container;
+    this.forecastMenuOwner = createForecastContextMenuOwner(container.ownerDocument);
     this.taskModal = new TaskModal(
       this.app,
       this.statusRegistry,
@@ -478,6 +486,9 @@ export class CenterPanel {
   }
 
   private destroyCalendarView(): void {
+    this.forecastMenuOwner?.dismiss();
+    this.projectionDiagnosticOwner?.destroy();
+    this.projectionDiagnosticOwner = null;
     this.clearCalendarPicker();
     this.calUnsubscribe?.();
     this.calUnsubscribe = null;
@@ -623,6 +634,13 @@ export class CenterPanel {
   }
 
   private renderCalendarMode(): void {
+    const forecastMenuOwner =
+      this.forecastMenuOwner ?? createForecastContextMenuOwner(this.el.ownerDocument);
+    this.forecastMenuOwner = forecastMenuOwner;
+    const projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(
+      this.el.ownerDocument,
+    );
+    this.projectionDiagnosticOwner = projectionDiagnosticOwner;
     const nav = this.el.createDiv({ cls: 'tc-cal-nav' });
 
     const leftGroup = nav.createDiv({ cls: 'tc-cal-nav-left' });
@@ -854,6 +872,7 @@ export class CenterPanel {
 
     const mountView = (): void => {
       this.dismissRecurrenceEditor();
+      forecastMenuOwner.dismiss();
       this.captureActiveTimedBlockFocus();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       if (pendingQueueSequence !== undefined) {
@@ -883,6 +902,7 @@ export class CenterPanel {
       if (this.calViewType === 'today') {
         this.calViewInstance = new TodayView({
           app: this.app,
+          forecastMenuOwner,
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
@@ -917,6 +937,7 @@ export class CenterPanel {
       } else if (this.calViewType === 'week') {
         this.calViewInstance = new WeekTimeGridView({
           app: this.app,
+          forecastMenuOwner,
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
@@ -957,6 +978,7 @@ export class CenterPanel {
       } else {
         this.calViewInstance = new MonthGridView({
           app: this.app,
+          forecastMenuOwner,
           onDayClick: (date) => {
             this.cancelKeyboardInteraction();
             this.calViewType = 'today';
@@ -1001,7 +1023,7 @@ export class CenterPanel {
         shouldScrollToNow,
         preservedScrollTop,
       );
-      renderCalendarProjectionIssues(viewContainer, issues);
+      projectionDiagnosticOwner.update(viewContainer, issues);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
@@ -1011,6 +1033,7 @@ export class CenterPanel {
         return;
       }
       this.dismissRecurrenceEditor();
+      forecastMenuOwner.dismiss();
       this.captureActiveTimedBlockFocus();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       if (pendingQueueSequence !== undefined) {
@@ -1019,7 +1042,7 @@ export class CenterPanel {
       const renderGeneration = ++this.calendarRenderGeneration;
       const { config, issues, tasks } = currentCalendarContent();
       this.calViewInstance.patch(viewContainer, tasks, config);
-      renderCalendarProjectionIssues(viewContainer, issues);
+      projectionDiagnosticOwner.update(viewContainer, issues);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
