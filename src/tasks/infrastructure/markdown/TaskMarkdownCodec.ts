@@ -1,14 +1,12 @@
-import { inlineCodeRanges, type SourceRange } from '../../../parser/inlineCode';
 import { parseLinks } from '../../../parser/links';
 import { StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {
   editRecurrenceIterationTaskLine,
-  RECURRENCE_ITERATION_MARKERS,
-  recurrenceSyntaxBoundaryPositions,
   type RecurrenceTaskLineEdit,
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
+import { parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
 import type { OnCompletion, TaskPriority, TaskStatus } from '../../domain/types';
 import {
   formatDurationMinutes,
@@ -128,30 +126,6 @@ interface ParseSource {
   readonly line: number;
 }
 
-interface Candidate extends SourceSpan {
-  readonly value?: string | number;
-}
-
-const TASK_LINE_RE = /^[\s>]*- \[(.)\]/u;
-const TAG_RE = /#[\w/-]+/gu;
-const PRIORITY_RE = /[🔺⏫🔼🔽⏬]/gu;
-const DATE_PATTERNS: ReadonlyArray<{
-  kind: 'created' | 'start' | 'scheduled' | 'due' | 'completion' | 'cancelled';
-  regex: RegExp;
-}> = [
-  { kind: 'created', regex: /➕\s*(\d{4}-\d{2}-\d{2})/gu },
-  { kind: 'start', regex: /🛫\s*(\d{4}-\d{2}-\d{2})/gu },
-  { kind: 'scheduled', regex: /⏳\s*(\d{4}-\d{2}-\d{2})/gu },
-  { kind: 'due', regex: /📅\s*(\d{4}-\d{2}-\d{2})/gu },
-  { kind: 'completion', regex: /✅\s*(\d{4}-\d{2}-\d{2})/gu },
-  { kind: 'cancelled', regex: /❌\s*(\d{4}-\d{2}-\d{2})/gu },
-];
-const TIME_RE = /⏰\s*(\d{1,2}:\d{2})/gu;
-const DURATION_RE = /⏱️\s*(?:(\d{1,2}):([0-5]\d)(?=\s|$)|(?:(\d+)h)?(?:(\d+)m)?)/gu;
-const RECURRENCE_MARKER_RE = /🔁/gu;
-const ON_COMPLETION_RE = /🏁\s*(keep|delete)(?=\s|$)/giu;
-const BLOCK_ID_RE = /\^[A-Za-z0-9-]+(?=\s*$)/gu;
-
 const MARKER_BY_FIELD: Readonly<Record<TaskValidationField, string>> = {
   title: '',
   status: '',
@@ -201,18 +175,6 @@ const TOKEN_RANK: Readonly<Partial<Record<TaskSpanKind, number>>> = {
   completion: 100,
 };
 
-const TASK_ID = '[A-Za-z0-9_-]+';
-const TASK_ID_SEQUENCE = `${TASK_ID}( *, *${TASK_ID} *)*`;
-const TASK_ID_RE = new RegExp(`🆔\\uFE0F? *(${TASK_ID})(?=$|\\s)`, 'uy');
-const DEPENDS_ON_RE = new RegExp(`⛔\\uFE0F? *(${TASK_ID_SEQUENCE})(?=$|\\s)`, 'uy');
-
-const KNOWN_CARRIER_MARKERS = RECURRENCE_ITERATION_MARKERS.filter(
-  ({ kind }) => kind !== 'recurrence',
-) as ReadonlyArray<{
-  readonly marker: string;
-  readonly kind: NonNullable<SourceSpan['malformedKind']>;
-}>;
-
 const METADATA_KINDS = new Set<TaskSpanKind>([
   'priority',
   'recurrence',
@@ -233,299 +195,10 @@ const METADATA_KINDS = new Set<TaskSpanKind>([
 
 const TITLE_SEMANTIC_KINDS = new Set<TaskSpanKind>([...METADATA_KINDS, 'tag']);
 
-const PRIORITY_BY_MARKER: Readonly<Record<string, TaskPriority>> = {
-  '🔺': 'A',
-  '⏫': 'B',
-  '🔼': 'C',
-  '🔽': 'E',
-  '⏬': 'F',
-};
-
-const PRIORITY_PRECEDENCE: readonly TaskPriority[] = ['A', 'B', 'C', 'E', 'F'];
-const UNKNOWN_PICTOGRAPH_RE = /\p{Extended_Pictographic}/u;
 const WIKILINK_ALIAS_RE = /\[\[([^|[\]]+)\|([^[\]]+)\]\]/gu;
 const WIKILINK_RE = /\[\[([^[\]]+)\]\]/gu;
 const MD_LINK_RE = /\[([^[\]]+)\]\(([^)]+)\)/gu;
 const BRACKETS_RE = /\[([^[\]]*)\]/gu;
-
-function matches(regex: RegExp, text: string): RegExpExecArray[] {
-  regex.lastIndex = 0;
-  const result: RegExpExecArray[] = [];
-  let match: RegExpExecArray | null;
-  while ((match = regex.exec(text)) !== null) result.push(match);
-  return result;
-}
-
-function pushPatternCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  kind: TaskSpanKind,
-  regex: RegExp,
-  valueGroup?: number,
-): void {
-  for (const match of matches(regex, body)) {
-    if (match[0].length === 0) continue;
-    candidates.push({
-      kind,
-      from: bodyFrom + match.index,
-      to: bodyFrom + match.index + match[0].length,
-      ...(valueGroup !== undefined && match[valueGroup] !== undefined
-        ? { value: match[valueGroup] }
-        : {}),
-    });
-  }
-}
-
-function pushTagCandidates(candidates: Candidate[], body: string, bodyFrom: number): void {
-  for (const match of matches(TAG_RE, body)) {
-    const from = match.index;
-    const to = from + match[0].length;
-    candidates.push({ kind: 'tag', from: bodyFrom + from, to: bodyFrom + to });
-  }
-}
-
-function mergedRanges(ranges: readonly SourceRange[]): readonly SourceRange[] {
-  const sorted = [...ranges].sort((left, right) => left.from - right.from || left.to - right.to);
-  const merged: SourceRange[] = [];
-  for (const range of sorted) {
-    const previous = merged[merged.length - 1];
-    if (!previous || range.from > previous.to) {
-      merged.push(range);
-      continue;
-    }
-    if (range.to > previous.to) {
-      merged[merged.length - 1] = { from: previous.from, to: range.to };
-    }
-  }
-  return merged;
-}
-
-function excludeOverlappingRanges<T extends SourceRange>(
-  sortedCandidates: readonly T[],
-  sortedExclusions: readonly SourceRange[],
-): T[] {
-  const accepted: T[] = [];
-  let exclusionIndex = 0;
-  for (const candidate of sortedCandidates) {
-    while (
-      exclusionIndex < sortedExclusions.length &&
-      sortedExclusions[exclusionIndex]!.to <= candidate.from
-    ) {
-      exclusionIndex++;
-    }
-    const exclusion = sortedExclusions[exclusionIndex];
-    if (exclusion && candidate.from < exclusion.to && candidate.to > exclusion.from) continue;
-    accepted.push(candidate);
-  }
-  return accepted;
-}
-
-function containsSortedPoint(at: number, sortedRanges: readonly SourceRange[]): boolean {
-  for (const range of sortedRanges) {
-    if (range.to <= at) continue;
-    return range.from <= at && at < range.to;
-  }
-  return false;
-}
-
-function includesExactCandidate(
-  sortedCandidates: readonly Candidate[],
-  range: SourceRange,
-  kind: TaskSpanKind,
-): boolean {
-  for (const candidate of sortedCandidates) {
-    if (candidate.from > range.from) return false;
-    if (candidate.kind === kind && candidate.from === range.from && candidate.to === range.to) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function pushPinnedCarrierCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  marker: '🆔' | '⛔',
-  regex: RegExp,
-  kind: 'task-id' | 'depends-on',
-): void {
-  let searchFrom = 0;
-  while (searchFrom < body.length) {
-    const markerAt = body.indexOf(marker, searchFrom);
-    if (markerAt < 0) break;
-    regex.lastIndex = markerAt;
-    const match = regex.exec(body);
-    if (match?.index === markerAt) {
-      candidates.push({
-        kind,
-        from: bodyFrom + markerAt,
-        to: bodyFrom + markerAt + match[0].length,
-        value: match[1],
-      });
-    }
-    searchFrom = markerAt + marker.length;
-  }
-}
-
-function markerPositions(body: string): ReadonlyArray<{
-  readonly at: number;
-  readonly marker: string;
-  readonly kind: NonNullable<SourceSpan['malformedKind']>;
-}> {
-  return KNOWN_CARRIER_MARKERS.flatMap(({ marker, kind }) => {
-    const positions: Array<{ at: number; marker: string; kind: typeof kind }> = [];
-    let from = 0;
-    while (from < body.length) {
-      const at = body.indexOf(marker, from);
-      if (at < 0) break;
-      positions.push({ at, marker, kind });
-      from = at + marker.length;
-    }
-    return positions;
-  }).sort((left, right) => left.at - right.at);
-}
-
-function terminalCaretRange(
-  body: string,
-  sortedAtomicRanges: readonly SourceRange[],
-): SourceRange | undefined {
-  let to = body.length;
-  while (to > 0 && /\s/u.test(body[to - 1]!)) to--;
-  let from = to;
-  let atomicIndex = sortedAtomicRanges.length - 1;
-  while (from > 0) {
-    while (atomicIndex >= 0 && sortedAtomicRanges[atomicIndex]!.to > from) atomicIndex--;
-    const atomic = sortedAtomicRanges[atomicIndex];
-    if (atomic?.to === from) {
-      from = atomic.from;
-      atomicIndex--;
-      continue;
-    }
-    if (/\s/u.test(body[from - 1]!)) break;
-    from--;
-  }
-  return body[from] === '^' ? { from, to } : undefined;
-}
-
-function malformedValueEnd(
-  body: string,
-  valueFrom: number,
-  boundary: number,
-  kind: NonNullable<SourceSpan['malformedKind']>,
-): number {
-  let to = valueFrom;
-  while (to < boundary && !/\s/u.test(body[to]!)) to++;
-  if (kind !== 'depends-on') return to;
-
-  while (to < boundary) {
-    let next = to;
-    while (next < boundary && /\s/u.test(body[next]!)) next++;
-    if (next >= boundary || (body[to - 1] !== ',' && body[next] !== ',')) break;
-    to = next;
-    while (to < boundary && !/\s/u.test(body[to]!)) to++;
-  }
-  return to;
-}
-
-function pushRecurrenceCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  recurrenceMarkers: readonly number[],
-  boundaries: readonly number[],
-): void {
-  let boundaryIndex = 0;
-  for (const recurrenceAt of recurrenceMarkers) {
-    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex]! <= recurrenceAt) {
-      boundaryIndex++;
-    }
-    const recurrenceBoundary = boundaries[boundaryIndex] ?? body.length;
-    let recurrenceTo = recurrenceBoundary;
-    while (recurrenceTo > recurrenceAt && /\s/u.test(body[recurrenceTo - 1] ?? '')) {
-      recurrenceTo--;
-    }
-    const rawValue = body.slice(recurrenceAt + '🔁'.length, recurrenceTo).trim();
-    candidates.push({
-      kind: 'recurrence',
-      from: bodyFrom + recurrenceAt,
-      to: bodyFrom + recurrenceTo,
-      ...(rawValue ? { value: rawValue } : {}),
-    });
-  }
-}
-
-function pushMalformedKnownCandidates(
-  candidates: Candidate[],
-  body: string,
-  bodyFrom: number,
-  markers: ReturnType<typeof markerPositions>,
-  boundaries: readonly number[],
-): void {
-  const protectedRanges = mergedRanges(candidates);
-  let protectedIndex = 0;
-  let boundaryIndex = 0;
-  const overlapsProtected = (from: number, to: number): boolean => {
-    while (protectedIndex < protectedRanges.length && protectedRanges[protectedIndex]!.to <= from) {
-      protectedIndex++;
-    }
-    const protectedRange = protectedRanges[protectedIndex];
-    return protectedRange !== undefined && from < protectedRange.to && to > protectedRange.from;
-  };
-
-  for (const { at, marker, kind } of markers) {
-    const absoluteFrom = bodyFrom + at;
-    if (overlapsProtected(absoluteFrom, absoluteFrom + marker.length)) continue;
-
-    let markerEnd = at + marker.length;
-    if ((kind === 'task-id' || kind === 'depends-on') && body[markerEnd] === '\ufe0f') markerEnd++;
-    let valueFrom = markerEnd;
-    while (/\s/u.test(body[valueFrom] ?? '')) valueFrom++;
-    while (boundaryIndex < boundaries.length && boundaries[boundaryIndex]! < valueFrom) {
-      boundaryIndex++;
-    }
-    const boundary = boundaries[boundaryIndex] ?? body.length;
-    const valueTo = malformedValueEnd(body, valueFrom, boundary, kind);
-    const to = valueTo > valueFrom ? valueTo : markerEnd;
-    candidates.push({
-      kind: 'malformed-known',
-      malformedKind: kind,
-      from: bodyFrom + at,
-      to: bodyFrom + to,
-    });
-  }
-}
-
-function durationMinutes(
-  hours: string | undefined,
-  minutes: string | undefined,
-): number | undefined {
-  const total = Number(hours ?? 0) * 60 + Number(minutes ?? 0);
-  return total > 0 ? total : undefined;
-}
-
-function addGapSpans(spans: SourceSpan[], original: string, from: number, to: number): void {
-  let cursor = from;
-  while (cursor < to) {
-    const whitespace = /\s/u.test(original[cursor] ?? '');
-    let end = cursor + 1;
-    while (end < to && /\s/u.test(original[end] ?? '') === whitespace) end++;
-    if (whitespace) {
-      spans.push({ kind: 'separator', from: cursor, to: end });
-      cursor = end;
-      continue;
-    }
-
-    const raw = original.slice(cursor, end);
-    spans.push({
-      kind: UNKNOWN_PICTOGRAPH_RE.test(raw) ? 'unknown' : 'title',
-      from: cursor,
-      to: end,
-    });
-    cursor = end;
-  }
-}
 
 function collapseLinks(input: string): string {
   return input
@@ -533,39 +206,6 @@ function collapseLinks(input: string): string {
     .replace(WIKILINK_RE, (_match, link: string) => '🔗 ' + link.replace(/\.[^.]*$/u, ''))
     .replace(MD_LINK_RE, '🌐 $1')
     .replace(BRACKETS_RE, '$1');
-}
-
-function firstString(candidates: readonly Candidate[], kind: TaskSpanKind): string | undefined {
-  const value = candidates.find((candidate) => candidate.kind === kind)?.value;
-  return typeof value === 'string' ? value : undefined;
-}
-
-function completionPolicyFrom(candidates: readonly Candidate[]): {
-  readonly onCompletion: OnCompletion;
-  readonly onCompletionExplicit: boolean;
-} {
-  const value = firstString(candidates, 'on-completion')?.toLowerCase();
-  return value === 'delete'
-    ? { onCompletion: 'delete', onCompletionExplicit: true }
-    : { onCompletion: 'keep', onCompletionExplicit: value !== undefined };
-}
-
-function lineEndingOf(original: string): ParsedTaskLine['lineEnding'] {
-  if (original.endsWith('\r\n')) return '\r\n';
-  if (original.endsWith('\n')) return '\n';
-  return '';
-}
-
-function pushBlockIdCandidates(candidates: Candidate[], body: string, bodyFrom: number): void {
-  for (const match of matches(BLOCK_ID_RE, body)) {
-    const before = body[match.index - 1];
-    if (match.index === 0 || before === undefined || !/\s/u.test(before)) continue;
-    candidates.push({
-      kind: 'block-id',
-      from: bodyFrom + match.index,
-      to: bodyFrom + match.index + match[0].length,
-    });
-  }
 }
 
 function spliceSource(source: string, from: number, to: number, replacement: string): string {
@@ -1234,202 +874,22 @@ export class TaskMarkdownCodec {
   }
 
   parseLine(original: string, source: ParseSource): ParsedTaskLine | null {
-    const lineEnding = lineEndingOf(original);
-    const contentEnd = original.length - lineEnding.length;
-    const content = original.slice(0, contentEnd);
-    const taskMatch = TASK_LINE_RE.exec(content);
-    if (!taskMatch) return null;
-
-    const statusSymbol = taskMatch[1] ?? '';
-    const prefixEnd = taskMatch[0].length;
-    const body = content.slice(prefixEnd);
-    const inlineCodeInBody = inlineCodeRanges(body);
-    const links = parseLinks(body);
-    const inlineCode = inlineCodeInBody.map((range) => ({
-      from: prefixEnd + range.from,
-      to: prefixEnd + range.to,
-    }));
-    const linkRanges = links.map((link) => ({
-      from: prefixEnd + link.index,
-      to: prefixEnd + link.index + link.raw.length,
-    }));
-    const atomicBodyRanges = mergedRanges([
-      ...inlineCodeInBody,
-      ...links.map((link) => ({ from: link.index, to: link.index + link.raw.length })),
-    ]);
-    let candidates: Candidate[] = [];
-
-    for (const pattern of DATE_PATTERNS) {
-      pushPatternCandidates(candidates, body, prefixEnd, pattern.kind, pattern.regex, 1);
-    }
-    pushPatternCandidates(candidates, body, prefixEnd, 'on-completion', ON_COMPLETION_RE, 1);
-    pushTagCandidates(candidates, body, prefixEnd);
-    pushPatternCandidates(candidates, body, prefixEnd, 'priority', PRIORITY_RE);
-    pushPatternCandidates(candidates, body, prefixEnd, 'time', TIME_RE, 1);
-    pushBlockIdCandidates(candidates, body, prefixEnd);
-    pushPinnedCarrierCandidates(candidates, body, prefixEnd, '🆔', TASK_ID_RE, 'task-id');
-    pushPinnedCarrierCandidates(candidates, body, prefixEnd, '⛔', DEPENDS_ON_RE, 'depends-on');
-
-    for (const match of matches(DURATION_RE, body)) {
-      if (
-        match[1] === undefined &&
-        match[2] === undefined &&
-        match[3] === undefined &&
-        match[4] === undefined
-      )
-        continue;
-      const hours = match[1] ?? match[3];
-      const minutes = match[2] ?? match[4];
-      candidates.push({
-        kind: 'duration',
-        from: prefixEnd + match.index,
-        to: prefixEnd + match.index + match[0].length,
-        ...(durationMinutes(hours, minutes) !== undefined
-          ? { value: durationMinutes(hours, minutes) }
-          : {}),
-      });
-    }
-
-    const atomicTitleCandidates: Candidate[] = [
-      ...inlineCode.map((range) => ({ kind: 'title' as const, ...range })),
-      ...linkRanges.map((range) => ({ kind: 'title' as const, ...range })),
-    ].sort((left, right) => left.from - right.from || left.to - right.to);
-    const atomicTitleRanges = atomicBodyRanges.map((range) => ({
-      from: prefixEnd + range.from,
-      to: prefixEnd + range.to,
-    }));
-    candidates.sort((left, right) => left.from - right.from || left.to - right.to);
-    candidates = excludeOverlappingRanges(candidates, atomicTitleRanges);
-    const terminalCaret = terminalCaretRange(body, atomicBodyRanges);
-    let malformedTerminal: Candidate | undefined;
-    if (terminalCaret) {
-      const terminalRange = {
-        from: prefixEnd + terminalCaret.from,
-        to: prefixEnd + terminalCaret.to,
-      };
-      const isAtomicTitle = containsSortedPoint(terminalRange.from, atomicTitleRanges);
-      const isValidBlock = includesExactCandidate(candidates, terminalRange, 'block-id');
-      if (!isAtomicTitle && !isValidBlock) {
-        malformedTerminal = {
-          kind: 'malformed-known',
-          malformedKind: 'block-id',
-          ...terminalRange,
-        };
-        candidates = excludeOverlappingRanges(candidates, [terminalRange]);
-        candidates.push(malformedTerminal);
-      }
-    }
-    candidates.push(...atomicTitleCandidates);
-    const recurrenceExcluded = mergedRanges([
-      ...atomicTitleRanges,
-      ...(malformedTerminal ? [malformedTerminal] : []),
-    ]);
-    const recurrenceMarkerRanges = matches(RECURRENCE_MARKER_RE, body).map((match) => ({
-      at: match.index,
-      from: prefixEnd + match.index,
-      to: prefixEnd + match.index + '🔁'.length,
-    }));
-    const recurrenceMarkers = excludeOverlappingRanges(
-      recurrenceMarkerRanges,
-      recurrenceExcluded,
-    ).map(({ at }) => at);
-    const knownMarkers = markerPositions(body);
-    const boundaries = recurrenceSyntaxBoundaryPositions(
-      body,
-      recurrenceExcluded.map((range) => ({
-        from: range.from - prefixEnd,
-        to: range.to - prefixEnd,
-      })),
-    );
-    pushRecurrenceCandidates(candidates, body, prefixEnd, recurrenceMarkers, boundaries);
-    pushMalformedKnownCandidates(candidates, body, prefixEnd, knownMarkers, boundaries);
-
-    candidates.sort((left, right) => left.from - right.from || left.to - right.to);
-    const accepted: Candidate[] = [];
-    let acceptedTo = prefixEnd;
-    for (const candidate of candidates) {
-      if (candidate.from < acceptedTo || candidate.to > contentEnd) continue;
-      accepted.push(candidate);
-      acceptedTo = candidate.to;
-    }
-
-    const spans: SourceSpan[] = [{ kind: 'prefix', from: 0, to: prefixEnd }];
-    let cursor = prefixEnd;
-    for (const candidate of accepted) {
-      addGapSpans(spans, original, cursor, candidate.from);
-      spans.push({
-        kind: candidate.kind,
-        from: candidate.from,
-        to: candidate.to,
-        ...(candidate.malformedKind !== undefined && {
-          malformedKind: candidate.malformedKind,
-        }),
-      });
-      cursor = candidate.to;
-    }
-    addGapSpans(spans, original, cursor, contentEnd);
-    if (lineEnding) spans.push({ kind: 'separator', from: contentEnd, to: original.length });
-
-    const occurrences = new Map<TaskSpanKind, SourceSpan[]>();
-    for (const span of spans) {
-      const group = occurrences.get(span.kind) ?? [];
-      group.push(span);
-      occurrences.set(span.kind, group);
-    }
-
-    const markdownTitle = semanticTitleFragments(spans, contentEnd)
-      .map((fragment) => original.slice(fragment.from, fragment.to))
-      .join(' ')
-      .replace(/\s{2,}/gu, ' ')
-      .trim();
-
-    const priorityCandidates = accepted
-      .filter((candidate) => candidate.kind === 'priority')
-      .map((candidate) => PRIORITY_BY_MARKER[original.slice(candidate.from, candidate.to)])
-      .filter((priority): priority is TaskPriority => priority !== undefined);
-    const priority =
-      PRIORITY_PRECEDENCE.find((candidate) => priorityCandidates.includes(candidate)) ?? 'D';
-
-    const firstDuration = accepted.find((candidate) => candidate.kind === 'duration');
-    const duration =
-      firstDuration && typeof firstDuration.value === 'number' ? firstDuration.value : undefined;
-    const planning: ParsedTaskLine['planning'] = {
-      ...(firstString(accepted, 'due') !== undefined && { due: firstString(accepted, 'due') }),
-      ...(firstString(accepted, 'created') !== undefined && {
-        created: firstString(accepted, 'created'),
-      }),
-      ...(firstString(accepted, 'scheduled') !== undefined && {
-        scheduled: firstString(accepted, 'scheduled'),
-      }),
-      ...(firstString(accepted, 'start') !== undefined && {
-        start: firstString(accepted, 'start'),
-      }),
-      ...(firstString(accepted, 'completion') !== undefined && {
-        completion: firstString(accepted, 'completion'),
-      }),
-      ...(firstString(accepted, 'cancelled') !== undefined && {
-        cancelled: firstString(accepted, 'cancelled'),
-      }),
-      ...(firstString(accepted, 'time') !== undefined && { time: firstString(accepted, 'time') }),
-      ...(typeof duration === 'number' && { duration }),
-    };
-
-    const completionPolicy = completionPolicyFrom(accepted);
+    const model = parseTaskLineSourceModel(original);
+    if (!model) return null;
     return {
-      original,
-      lineEnding,
-      statusSymbol,
-      markdownTitle,
-      title: collapseLinks(markdownTitle),
-      tags: accepted
-        .filter((candidate) => candidate.kind === 'tag')
-        .map((candidate) => original.slice(candidate.from, candidate.to)),
-      spans,
-      occurrences,
-      planning,
-      priority,
-      recurrence: firstString(accepted, 'recurrence'),
-      ...completionPolicy,
+      original: model.original,
+      lineEnding: model.lineEnding,
+      statusSymbol: model.statusSymbol,
+      markdownTitle: model.markdownTitle,
+      title: collapseLinks(model.markdownTitle),
+      tags: model.tags,
+      spans: model.spans,
+      occurrences: model.occurrences,
+      planning: model.planning,
+      priority: model.priority,
+      recurrence: model.recurrence,
+      onCompletion: model.onCompletion,
+      onCompletionExplicit: model.onCompletionExplicit,
       source: { ...source, originalMarkdown: original },
     };
   }

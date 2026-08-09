@@ -1,5 +1,6 @@
 import { shiftLocalDate } from './localDateMath';
 import { parseRecurrenceRule, type RecurrenceIssueCode } from './recurrence';
+import { parseTaskLineSourceModel, type TaskLineSourceCarrier } from './taskLineSourceModel';
 import type { LocalDate, TaskPlanning } from './types';
 import { formatDurationMinutes, localDate, localTime } from './validation';
 
@@ -53,6 +54,7 @@ interface SourceLine {
 interface ParsedIterationTaskLine {
   readonly original: string;
   readonly contentEnd: number;
+  readonly statusSymbol: string;
   readonly statusAt: number;
   readonly carriers: readonly Carrier[];
 }
@@ -99,20 +101,6 @@ const DATE_MARKERS: Readonly<Record<DateCarrier, string>> = {
   completion: '✅',
   cancelled: '❌',
 };
-export const RECURRENCE_ITERATION_MARKERS: ReadonlyArray<{
-  readonly kind: CarrierKind;
-  readonly marker: string;
-}> = [
-  ...Object.entries(DATE_MARKERS).map(([kind, marker]) => ({ kind: kind as DateCarrier, marker })),
-  { kind: 'time', marker: '⏰' },
-  { kind: 'duration', marker: '⏱️' },
-  { kind: 'recurrence', marker: '🔁' },
-  { kind: 'on-completion', marker: '🏁' },
-  { kind: 'task-id', marker: '🆔' },
-  { kind: 'depends-on', marker: '⛔' },
-];
-const PRIORITY_MARKERS = ['🔺', '⏫', '🔼', '🔽', '⏬'] as const;
-const TAG_RE = /#[\w/-]+/gu;
 const INSERTION_RANK: Readonly<Record<CarrierKind, number>> = {
   time: 10,
   duration: 20,
@@ -214,139 +202,6 @@ export function stripRecurrenceTerminalBlockId(line: string): string {
   return line.replace(/\s+\^[A-Za-z0-9-]+(?=\r?$)/u, '');
 }
 
-function isEscaped(source: string, at: number): boolean {
-  let slashes = 0;
-  for (let index = at - 1; index >= 0 && source[index] === '\\'; index--) slashes++;
-  return slashes % 2 === 1;
-}
-
-function inlineCodeRanges(source: string): SourceRange[] {
-  const ranges: SourceRange[] = [];
-  let cursor = 0;
-  while (cursor < source.length) {
-    const open = source.indexOf('`', cursor);
-    if (open < 0) break;
-    if (isEscaped(source, open)) {
-      cursor = open + 1;
-      continue;
-    }
-    let runLength = 1;
-    while (source[open + runLength] === '`') runLength++;
-    const delimiter = '`'.repeat(runLength);
-    let close = source.indexOf(delimiter, open + runLength);
-    while (close >= 0 && (source[close - 1] === '`' || source[close + runLength] === '`')) {
-      close = source.indexOf(delimiter, close + 1);
-    }
-    if (close < 0) {
-      cursor = open + runLength;
-      continue;
-    }
-    ranges.push({ from: open, to: close + runLength });
-    cursor = close + runLength;
-  }
-  return ranges;
-}
-
-function linkFrom(source: string, bracket: number): number {
-  return source[bracket - 1] === '!' ? bracket - 1 : bracket;
-}
-
-function wikiLinkRange(source: string, bracket: number): SourceRange | undefined {
-  if (source[bracket + 1] !== '[') return undefined;
-  const close = source.indexOf(']]', bracket + 2);
-  return close < 0 ? undefined : { from: linkFrom(source, bracket), to: close + 2 };
-}
-
-function markdownLinkRange(source: string, bracket: number): SourceRange | undefined {
-  const closeLabel = source.indexOf(']', bracket + 1);
-  if (closeLabel < 0 || source[closeLabel + 1] !== '(') return undefined;
-  let depth = 1;
-  let at = closeLabel + 2;
-  while (at < source.length && depth > 0) {
-    if (!isEscaped(source, at)) {
-      if (source[at] === '(') depth++;
-      if (source[at] === ')') depth--;
-    }
-    at++;
-  }
-  return depth === 0 ? { from: linkFrom(source, bracket), to: at } : undefined;
-}
-
-function linkRanges(source: string, excluded: readonly SourceRange[]): SourceRange[] {
-  const ranges: SourceRange[] = [];
-  let cursor = 0;
-  while (cursor < source.length) {
-    const bracket = source.indexOf('[', cursor);
-    if (bracket < 0) break;
-    const isExcluded = excluded.some((range) => range.from <= bracket && bracket < range.to);
-    if (isExcluded || isEscaped(source, bracket)) {
-      cursor = bracket + 1;
-      continue;
-    }
-    const range = wikiLinkRange(source, bracket) ?? markdownLinkRange(source, bracket);
-    if (range) ranges.push(range);
-    cursor = range?.to ?? bracket + 1;
-  }
-  return ranges;
-}
-
-function protectedRanges(source: string): readonly SourceRange[] {
-  const code = inlineCodeRanges(source);
-  return [...code, ...linkRanges(source, code)].sort((left, right) => left.from - right.from);
-}
-
-function insideRanges(at: number, ranges: readonly SourceRange[]): boolean {
-  return ranges.some((range) => range.from <= at && at < range.to);
-}
-
-function markerPositions(
-  content: string,
-  from: number,
-  protectedSyntax: readonly SourceRange[],
-): Array<{ readonly kind: CarrierKind; readonly marker: string; readonly at: number }> {
-  const positions: Array<{ kind: CarrierKind; marker: string; at: number }> = [];
-  for (const { kind, marker } of RECURRENCE_ITERATION_MARKERS) {
-    let cursor = from;
-    while (cursor < content.length) {
-      const at = content.indexOf(marker, cursor);
-      if (at < 0) break;
-      if (!insideRanges(at, protectedSyntax)) positions.push({ kind, marker, at });
-      cursor = at + marker.length;
-    }
-  }
-  return positions.sort(
-    (left, right) => left.at - right.at || right.marker.length - left.marker.length,
-  );
-}
-
-export function recurrenceSyntaxBoundaryPositions(
-  content: string,
-  protectedSyntax: readonly SourceRange[],
-  from = 0,
-): readonly number[] {
-  const positions = markerPositions(content, from, protectedSyntax).map(({ at }) => at);
-  positions.push(
-    ...protectedSyntax.filter((range) => range.from >= from).map((range) => range.from),
-  );
-  for (const marker of PRIORITY_MARKERS) {
-    let cursor = from;
-    while (cursor < content.length) {
-      const at = content.indexOf(marker, cursor);
-      if (at < 0) break;
-      if (!insideRanges(at, protectedSyntax)) positions.push(at);
-      cursor = at + marker.length;
-    }
-  }
-  TAG_RE.lastIndex = from;
-  let tag: RegExpExecArray | null;
-  while ((tag = TAG_RE.exec(content)) !== null) {
-    if (!insideRanges(tag.index, protectedSyntax)) positions.push(tag.index);
-  }
-  const blockIdAt = terminalBlockIdAt(content, protectedSyntax);
-  if (blockIdAt !== undefined && blockIdAt >= from) positions.push(blockIdAt);
-  return [...new Set(positions)].sort((left, right) => left - right);
-}
-
 function calendarDate(value: string): boolean {
   try {
     localDate(value);
@@ -356,219 +211,25 @@ function calendarDate(value: string): boolean {
   }
 }
 
-function trimmedCarrierEnd(content: string, from: number, boundary: number): number {
-  let to = boundary;
-  while (to > from && /\s/u.test(content[to - 1]!)) to--;
-  return to;
-}
-
-function tokenEnd(content: string, from: number, boundary: number): number {
-  let to = from;
-  while (to < boundary && !/\s/u.test(content[to]!)) to++;
-  return to;
-}
-
-type MarkerPosition = ReturnType<typeof markerPositions>[number];
-type CarrierParseResult =
-  | { readonly type: 'valid'; readonly carrier: Carrier }
-  | { readonly type: 'invalid'; readonly code: IterationIssueCode };
-
-const TASK_ID_VALUE_RE = /^[A-Za-z0-9_-]+(?=\s|$)/u;
-const DEPENDS_ON_VALUE_RE = /^[A-Za-z0-9_-]+(?:\s*,\s*[A-Za-z0-9_-]+)*(?=\s|$)/u;
-
 function lineEndingOf(original: string): SourceLine['ending'] {
   if (original.endsWith('\r\n')) return '\r\n';
   if (original.endsWith('\n')) return '\n';
   return '';
 }
 
-function terminalBlockIdAt(
-  content: string,
-  protectedSyntax: readonly SourceRange[],
-): number | undefined {
-  const caretAt = content.lastIndexOf('^');
-  if (
-    caretAt <= 0 ||
-    !/\s/u.test(content[caretAt - 1]!) ||
-    !/^\^[A-Za-z0-9-]+$/u.test(content.slice(caretAt)) ||
-    insideRanges(caretAt, protectedSyntax)
-  ) {
-    return undefined;
-  }
-  return caretAt;
-}
+const CARRIER_KINDS = new Set<string>([
+  ...Object.keys(DATE_MARKERS),
+  'time',
+  'duration',
+  'recurrence',
+  'on-completion',
+  'task-id',
+  'depends-on',
+  'block-id',
+]);
 
-function carrierValueFrom(content: string, position: MarkerPosition): number {
-  let from = position.at + position.marker.length;
-  if (
-    (position.kind === 'task-id' || position.kind === 'depends-on') &&
-    content[from] === '\ufe0f'
-  ) {
-    from++;
-  }
-  while (/\s/u.test(content[from] ?? '')) from++;
-  return from;
-}
-
-function parseDateCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const match = /^(\d{4}-\d{2}-\d{2})(?=\s|$)/u.exec(content.slice(valueFrom, boundary));
-  if (!match || !calendarDate(match[1]!)) {
-    return { type: 'invalid', code: 'invalid-task-syntax' };
-  }
-  return {
-    type: 'valid',
-    carrier: {
-      kind: position.kind,
-      from: position.at,
-      to: valueFrom + match[1]!.length,
-      value: match[1],
-    },
-  };
-}
-
-function parseTimeCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const match = /^(\d{1,2}:\d{2})(?=\s|$)/u.exec(content.slice(valueFrom, boundary));
-  if (!match) return { type: 'invalid', code: 'invalid-task-syntax' };
-  try {
-    localTime(match[1]!);
-  } catch {
-    return { type: 'invalid', code: 'invalid-task-syntax' };
-  }
-  return {
-    type: 'valid',
-    carrier: {
-      kind: position.kind,
-      from: position.at,
-      to: valueFrom + match[1]!.length,
-      value: match[1],
-    },
-  };
-}
-
-function parseDurationCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const match = /^(?:(\d{1,2}):([0-5]\d)|(?:(\d+)h)?(?:(\d+)m)?)(?=\s|$)/u.exec(
-    content.slice(valueFrom, boundary),
-  );
-  if (!match || match[0].length === 0) {
-    return { type: 'invalid', code: 'invalid-task-syntax' };
-  }
-  const hours = Number(match[1] ?? match[3] ?? 0);
-  const minutes = Number(match[2] ?? match[4] ?? 0);
-  const duration = hours * 60 + minutes;
-  if (!Number.isSafeInteger(duration) || duration <= 0) {
-    return { type: 'invalid', code: 'invalid-task-syntax' };
-  }
-  return {
-    type: 'valid',
-    carrier: {
-      kind: position.kind,
-      from: position.at,
-      to: valueFrom + match[0].length,
-      value: duration,
-    },
-  };
-}
-
-function parseRecurrenceCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const to = trimmedCarrierEnd(content, valueFrom, boundary);
-  const raw = content.slice(valueFrom, to);
-  const recurrence = parseRecurrenceRule(raw);
-  return recurrence.type === 'invalid'
-    ? recurrence
-    : {
-        type: 'valid',
-        carrier: { kind: position.kind, from: position.at, to, value: raw },
-      };
-}
-
-function parseOnCompletionCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const to = tokenEnd(content, valueFrom, boundary);
-  const value = content.slice(valueFrom, to).toLowerCase();
-  if (value !== 'keep' && value !== 'delete') {
-    return { type: 'invalid', code: 'invalid-task-syntax' };
-  }
-  return {
-    type: 'valid',
-    carrier: { kind: position.kind, from: position.at, to, value },
-  };
-}
-
-function parseIdentityCarrier(
-  content: string,
-  position: MarkerPosition,
-  valueFrom: number,
-  boundary: number,
-): CarrierParseResult {
-  const regex = position.kind === 'task-id' ? TASK_ID_VALUE_RE : DEPENDS_ON_VALUE_RE;
-  const match = regex.exec(content.slice(valueFrom, boundary));
-  if (!match) return { type: 'invalid', code: 'invalid-task-syntax' };
-  return {
-    type: 'valid',
-    carrier: {
-      kind: position.kind,
-      from: position.at,
-      to: valueFrom + match[0].length,
-    },
-  };
-}
-
-function parseCarrier(
-  content: string,
-  position: MarkerPosition,
-  boundary: number,
-): CarrierParseResult {
-  if (position.kind === 'block-id') {
-    return {
-      type: 'valid',
-      carrier: {
-        kind: position.kind,
-        from: position.at,
-        to: tokenEnd(content, position.at, boundary),
-      },
-    };
-  }
-  const valueFrom = carrierValueFrom(content, position);
-  if (position.kind in DATE_MARKERS) {
-    return parseDateCarrier(content, position, valueFrom, boundary);
-  }
-  if (position.kind === 'time') {
-    return parseTimeCarrier(content, position, valueFrom, boundary);
-  }
-  if (position.kind === 'duration') {
-    return parseDurationCarrier(content, position, valueFrom, boundary);
-  }
-  if (position.kind === 'recurrence') {
-    return parseRecurrenceCarrier(content, position, valueFrom, boundary);
-  }
-  if (position.kind === 'on-completion') {
-    return parseOnCompletionCarrier(content, position, valueFrom, boundary);
-  }
-  return parseIdentityCarrier(content, position, valueFrom, boundary);
+function isCarrier(candidate: TaskLineSourceCarrier): candidate is Carrier {
+  return CARRIER_KINDS.has(candidate.kind);
 }
 
 function carrierIssue(carriers: readonly Carrier[]): IterationIssueCode | undefined {
@@ -602,34 +263,37 @@ function parseIterationTaskLine(original: string):
       readonly type: 'invalid';
       readonly code: IterationIssueCode;
     } {
-  const ending = lineEndingOf(original);
-  const contentEnd = original.length - ending.length;
-  const content = original.slice(0, contentEnd);
-  const task = TASK_RE.exec(content);
-  if (!task) return { type: 'invalid', code: 'invalid-task-syntax' };
-  const prefixEnd = task[0].length;
-  const statusAt = prefixEnd - 2;
-  const protectedSyntax = protectedRanges(content.slice(prefixEnd)).map((range) => ({
-    from: prefixEnd + range.from,
-    to: prefixEnd + range.to,
-  }));
-  const positions = markerPositions(content, prefixEnd, protectedSyntax);
-  const blockIdAt = terminalBlockIdAt(content, protectedSyntax);
-  if (blockIdAt !== undefined) positions.push({ kind: 'block-id', marker: '^', at: blockIdAt });
-  positions.sort((left, right) => left.at - right.at || right.marker.length - left.marker.length);
-  const recurrenceBoundaries = recurrenceSyntaxBoundaryPositions(
-    content,
-    protectedSyntax,
-    prefixEnd,
-  );
-  const carriers: Carrier[] = [];
+  const model = parseTaskLineSourceModel(original);
+  if (!model || model.carriers.some((carrier) => carrier.kind === 'malformed-known')) {
+    return { type: 'invalid', code: 'invalid-task-syntax' };
+  }
+  const carriers = model.carriers.filter(isCarrier);
 
-  for (const position of positions) {
-    const boundary =
-      recurrenceBoundaries.find((candidate) => candidate > position.at) ?? contentEnd;
-    const parsed = parseCarrier(content, position, boundary);
-    if (parsed.type === 'invalid') return parsed;
-    carriers.push(parsed.carrier);
+  for (const carrier of carriers) {
+    if (carrier.kind in DATE_MARKERS) {
+      if (typeof carrier.value !== 'string' || !calendarDate(carrier.value)) {
+        return { type: 'invalid', code: 'invalid-task-syntax' };
+      }
+    }
+    if (carrier.kind === 'time') {
+      try {
+        localTime(String(carrier.value));
+      } catch {
+        return { type: 'invalid', code: 'invalid-task-syntax' };
+      }
+    }
+    if (
+      carrier.kind === 'duration' &&
+      (typeof carrier.value !== 'number' ||
+        !Number.isSafeInteger(carrier.value) ||
+        carrier.value <= 0)
+    ) {
+      return { type: 'invalid', code: 'invalid-task-syntax' };
+    }
+    if (carrier.kind === 'recurrence') {
+      const recurrence = parseRecurrenceRule(String(carrier.value ?? ''));
+      if (recurrence.type === 'invalid') return recurrence;
+    }
   }
 
   const issue = carrierIssue(carriers);
@@ -637,8 +301,21 @@ function parseIterationTaskLine(original: string):
 
   return {
     type: 'valid',
-    parsed: { original, contentEnd, statusAt, carriers },
+    parsed: {
+      original,
+      contentEnd: model.contentEnd,
+      statusSymbol: model.statusSymbol,
+      statusAt: model.statusAt,
+      carriers,
+    },
   };
+}
+
+function semanticRecurrenceMarkerCount(original: string): number {
+  return (
+    parseTaskLineSourceModel(original)?.carriers.filter(({ kind }) => kind === 'recurrence')
+      .length ?? 0
+  );
 }
 
 function removeSpan(source: string, span: SourceRange): string {
@@ -790,10 +467,15 @@ function changesForEdit(
       : { type: 'invalid', code: 'invalid-descendant-date' };
   }
   if (edit.type === 'complete-owner') {
+    const sameDoneStatus =
+      parsed.statusSymbol === edit.doneSymbol ||
+      (parsed.statusSymbol.toLowerCase() === 'x' && edit.doneSymbol.toLowerCase() === 'x');
     return {
       type: 'valid',
       changes: {
-        completion: edit.addCompletionDate ? `✅ ${edit.today}` : null,
+        ...(!sameDoneStatus && {
+          completion: edit.addCompletionDate ? `✅ ${edit.today}` : null,
+        }),
         cancelled: null,
       },
     };
@@ -846,7 +528,11 @@ export function prepareRecurrenceIteration(
   const ownership = recurrenceOwnedSubtree(input.rootBlock, input.ownerRelativeLine);
   if (!ownership || !calendarDate(input.today)) return invalid('invalid-task-syntax');
   if (!Number.isSafeInteger(input.dayDelta)) return invalid('invalid-descendant-date');
-  if (input.rootBlock.split('🔁').length - 1 > 1) {
+  const recurrenceMarkersByLine = lines.map((line) =>
+    semanticRecurrenceMarkerCount(line.text + line.ending),
+  );
+  const recurrenceMarkerCount = recurrenceMarkersByLine.reduce((sum, count) => sum + count, 0);
+  if (recurrenceMarkerCount !== 1 || recurrenceMarkersByLine[ownership.fromLine] !== 1) {
     return invalid('nested-recurrence-conflict');
   }
 

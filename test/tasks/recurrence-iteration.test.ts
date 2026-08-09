@@ -3,6 +3,10 @@ import { prepareRecurrenceIteration } from '../../src/tasks/domain/recurrenceIte
 import type { TaskPlanning } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
 import { stripTerminalBlockId } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { canonicalStatusCatalog } from '../helpers';
+
+const codec = new TaskMarkdownCodec(canonicalStatusCatalog());
 
 function planning(overrides: TaskPlanning = {}): TaskPlanning {
   return overrides;
@@ -132,6 +136,51 @@ describe('prepareRecurrenceIteration', () => {
     });
   });
 
+  it.each([
+    ['enabled', true, '- [x] Owner 🔁 every day ✅ 2026-07-01'],
+    ['disabled', false, '- [x] Owner 🔁 every day ✅ 2026-07-01'],
+    ['case-equivalent Done symbol', true, '- [X] Owner 🔁 every day ✅ 2026-07-01'],
+  ])('preserves the first Done stamp when completion dates are %s', (_name, enabled, rootBlock) => {
+    const result = prepareRecurrenceIteration({
+      rootBlock,
+      ownerRelativeLine: 0,
+      nextPlanning: {},
+      dayDelta: 1,
+      doneSymbol: 'x',
+      todoSymbol: ' ',
+      today: localDate('2026-08-01'),
+      addCreatedDate: false,
+      addCompletionDate: enabled,
+    });
+
+    expect(result).toMatchObject({
+      type: 'prepared',
+      completedSubtree: '- [x] Owner 🔁 every day ✅ 2026-07-01',
+    });
+  });
+
+  it.each([
+    [true, '- [x] Owner 🔁 every day ✅ 2026-08-01'],
+    [false, '- [x] Owner 🔁 every day'],
+  ])(
+    'clears cancellation history when completing with completion dates %s',
+    (enabled, expected) => {
+      const result = prepareRecurrenceIteration({
+        rootBlock: '- [-] Owner 🔁 every day ❌ 2026-07-01',
+        ownerRelativeLine: 0,
+        nextPlanning: {},
+        dayDelta: 1,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+        addCompletionDate: enabled,
+      });
+
+      expect(result).toMatchObject({ type: 'prepared', completedSubtree: expected });
+    },
+  );
+
   it('removes every task identity carrier from the clean copy', () => {
     expect(
       prepareRecurrenceIteration({
@@ -176,6 +225,86 @@ describe('prepareRecurrenceIteration', () => {
         addCompletionDate: true,
       }),
     ).toEqual({ type: 'invalid', code: 'nested-recurrence-conflict' });
+  });
+
+  it.each([
+    ['zero markers', '- [/] Owner', 0],
+    [
+      'ancestor marker borrowed by a nested owner',
+      ['- [ ] Root 🔁 every day', '  - [/] Owner'].join('\n'),
+      1,
+    ],
+    [
+      'sibling marker borrowed by a nested owner',
+      ['- [ ] Root', '  - [/] Owner', '  - [ ] Sibling 🔁 every day'].join('\n'),
+      1,
+    ],
+  ])(
+    'requires the selected owner to own the one semantic recurrence marker: %s',
+    (_name, rootBlock, ownerRelativeLine) => {
+      expect(
+        prepareRecurrenceIteration({
+          rootBlock,
+          ownerRelativeLine,
+          nextPlanning: {},
+          dayDelta: 0,
+          doneSymbol: 'x',
+          todoSymbol: ' ',
+          today: localDate('2026-08-01'),
+          addCreatedDate: true,
+          addCompletionDate: true,
+        }),
+      ).toEqual({ type: 'invalid', code: 'nested-recurrence-conflict' });
+    },
+  );
+
+  it('ignores protected recurrence markers when enforcing owner recurrence semantics', () => {
+    expect(
+      prepareRecurrenceIteration({
+        rootBlock: '- [/] Owner 🔁 every day `🔁 every week` [marker 🔁](https://example.com)',
+        ownerRelativeLine: 0,
+        nextPlanning: {},
+        dayDelta: 0,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+      }),
+    ).toMatchObject({
+      type: 'prepared',
+      cleanSubtree: '- [ ] Owner 🔁 every day `🔁 every week` [marker 🔁](https://example.com)',
+    });
+  });
+
+  it.each([
+    {
+      name: 'date punctuation',
+      rootBlock: '- [/] Owner 🔁 every day 📅 2026-08-02.',
+      nextPlanning: { due: localDate('2026-08-09') },
+      cleanSubtree: '- [ ] Owner 🔁 every day 📅 2026-08-09.',
+    },
+    {
+      name: 'time punctuation',
+      rootBlock: '- [/] Owner 🔁 every day ⏰ 09:30,',
+      nextPlanning: { time: localTime('09:30') },
+      cleanSubtree: '- [ ] Owner 🔁 every day ⏰ 09:30,',
+    },
+  ])('uses the codec source model for $name', ({ rootBlock, nextPlanning, cleanSubtree }) => {
+    expect(codec.validateLine(rootBlock)).toEqual([]);
+    expect(
+      prepareRecurrenceIteration({
+        rootBlock,
+        ownerRelativeLine: 0,
+        nextPlanning,
+        dayDelta: 7,
+        doneSymbol: 'x',
+        todoSymbol: ' ',
+        today: localDate('2026-08-01'),
+        addCreatedDate: false,
+        addCompletionDate: true,
+      }),
+    ).toMatchObject({ type: 'prepared', cleanSubtree });
   });
 
   it('rejects malformed task dates before returning either candidate', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { parseTaskLineSourceModel } from '../../src/tasks/domain/taskLineSourceModel';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localTime } from '../../src/tasks/domain/validation';
 import { applyTaskCommand } from '../../src/tasks/infrastructure/markdown/applyTaskCommand';
@@ -37,6 +38,41 @@ function expectLosslessPartition(parsed: ParsedTaskLine): void {
 }
 
 describe('TaskMarkdownCodec', () => {
+  it.each([
+    '- [/] Punctuation 🔁 every day ⏫ #tag 📅 2026-08-02. ⏰ 09:30,',
+    '- [ ] Malformed 📅 nope ⛔ one,two!',
+    '- [ ] Protected `🔁 every hour 📅 2026-01-01` [🔁 link](https://example.com) 🔁 every day',
+  ])('delegates the authoritative source partition for %j', (source) => {
+    const model = parseTaskLineSourceModel(source);
+    const parsed = codec.parseLine(source, location);
+
+    expect(model).not.toBeNull();
+    expect(parsed).not.toBeNull();
+    expect({
+      statusSymbol: parsed?.statusSymbol,
+      markdownTitle: parsed?.markdownTitle,
+      tags: parsed?.tags,
+      spans: parsed?.spans,
+      occurrences: parsed?.occurrences,
+      planning: parsed?.planning,
+      priority: parsed?.priority,
+      recurrence: parsed?.recurrence,
+      onCompletion: parsed?.onCompletion,
+      onCompletionExplicit: parsed?.onCompletionExplicit,
+    }).toEqual({
+      statusSymbol: model?.statusSymbol,
+      markdownTitle: model?.markdownTitle,
+      tags: model?.tags,
+      spans: model?.spans,
+      occurrences: model?.occurrences,
+      planning: model?.planning,
+      priority: model?.priority,
+      recurrence: model?.recurrence,
+      onCompletion: model?.onCompletion,
+      onCompletionExplicit: model?.onCompletionExplicit,
+    });
+  });
+
   describe('atomic schedule commands', () => {
     it('shifts both boundaries of a three-day span backward by two days', () => {
       const source = '- [/] Span #keep 🛫 2026-03-01 📅 2026-03-03 ⏰ 09:30 ⏱️ 45m';
