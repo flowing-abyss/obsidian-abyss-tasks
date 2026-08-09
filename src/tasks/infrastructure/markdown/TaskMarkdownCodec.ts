@@ -2,6 +2,13 @@ import { inlineCodeRanges, type SourceRange } from '../../../parser/inlineCode';
 import { parseLinks } from '../../../parser/links';
 import { StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
+import {
+  editRecurrenceIterationTaskLine,
+  RECURRENCE_ITERATION_MARKERS,
+  recurrenceSyntaxBoundaryPositions,
+  type RecurrenceTaskLineEdit,
+  type RecurrenceTaskLineEditResult,
+} from '../../domain/recurrenceIteration';
 import type { OnCompletion, TaskPriority, TaskStatus } from '../../domain/types';
 import {
   formatDurationMinutes,
@@ -199,19 +206,9 @@ const TASK_ID_SEQUENCE = `${TASK_ID}( *, *${TASK_ID} *)*`;
 const TASK_ID_RE = new RegExp(`🆔\\uFE0F? *(${TASK_ID})(?=$|\\s)`, 'uy');
 const DEPENDS_ON_RE = new RegExp(`⛔\\uFE0F? *(${TASK_ID_SEQUENCE})(?=$|\\s)`, 'uy');
 
-const KNOWN_CARRIER_MARKERS = [
-  { marker: '➕', kind: 'created' },
-  { marker: '🛫', kind: 'start' },
-  { marker: '⏳', kind: 'scheduled' },
-  { marker: '📅', kind: 'due' },
-  { marker: '✅', kind: 'completion' },
-  { marker: '❌', kind: 'cancelled' },
-  { marker: '⏰', kind: 'time' },
-  { marker: '⏱️', kind: 'duration' },
-  { marker: '🏁', kind: 'on-completion' },
-  { marker: '🆔', kind: 'task-id' },
-  { marker: '⛔', kind: 'depends-on' },
-] as const satisfies ReadonlyArray<{
+const KNOWN_CARRIER_MARKERS = RECURRENCE_ITERATION_MARKERS.filter(
+  ({ kind }) => kind !== 'recurrence',
+) as ReadonlyArray<{
   readonly marker: string;
   readonly kind: NonNullable<SourceSpan['malformedKind']>;
 }>;
@@ -410,10 +407,6 @@ function terminalCaretRange(
     from--;
   }
   return body[from] === '^' ? { from, to } : undefined;
-}
-
-function sortedUnique(values: readonly number[]): readonly number[] {
-  return [...new Set(values)].sort((left, right) => left - right);
 }
 
 function malformedValueEnd(
@@ -680,6 +673,16 @@ export class TaskMarkdownCodec {
 
   statusForSymbol(symbol: string): TaskStatus {
     return this.statusCatalog.statusForSymbol(symbol);
+  }
+
+  applyRecurrenceIterationLineEdit(
+    original: string,
+    edit: RecurrenceTaskLineEdit,
+  ): RecurrenceTaskLineEditResult {
+    if (this.validateLine(original).length > 0) {
+      return { type: 'invalid', code: 'invalid-task-syntax' };
+    }
+    return editRecurrenceIterationTaskLine(original, edit);
   }
 
   editTextLink(source: string, occurrence: number, replacement: string): LineEditResult {
@@ -1331,11 +1334,13 @@ export class TaskMarkdownCodec {
       recurrenceExcluded,
     ).map(({ at }) => at);
     const knownMarkers = markerPositions(body);
-    const boundaries = sortedUnique([
-      ...candidates.map((candidate) => candidate.from - prefixEnd),
-      ...knownMarkers.map(({ at }) => at),
-      ...recurrenceMarkers,
-    ]);
+    const boundaries = recurrenceSyntaxBoundaryPositions(
+      body,
+      recurrenceExcluded.map((range) => ({
+        from: range.from - prefixEnd,
+        to: range.to - prefixEnd,
+      })),
+    );
     pushRecurrenceCandidates(candidates, body, prefixEnd, recurrenceMarkers, boundaries);
     pushMalformedKnownCandidates(candidates, body, prefixEnd, knownMarkers, boundaries);
 

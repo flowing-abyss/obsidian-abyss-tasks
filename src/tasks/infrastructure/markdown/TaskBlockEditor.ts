@@ -1,3 +1,8 @@
+import {
+  recurrenceOwnedSubtree,
+  stripRecurrenceTerminalBlockId,
+  type RecurrenceOwnedSubtree,
+} from '../../domain/recurrenceIteration';
 import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
@@ -5,6 +10,10 @@ const PREFIX_RE = /^([\s>]*)/u;
 const DESCRIPTION_RE = /^[\s>]*- > /u;
 const COMMENT_LIST_PREFIX_RE = /^([\s>]*- )/u;
 const COMMENT_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}:/u;
+
+export function stripTerminalBlockId(line: string): string {
+  return stripRecurrenceTerminalBlockId(line);
+}
 
 export interface TaskRootBlock {
   readonly line: number;
@@ -185,6 +194,13 @@ function commentParts(
 }
 
 export class TaskBlockEditor {
+  ownedTaskSubtree(
+    rootBlock: string,
+    ownerRelativeLine: number,
+  ): RecurrenceOwnedSubtree | undefined {
+    return recurrenceOwnedSubtree(rootBlock, ownerRelativeLine);
+  }
+
   rootBlocks(content: string): readonly TaskRootBlock[] {
     const lines = sourceLines(content);
     const roots: TaskRootBlock[] = [];
