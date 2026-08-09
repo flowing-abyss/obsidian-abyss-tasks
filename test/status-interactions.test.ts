@@ -220,13 +220,15 @@ describe('status and priority consumer delegation', () => {
     }
   });
 
-  it('reports the current priority on native keyboard-operable buttons', () => {
+  it('reports the current priority as an exclusive native keyboard-operable menu choice', () => {
     const onPickPriority = vi.fn();
+    const onClose = vi.fn();
     const handle = showStatusMenuAt(new MouseEvent('contextmenu'), {
       task: task({ priority: 'B' }),
       registry: testStatusRegistry(),
       onPickStatus: () => {},
       onPickPriority,
+      onClose,
     });
     const current = handle.element.querySelector<HTMLButtonElement>(
       ".tc-status-popover-flag[data-tc-priority='B']",
@@ -237,11 +239,18 @@ describe('status and priority consumer delegation', () => {
 
     expect(current.tagName).toBe('BUTTON');
     expect(current.tabIndex).toBe(0);
-    expect(current.getAttribute('aria-pressed')).toBe('true');
-    expect(other.getAttribute('aria-pressed')).toBe('false');
+    expect(current.parentElement?.getAttribute('role')).toBe('group');
+    expect(current.parentElement?.getAttribute('aria-label')).toBe('Priority');
+    expect(current.getAttribute('role')).toBe('menuitemradio');
+    expect(current.getAttribute('aria-checked')).toBe('true');
+    expect(other.getAttribute('aria-checked')).toBe('false');
+    expect(current.hasAttribute('aria-pressed')).toBe(false);
     other.click();
     expect(onPickPriority).toHaveBeenCalledWith('D');
+    expect(onClose).toHaveBeenCalledOnce();
     expect(handle.element.isConnected).toBe(false);
+    handle.close();
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it('makes status and edit-repeat choices keyboard-operable menu items', () => {

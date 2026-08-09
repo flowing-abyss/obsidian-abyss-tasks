@@ -198,6 +198,7 @@ export class CalendarRenderer {
         if (!target) return;
         const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : this.rootEl;
         this.dismissStatusMenu();
+        let cleanup: () => void;
         const statusMenu = showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
@@ -219,8 +220,12 @@ export class CalendarRenderer {
             if (command) void this.tasks.execute(command).then(presentTaskCommandResult);
           },
           onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
+          onClose: () => {
+            if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
+          },
         });
-        this.statusMenuCleanup = () => statusMenu.close();
+        cleanup = () => statusMenu.close();
+        this.statusMenuCleanup = cleanup;
       },
     };
   }

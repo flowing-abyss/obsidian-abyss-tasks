@@ -17,6 +17,7 @@ import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
+import * as statusMenu from '../src/ui/statusMenu';
 import {
   calendarMutationTarget,
   projectCalendarOccurrences,
@@ -796,6 +797,7 @@ describe('CalendarRenderer', () => {
       const todayStr = window.moment().format('YYYY-MM-DD');
       store.setTasks([task({ title: 'Before patch', planning: { due: todayStr } })]);
       const remove = vi.spyOn(root.ownerDocument, 'removeEventListener');
+      const owned = r as unknown as { statusMenuCleanup: (() => void) | null };
       r.mount();
 
       try {
@@ -804,6 +806,16 @@ describe('CalendarRenderer', () => {
           .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         vi.runOnlyPendingTimers();
         expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+        expect(owned.statusMenuCleanup).not.toBeNull();
+
+        activeDocument.querySelector<HTMLButtonElement>('.tc-status-popover-flag')!.click();
+        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+        expect(owned.statusMenuCleanup).toBeNull();
+
+        root
+          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        vi.runOnlyPendingTimers();
 
         store.setTasks([task({ title: 'After patch', planning: { due: todayStr } })]);
         store.emit();
@@ -827,6 +839,60 @@ describe('CalendarRenderer', () => {
         remove.mockRestore();
         vi.clearAllTimers();
         vi.useRealTimers();
+      }
+    });
+
+    it('releases an ordinarily closed status handle without letting a stale close clear its successor', () => {
+      const closeNotifications: Array<() => void> = [];
+      const handles: Array<{ element: HTMLElement; close: () => void }> = [];
+      const show = vi.spyOn(statusMenu, 'showStatusMenuAt').mockImplementation((_event, opts) => {
+        const element = activeDocument.body.createDiv({ cls: 'tc-status-popover' });
+        const { onClose } = opts;
+        let closed = false;
+        const handle = {
+          element,
+          close: (): void => {
+            if (closed) return;
+            closed = true;
+            element.remove();
+            onClose?.();
+          },
+        };
+        closeNotifications.push(() => onClose?.());
+        handles.push(handle);
+        return handle;
+      });
+      const store = new StubStore();
+      const root = freshContainer();
+      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
+      const owned = r as unknown as { statusMenuCleanup: (() => void) | null };
+      store.setTasks([
+        task({
+          title: 'Status lifecycle',
+          planning: { due: window.moment().format('YYYY-MM-DD') },
+        }),
+      ]);
+      r.mount();
+
+      try {
+        const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+        marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        expect(owned.statusMenuCleanup).not.toBeNull();
+
+        handles[0]!.close();
+        expect(owned.statusMenuCleanup).toBeNull();
+
+        marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        const successorCleanup = owned.statusMenuCleanup;
+        expect(successorCleanup).not.toBeNull();
+
+        closeNotifications[0]!();
+        expect(owned.statusMenuCleanup).toBe(successorCleanup);
+        expect(handles[1]!.element.isConnected).toBe(true);
+      } finally {
+        r.destroy();
+        for (const handle of handles) handle.close();
+        show.mockRestore();
       }
     });
 

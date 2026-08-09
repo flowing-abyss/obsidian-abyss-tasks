@@ -13,6 +13,8 @@ export interface StatusMenuOpts {
   onEditRepeat?: () => void;
   /** Consumer lifetime that owns this body-mounted surface. */
   owner?: Component;
+  /** Notifies a retaining consumer after this handle has fully closed, exactly once. */
+  onClose?: () => void;
 }
 
 export interface StatusMenuHandle {
@@ -96,7 +98,7 @@ function positionPopoverAt(pop: HTMLElement, ev: MouseEvent): void {
  * float above any panel; dismissed on outside click, Escape, or after a pick.
  */
 export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMenuHandle {
-  const { task, registry, onPickStatus, onPickPriority, onEditRepeat, owner } = opts;
+  const { task, registry, onPickStatus, onPickPriority, onEditRepeat, owner, onClose } = opts;
   const eventTarget = ev.currentTarget ?? ev.target;
   const targetDocument =
     eventTarget && 'ownerDocument' in eventTarget ? (eventTarget as Node).ownerDocument : null;
@@ -137,6 +139,7 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
     ownerLifetime = null;
     if (lifetime) owner?.removeChild(lifetime);
     if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+    onClose?.();
   };
   const onOutside = (e: MouseEvent): void => {
     if (!pop.contains(e.target as Node)) close();
@@ -161,7 +164,10 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
   pop.setAttrs({ role: 'menu', 'aria-label': 'Task status and priority' });
 
   // ── Priority row ──────────────────────────────────────────
-  const priorityRow = pop.createDiv({ cls: 'tc-status-popover-priority-row' });
+  const priorityRow = pop.createDiv({
+    cls: 'tc-status-popover-priority-row',
+    attr: { role: 'group', 'aria-label': 'Priority' },
+  });
   const currentPriority = task.priority ?? 'D';
   for (const opt of PRIORITY_OPTIONS) {
     const btn = priorityRow.createEl('button', {
@@ -169,7 +175,8 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       attr: {
         'data-tc-priority': opt.p,
         'aria-label': opt.label,
-        'aria-pressed': String(currentPriority === opt.p),
+        role: 'menuitemradio',
+        'aria-checked': String(currentPriority === opt.p),
         title: opt.label,
       },
     });
