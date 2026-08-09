@@ -306,6 +306,129 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       container.remove();
     }
   });
+
+  it('keeps dismissal and cleanup owned by the mounted document after activeDocument changes', () => {
+    vi.useFakeTimers();
+    const originalActiveDocument = activeDocument;
+    const ownerDocument = document.implementation.createHTMLDocument('mounted panel');
+    const replacementActiveDocument = document.implementation.createHTMLDocument('active window');
+    const ownerAdd = vi.spyOn(ownerDocument, 'addEventListener');
+    const ownerRemove = vi.spyOn(ownerDocument, 'removeEventListener');
+    const replacementAdd = vi.spyOn(replacementActiveDocument, 'addEventListener');
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, []);
+    const container = ownerDocument.createElement('div');
+    ownerDocument.body.append(container);
+    let destroyed = false;
+
+    try {
+      panel.mount(container);
+      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      vi.stubGlobal('activeDocument', replacementActiveDocument);
+      vi.runOnlyPendingTimers();
+
+      const outsideRegistration = ownerAdd.mock.calls.find(
+        ([type, , options]) => type === 'click' && options === true,
+      );
+      expect(outsideRegistration).toBeDefined();
+      expect(
+        replacementAdd.mock.calls.some(([type, , options]) => type === 'click' && options === true),
+      ).toBe(false);
+
+      ownerDocument.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      expect(container.querySelector('.tc-view-state-popover')).toBeNull();
+      expect(ownerRemove).toHaveBeenCalledWith('click', outsideRegistration![1], true);
+
+      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      vi.runOnlyPendingTimers();
+      const ownerClickRegistrations = ownerAdd.mock.calls.filter(
+        ([type, , options]) => type === 'click' && options === true,
+      );
+      const destroyRegistration = ownerClickRegistrations[ownerClickRegistrations.length - 1]!;
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+      panel.destroy();
+      destroyed = true;
+      expect(ownerRemove).toHaveBeenCalledWith('click', destroyRegistration[1], true);
+    } finally {
+      if (!destroyed) panel.destroy();
+      for (const doc of [ownerDocument, replacementActiveDocument]) {
+        const addSpy = doc === ownerDocument ? ownerAdd : replacementAdd;
+        for (const [type, listener, options] of addSpy.mock.calls) {
+          if (type === 'click' && options === true) {
+            doc.removeEventListener('click', listener as EventListener, true);
+          }
+        }
+      }
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+      ownerAdd.mockRestore();
+      ownerRemove.mockRestore();
+      replacementAdd.mockRestore();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      container.remove();
+    }
+  });
+
+  it('exposes selected group, sort, preset, and status-toggle state through aria-pressed', () => {
+    const settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS)) as CalendarSettings;
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, [], settings);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    const open = (): HTMLElement => {
+      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      return container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+    };
+    const row = (popover: HTMLElement, label: string): HTMLElement =>
+      Array.from(popover.querySelectorAll<HTMLElement>('.tc-view-state-row')).find(
+        (candidate) => candidate.querySelector('.tc-view-state-row-label')?.textContent === label,
+      )!;
+    const option = (popover: HTMLElement, rowLabel: string, label: string): HTMLButtonElement =>
+      Array.from(row(popover, rowLabel).querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) =>
+          candidate.querySelector('.tc-view-state-option-label')?.textContent === label,
+      )!;
+
+    try {
+      panel.mount(container);
+
+      let popover = open();
+      expect(option(popover, 'Group by', 'Date').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Group by', 'None').getAttribute('aria-pressed')).toBe('false');
+      option(popover, 'Group by', 'None').click();
+
+      popover = open();
+      expect(option(popover, 'Group by', 'None').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Group by', 'Date').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Sort by', 'Date ↑').getAttribute('aria-pressed')).toBe('true');
+      option(popover, 'Sort by', 'Priority').click();
+
+      popover = open();
+      expect(option(popover, 'Sort by', 'Priority ↑').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Sort by', 'Date').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
+      option(popover, 'Show', 'All').click();
+
+      popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('true');
+      option(popover, 'Show', 'Done').click();
+
+      popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Show', 'To do').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
 });
 
 describe('CenterPanel.createTask', () => {

@@ -2263,6 +2263,7 @@ export class CenterPanel {
       cls: 'tc-view-state-popover tc-popover',
       attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
     });
+    const ownerDocument = popover.ownerDocument;
 
     let dismissListening = false;
     let dismissTimer: number | undefined;
@@ -2275,7 +2276,7 @@ export class CenterPanel {
         dismissTimer = undefined;
       }
       if (dismissListening) {
-        activeDocument.removeEventListener('click', dismiss, true);
+        ownerDocument.removeEventListener('click', dismiss, true);
         dismissListening = false;
       }
       popover.remove();
@@ -2346,7 +2347,10 @@ export class CenterPanel {
       for (const opt of options) {
         const isActive = opt.value === activeValue;
         const isDefault = opt.value === defaultValue;
-        const optEl = subList.createEl('button', { cls: 'tc-view-state-option' });
+        const optEl = subList.createEl('button', {
+          cls: 'tc-view-state-option',
+          attr: { 'aria-pressed': String(isActive) },
+        });
         const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
         if (isActive) setIcon(checkEl, 'check');
         optEl.createEl('span', { cls: 'tc-view-state-option-label', text: opt.label });
@@ -2395,7 +2399,10 @@ export class CenterPanel {
       bindExpandableRow(rowMain, subList);
 
       for (const preset of presets) {
-        const optEl = subList.createEl('button', { cls: 'tc-view-state-option' });
+        const optEl = subList.createEl('button', {
+          cls: 'tc-view-state-option',
+          attr: { 'aria-pressed': String(preset.isActive === true) },
+        });
         const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
         if (preset.isActive) setIcon(checkEl, 'check');
         optEl.createEl('span', { cls: 'tc-view-state-option-label', text: preset.label });
@@ -2407,7 +2414,10 @@ export class CenterPanel {
 
       for (const opt of options) {
         const isActive = selected.includes(opt.value);
-        const optEl = subList.createEl('button', { cls: 'tc-view-state-option' });
+        const optEl = subList.createEl('button', {
+          cls: 'tc-view-state-option',
+          attr: { 'aria-pressed': String(isActive) },
+        });
         const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
         if (isActive) setIcon(checkEl, 'check');
         optEl.createEl('span', { cls: 'tc-view-state-option-label', text: opt.label });
@@ -2546,7 +2556,7 @@ export class CenterPanel {
     dismissTimer = window.setTimeout(() => {
       dismissTimer = undefined;
       if (!popover.isConnected) return;
-      activeDocument.addEventListener('click', dismiss, true);
+      ownerDocument.addEventListener('click', dismiss, true);
       dismissListening = true;
     }, 0);
   }
