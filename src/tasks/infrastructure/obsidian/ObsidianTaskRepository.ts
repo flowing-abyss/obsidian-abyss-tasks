@@ -773,7 +773,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       });
     } catch {
       if (committedContent !== undefined) {
-        await this.reconcileAfterRejection(file, sourceTask.ref.filePath);
+        await this.reconcileRejectedDeletion(file, sourceTask.ref.filePath, sourceTask.ref);
       }
       return 'io-error';
     }
@@ -939,7 +939,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       if (transitionToken) {
         await this.abortAndReconcileTransition(file, rootRef.filePath, transitionToken, rootRef);
       } else if (committedContent !== undefined) {
-        await this.reconcileAfterRejection(file, rootRef.filePath);
+        await this.reconcileRejectedDeletion(file, rootRef.filePath, rootRef);
       }
       return {
         type: 'io-error',
@@ -1156,7 +1156,7 @@ export class ObsidianTaskRepository implements TaskRepository {
       if (transitionToken) {
         await this.abortAndReconcileTransition(file, rootRef.filePath, transitionToken, rootRef);
       } else if (committedContent !== undefined) {
-        await this.reconcileAfterRejection(file, rootRef.filePath);
+        await this.reconcileRejectedDeletion(file, rootRef.filePath, rootRef);
       }
       return {
         type: 'io-error',
@@ -1575,8 +1575,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     consumed: TaskRef,
   ): Promise<void> {
     const authority = this.options.refAuthority;
-    const snapshotState = this.options.snapshotState;
-    if (!authority || !snapshotState) {
+    if (!authority || !this.options.snapshotState) {
       authority?.abort(token);
       await this.reconcileAfterRejection(file, path);
       return;
@@ -1591,18 +1590,37 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
     authority.abort(token);
 
+    this.installRejectedContent(path, authoritative, consumed);
+  }
+
+  private async reconcileRejectedDeletion(
+    file: TFile,
+    path: string,
+    consumed: TaskRef,
+  ): Promise<void> {
+    try {
+      const authoritative = await this.app.vault.read(file);
+      this.installRejectedContent(path, authoritative, consumed);
+    } catch {
+      // The caller's failure result records that the authoritative content is unknown.
+    }
+  }
+
+  private installRejectedContent(path: string, authoritative: string, consumed: TaskRef): void {
+    const authority = this.options.refAuthority;
+    const snapshotState = this.options.snapshotState;
+    if (!authority || !snapshotState) {
+      snapshotState?.installCommittedContent(path, authoritative);
+      return;
+    }
+
     const evidence = authority.evidence(consumed.revision);
     const current = evidence && snapshotState.currentRoot(path, consumed.line, evidence.source);
     const located = this.options.locator.locate(
       this.options.editor.rootBlocks(authoritative),
       consumed,
     );
-    if (
-      !evidence ||
-      !current ||
-      current.revision === consumed.revision ||
-      located.type !== 'exact'
-    ) {
+    if (!evidence || current?.revision === consumed.revision || located.type !== 'exact') {
       try {
         snapshotState.installCommittedContent(path, authoritative);
       } catch {
@@ -1611,12 +1629,14 @@ export class ObsidianTaskRepository implements TaskRepository {
       return;
     }
 
+    const expectedRevision = current?.revision ?? consumed.revision;
+
     const rollback = authority.stage(
       {
         filePath: path,
         candidateFingerprint: taskRefContentFingerprint(authoritative),
         candidateLength: authoritative.length,
-        expectedRevision: current.revision,
+        expectedRevision,
         roots: [
           {
             line: located.block.line,
@@ -1625,7 +1645,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           },
         ],
       },
-      current.revision,
+      expectedRevision,
     );
     if (rollback.type === 'conflict') return;
     try {

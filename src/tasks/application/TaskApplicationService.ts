@@ -13,6 +13,7 @@ import type {
   TaskStatus,
   TaskStatusRule,
 } from '../domain/types';
+import { sameTaskNodeRef } from '../domain/types';
 import { isSingleLineText } from '../domain/validation';
 import type { TaskApplicationApi, TaskQueryApi } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
@@ -107,6 +108,10 @@ type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
   | { readonly result: TaskCommandResult };
+interface RecentOutcome {
+  readonly task: TaskSnapshot;
+  readonly permittedTarget?: TaskNodeRef;
+}
 type MoveScheduleCommand = Extract<
   TaskCommand,
   { readonly type: 'move-time-slot' | 'move-to-all-day' }
@@ -190,7 +195,7 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
 export class TaskApplicationService implements TaskApplicationApi {
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
-  private readonly recentOutcomes = new Map<string, TaskSnapshot>();
+  private readonly recentOutcomes = new Map<string, RecentOutcome>();
 
   constructor(
     readonly queries: TaskQueryApi,
@@ -217,7 +222,7 @@ export class TaskApplicationService implements TaskApplicationApi {
         if (result.outcome.type === 'task') this.remember(result.outcome.task);
         if (result.outcome.type === 'recurrence') {
           if ('recurrence' in prepared) this.forget(rootRefOf(prepared.recurrence.target));
-          this.remember(result.outcome.active.root);
+          this.remember(result.outcome.active.root, result.outcome.active.target);
         }
         return { type: 'ok', outcome: result.outcome, changed: result.changed };
       }
@@ -354,7 +359,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     }
 
     const rootRef = rootRefOf(command.target);
-    const recent = this.recentOutcomes.get(refKey(rootRef));
+    const recent = this.recentFor(command.target);
     const resolution = recent
       ? { type: 'exact' as const, task: recent }
       : this.queries.resolve(rootRef);
@@ -463,7 +468,7 @@ export class TaskApplicationService implements TaskApplicationApi {
   private prepareMoveSchedule(
     command: MoveScheduleCommand,
   ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
-    const recent = this.recentOutcomes.get(refKey(command.ref));
+    const recent = this.recentFor({ type: 'task', ref: command.ref });
     const resolution = recent
       ? { type: 'exact' as const, task: recent }
       : this.queries.resolve(command.ref);
@@ -478,20 +483,34 @@ export class TaskApplicationService implements TaskApplicationApi {
     return { command };
   }
 
-  private remember(task: TaskSnapshot): void {
+  private remember(task: TaskSnapshot, permittedTarget?: TaskNodeRef): void {
     const key = refKey(task.ref);
     this.recentOutcomes.delete(key);
-    this.recentOutcomes.set(key, cloneTaskSnapshot(task));
+    this.recentOutcomes.set(key, {
+      task: cloneTaskSnapshot(task),
+      ...(permittedTarget && { permittedTarget }),
+    });
     if (this.recentOutcomes.size <= RECENT_OUTCOME_LIMIT) return;
     const oldest = this.recentOutcomes.keys().next().value;
     if (oldest !== undefined) this.recentOutcomes.delete(oldest);
   }
 
   private forget(ref: TaskRef): void {
-    for (const [key, task] of this.recentOutcomes) {
-      if (task.ref.filePath === ref.filePath && task.ref.revision === ref.revision) {
+    for (const [key, outcome] of this.recentOutcomes) {
+      if (
+        outcome.task.ref.filePath === ref.filePath &&
+        outcome.task.ref.revision === ref.revision
+      ) {
         this.recentOutcomes.delete(key);
       }
     }
+  }
+
+  private recentFor(target: TaskNodeRef): TaskSnapshot | undefined {
+    const outcome = this.recentOutcomes.get(refKey(rootRefOf(target)));
+    if (!outcome) return undefined;
+    return !outcome.permittedTarget || sameTaskNodeRef(outcome.permittedTarget, target)
+      ? outcome.task
+      : undefined;
   }
 }

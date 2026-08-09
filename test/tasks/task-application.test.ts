@@ -7,7 +7,12 @@ import type {
   TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
-import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
+import type {
+  SubtaskSnapshot,
+  TaskNodeRef,
+  TaskRef,
+  TaskSnapshot,
+} from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 
 const ref: TaskRef = { filePath: 'tasks.md', line: 0, revision: 'block:test' };
@@ -1399,6 +1404,105 @@ describe('TaskApplicationService recurrence completion routing', () => {
     ).resolves.toEqual({ type: 'conflict', current });
     expect(edit).toHaveBeenCalledOnce();
     expect(completeRecurrence).toHaveBeenCalledOnce();
+  });
+
+  it('authorizes only the active nested occurrence when completed history shares its root ref', async () => {
+    const nested = (
+      parent: TaskNodeRef,
+      relativeLine: number,
+      title: string,
+      status: 'open' | 'done',
+    ): SubtaskSnapshot => ({
+      ref: {
+        parent,
+        relativeLine,
+        originalBlock: `  - [${status === 'done' ? 'x' : ' '}] ${title}`,
+      },
+      title,
+      markdownTitle: title,
+      status,
+      statusSymbol: status === 'done' ? 'x' : ' ',
+      priority: 'D',
+      planning: {},
+      tags: [],
+      recurrence: 'every day',
+      onCompletion: 'keep',
+      onCompletionExplicit: false,
+      subtasks: [],
+      comments: [],
+    });
+    const consumedRoot = recurringSnapshot({ recurrence: undefined });
+    const consumedParent: TaskNodeRef = { type: 'task', ref: consumedRoot.ref };
+    const current = {
+      ...consumedRoot,
+      subtasks: [nested(consumedParent, 1, 'Owner', 'open')],
+    };
+    const activeRootRef = { ...ref, revision: 'shared-active-root' };
+    const activeParent: TaskNodeRef = { type: 'task', ref: activeRootRef };
+    const activeChild = nested(activeParent, 1, 'Owner', 'open');
+    const completedChild = nested(activeParent, 2, 'Owner', 'done');
+    const activeRoot = {
+      ...recurringSnapshot({ ref: activeRootRef, recurrence: undefined }),
+      subtasks: [activeChild, completedChild],
+    };
+    const outcome = {
+      type: 'recurrence' as const,
+      active: {
+        root: activeRoot,
+        target: { type: 'subtask' as const, ref: activeChild.ref },
+      },
+      completed: {
+        root: activeRoot,
+        target: { type: 'subtask' as const, ref: completedChild.ref },
+      },
+    };
+    const completeRecurrence = vi.fn<TaskRepository['completeRecurrence']>().mockResolvedValue({
+      type: 'committed',
+      outcome,
+      changed: true,
+    });
+    const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: activeRoot },
+      changed: true,
+    });
+    const laggingQueries: TaskQueryApi = {
+      ...queries(),
+      resolve: (target) =>
+        target.revision === ref.revision
+          ? { type: 'exact', task: current }
+          : { type: 'conflict', current },
+    };
+    const application = new TaskApplicationService(
+      laggingQueries,
+      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      statuses,
+      clock,
+    );
+
+    await application.execute({
+      type: 'set-status',
+      target: { type: 'subtask', ref: current.subtasks[0]!.ref },
+      symbol: 'x',
+    });
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: outcome.completed.target,
+        symbol: '/',
+      }),
+    ).resolves.toEqual({ type: 'conflict', current });
+    expect(edit).not.toHaveBeenCalled();
+
+    await expect(
+      application.execute({
+        type: 'set-status',
+        target: outcome.active.target,
+        symbol: '/',
+      }),
+    ).resolves.toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+    expect(edit).toHaveBeenCalledOnce();
   });
 
   it('evicts a primed consumed-ref alias before caching the active recurrence during index lag', async () => {

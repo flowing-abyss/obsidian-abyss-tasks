@@ -746,8 +746,19 @@ describe('Obsidian recurrence transaction boundary', () => {
   it('reconciles an early full-delete event when process rejects without a successor token', async () => {
     const source = '- [ ] Remove me\n  - [ ] Child\n';
     const harness = await makeHarness('obsidian', source);
-    const target = rootTarget(harness, source);
-    if (target.type !== 'task') throw new Error('missing task root');
+    const initial = rootTarget(harness, source);
+    if (initial.type !== 'task') throw new Error('missing task root');
+    const advancedResult = await harness.repository.edit({
+      type: 'patch',
+      target: initial,
+      patch: { priority: { type: 'set', value: 'A' } },
+    });
+    if (advancedResult.type !== 'committed' || advancedResult.outcome.type !== 'task') {
+      throw new Error('missing advanced task');
+    }
+    const advanced = advancedResult.outcome.task;
+    const advancedContent = await harness.read();
+    expect(harness.authority.evidence(advanced.ref.revision)?.generation).not.toBe('0');
     vi.spyOn(harness.app.vault, 'process').mockImplementation(async (file, transform) => {
       const current = await harness.app.vault.read(file);
       const candidate = transform(current);
@@ -756,13 +767,13 @@ describe('Obsidian recurrence transaction boundary', () => {
     });
 
     await expect(
-      harness.repository.edit({ type: 'delete', ref: target.ref }),
+      harness.repository.edit({ type: 'delete', ref: advanced.ref }),
     ).resolves.toMatchObject({ type: 'io-error' });
     await flushMicrotasks();
 
-    expect(await harness.read()).toBe(source);
+    expect(await harness.read()).toBe(advancedContent);
     expect(harness.index.list()).toHaveLength(1);
-    expect(harness.index.list()[0]?.ref).toEqual(target.ref);
+    expect(harness.index.list()[0]?.ref).toEqual(advanced.ref);
   });
 
   it('reconciles an early create event when process rejects without a successor token', async () => {
@@ -823,8 +834,18 @@ describe('Obsidian recurrence transaction boundary', () => {
     const harness = await makeHarness('obsidian', source, {
       extraFiles: { [destination]: '' },
     });
-    const target = rootTarget(harness, source);
-    if (target.type !== 'task') throw new Error('missing task root');
+    const initial = rootTarget(harness, source);
+    if (initial.type !== 'task') throw new Error('missing task root');
+    const advancedResult = await harness.repository.edit({
+      type: 'patch',
+      target: initial,
+      patch: { priority: { type: 'set', value: 'A' } },
+    });
+    if (advancedResult.type !== 'committed' || advancedResult.outcome.type !== 'task') {
+      throw new Error('missing advanced task');
+    }
+    const advanced = advancedResult.outcome.task;
+    expect(harness.authority.evidence(advanced.ref.revision)?.generation).not.toBe('0');
     let processCount = 0;
     vi.spyOn(harness.app.vault, 'process').mockImplementation(async (file, transform) => {
       const current = await harness.app.vault.read(file);
@@ -838,15 +859,16 @@ describe('Obsidian recurrence transaction boundary', () => {
       throw new Error('rejected after source delete observation');
     });
 
-    await expect(
-      harness.repository.move(target.ref, {
-        filePath: destination,
-        insertion: { type: 'append' },
-      }),
-    ).resolves.toMatchObject({ type: 'partial', operation: 'move' });
+    const result = await harness.repository.move(advanced.ref, {
+      filePath: destination,
+      insertion: { type: 'append' },
+    });
+    expect(result).toMatchObject({ type: 'partial', operation: 'move' });
     await flushMicrotasks();
 
-    expect(harness.index.list({ filePath: path })[0]?.ref).toEqual(target.ref);
+    if (result.type !== 'partial') throw new Error('missing partial move');
+    expect(result.recovery.source).toEqual(advanced.ref);
+    expect(harness.index.list({ filePath: path })[0]?.ref).toEqual(result.recovery.source);
     expect(harness.index.list({ filePath: destination })).toHaveLength(1);
   });
 
