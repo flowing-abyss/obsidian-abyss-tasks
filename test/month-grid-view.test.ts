@@ -77,6 +77,18 @@ function requiredElement(root: ParentNode, selector: string): HTMLElement {
   return element;
 }
 
+function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined> {
+  const badge = root.querySelector<HTMLElement>('.tc-recurrence-badge');
+  const icon = badge?.querySelector<HTMLElement>('.tc-recurrence-badge-icon');
+  return {
+    rootClass: badge?.className,
+    validity: badge?.dataset['recurrenceValidity'],
+    label: badge?.getAttribute('aria-label') ?? undefined,
+    iconClass: icon?.className,
+    icon: icon?.dataset['icon'],
+  };
+}
+
 function callbacks() {
   return {
     app: fakeApp,
@@ -168,6 +180,29 @@ function monthGridRowFor(container: HTMLElement, date: string, title: string): n
 }
 
 describe('MonthGridView', () => {
+  it('renders the shared recurrence badge DOM in a compact month item', () => {
+    const container = freshContainer();
+    new MonthGridView(callbacks()).render(
+      container,
+      [
+        task({
+          title: 'Monthly repeat',
+          recurrence: 'every week',
+          planning: { scheduled: '2026-07-10', time: '09:00' },
+        }),
+      ],
+      resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 }),
+    );
+
+    expect(recurrenceBadgeDom(requiredElement(container, '.tc-mg-block-dot'))).toEqual({
+      rootClass: 'tc-recurrence-badge',
+      validity: 'valid',
+      label: 'Repeats: every week',
+      iconClass: 'tc-recurrence-badge-icon',
+      icon: 'repeat-2',
+    });
+  });
+
   it('renders timed span and compact items before untimed items independent of input order', () => {
     const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
     const tasks = monthChronologyTasks();

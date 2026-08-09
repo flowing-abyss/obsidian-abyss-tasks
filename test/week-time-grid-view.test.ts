@@ -59,7 +59,43 @@ function measureTimedColumns(container: HTMLElement): void {
   });
 }
 
+function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined> {
+  const badge = root.querySelector<HTMLElement>('.tc-recurrence-badge');
+  const icon = badge?.querySelector<HTMLElement>('.tc-recurrence-badge-icon');
+  return {
+    rootClass: badge?.className,
+    validity: badge?.dataset['recurrenceValidity'],
+    label: badge?.getAttribute('aria-label') ?? undefined,
+    iconClass: icon?.className,
+    icon: icon?.dataset['icon'],
+  };
+}
+
 describe('WeekTimeGridView', () => {
+  it('renders the shared recurrence badge DOM in an all-day week item', () => {
+    const container = freshContainer();
+    new WeekTimeGridView(callbacks()).render(
+      container,
+      [
+        task({
+          title: 'Week repeat',
+          recurrence: 'every week',
+          planning: { due: '2026-07-08' },
+        }),
+      ],
+      resolvedConfig({ startPosition: '2026-07-06', firstDayOfWeek: 1 }),
+      false,
+    );
+
+    expect(recurrenceBadgeDom(container.querySelector<HTMLElement>('.tc-tg-plain')!)).toEqual({
+      rootClass: 'tc-recurrence-badge',
+      validity: 'valid',
+      label: 'Repeats: every week',
+      iconClass: 'tc-recurrence-badge-icon',
+      icon: 'repeat-2',
+    });
+  });
+
   it('patches only task layers while retaining the week skeleton, scroll position, listeners, and now-line interval', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-08T09:30:00'));

@@ -1,11 +1,12 @@
 import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
 import {
   presentTaskCommandResult,
   presentTaskCreationResult,
   presentTaskMoveResult,
+  requestTaskCompletion,
 } from '../src/ui/taskCommandResult';
 
 vi.mock('obsidian', async () => {
@@ -17,9 +18,94 @@ function noticeCalls(): unknown[][] {
   return (Notice as unknown as { mock: { calls: unknown[][] } }).mock.calls;
 }
 
+function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  return { promise: new Promise<void>((done) => (resolve = done)), resolve: () => resolve() };
+}
+
+const invalidDeleteTask = {
+  status: 'open',
+  recurrence: 'tomorrow',
+  onCompletion: 'delete',
+} as const;
+
 describe('task command result presentation', () => {
   beforeEach(() => {
     (Notice as unknown as { mock: { calls: unknown[][] } }).mock.calls = [];
+  });
+
+  afterEach(() => {
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm button')
+      ?.click();
+  });
+
+  it.each(['Cancel', 'Escape', 'backdrop'] as const)(
+    'settles invalid Delete confirmation through %s without invoking the mutation',
+    async (dismissal) => {
+      const mutation = vi.fn().mockResolvedValue(undefined);
+      const completion = requestTaskCompletion(invalidDeleteTask, mutation);
+      let settled = false;
+      void completion.then(() => {
+        settled = true;
+      });
+      expect(settled).toBe(false);
+
+      const surface = activeDocument.querySelector<HTMLElement>('.tc-recurrence-delete-confirm')!;
+      if (dismissal === 'Cancel') {
+        Array.from(surface.querySelectorAll<HTMLButtonElement>('button'))
+          .find((candidate) => candidate.textContent === 'Cancel')
+          ?.click();
+      } else if (dismissal === 'Escape') {
+        activeDocument.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+      } else {
+        surface.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+
+      await completion;
+      expect(settled).toBe(true);
+      expect(mutation).not.toHaveBeenCalled();
+      expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+    },
+  );
+
+  it('keeps an ordinary completion pending until its application command settles', async () => {
+    const pending = deferred();
+    const mutation = vi.fn().mockReturnValue(pending.promise);
+    const completion = requestTaskCompletion({ status: 'open', onCompletion: 'keep' }, mutation);
+    let settled = false;
+    void completion.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(mutation).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+    pending.resolve();
+    await completion;
+    expect(settled).toBe(true);
+  });
+
+  it('keeps a confirmed invalid Delete completion pending until its application command settles', async () => {
+    const pending = deferred();
+    const mutation = vi.fn().mockReturnValue(pending.promise);
+    const completion = requestTaskCompletion(invalidDeleteTask, mutation);
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm-button')
+      ?.click();
+    let settled = false;
+    void completion.then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    expect(mutation).toHaveBeenCalledOnce();
+    expect(settled).toBe(false);
+    pending.resolve();
+    await completion;
+    expect(settled).toBe(true);
   });
 
   it.each([

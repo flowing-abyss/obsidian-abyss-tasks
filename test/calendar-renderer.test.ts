@@ -454,6 +454,51 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
+    it('closes the anchored recurrence editor before a query patch replaces its task anchor', () => {
+      const store = new StubStore();
+      const root = freshContainer();
+      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      store.setTasks([
+        task({ title: 'Before patch', recurrence: 'every week', planning: { due: todayStr } }),
+      ]);
+      r.mount();
+
+      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+
+      store.setTasks([
+        task({ title: 'After patch', recurrence: 'every week', planning: { due: todayStr } }),
+      ]);
+      store.emit();
+
+      expect(marker.isConnected).toBe(false);
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+      r.destroy();
+    });
+
+    it('closes the anchored recurrence editor before a calendar rerender replaces its anchor', () => {
+      const store = new StubStore();
+      const root = freshContainer();
+      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      store.setTasks([task({ recurrence: 'every week', planning: { due: todayStr } })]);
+      r.mount();
+
+      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+
+      root.querySelector<HTMLButtonElement>('.next')?.click();
+
+      expect(marker.isConnected).toBe(false);
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+      r.destroy();
+    });
+
     it('requires a real confirmation click before invalid Delete completion removes the subtree', async () => {
       const todayStr = window.moment().format('YYYY-MM-DD');
       const app = await createAppWithFiles({
@@ -492,6 +537,43 @@ describe('CalendarRenderer', () => {
       await flushMicrotasks();
 
       expect(configured.tasks.queries.list()).toHaveLength(0);
+      r.destroy();
+      configured.index.destroy();
+    });
+
+    it('keeps the invalid Delete subtree unchanged when its real confirmation is cancelled', async () => {
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      const app = await createAppWithFiles({
+        'repeat-cancel.md':
+          `- [ ] Invalid repeat 🔁 tomorrow 🏁 delete 📅 ${todayStr}\n` + '  - [ ] Child\n',
+      });
+      const configured = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await configured.index.initialize();
+      const root = freshContainer();
+      const r = new CalendarRenderer(
+        root,
+        resolvedConfig({ defaultView: 'month' }),
+        app,
+        configured.tasks.queries,
+        configured.tasks,
+        configured.statusRegistry,
+      );
+      r.mount();
+
+      root
+        .querySelector<HTMLElement>('.task .tc-status-marker')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const confirmation = activeDocument.querySelector<HTMLElement>(
+        '.tc-recurrence-delete-confirm',
+      )!;
+      Array.from(confirmation.querySelectorAll<HTMLButtonElement>('button'))
+        .find((candidate) => candidate.textContent === 'Cancel')
+        ?.click();
+      await flushMicrotasks();
+
+      expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+      expect(configured.tasks.queries.list()).toHaveLength(1);
+      expect(configured.tasks.queries.list()[0]?.subtasks).toHaveLength(1);
       r.destroy();
       configured.index.destroy();
     });

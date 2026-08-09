@@ -82,6 +82,42 @@ const callbacks = () => ({
 });
 
 describe('renderAllDayCell', () => {
+  it('renders one shared recurrence badge in an all-day task body', () => {
+    const container = freshContainer();
+    const recurring = task({
+      recurrence: 'every week',
+      planning: { due: '2026-07-10' },
+    });
+
+    renderAllDayCell(container, '2026-07-10', [], [recurring], [], callbacks());
+
+    const body = container.querySelector<HTMLElement>('.tc-tg-plain')!;
+    const badge = body.querySelector<HTMLElement>('.tc-recurrence-badge');
+    expect(body.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(badge?.getAttribute('aria-label')).toBe('Repeats: every week');
+    expect(badge?.querySelector('.tc-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
+      'repeat-2',
+    );
+  });
+
+  it('renders the same shared recurrence badge in an all-day deadline body', () => {
+    const container = freshContainer();
+    const recurring = task({
+      recurrence: 'every month',
+      planning: { due: '2026-07-10', scheduled: '2026-07-05' },
+    });
+
+    renderAllDayCell(container, '2026-07-10', [], [], [recurring], callbacks());
+
+    const body = container.querySelector<HTMLElement>('.tc-tg-deadline-marker')!;
+    const badge = body.querySelector<HTMLElement>('.tc-recurrence-badge');
+    expect(body.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(badge?.getAttribute('aria-label')).toBe('Repeats: every month');
+    expect(badge?.querySelector('.tc-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
+      'repeat-2',
+    );
+  });
+
   it('renders day-local range tiles with date metadata and terminal-only rich content', () => {
     const container = freshContainer();
     const dates = ['2026-07-14', '2026-07-15', '2026-07-16'];

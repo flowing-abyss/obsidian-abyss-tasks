@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RecurrencePolicy, TaskCommandResult, TaskPatch } from '../src/tasks';
 import {
+  mountAnchoredRecurrenceEditor,
   mountRecurrenceEditor,
   type RecurrenceEditorHandle,
 } from '../src/ui/recurrence/RecurrenceEditor';
@@ -70,6 +71,7 @@ function button(container: HTMLElement, label: string): HTMLButtonElement {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   for (const handle of mounted.splice(0)) handle.destroy();
   activeDocument.body.empty();
 });
@@ -325,5 +327,47 @@ describe('mountRecurrenceEditor', () => {
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('restores the previously focused anchor when Cancel closes the editor', () => {
+    const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
+    anchor.focus();
+    const { container, handle, onClose } = mount();
+    activeDocument.body.append(container);
+    handle.focus();
+
+    click(button(container, 'Cancel'));
+
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(activeDocument.activeElement).toBe(anchor);
+  });
+
+  it('restores a connected anchor when an outside click dismisses the anchored editor', () => {
+    vi.useFakeTimers();
+    const previous = activeDocument.body.createEl('button', { text: 'Previous focus' });
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    previous.focus();
+    const root = task({ planning: { due: '2026-08-09' } });
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit: vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: root },
+      }),
+    });
+    mounted.push(handle);
+    vi.runAllTimers();
+
+    activeDocument.body.dispatchEvent(
+      new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
+    );
+
+    expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(anchor);
+    vi.useRealTimers();
   });
 });

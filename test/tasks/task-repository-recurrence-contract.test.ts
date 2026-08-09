@@ -361,6 +361,35 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
 
     it.each([
       {
+        name: 'a recurring descendant',
+        source:
+          '- [ ] Invalid repeat 🔁 tomorrow 🏁 delete\n' +
+          '  - [ ] Child 🔁 every week 📅 2026-08-02\n',
+      },
+      {
+        name: 'a second recurrence marker on the selected owner',
+        source: '- [ ] Invalid repeat 🔁 tomorrow 🔁 every week 🏁 delete\n' + '  - [ ] Child\n',
+      },
+    ])('rejects ordinary Delete for an invalid selected owner with $name', async ({ source }) => {
+      const harness = await makeHarness(adapter, source);
+
+      await expect(
+        harness.repository.edit({
+          type: 'set-status',
+          target: rootTarget(harness, source),
+          symbol: 'x',
+          stamp: localDate('2026-08-01'),
+          addCompletionDate: true,
+        }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'nested-recurrence-conflict', field: 'recurrence' }],
+      });
+      expect(await harness.read()).toBe(source);
+    });
+
+    it.each([
+      {
         name: 'a second recurrence on a sibling',
         source:
           '- [ ] Shell\n' +

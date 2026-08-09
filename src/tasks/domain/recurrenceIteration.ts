@@ -318,6 +318,19 @@ function semanticRecurrenceMarkerCount(original: string): number {
   );
 }
 
+export function recurrenceMarkerCountInOwnedSubtree(
+  rootBlock: string,
+  ownerRelativeLine: number,
+): number | undefined {
+  const ownership = recurrenceOwnedSubtree(rootBlock, ownerRelativeLine);
+  if (!ownership) return undefined;
+  const lines = sourceLines(rootBlock);
+  return ownership.taskLines.reduce(
+    (count, line) => count + semanticRecurrenceMarkerCount(lines[line]!.text + lines[line]!.ending),
+    0,
+  );
+}
+
 function removeSpan(source: string, span: SourceRange): string {
   let from = span.from;
   let to = span.to;

@@ -104,6 +104,7 @@ export class CalendarRenderer {
     this.renderView();
 
     this.unsubscribe = this.queries.subscribe(() => {
+      this.dismissRecurrenceEditor();
       this.activeView?.patch(this.viewContainer!, [...this.queries.list()], this.buildConfig());
       this.updateToolbar();
     });
@@ -129,6 +130,7 @@ export class CalendarRenderer {
 
   private switchView(type: ActiveView): void {
     if (this.activeViewType === type) return;
+    this.dismissRecurrenceEditor();
     this.activeViewType = type;
     this.rootEl.setAttribute('view', type);
     this.activeView?.destroy();
@@ -187,7 +189,7 @@ export class CalendarRenderer {
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
-    this.recurrenceEditorCleanup?.();
+    this.dismissRecurrenceEditor();
     let cleanup: () => void;
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
@@ -206,8 +208,14 @@ export class CalendarRenderer {
         }
       },
     });
-    cleanup = () => handle.destroy();
+    cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
+  }
+
+  private dismissRecurrenceEditor(): void {
+    const cleanup = this.recurrenceEditorCleanup;
+    this.recurrenceEditorCleanup = null;
+    cleanup?.();
   }
 
   private hasNestedRecurrence(task: TaskSnapshot): boolean {
@@ -232,6 +240,7 @@ export class CalendarRenderer {
 
   private renderView(): void {
     if (!this.viewContainer) return;
+    this.dismissRecurrenceEditor();
     const tasks = [...this.queries.list()];
     const config = this.buildConfig();
     const cb = this.buildCallbacks();
@@ -346,7 +355,7 @@ export class CalendarRenderer {
   }
 
   destroy(): void {
-    this.recurrenceEditorCleanup?.();
+    this.dismissRecurrenceEditor();
     this.unsubscribe?.();
     this.activeView?.destroy();
     this.toolbar?.destroy();

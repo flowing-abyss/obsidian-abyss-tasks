@@ -1705,6 +1705,55 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
       h.el.remove();
     }
   });
+
+  it('closes an anchored recurrence editor before a query patch replaces its task anchor', () => {
+    const original = task({
+      title: 'Before patch',
+      recurrence: 'every week',
+      planning: { due: TODAY },
+    });
+    const h = keyboardPanelHarness([original], vi.fn());
+    try {
+      const marker = h.el.querySelector<HTMLElement>(
+        '.tc-mg-plain .tc-status-marker, .tc-mg-deadline-marker .tc-status-marker',
+      )!;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+
+      h.setSnapshots([
+        task({ title: 'After patch', recurrence: 'every week', planning: { due: TODAY } }),
+      ]);
+      h.emit();
+
+      expect(marker.isConnected).toBe(false);
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
+
+  it('closes an anchored recurrence editor before a calendar mount replaces its task anchor', () => {
+    const recurring = task({ recurrence: 'every week', planning: { due: TODAY } });
+    const h = keyboardPanelHarness([recurring], vi.fn());
+    try {
+      const marker = h.el.querySelector<HTMLElement>(
+        '.tc-mg-plain .tc-status-marker, .tc-mg-deadline-marker .tc-status-marker',
+      )!;
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+
+      h.el.querySelector<HTMLButtonElement>('[aria-label="Next"]')?.click();
+
+      expect(marker.isConnected).toBe(false);
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+    } finally {
+      h.panel.destroy();
+      h.el.remove();
+    }
+  });
 });
 
 describe('CenterPanel calendar mode — timed pointer command bridge', () => {

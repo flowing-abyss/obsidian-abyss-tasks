@@ -18,7 +18,10 @@ import {
   parseRecurrenceRule,
   type RecurrenceIssueCode,
 } from '../../domain/recurrence';
-import { prepareRecurrenceIteration } from '../../domain/recurrenceIteration';
+import {
+  prepareRecurrenceIteration,
+  recurrenceMarkerCountInOwnedSubtree,
+} from '../../domain/recurrenceIteration';
 import type {
   CommentRef,
   LocalDate,
@@ -373,18 +376,24 @@ function prepareRecurrenceCandidate(
   };
 }
 
-function blocksOrdinaryDeleteCompletion(
+function ordinaryDeleteRecurrenceDisposition(
   parsed: NonNullable<ReturnType<TaskMarkdownCodec['parseLine']>>,
   rawRule: string | undefined,
-): boolean {
+  rootBlock: string,
+  relativeLine: number,
+): 'allow' | 'defer' | 'invalid' {
   const recurrenceSpans = parsed.spans.filter(
     (span) =>
       span.kind === 'recurrence' ||
       (span.kind === 'malformed-known' && span.malformedKind === 'recurrence'),
   );
-  if (recurrenceSpans.length === 0) return false;
-  if (recurrenceSpans.length !== 1 || rawRule === undefined) return true;
-  return parseRecurrenceRule(rawRule).type === 'valid';
+  const ownedMarkerCount = recurrenceMarkerCountInOwnedSubtree(rootBlock, relativeLine);
+  if (ownedMarkerCount === undefined) return 'invalid';
+  if (recurrenceSpans.length === 0) return ownedMarkerCount === 0 ? 'allow' : 'invalid';
+  if (recurrenceSpans.length !== 1 || rawRule === undefined || ownedMarkerCount !== 1) {
+    return 'invalid';
+  }
+  return parseRecurrenceRule(rawRule).type === 'valid' ? 'defer' : 'allow';
 }
 
 function blockTarget(
@@ -1314,14 +1323,18 @@ export class ObsidianTaskRepository implements TaskRepository {
             filePath: path,
             line: block.line + relativeLine,
           });
-    if (
-      !current ||
-      !owner ||
-      !parsed ||
-      owner.onCompletion !== 'delete' ||
-      blocksOrdinaryDeleteCompletion(parsed, owner.recurrence)
-    ) {
+    if (!current || !owner || !parsed || owner.onCompletion !== 'delete') {
       return undefined;
+    }
+    const recurrenceDisposition = ordinaryDeleteRecurrenceDisposition(
+      parsed,
+      owner.recurrence,
+      block.source,
+      relativeLine,
+    );
+    if (recurrenceDisposition === 'defer') return undefined;
+    if (recurrenceDisposition === 'invalid') {
+      return { result: invalidRecurrence('nested-recurrence-conflict'), content };
     }
     if (target.type === 'task') {
       const next = this.options.editor.deleteRoot(content, block);

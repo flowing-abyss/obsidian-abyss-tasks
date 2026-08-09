@@ -124,6 +124,28 @@ function timedGestureGrid() {
 }
 
 describe('Task 2 unified timed interaction contract', () => {
+  it('renders one shared recurrence badge in the terminal timed-block head', () => {
+    const container = freshContainer();
+    renderTimedBlocksForDay(
+      container,
+      [
+        task({
+          recurrence: 'tomorrow',
+          planning: { due: '2026-07-10', time: '09:00', duration: 60 },
+        }),
+      ],
+      callbacks(),
+    );
+
+    const head = container.querySelector<HTMLElement>('.tc-tg-block-head')!;
+    const badge = head.querySelector<HTMLElement>('.tc-recurrence-badge');
+    expect(head.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(badge?.dataset['recurrenceValidity']).toBe('invalid');
+    expect(badge?.querySelector('.tc-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
+      'repeat-2',
+    );
+  });
+
   it('uses committed event-fill contrast for terminal and ghost timed blocks', () => {
     const originalBackground = document.body.style.getPropertyValue('--background-primary');
     document.body.style.setProperty('--background-primary', '#666666');

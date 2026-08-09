@@ -5,6 +5,10 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
 import { tagFillTextColorVar } from '../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
@@ -301,6 +305,7 @@ export class MonthGridView extends BaseView {
       item.style.gridRow = String(slot + 1);
       this.applyTagFill(item, t, tagGroups);
       this.renderMarker(item, t);
+      if (t.recurrence) renderRecurrenceBadge(item, recurrenceBadgeInput(t.recurrence));
       if (kind === 'timed')
         item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });

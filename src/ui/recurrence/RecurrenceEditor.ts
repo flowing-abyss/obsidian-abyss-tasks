@@ -25,16 +25,18 @@ export interface RecurrenceEditorOptions {
   readonly ownershipConflict: boolean;
   readonly onSubmit: (patch: TaskPatch) => Promise<TaskCommandResult>;
   readonly onClose: () => void;
+  readonly dismissalFocus?: HTMLElement;
 }
 
 export interface RecurrenceEditorHandle {
   destroy(): void;
+  dismiss(): void;
   focus(): void;
 }
 
 export interface AnchoredRecurrenceEditorOptions extends Omit<
   RecurrenceEditorOptions,
-  'container' | 'onClose'
+  'container' | 'dismissalFocus' | 'onClose'
 > {
   readonly anchor: HTMLElement;
   readonly onClose?: () => void;
@@ -146,6 +148,17 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   const task = selectedTask(options.source);
   const reference = referenceDate(options.source, options.policy);
   const previousFocus = options.container.ownerDocument.activeElement;
+  const restoreFocus = (): void => {
+    if (options.dismissalFocus?.isConnected) {
+      options.dismissalFocus.focus();
+      return;
+    }
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+  };
+  const dismiss = (): void => {
+    options.onClose();
+    restoreFocus();
+  };
   const existing = task?.recurrence;
   const existingParsed = existing === undefined ? undefined : parseRecurrenceRule(existing);
   const state: EditorState = {
@@ -574,7 +587,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const spacer = actions.createSpan({ cls: 'tc-recurrence-actions-spacer' });
     spacer.setAttribute('aria-hidden', 'true');
     const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
-    cancel.addEventListener('click', options.onClose);
+    cancel.addEventListener('click', dismiss);
     const save = actions.createEl('button', {
       cls: 'mod-cta tc-recurrence-save',
       text: 'Save repeat',
@@ -588,8 +601,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      options.onClose();
-      if (previousFocus instanceof HTMLElement) previousFocus.focus();
+      dismiss();
       return;
     }
     const target = event.target;
@@ -613,6 +625,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       options.container.removeEventListener('keydown', keyHandler);
       options.container.empty();
     },
+    dismiss,
     focus: () => {
       const focusTarget = options.container.querySelector<HTMLElement>(
         state.mode === 'advanced'
@@ -656,7 +669,7 @@ export function mountAnchoredRecurrenceEditor(
   };
   const onOutside = (event: MouseEvent): void => {
     const target = event.target as Node;
-    if (!popover.contains(target) && !options.anchor.contains(target)) destroy();
+    if (!popover.contains(target) && !options.anchor.contains(target)) editor?.dismiss();
   };
   const destroy = (): void => {
     if (destroyed) return;
@@ -670,7 +683,12 @@ export function mountAnchoredRecurrenceEditor(
     options.onClose?.();
   };
 
-  editor = mountRecurrenceEditor({ ...options, container: popover, onClose: destroy });
+  editor = mountRecurrenceEditor({
+    ...options,
+    container: popover,
+    dismissalFocus: options.anchor,
+    onClose: destroy,
+  });
   position();
   ownerDocument.addEventListener('scroll', position, true);
   ownerWindow?.addEventListener('resize', position);
@@ -680,5 +698,5 @@ export function mountAnchoredRecurrenceEditor(
   }, 0);
   ownerWindow?.setTimeout(() => editor?.focus(), 0);
 
-  return { destroy, focus: () => editor?.focus() };
+  return { destroy, dismiss: () => editor?.dismiss(), focus: () => editor?.focus() };
 }

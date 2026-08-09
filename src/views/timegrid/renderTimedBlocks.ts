@@ -6,6 +6,10 @@ import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
@@ -237,6 +241,9 @@ export function renderTimedBlocksForDay(
           });
         },
       });
+    }
+    if (p.task.recurrence) {
+      renderRecurrenceBadge(head, recurrenceBadgeInput(p.task.recurrence));
     }
     // Task 38: a completed/cancelled task stays a full, visible block (checkbox showing its
     // checked state via the marker above), communicating completion purely through this

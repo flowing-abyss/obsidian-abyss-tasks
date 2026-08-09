@@ -399,7 +399,7 @@ export class CenterPanel {
     this.cancelKeyboardInteraction();
     this.clearSearchShell();
     this.clearTaskDatePicker();
-    this.recurrenceEditorCleanup?.();
+    this.dismissRecurrenceEditor();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
@@ -505,7 +505,7 @@ export class CenterPanel {
 
   private render(): void {
     this.clearTaskDatePicker();
-    this.recurrenceEditorCleanup?.();
+    this.dismissRecurrenceEditor();
     this.clearSearchShell();
 
     const mode = this.state.get('mode');
@@ -801,6 +801,7 @@ export class CenterPanel {
     };
 
     const mountView = (): void => {
+      this.dismissRecurrenceEditor();
       this.captureActiveTimedBlockFocus();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       if (pendingQueueSequence !== undefined) {
@@ -950,6 +951,7 @@ export class CenterPanel {
         mountView();
         return;
       }
+      this.dismissRecurrenceEditor();
       this.captureActiveTimedBlockFocus();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       if (pendingQueueSequence !== undefined) {
@@ -3238,7 +3240,7 @@ export class CenterPanel {
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {
-    this.recurrenceEditorCleanup?.();
+    this.dismissRecurrenceEditor();
     let cleanup: () => void;
     const handle = mountAnchoredRecurrenceEditor({
       anchor,
@@ -3265,8 +3267,14 @@ export class CenterPanel {
         }
       },
     });
-    cleanup = () => handle.destroy();
+    cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
+  }
+
+  private dismissRecurrenceEditor(): void {
+    const cleanup = this.recurrenceEditorCleanup;
+    this.recurrenceEditorCleanup = null;
+    cleanup?.();
   }
 
   private hasNestedRecurrence(task: TaskSnapshot): boolean {

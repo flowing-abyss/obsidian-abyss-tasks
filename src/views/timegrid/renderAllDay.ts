@@ -5,6 +5,10 @@ import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
+import {
+  recurrenceBadgeInput,
+  renderRecurrenceBadge,
+} from '../../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
@@ -182,6 +186,7 @@ function renderAllDayBody(
       },
     });
   }
+  if (task.recurrence) renderRecurrenceBadge(el, recurrenceBadgeInput(task.recurrence));
   // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
   // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.tc-tg-block-head`.
@@ -560,6 +565,7 @@ export function renderAllDayCell(
         });
       },
     });
+    if (t.recurrence) renderRecurrenceBadge(marker, recurrenceBadgeInput(t.recurrence));
     marker.createSpan({ text: '📅 ' });
     // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
     // and all-day span/plain items above — previously this title had no status class at all.
