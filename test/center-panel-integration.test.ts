@@ -188,6 +188,126 @@ describe('CenterPanel list selection', () => {
   });
 });
 
+describe('CenterPanel sort and group popover keyboard ownership', () => {
+  it('moves focus from the trigger to an interactive control inside the opened popover', () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, []);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      trigger.focus();
+      trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
+
+      const popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      expect(activeDocument.activeElement).toBe(
+        popover.querySelector<HTMLElement>('.tc-view-state-row-main'),
+      );
+      expect(popover.contains(activeDocument.activeElement)).toBe(true);
+      const focusedRow = activeDocument.activeElement as HTMLElement;
+      focusedRow.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      expect(focusedRow.getAttribute('aria-expanded')).toBe('true');
+      expect(
+        focusedRow.parentElement?.querySelector('.tc-view-state-sublist')?.classList,
+      ).not.toContain('tc-hidden');
+      focusedRow.dispatchEvent(
+        new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+      );
+      expect(focusedRow.getAttribute('aria-expanded')).toBe('false');
+      expect(
+        focusedRow.parentElement?.querySelector('.tc-view-state-sublist')?.classList,
+      ).toContain('tc-hidden');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('closes on Escape and restores focus to its trigger', () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, []);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+
+    try {
+      panel.mount(container);
+      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      trigger.focus();
+      trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
+      const popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+
+      (activeDocument.activeElement as HTMLElement).dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+
+      expect(container.querySelector('.tc-view-state-popover')).toBeNull();
+      expect(activeDocument.activeElement).toBe(trigger);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('removes its registered outside-click listener on trigger toggle, rerender, and destroy', () => {
+    vi.useFakeTimers();
+    const addListener = vi.spyOn(activeDocument, 'addEventListener');
+    const removeListener = vi.spyOn(activeDocument, 'removeEventListener');
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(state, []);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    let destroyed = false;
+
+    const openAndRegisteredListener = (): EventListener => {
+      const start = addListener.mock.calls.length;
+      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      trigger.click();
+      vi.runOnlyPendingTimers();
+      const registration = addListener.mock.calls
+        .slice(start)
+        .find(([type, , options]) => type === 'click' && options === true);
+      expect(registration).toBeDefined();
+      return registration![1] as EventListener;
+    };
+
+    try {
+      panel.mount(container);
+
+      const toggledListener = openAndRegisteredListener();
+      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      expect(removeListener).toHaveBeenCalledWith('click', toggledListener, true);
+
+      const rerenderedListener = openAndRegisteredListener();
+      panel.refresh();
+      expect(removeListener).toHaveBeenCalledWith('click', rerenderedListener, true);
+
+      const destroyedListener = openAndRegisteredListener();
+      panel.destroy();
+      destroyed = true;
+      expect(removeListener).toHaveBeenCalledWith('click', destroyedListener, true);
+    } finally {
+      if (!destroyed) panel.destroy();
+      for (const [type, listener, options] of addListener.mock.calls) {
+        if (type === 'click' && options === true) {
+          activeDocument.removeEventListener('click', listener as EventListener, true);
+        }
+      }
+      addListener.mockRestore();
+      removeListener.mockRestore();
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      container.remove();
+    }
+  });
+});
+
 describe('CenterPanel.createTask', () => {
   it("sel='today' creates through TaskApplicationApi in customFilePath when addToToday=false", async () => {
     const settings: CalendarSettings = {

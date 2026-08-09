@@ -157,6 +157,7 @@ export class CenterPanel {
   private calendarPickerCleanup: (() => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
+  private viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private forecastMenuOwner: ForecastContextMenuOwner | null = null;
   private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner | null = null;
   // Full renders replace the view instance, so keep the last scroll-to-now key at panel scope.
@@ -422,6 +423,7 @@ export class CenterPanel {
     this.clearSearchShell();
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
+    this.viewStatePopoverCleanup?.();
     this.taskModal?.close();
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
@@ -531,6 +533,7 @@ export class CenterPanel {
   private render(): void {
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
+    this.viewStatePopoverCleanup?.();
     this.clearSearchShell();
 
     const mode = this.state.get('mode');
@@ -2250,21 +2253,70 @@ export class CenterPanel {
   }
 
   private showViewStatePopover(anchor: HTMLElement, autoOpenStatusGroupRow = false): void {
-    const existing = this.el.querySelector('.tc-view-state-popover');
-    if (existing) {
-      existing.remove();
+    if (this.viewStatePopoverCleanup) {
+      this.viewStatePopoverCleanup(true);
       return;
     }
 
     const vs = this.state.get('centerListViewState');
-    const popover = this.el.createDiv({ cls: 'tc-view-state-popover tc-popover' });
+    const popover = this.el.createDiv({
+      cls: 'tc-view-state-popover tc-popover',
+      attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
+    });
 
-    let dismiss: (e: MouseEvent) => void;
-    dismiss = (e: MouseEvent): void => {
-      if (!popover.contains(e.target as Node) && e.target !== anchor) {
-        popover.remove();
-        activeDocument.removeEventListener('click', dismiss, true);
+    let dismissListening = false;
+    let dismissTimer: number | undefined;
+    let closed = false;
+    const close = (restoreFocus = false): void => {
+      if (closed) return;
+      closed = true;
+      if (dismissTimer !== undefined) {
+        window.clearTimeout(dismissTimer);
+        dismissTimer = undefined;
       }
+      if (dismissListening) {
+        activeDocument.removeEventListener('click', dismiss, true);
+        dismissListening = false;
+      }
+      popover.remove();
+      if (this.viewStatePopoverCleanup === close) this.viewStatePopoverCleanup = null;
+      if (restoreFocus && anchor.isConnected) anchor.focus();
+    };
+    this.viewStatePopoverCleanup = close;
+    const dismiss = (e: MouseEvent): void => {
+      if (!popover.contains(e.target as Node) && e.target !== anchor) {
+        close(false);
+      }
+    };
+    popover.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+    });
+
+    const bindExpandableRow = (rowMain: HTMLElement, subList: HTMLElement): void => {
+      const toggle = (): void => {
+        const isOpen = !subList.hasClass('tc-hidden');
+        popover.querySelectorAll<HTMLElement>('.tc-view-state-sublist').forEach((el) => {
+          el.addClass('tc-hidden');
+        });
+        popover.querySelectorAll<HTMLElement>('.tc-view-state-row-main').forEach((el) => {
+          el.removeClass('is-open');
+          el.setAttribute('aria-expanded', 'false');
+        });
+        if (!isOpen) {
+          subList.removeClass('tc-hidden');
+          rowMain.addClass('is-open');
+          rowMain.setAttribute('aria-expanded', 'true');
+        }
+      };
+      rowMain.addEventListener('click', toggle);
+      rowMain.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
     };
 
     const makeRow = (
@@ -2277,7 +2329,10 @@ export class CenterPanel {
       onSelect: (value: string) => void,
     ): void => {
       const row = popover.createDiv({ cls: 'tc-view-state-row' });
-      const rowMain = row.createDiv({ cls: 'tc-view-state-row-main' });
+      const rowMain = row.createDiv({
+        cls: 'tc-view-state-row-main',
+        attr: { role: 'button', tabindex: '0', 'aria-expanded': 'false' },
+      });
       const iconEl = rowMain.createEl('span', { cls: 'tc-view-state-row-icon' });
       setIcon(iconEl, icon);
       rowMain.createEl('span', { cls: 'tc-view-state-row-label', text: label });
@@ -2286,20 +2341,7 @@ export class CenterPanel {
       setIcon(chevEl, 'chevron-right');
 
       const subList = row.createDiv({ cls: 'tc-view-state-sublist tc-hidden' });
-
-      rowMain.addEventListener('click', () => {
-        const isOpen = !subList.hasClass('tc-hidden');
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-sublist').forEach((el) => {
-          el.addClass('tc-hidden');
-        });
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-row-main').forEach((el) => {
-          el.removeClass('is-open');
-        });
-        if (!isOpen) {
-          subList.removeClass('tc-hidden');
-          rowMain.addClass('is-open');
-        }
-      });
+      bindExpandableRow(rowMain, subList);
 
       for (const opt of options) {
         const isActive = opt.value === activeValue;
@@ -2312,9 +2354,8 @@ export class CenterPanel {
           optEl.createEl('span', { cls: 'tc-view-state-option-default', text: 'Default' });
         }
         optEl.addEventListener('click', () => {
+          close();
           onSelect(opt.value);
-          popover.remove();
-          activeDocument.removeEventListener('click', dismiss, true);
         });
       }
     };
@@ -2335,7 +2376,10 @@ export class CenterPanel {
       presets: Array<{ label: string; onClick: () => void; isActive?: boolean }> = [],
     ): void => {
       const row = popover.createDiv({ cls: 'tc-view-state-row' });
-      const rowMain = row.createDiv({ cls: 'tc-view-state-row-main' });
+      const rowMain = row.createDiv({
+        cls: 'tc-view-state-row-main',
+        attr: { role: 'button', tabindex: '0', 'aria-expanded': String(initiallyOpen) },
+      });
       const iconEl = rowMain.createEl('span', { cls: 'tc-view-state-row-icon' });
       setIcon(iconEl, icon);
       rowMain.createEl('span', { cls: 'tc-view-state-row-label', text: label });
@@ -2348,20 +2392,7 @@ export class CenterPanel {
         subList.removeClass('tc-hidden');
         rowMain.addClass('is-open');
       }
-
-      rowMain.addEventListener('click', () => {
-        const isOpen = !subList.hasClass('tc-hidden');
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-sublist').forEach((el) => {
-          el.addClass('tc-hidden');
-        });
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-row-main').forEach((el) => {
-          el.removeClass('is-open');
-        });
-        if (!isOpen) {
-          subList.removeClass('tc-hidden');
-          rowMain.addClass('is-open');
-        }
-      });
+      bindExpandableRow(rowMain, subList);
 
       for (const preset of presets) {
         const optEl = subList.createEl('button', { cls: 'tc-view-state-option' });
@@ -2460,10 +2491,7 @@ export class CenterPanel {
     // are the actual source of truth (presets just set their state).
     const applyStatusGroupsChange = (nextStatusGroups: TaskStatusType[] | undefined): void => {
       this.reopenStatusGroupPopover = true;
-      // The popover is about to be torn down and rebuilt by the full re-render
-      // that updateViewState triggers — drop this instance's dismiss listener
-      // now so it doesn't linger on a detached node.
-      activeDocument.removeEventListener('click', dismiss, true);
+      close();
       this.updateViewState({ ...vs, statusGroups: nextStatusGroups });
     };
 
@@ -2508,15 +2536,18 @@ export class CenterPanel {
         text: 'Reset to defaults',
       });
       resetBtn.addEventListener('click', () => {
+        close();
         this.updateViewState(getListViewDefaults(this.currentListKey));
-        popover.remove();
-        activeDocument.removeEventListener('click', dismiss, true);
       });
     }
 
     anchor.after(popover);
-    window.setTimeout(() => {
+    popover.querySelector<HTMLElement>('.tc-view-state-row-main')?.focus();
+    dismissTimer = window.setTimeout(() => {
+      dismissTimer = undefined;
+      if (!popover.isConnected) return;
       activeDocument.addEventListener('click', dismiss, true);
+      dismissListening = true;
     }, 0);
   }
 
