@@ -1349,6 +1349,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(spanBody).not.toBeNull();
     expect(spanBody?.getAttribute('draggable')).toBeNull();
     expect(spanBody?.querySelector('[data-resize-edge]')).toBeNull();
+    panel.destroy();
   });
 
   it('routes a materialized nested recurrence owner through its subtask target', () => {
@@ -1621,6 +1622,75 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         panel.destroy();
         el.remove();
       } finally {
+        addSpy.mockRestore();
+      }
+    },
+  );
+
+  it.each([
+    ['month', '.tc-cal-nav-month', '.tc-month-picker', '.tc-month-picker-btn'],
+    ['year', '.tc-cal-nav-year', '.tc-year-picker', '.tc-year-picker-btn'],
+  ] as const)(
+    '%s picker owns initial focus and Escape dismissal',
+    async (_kind, anchorSelector, pickerSelector, optionSelector) => {
+      const addSpy = vi.spyOn(activeDocument, 'addEventListener');
+      const documentKeydown = vi.fn();
+      activeDocument.addEventListener('keydown', documentKeydown);
+      let panel: CenterPanel | undefined;
+      let el: HTMLElement | undefined;
+      try {
+        ({ panel, el } = await makeCalendarPanel());
+        activeDocument.body.append(el);
+        const anchor = el.querySelector<HTMLElement>(anchorSelector)!;
+        anchor.focus();
+        anchor.click();
+
+        const picker = el.querySelector<HTMLElement>(pickerSelector)!;
+        const selected = picker.querySelector<HTMLElement>(`${optionSelector}.is-active`)!;
+        expect(selected).not.toBeNull();
+        expect(picker.getAttribute('role')).toBe('dialog');
+        expect(picker.getAttribute('aria-modal')).toBe('false');
+        expect(picker.getAttribute('aria-label')).toBe(`Select ${_kind}`);
+        expect(selected.getAttribute('aria-pressed')).toBe('true');
+        expect(
+          Array.from(picker.querySelectorAll<HTMLElement>(optionSelector))
+            .filter((option) => option !== selected)
+            .every((option) => option.getAttribute('aria-pressed') === 'false'),
+        ).toBe(true);
+        expect(picker.contains(activeDocument.activeElement)).toBe(true);
+        expect(activeDocument.activeElement).toBe(selected);
+
+        const escape = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        });
+        selected.dispatchEvent(escape);
+
+        expect(escape.defaultPrevented).toBe(true);
+        expect(documentKeydown).not.toHaveBeenCalled();
+        expect(el.querySelector(pickerSelector)).toBeNull();
+        expect(activeDocument.activeElement).toBe(anchor);
+
+        anchor.click();
+        const reopenedPicker = el.querySelector<HTMLElement>(pickerSelector)!;
+        const reopenedSelected = reopenedPicker.querySelector<HTMLElement>(
+          `${optionSelector}.is-active`,
+        )!;
+        expect(activeDocument.activeElement).toBe(reopenedSelected);
+        reopenedSelected.click();
+        expect(el.querySelector(pickerSelector)).toBeNull();
+        expect(activeDocument.activeElement).toBe(anchor);
+
+        await flushMicrotasks();
+        expect(
+          addSpy.mock.calls.filter(([type]) => type === 'click'),
+          'Escape before deferred outside-dismiss registration must not leave a listener',
+        ).toHaveLength(0);
+      } finally {
+        panel?.destroy();
+        el?.remove();
+        activeDocument.removeEventListener('keydown', documentKeydown);
         addSpy.mockRestore();
       }
     },

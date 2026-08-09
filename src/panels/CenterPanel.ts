@@ -155,7 +155,7 @@ export class CenterPanel {
   private calDate = window.moment().date(1);
   private calViewInstance: TodayView | WeekTimeGridView | MonthGridView | null = null;
   private calUnsubscribe: (() => void) | null = null;
-  private calendarPickerCleanup: (() => void) | null = null;
+  private calendarPickerCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
   private viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
@@ -499,8 +499,8 @@ export class CenterPanel {
     this.calViewInstance = null;
   }
 
-  private clearCalendarPicker(): void {
-    this.calendarPickerCleanup?.();
+  private clearCalendarPicker(restoreFocus = false): void {
+    this.calendarPickerCleanup?.(restoreFocus);
   }
 
   private armCalendarPicker(picker: HTMLElement, anchor: HTMLElement): void {
@@ -510,7 +510,13 @@ export class CenterPanel {
     const dismiss = (event: MouseEvent): void => {
       if (!picker.contains(event.target as Node) && event.target !== anchor) cleanup();
     };
-    const cleanup = (): void => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      cleanup(true);
+    };
+    const cleanup = (restoreFocus = false): void => {
       if (registrationTimer !== undefined) {
         window.clearTimeout(registrationTimer);
         registrationTimer = undefined;
@@ -519,10 +525,16 @@ export class CenterPanel {
         ownerDocument.removeEventListener('click', dismiss, true);
         listening = false;
       }
+      picker.removeEventListener('keydown', onKeyDown);
       picker.remove();
       if (this.calendarPickerCleanup === cleanup) this.calendarPickerCleanup = null;
+      if (restoreFocus && anchor.isConnected) anchor.focus();
     };
     this.calendarPickerCleanup = cleanup;
+    picker.addEventListener('keydown', onKeyDown);
+    const selectedOption = picker.querySelector<HTMLElement>('button.is-active');
+    const firstOption = picker.querySelector<HTMLElement>('button:not(:disabled)');
+    (selectedOption ?? firstOption)?.focus({ preventScroll: true });
     registrationTimer = window.setTimeout(() => {
       registrationTimer = undefined;
       if (this.calendarPickerCleanup !== cleanup || !picker.isConnected) return;
@@ -1060,7 +1072,10 @@ export class CenterPanel {
         return;
       }
       this.clearCalendarPicker();
-      const picker = this.el.createDiv({ cls: 'tc-month-picker tc-popover' });
+      const picker = this.el.createDiv({
+        cls: 'tc-month-picker tc-popover',
+        attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select month' },
+      });
       const MONTH_NAMES = [
         'Jan',
         'Feb',
@@ -1076,11 +1091,16 @@ export class CenterPanel {
         'Dec',
       ];
       MONTH_NAMES.forEach((m, i) => {
-        const btn = picker.createEl('button', { cls: 'tc-month-picker-btn', text: m });
-        if (i === this.calDate.month()) btn.addClass('is-active');
+        const selected = i === this.calDate.month();
+        const btn = picker.createEl('button', {
+          cls: 'tc-month-picker-btn',
+          text: m,
+          attr: { 'aria-pressed': String(selected) },
+        });
+        if (selected) btn.addClass('is-active');
         btn.addEventListener('click', () => {
           this.cancelKeyboardInteraction();
-          this.clearCalendarPicker();
+          this.clearCalendarPicker(true);
           this.calDate = this.calDate.clone().month(i).date(1);
           updateTitle();
           mountView();
@@ -1097,14 +1117,22 @@ export class CenterPanel {
         return;
       }
       this.clearCalendarPicker();
-      const picker = this.el.createDiv({ cls: 'tc-year-picker tc-popover' });
+      const picker = this.el.createDiv({
+        cls: 'tc-year-picker tc-popover',
+        attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select year' },
+      });
       const currentYear = this.calDate.year();
       for (let y = currentYear - 5; y <= currentYear + 5; y++) {
-        const btn = picker.createEl('button', { cls: 'tc-year-picker-btn', text: String(y) });
-        if (y === currentYear) btn.addClass('is-active');
+        const selected = y === currentYear;
+        const btn = picker.createEl('button', {
+          cls: 'tc-year-picker-btn',
+          text: String(y),
+          attr: { 'aria-pressed': String(selected) },
+        });
+        if (selected) btn.addClass('is-active');
         btn.addEventListener('click', () => {
           this.cancelKeyboardInteraction();
-          this.clearCalendarPicker();
+          this.clearCalendarPicker(true);
           this.calDate = this.calDate.clone().year(y).date(1);
           updateTitle();
           mountView();
