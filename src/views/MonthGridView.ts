@@ -405,6 +405,7 @@ export class MonthGridView extends BaseView {
         showStatusMenuAt(ev, {
           task: t,
           registry: this.callbacks.statusRegistry,
+          owner: this.md,
           onPickStatus: (c) => this.callbacks.onSetStatus(t, c),
           onPickPriority: (p) => this.callbacks.onSetPriority(t, p),
           ...(this.callbacks.onEditRepeat && {

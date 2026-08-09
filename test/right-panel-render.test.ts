@@ -148,6 +148,101 @@ describe('RightPanel recurrence editor integration', () => {
       },
     });
   });
+
+  it('moves focus into the right-panel overflow menu when it opens', async () => {
+    const root = task({ title: 'Focused menu task' });
+    const { state, el, panel } = await makePanel(
+      {},
+      {
+        queries: queryApiForTasks(() => [root]),
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [root]);
+    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
+      (button) => button.textContent === '⋯',
+    )!;
+
+    try {
+      more.focus();
+      click(more);
+      const menu = el.querySelector<HTMLElement>('.tc-task-context-menu')!;
+      const firstItem = menu.querySelector<HTMLElement>('.tc-context-item')!;
+
+      expect(menu.getAttribute('role')).toBe('menu');
+      expect(firstItem.getAttribute('role')).toBe('menuitem');
+      expect(activeDocument.activeElement).toBe(firstItem);
+      expect(menu.contains(activeDocument.activeElement)).toBe(true);
+      expect(firstItem.tabIndex).toBe(0);
+
+      firstItem.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
+      expect(activeDocument.activeElement).toBe(more);
+
+      click(more);
+      el.querySelector<HTMLElement>('.tc-task-context-menu .tc-context-item')!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
+      expect(el.querySelector('.tc-recurrence-popover')).not.toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('owns overflow-menu listeners in its mounted document and removes them on rerender', async () => {
+    const originalActiveDocument = activeDocument;
+    const frame = originalActiveDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    const replacementDocument = originalActiveDocument.implementation.createHTMLDocument('next');
+    const ownerAdd = vi.spyOn(ownerDocument, 'addEventListener');
+    const ownerRemove = vi.spyOn(ownerDocument, 'removeEventListener');
+    const replacementAdd = vi.spyOn(replacementDocument, 'addEventListener');
+    const first = task({ title: 'First menu task' });
+    const second = task({ title: 'Replacement task' });
+    const { state, el, panel } = await makePanel(
+      {},
+      {
+        queries: queryApiForTasks(() => [first, second]),
+        execute: vi.fn<TaskApplicationApi['execute']>(),
+      },
+    );
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [first]);
+
+    try {
+      const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
+        (button) => button.textContent === '⋯',
+      )!;
+      click(more);
+      vi.stubGlobal('activeDocument', replacementDocument);
+      await tick();
+
+      const keyRegistration = ownerAdd.mock.calls.find(([type]) => type === 'keydown')!;
+      const clickRegistration = ownerAdd.mock.calls.find(([type]) => type === 'click')!;
+      expect(keyRegistration).toBeDefined();
+      expect(clickRegistration).toBeDefined();
+      expect(
+        replacementAdd.mock.calls.some(([type]) => type === 'keydown' || type === 'click'),
+      ).toBe(false);
+
+      state.set('taskStack', [second]);
+
+      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
+      expect(ownerRemove).toHaveBeenCalledWith('keydown', keyRegistration[1], true);
+      expect(ownerRemove).toHaveBeenCalledWith('click', clickRegistration[1], true);
+    } finally {
+      vi.unstubAllGlobals();
+      panel.destroy();
+      el.remove();
+      frame.remove();
+      ownerAdd.mockRestore();
+      ownerRemove.mockRestore();
+      replacementAdd.mockRestore();
+    }
+  });
 });
 
 /** Read a markdown file's current content via the vault. */
@@ -1154,16 +1249,36 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
   });
 
   it('the "+" control\'s menu offers both Start and Plan when neither is set', async () => {
-    const { state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    const { state, el, panel } = await makePanel();
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
     const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
-    click(addBtn);
-    const menu = el.querySelector('.tc-add-date-menu');
-    expect(menu).not.toBeNull();
-    expect(menu?.textContent).toContain('Start');
-    expect(menu?.textContent).toContain('Plan');
+    try {
+      addBtn.focus();
+      click(addBtn);
+      const menu = el.querySelector<HTMLElement>('.tc-add-date-menu')!;
+      const firstItem = menu.querySelector<HTMLElement>('.tc-add-date-menu-item')!;
+      expect(menu.getAttribute('role')).toBe('menu');
+      expect(firstItem.getAttribute('role')).toBe('menuitem');
+      expect(firstItem.tabIndex).toBe(0);
+      expect(ownerDocument.activeElement).toBe(firstItem);
+      expect(menu.textContent).toContain('Start');
+      expect(menu.textContent).toContain('Plan');
+
+      firstItem.dispatchEvent(
+        new ownerDocument.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      expect(el.querySelector('.tc-add-date-menu')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(addBtn);
+    } finally {
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
   });
 
   it('keeps a wrapped left-edge "+ date" chooser inside a narrow panel as a compact child surface', async () => {
@@ -1230,7 +1345,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     expect(el.querySelector('.tc-chip-add-date')).toBeNull();
   });
 
-  it('clicking "Start" in the "+" menu opens the same date popover style used for the due-date chip', async () => {
+  it('Space on "Start" in the "+" menu opens the shared date popover', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
@@ -1240,7 +1355,9 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     const startOption = Array.from(el.querySelectorAll<HTMLElement>('.tc-add-date-menu-item')).find(
       (o) => o.textContent?.includes('Start'),
     )!;
-    click(startOption);
+    startOption.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+    );
     const popover = el.querySelector('.tc-date-popover');
     expect(popover).not.toBeNull();
     expect(popover?.querySelector('input[type="date"]')).not.toBeNull();

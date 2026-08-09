@@ -391,6 +391,33 @@ describe('CenterPanel task date context menus', () => {
     },
   });
 
+  it('moves focus from the task card into the newly mounted native menu', () => {
+    const menu = activeDocument.createElement('div');
+    menu.className = 'menu';
+    const firstItem = menu.createDiv({ cls: 'menu-item', text: 'Today' });
+    captureMenu();
+    vi.mocked(Menu.prototype.showAtMouseEvent).mockImplementation(function (this: Menu) {
+      activeDocument.body.append(menu);
+      return this;
+    });
+    const { el, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+
+    try {
+      card.focus();
+      openMenu(card);
+
+      expect(activeDocument.activeElement).toBe(firstItem);
+      expect(menu.contains(activeDocument.activeElement)).toBe(true);
+      expect(firstItem.tabIndex).toBe(0);
+    } finally {
+      panel.destroy();
+      menu.remove();
+      el.remove();
+    }
+  });
+
   it('orders Today, Tomorrow, Set date…, and Set tag… in the single menu', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);

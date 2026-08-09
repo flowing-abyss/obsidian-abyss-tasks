@@ -216,4 +216,42 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.tc-modal .tc-recurrence-popover')).toBeNull();
     expect(activeDocument.activeElement).toBe(repeatChip);
   });
+
+  it('keeps the modal open when Escape dismisses its status menu', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal status\n' });
+    const current = task({
+      title: 'Modal status',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Modal status',
+        originalBlock: '- [ ] Modal status',
+      },
+    });
+    const queries: TaskQueryApi = taskQueryApi({
+      list: () => [current],
+      resolve: () => ({ type: 'exact', task: current }),
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(current);
+    const marker = activeDocument.querySelector<HTMLElement>(
+      '.tc-modal .tc-right-header > .tc-status-marker',
+    )!;
+
+    marker.focus();
+    marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    activeDocument
+      .querySelector<HTMLButtonElement>('.tc-status-popover-flag')!
+      .dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+
+    expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+    expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
+    expect(activeDocument.activeElement).toBe(marker);
+  });
 });

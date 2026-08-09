@@ -196,6 +196,7 @@ function renderTimedBlockHead(
               showStatusMenuAt(event, {
                 task,
                 registry: callbacks.statusRegistry,
+                owner: callbacks.component,
                 onPickStatus: (status) => callbacks.onSetStatus(task, status),
                 onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
                 ...(callbacks.onEditRepeat && {

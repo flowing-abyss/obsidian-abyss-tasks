@@ -1,5 +1,6 @@
 import { Menu, setIcon } from 'obsidian';
 import type { Project } from '../../projects/types';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsDashboardContext } from './viewContext';
 
@@ -40,7 +41,7 @@ export function renderProjectDashboard(
           .onClick(() => ctx.onSetStatus(project.path, s.id)),
       );
     }
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   });
 
   const open = header.createEl('button', {

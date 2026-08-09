@@ -2,6 +2,7 @@ import { Menu, setIcon } from 'obsidian';
 import { orderedGroups, type StatusGroup } from '../../projects/status';
 import type { Project } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsListContext } from './viewContext';
 
@@ -143,7 +144,7 @@ function renderRow(
           .onClick(() => ctx.onSetStatus(project.path, s.id)),
       );
     }
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   });
 
   const openBtn = actions.createEl('button', {

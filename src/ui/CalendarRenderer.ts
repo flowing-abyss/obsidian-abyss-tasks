@@ -64,6 +64,7 @@ export class CalendarRenderer {
   private activeStatGroup: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
+  private statusMenuCleanup: (() => void) | null = null;
   private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
   private forecastMenuOwner: ForecastContextMenuOwner;
   private taskModal: TaskModal;
@@ -132,6 +133,7 @@ export class CalendarRenderer {
     this.renderView();
 
     this.unsubscribe = this.queries.subscribe(() => {
+      this.dismissStatusMenu();
       this.forecastMenuOwner.dismiss();
       this.dismissRecurrenceEditor();
       const tasks = this.calendarTasks();
@@ -161,6 +163,7 @@ export class CalendarRenderer {
 
   private switchView(type: ActiveView): void {
     if (this.activeViewType === type) return;
+    this.dismissStatusMenu();
     this.dismissRecurrenceEditor();
     this.activeViewType = type;
     this.rootEl.setAttribute('view', type);
@@ -194,7 +197,8 @@ export class CalendarRenderer {
         const target = calendarMutationTarget(task);
         if (!target) return;
         const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : this.rootEl;
-        showStatusMenuAt(ev, {
+        this.dismissStatusMenu();
+        const statusMenu = showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
           onPickStatus: (symbol) => {
@@ -216,6 +220,7 @@ export class CalendarRenderer {
           },
           onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
         });
+        this.statusMenuCleanup = () => statusMenu.close();
       },
     };
   }
@@ -322,6 +327,7 @@ export class CalendarRenderer {
 
   private renderView(): void {
     if (!this.viewContainer) return;
+    this.dismissStatusMenu();
     this.forecastMenuOwner.dismiss();
     this.dismissRecurrenceEditor();
     const tasks = this.calendarTasks();
@@ -449,12 +455,18 @@ export class CalendarRenderer {
   destroy(): void {
     this.projectionDiagnosticOwner.destroy();
     this.forecastMenuOwner.dismiss();
+    this.dismissStatusMenu();
     this.dismissRecurrenceEditor();
     this.taskModal.close();
     this.unsubscribe?.();
     this.activeView?.destroy();
     this.toolbar?.destroy();
     this.rootEl.empty();
+  }
+
+  private dismissStatusMenu(): void {
+    this.statusMenuCleanup?.();
+    this.statusMenuCleanup = null;
   }
 }
 

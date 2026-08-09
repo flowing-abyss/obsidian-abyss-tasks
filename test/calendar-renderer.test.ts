@@ -788,6 +788,48 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
+    it('tears down the body-mounted status menu on calendar rerender and destroy', () => {
+      vi.useFakeTimers();
+      const store = new StubStore();
+      const root = freshContainer();
+      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      store.setTasks([task({ title: 'Before patch', planning: { due: todayStr } })]);
+      const remove = vi.spyOn(root.ownerDocument, 'removeEventListener');
+      r.mount();
+
+      try {
+        root
+          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        vi.runOnlyPendingTimers();
+        expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+
+        store.setTasks([task({ title: 'After patch', planning: { due: todayStr } })]);
+        store.emit();
+        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+
+        root
+          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        vi.runOnlyPendingTimers();
+        expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+
+        r.destroy();
+        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+        expect(remove.mock.calls.some(([type]) => type === 'keydown')).toBe(true);
+        expect(remove.mock.calls.some(([type]) => type === 'mousedown')).toBe(true);
+      } finally {
+        r.destroy();
+        activeDocument
+          .querySelectorAll('.tc-status-popover')
+          .forEach((element) => element.remove());
+        remove.mockRestore();
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    });
+
     it('closes the anchored recurrence editor before a query patch replaces its task anchor', () => {
       const store = new StubStore();
       const root = freshContainer();

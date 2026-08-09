@@ -314,6 +314,7 @@ export class RightPanel {
         showStatusMenuAt(event, {
           task,
           registry: this.statusRegistry,
+          owner: this.md,
           onPickStatus: (symbol) => void this.setStatus(task, symbol),
           onPickPriority: (priority) => void this.updatePriority(task, priority),
           onEditRepeat: () =>
@@ -645,6 +646,7 @@ export class RightPanel {
         showStatusMenuAt(ev, {
           task: sub,
           registry: this.statusRegistry,
+          owner: this.md,
           onPickStatus: (c) => void this.setStatus(sub, c),
           onPickPriority: (p) => void this.updatePriority(sub, p),
           onEditRepeat: () => this.showRecurrencePopover(anchor, sub, this.recurrenceStackFor(sub)),
@@ -855,14 +857,10 @@ export class RightPanel {
 
     const menu = this.el.createDiv({
       cls: 'tc-context-menu tc-add-date-menu tc-add-date-menu--compact tc-popover-anchored',
+      attr: { role: 'menu', 'aria-label': 'Add date' },
     });
     for (const opt of options) {
-      const item = menu.createDiv({
-        cls: 'tc-context-item tc-add-date-menu-item',
-        text: opt.label,
-      });
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
+      this.createContextMenuItem(menu, 'tc-context-item tc-add-date-menu-item', opt.label, () => {
         this.removeAnchoredSurface(menu);
         this.showDatePopover(anchor, task, opt.field);
       });
@@ -870,6 +868,31 @@ export class RightPanel {
 
     this.positionAnchoredSurface(menu, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(menu, anchor);
+    menu.querySelector<HTMLElement>('.tc-context-item')?.focus({ preventScroll: true });
+  }
+
+  private createContextMenuItem(
+    menu: HTMLElement,
+    className: string,
+    text: string,
+    action: () => void,
+  ): HTMLElement {
+    const item = menu.createDiv({
+      cls: className,
+      text,
+      attr: { role: 'menuitem', tabindex: '0' },
+    });
+    item.addEventListener('click', (event) => {
+      event.stopPropagation();
+      action();
+    });
+    item.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      action();
+    });
+    return item;
   }
 
   private renderPriorityChip(container: HTMLElement, task: TaskLike): void {
@@ -1550,28 +1573,25 @@ export class RightPanel {
 
     const menu = this.el.createDiv({
       cls: 'tc-context-menu tc-task-context-menu tc-popover-anchored',
+      attr: { role: 'menu', 'aria-label': 'Task actions' },
     });
 
-    const editRepeat = menu.createDiv({ cls: 'tc-context-item', text: 'Edit repeat…' });
-    editRepeat.addEventListener('click', () => {
+    const editRepeat = this.createContextMenuItem(menu, 'tc-context-item', 'Edit repeat…', () => {
       this.removeAnchoredSurface(menu);
       this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task));
     });
 
-    const deleteItem = menu.createDiv({
-      cls: 'tc-context-item tc-context-danger',
-      text: this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
-    });
-    deleteItem.addEventListener('click', () => {
-      this.removeAnchoredSurface(menu);
-      void this.deleteTask(task);
-    });
+    this.createContextMenuItem(
+      menu,
+      'tc-context-item tc-context-danger',
+      this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
+      () => {
+        this.removeAnchoredSurface(menu);
+        void this.deleteTask(task);
+      },
+    );
 
-    const openItem = menu.createDiv({
-      cls: 'tc-context-item',
-      text: 'Open in file',
-    });
-    openItem.addEventListener('click', () => {
+    this.createContextMenuItem(menu, 'tc-context-item', 'Open in file', () => {
       this.removeAnchoredSurface(menu);
       const root = this.state.get('taskStack')[0];
       if (root && 'source' in root) void openInFile(this.app, root, taskNodeLine(root, task));
@@ -1579,6 +1599,7 @@ export class RightPanel {
 
     this.positionAnchoredSurface(menu, anchor, 'below-end');
     this.dismissMenuOnOutsideClick(menu, anchor);
+    editRepeat.focus({ preventScroll: true });
   }
 
   private recurrenceStackFor(task: TaskLike): readonly TaskLike[] {
@@ -1603,6 +1624,14 @@ export class RightPanel {
         dismissSurface();
       }
     };
+    const dismissOnEscape = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopPropagation();
+      dismissSurface();
+      anchor.focus({ preventScroll: true });
+    };
+    ownerDocument.addEventListener('keydown', dismissOnEscape, true);
     let registrationTimer = ownerWindow?.setTimeout(() => {
       registrationTimer = undefined;
       ownerDocument.addEventListener('click', dismiss, true);
@@ -1612,6 +1641,7 @@ export class RightPanel {
       placementCleanup?.();
       if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
       if (listening) ownerDocument.removeEventListener('click', dismiss, true);
+      ownerDocument.removeEventListener('keydown', dismissOnEscape, true);
       if (this.anchoredSurfaceCleanups.get(menu) === cleanup) {
         this.anchoredSurfaceCleanups.delete(menu);
       }

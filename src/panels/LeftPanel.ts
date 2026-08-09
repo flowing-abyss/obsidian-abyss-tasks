@@ -13,6 +13,7 @@ import {
   type TagGroupAppearanceResult,
 } from '../ui/TagGroupAppearanceModal';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
+import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 
 const PROJECTS_CAP = 10;
@@ -335,7 +336,7 @@ export class LeftPanel {
         .setIcon('file-text')
         .onClick(() => this.openProjectNote(project.path)),
     );
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private changeProjectStatus(path: string, statusId: string): void {
@@ -592,7 +593,7 @@ export class LeftPanel {
           new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
         }),
     );
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private showChildTagMenu(e: MouseEvent, tag: string): void {
@@ -622,7 +623,7 @@ export class LeftPanel {
           new RenameTagModal(this.app, this.tagManager, tag, () => this.render()).open();
         }),
     );
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private showTagGroupMenu(e: MouseEvent, group: TagGroup, flattenedTag?: string): void {
@@ -691,7 +692,7 @@ export class LeftPanel {
           .onClick(this.makeTagOp(() => this.tagManager.archiveTag(flattenedTag))),
       );
     }
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private openTagGroupAppearance(group: TagGroup, field: 'name' | 'color'): void {

@@ -42,6 +42,7 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
+import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
 import {
   recurrenceBadgeInput,
@@ -1553,6 +1554,7 @@ export class CenterPanel {
         showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
+          owner: this.md,
           onPickStatus: (c) => void this.setTaskStatus(task, c),
           onPickPriority: (p) => void this.setPriority(task, p),
           onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
@@ -1943,7 +1945,7 @@ export class CenterPanel {
           .onClick(() => void this.deleteTask(task)),
       );
 
-      menu.showAtMouseEvent(e);
+      showMenuAtMouseEventWithFocus(menu, e);
     });
   }
 
@@ -2168,7 +2170,7 @@ export class CenterPanel {
         .onClick(() => void this.deleteBulkTasks(selectedTasks)),
     );
 
-    menu.showAtMouseEvent(e);
+    showMenuAtMouseEventWithFocus(menu, e);
   }
 
   private renderPropertyChips(container: HTMLElement): void {

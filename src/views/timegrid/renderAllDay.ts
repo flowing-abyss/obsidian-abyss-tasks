@@ -194,6 +194,7 @@ function renderAllDayBody(
               showStatusMenuAt(ev, {
                 task,
                 registry: callbacks.statusRegistry,
+                owner: callbacks.component,
                 onPickStatus: (c) => callbacks.onSetStatus(task, c),
                 onPickPriority: (p) => callbacks.onSetPriority(task, p),
                 ...(callbacks.onEditRepeat && {
@@ -621,6 +622,7 @@ export function renderAllDayCell(
                 showStatusMenuAt(ev, {
                   task: t,
                   registry: callbacks.statusRegistry,
+                  owner: callbacks.component,
                   onPickStatus: (c) => callbacks.onSetStatus(t, c),
                   onPickPriority: (p) => callbacks.onSetPriority(t, p),
                   ...(callbacks.onEditRepeat && {

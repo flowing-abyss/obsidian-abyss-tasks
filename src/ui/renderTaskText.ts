@@ -1,5 +1,6 @@
 import { Component, Keymap, MarkdownRenderer, Menu, MenuItem, type App } from 'obsidian';
 import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../parser/links';
+import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 
 export interface RenderTaskTextOptions {
   app: App;
@@ -81,7 +82,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       e.stopPropagation();
       const menu = new Menu();
       menu.addItem(buildEditLinkItem(occurrenceIndex, token, opts));
-      menu.showAtMouseEvent(e);
+      showMenuAtMouseEventWithFocus(menu, e);
     });
   });
 }
