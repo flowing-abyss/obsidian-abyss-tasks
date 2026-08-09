@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { computeStats, ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskSnapshot } from '../src/tasks';
-import { queryApiForTasks, task, type TaskFixtureInput } from './helpers';
+import { queryApiForTasks, task, taskQueryApi, type TaskFixtureInput } from './helpers';
 
 /** A minimal object that passes `instanceof TFile` (TFile isn't standalone-constructable). */
 function tfile(path: string): { path: string; extension: string } {
@@ -122,6 +122,40 @@ describe('ProjectStore enumeration', () => {
       cancelled: 0,
       inProgress: 0,
     });
+    ps.destroy();
+  });
+
+  it('computes project counts from persisted snapshots without requesting forecasts', () => {
+    const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+    const persisted = t({
+      title: 'Daily project task',
+      source: { filePath: 'Projects/A.md' },
+      recurrence: 'every day',
+      planning: { due: '2026-08-03' },
+    });
+    const source = {
+      root: persisted,
+      target: { type: 'task' as const, ref: persisted.ref },
+      node: persisted,
+    };
+    const list = vi.fn(() => [persisted]);
+    const forCalendarProjection = vi.fn(() => ({
+      materialized: [source],
+      recurringSources: [source],
+    }));
+    const queries = taskQueryApi({ list, forCalendarProjection });
+    const ps = new ProjectStore(app, queries, { ...DEFAULT_SETTINGS });
+
+    ps.initialize();
+
+    expect(ps.get('Projects/A.md')?.stats).toEqual({
+      total: 1,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+    });
+    expect(list).toHaveBeenCalled();
+    expect(forCalendarProjection).not.toHaveBeenCalled();
     ps.destroy();
   });
 

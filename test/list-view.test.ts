@@ -141,6 +141,35 @@ describe('ListView', () => {
       expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
     });
 
+    it('keeps persisted-list counts independent from the calendar forecast projection', () => {
+      const persisted = task({
+        title: 'Persisted daily repeat',
+        recurrence: 'every day',
+        planning: { due: today() },
+        source: { filePath: 'persisted.md', line: 2 },
+      });
+      const source: CalendarTaskSource = {
+        root: persisted,
+        target: { type: 'task', ref: persisted.ref },
+        node: persisted,
+      };
+      const end = window.moment(today()).add(2, 'days').format('YYYY-MM-DD');
+      const projection = projectCalendarOccurrences(
+        { materialized: [source], recurringSources: [source] },
+        { from: localDate(today()), to: localDate(end) },
+        { removeScheduledDate: false },
+      );
+      const { view } = makeView();
+      const c = freshContainer();
+
+      view.render(c, [persisted], resolvedConfig());
+
+      expect(projection.occurrences).toHaveLength(3);
+      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
+      expect(c.querySelector('.tc-list-date-count')?.textContent).toBe('1');
+      expect(c.querySelector("[data-recurrence-forecast='true']")).toBeNull();
+    });
+
     it('keeps two materialized nested recurrence owners that share root coordinates', () => {
       const d = today();
       const rootSeed = task({

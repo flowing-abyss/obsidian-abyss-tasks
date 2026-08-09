@@ -3,6 +3,7 @@ import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -16,6 +17,7 @@ import type {
 } from '../src/tasks';
 import { localTime } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
+import { TaskModal } from '../src/ui/TaskModal';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
@@ -570,6 +572,46 @@ describe('CenterPanel.renderSearch', () => {
     expect(cards[0]?.querySelector('.tc-task-title')).toBeTruthy();
     expect((cards[0] as HTMLElement).dataset['filePath']).toBe('a.md');
     expect((cards[0] as HTMLElement).dataset['line']).toBe('0');
+    panel.destroy();
+  });
+
+  it('searches the persisted query list without requesting calendar projections', () => {
+    const persisted = task({
+      title: 'forecast boundary needle',
+      recurrence: 'every day',
+      planning: { due: '2026-06-01' },
+      source: { filePath: 'persisted.md', line: 4 },
+    });
+    const source = {
+      root: persisted,
+      target: { type: 'task' as const, ref: persisted.ref },
+      node: persisted,
+    };
+    const list = vi.fn(() => [persisted]);
+    const forCalendarProjection = vi.fn(() => ({
+      materialized: [source],
+      recurringSources: [source],
+    }));
+    const queries = taskQueryApi({ list, forCalendarProjection });
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'needle');
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+    );
+
+    panel.mount(freshContainer());
+
+    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
+    expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+      'persisted.md',
+    );
+    expect(list).toHaveBeenCalled();
+    expect(forCalendarProjection).not.toHaveBeenCalled();
     panel.destroy();
   });
 
@@ -1147,6 +1189,68 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const timedBlock = el.querySelector<HTMLElement>('.tc-tg-block');
     expect(timedBlock?.getAttribute('tabindex')).toBeNull();
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
+  });
+
+  it('keeps direct RightPanel and modal completion on the same exact application target seam', async () => {
+    const app = await createAppWithFiles({
+      'repeat.md': '- [ ] Shared surface repeat 🔁 every day 📅 2026-08-09\n',
+    });
+    const recurring = task({
+      title: 'Shared surface repeat',
+      recurrence: 'every day',
+      planning: { due: '2026-08-09' },
+      ref: { filePath: 'repeat.md', line: 0, revision: 'exact-shared-surface-ref' },
+      source: {
+        filePath: 'repeat.md',
+        line: 0,
+        originalMarkdown: '- [ ] Shared surface repeat 🔁 every day 📅 2026-08-09',
+        originalBlock: '- [ ] Shared surface repeat 🔁 every day 📅 2026-08-09',
+      },
+    });
+    const queries = taskQueryApi({
+      list: () => [recurring],
+      resolve: () => ({ type: 'exact', task: recurring }),
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: recurring },
+    });
+    const application: TaskApplicationApi = { queries, execute };
+    const registry = new StatusRegistry(DEFAULT_SETTINGS.taskStatuses);
+    const state = new AppState();
+    const panel = new RightPanel(state, app, registry, DEFAULT_SETTINGS, undefined, application);
+    const panelHost = freshContainer();
+    panel.mount(panelHost);
+    state.set('taskStack', [recurring]);
+
+    const modal = new TaskModal(app, registry, DEFAULT_SETTINGS, queries, application);
+    try {
+      panelHost
+        .querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      modal.open(recurring);
+      activeDocument
+        .querySelector<HTMLElement>('.tc-modal .tc-right-header > .tc-status-marker')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      expect(execute.mock.calls.map(([command]) => command)).toEqual([
+        {
+          type: 'toggle-completion',
+          target: { type: 'task', ref: recurring.ref },
+        },
+        {
+          type: 'toggle-completion',
+          target: { type: 'task', ref: recurring.ref },
+        },
+      ]);
+    } finally {
+      modal.close();
+      panel.destroy();
+    }
   });
 
   it('clicking Today switches to TodayView', async () => {

@@ -17,6 +17,17 @@ const LEGACY_BRIDGE_FILES = [
   'src/mutation/validateMutatedLine.ts',
 ] as const;
 
+const CALENDAR_COMPOSITION_ROOTS = [
+  'src/panels/CenterPanel.ts',
+  'src/ui/CalendarRenderer.ts',
+] as const;
+
+const RECURRENCE_EDITOR_WRITE_CONSUMERS = [
+  'src/panels/CenterPanel.ts',
+  'src/panels/RightPanel.ts',
+  'src/ui/CalendarRenderer.ts',
+] as const;
+
 interface AllowedWriter {
   readonly mutation:
     | 'single-task transaction'
@@ -116,6 +127,10 @@ function sourceFiles(directory = SRC_ROOT): string[] {
     if (entry.isDirectory()) return sourceFiles(path);
     return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
   });
+}
+
+function calendarModules(): string[] {
+  return [...CALENDAR_COMPOSITION_ROOTS, ...sourceFiles(resolve(SRC_ROOT, 'views')).map(repoPath)];
 }
 
 function repoPath(path: string): string {
@@ -391,6 +406,136 @@ function writerSites(): string[] {
   return sites.sort();
 }
 
+function calendarWriteSitesFor(path: string, module: ts.SourceFile): string[] {
+  const sites: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const target = unwrapCallTarget(node.expression);
+      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+        const operation = ts.isPropertyAccessExpression(target)
+          ? target.name.text
+          : target.argumentExpression && ts.isStringLiteralLike(target.argumentExpression)
+            ? target.argumentExpression.text
+            : undefined;
+        const receiver = target.expression.getText(module);
+        const isVaultWrite =
+          /(?:^|\.)vault(?:\.|$)/u.test(receiver) &&
+          operation !== undefined &&
+          ['process', 'modify', 'create', 'delete', 'rename', 'write', 'append'].includes(
+            operation,
+          );
+        const isRepositoryWrite =
+          /(?:^|\.)repository(?:\.|$)/u.test(receiver) &&
+          operation !== undefined &&
+          ['edit', 'create', 'move', 'completeRecurrence'].includes(operation);
+        if (isVaultWrite || isRepositoryWrite) sites.push(`${path}:${receiver}.${operation}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(module);
+  return sites;
+}
+
+function unsafeForecastSnapshotCastsFor(path: string, module: ts.SourceFile): string[] {
+  const sites: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+      const target = node.type.getText(module).replace(/\s+/gu, '');
+      const expression = node.expression.getText(module);
+      if (
+        /^(?:readonly)?TaskSnapshot(?:\[\]|Array<TaskSnapshot>)?$/u.test(target) &&
+        /forecast|occurrence|projection/iu.test(expression)
+      ) {
+        sites.push(`${path}:${expression} as ${target}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(module);
+  return sites;
+}
+
+function recurrenceSubmitRoutesFor(path: string, module: ts.SourceFile): string[] {
+  const routes: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const target = unwrapCallTarget(node.expression);
+      const name = ts.isIdentifier(target)
+        ? target.text
+        : ts.isPropertyAccessExpression(target)
+          ? target.name.text
+          : undefined;
+      if (name === 'mountRecurrenceEditor' || name === 'mountAnchoredRecurrenceEditor') {
+        const options = node.arguments[0];
+        if (!options || !ts.isObjectLiteralExpression(options)) return;
+        const submit = options.properties.find(
+          (property): property is ts.PropertyAssignment =>
+            ts.isPropertyAssignment(property) && property.name.getText(module) === 'onSubmit',
+        );
+        if (!submit) {
+          routes.push(`${path}:missing-onSubmit`);
+          return;
+        }
+        let route = 'missing-application-route';
+        const inspect = (candidate: ts.Node): void => {
+          if (!ts.isCallExpression(candidate)) {
+            ts.forEachChild(candidate, inspect);
+            return;
+          }
+          const callTarget = unwrapCallTarget(candidate.expression);
+          if (ts.isPropertyAccessExpression(callTarget)) {
+            if (
+              callTarget.name.text === 'execute' &&
+              /(?:^|\.)tasks!?$/u.test(callTarget.expression.getText(module))
+            ) {
+              route = 'TaskApplicationApi.execute';
+            } else if (callTarget.name.text === 'executePlanningPatch') {
+              route = 'executePlanningPatch';
+            }
+          }
+          ts.forEachChild(candidate, inspect);
+        };
+        inspect(submit.initializer);
+        routes.push(`${path}:${route}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(module);
+  return routes;
+}
+
+function memberApplicationExecuteCount(module: ts.SourceFile, member: string): number {
+  let count = 0;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isMethodDeclaration(node) &&
+      node.name.getText(module) === member &&
+      node.body !== undefined
+    ) {
+      const inspect = (candidate: ts.Node): void => {
+        if (ts.isCallExpression(candidate)) {
+          const target = unwrapCallTarget(candidate.expression);
+          if (
+            ts.isPropertyAccessExpression(target) &&
+            target.name.text === 'execute' &&
+            /(?:^|\.)tasks!?$/u.test(target.expression.getText(module))
+          ) {
+            count++;
+          }
+        }
+        ts.forEachChild(candidate, inspect);
+      };
+      inspect(node.body);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(module);
+  return count;
+}
+
 function barrelExports(): string[] {
   const names: string[] = [];
   for (const statement of syntax('src/tasks/index.ts').statements) {
@@ -580,6 +725,63 @@ describe('task architecture boundaries', () => {
     ).toEqual([
       'src/tasks/infrastructure/obsidian/ObsidianTaskRepository.ts#ObsidianTaskRepository.processFile#process#1',
     ]);
+  });
+
+  it('keeps calendar modules free of repository and Vault writes', () => {
+    const safe = syntaxFromText(
+      'src/views/probe.ts',
+      'tasks.execute(command); app.vault.cachedRead(file); taskSnapshotForCalendarOccurrence(occurrence);',
+    );
+    const unsafe = syntaxFromText(
+      'src/views/probe.ts',
+      'app.vault.process(file, update); app.vault.modify(file, text); repository.completeRecurrence(request);',
+    );
+    expect(calendarWriteSitesFor('src/views/probe.ts', safe)).toEqual([]);
+    expect(calendarWriteSitesFor('src/views/probe.ts', unsafe)).toEqual([
+      'src/views/probe.ts:app.vault.process',
+      'src/views/probe.ts:app.vault.modify',
+      'src/views/probe.ts:repository.completeRecurrence',
+    ]);
+    expect(calendarModules().flatMap((path) => calendarWriteSitesFor(path, syntax(path)))).toEqual(
+      [],
+    );
+  });
+
+  it('forbids forecast-to-snapshot casts while allowing the calendar occurrence adapter', () => {
+    const probe = syntaxFromText(
+      'src/views/probe.ts',
+      [
+        'const safe: TaskSnapshot = taskSnapshotForCalendarOccurrence(occurrence);',
+        'const first = forecast as TaskSnapshot;',
+        'const second = projectedOccurrence as unknown as TaskSnapshot;',
+        'const third = <TaskSnapshot[]>forecastProjection;',
+      ].join('\n'),
+    );
+    expect(unsafeForecastSnapshotCastsFor('src/views/probe.ts', probe)).toEqual([
+      'src/views/probe.ts:forecast as TaskSnapshot',
+      'src/views/probe.ts:projectedOccurrence as unknown as TaskSnapshot',
+      'src/views/probe.ts:forecastProjection as TaskSnapshot[]',
+    ]);
+    expect(
+      calendarModules().flatMap((path) => unsafeForecastSnapshotCastsFor(path, syntax(path))),
+    ).toEqual([]);
+  });
+
+  it('routes every mounted recurrence editor write through TaskApplicationApi', () => {
+    expect(
+      RECURRENCE_EDITOR_WRITE_CONSUMERS.flatMap((path) =>
+        recurrenceSubmitRoutesFor(path, syntax(path)),
+      ),
+    ).toEqual([
+      'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
+      'src/panels/CenterPanel.ts:TaskApplicationApi.execute',
+      'src/panels/RightPanel.ts:executePlanningPatch',
+      'src/ui/CalendarRenderer.ts:TaskApplicationApi.execute',
+      'src/ui/CalendarRenderer.ts:TaskApplicationApi.execute',
+    ]);
+    expect(
+      memberApplicationExecuteCount(syntax('src/panels/RightPanel.ts'), 'executePlanningPatch'),
+    ).toBe(2);
   });
 
   it('keeps the public task barrel exact and backed by named production consumers', () => {

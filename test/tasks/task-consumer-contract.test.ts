@@ -57,6 +57,11 @@ const PARSER_GRAMMAR_TESTS = new Set([
   'test/task-parser-deep.test.ts',
 ]);
 
+const CALENDAR_PROJECTION_CONSUMERS = new Set([
+  'src/panels/CenterPanel.ts',
+  'src/ui/CalendarRenderer.ts',
+]);
+
 function source(path: string): string {
   return readFileSync(resolve(ROOT, path), 'utf8');
 }
@@ -106,6 +111,19 @@ function moduleSpecifiers(path: string, candidate: string): string[] {
 
   visit(sourceFile(path, candidate));
   return specifiers;
+}
+
+function namedImports(path: string, candidate: string): string[] {
+  const names: string[] = [];
+  const module = sourceFile(path, candidate);
+  for (const statement of module.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const binding of bindings.elements)
+      names.push(binding.propertyName?.text ?? binding.name.text);
+  }
+  return names;
 }
 
 function moduleStem(path: string): string {
@@ -287,6 +305,25 @@ describe('final task consumer contract', () => {
 
   it('keeps task-scoped vault writes out of production consumers', () => {
     expect(matchingFiles(taskMutationConsumers, /\.vault\.process\s*\(/u)).toEqual([]);
+  });
+
+  it('confines projection adapters to the two calendar composition roots', () => {
+    const projectionBindings = new Set([
+      'projectCalendarOccurrences',
+      'taskSnapshotForCalendarOccurrence',
+    ]);
+    const consumers = productionFiles.filter((path) =>
+      namedImports(path, source(path)).some((name) => projectionBindings.has(name)),
+    );
+
+    expect(new Set(consumers)).toEqual(CALENDAR_PROJECTION_CONSUMERS);
+    expect(
+      [...CALENDAR_PROJECTION_CONSUMERS].every(
+        (path) =>
+          namedImports(path, source(path)).filter((name) => projectionBindings.has(name)).length ===
+          projectionBindings.size,
+      ),
+    ).toBe(true);
   });
 
   it('keeps premature statistics and time-tracking presentation absent', () => {

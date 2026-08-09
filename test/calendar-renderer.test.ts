@@ -1,14 +1,27 @@
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import {
   localDate,
+  type LocalDate,
   type TaskApplicationApi,
   type TaskIndexEvent,
   type TaskSnapshot,
 } from '../src/tasks';
+import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
+import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
+import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
+import {
+  calendarMutationTarget,
+  projectCalendarOccurrences,
+  taskSnapshotForCalendarOccurrence,
+} from '../src/views/calendarOccurrences';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -17,9 +30,11 @@ import {
   freshContainer,
   queryApiForTasks,
   resolvedConfig,
+  seedTaskCache,
   task,
   useRealMoment,
 } from './helpers';
+import { InMemoryTaskRepository } from './support/InMemoryTaskRepository';
 
 useRealMoment();
 
@@ -466,6 +481,194 @@ describe('CalendarRenderer', () => {
         root.querySelector('.statisticPopup li[data-group="recurrence"] .stat-count')?.textContent,
       ).toBe('1');
       r.destroy();
+    });
+
+    it('materializes one Tasks-compatible successor through the calendar and reloads without a duplicate', async () => {
+      const path = 'Projects/Recurring.md';
+      const originalMarkdown = '- [ ] Daily review #project 🔁 every day 📅 2026-08-03\n';
+      const app = await createAppWithFiles({ [path]: originalMarkdown });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const authority = new TaskRefAuthority('cross-surface-calendar');
+      const index = new TaskIndex(app, {
+        statusCatalog,
+        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+        refAuthority: authority,
+      });
+      await index.initialize();
+      const repository = new InMemoryTaskRepository({
+        files: { [path]: originalMarkdown },
+        codec: new TaskMarkdownCodec(statusCatalog),
+        snapshotsFromContent: (filePath, content) => index.previewContent(filePath, content),
+        locator: new TaskLocator(authority),
+        refAuthority: authority,
+        snapshotState: index,
+      });
+      const application = new TaskApplicationService(
+        index,
+        repository,
+        statusCatalog,
+        { today: () => localDate('2026-08-03') },
+        undefined,
+        () => ({
+          taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
+          recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+        }),
+      );
+      const execute = vi.spyOn(application, 'execute');
+      const rangeDates = (from: string, days: number): LocalDate[] =>
+        Array.from({ length: days }, (_, offset) =>
+          localDate(window.moment(from).add(offset, 'days').format('YYYY-MM-DD')),
+        );
+      const monthDates = rangeDates('2026-08-01', 31);
+      const weekDates = rangeDates('2026-08-03', 7);
+      const projectionFor = (dates: LocalDate[]) =>
+        projectCalendarOccurrences(
+          index.forCalendarProjection(dates),
+          { from: dates[0]!, to: dates[dates.length - 1]! },
+          { removeScheduledDate: false },
+        );
+      const monthBefore = projectionFor(monthDates);
+      const weekBefore = projectionFor(weekDates);
+      const materialized = monthBefore.occurrences.find(
+        (occurrence) => occurrence.kind === 'materialized',
+      )!;
+      const calendarTask = taskSnapshotForCalendarOccurrence(materialized);
+      const exactTarget = calendarMutationTarget(calendarTask)!;
+      const consumedRevision = exactTarget.type === 'task' ? exactTarget.ref.revision : '';
+
+      expect(monthBefore.occurrences.filter(({ kind }) => kind === 'forecast').length).toBe(28);
+      expect(weekBefore.occurrences.map(({ kind, planning }) => [kind, planning.due])).toEqual([
+        ['materialized', '2026-08-03'],
+        ['forecast', '2026-08-04'],
+        ['forecast', '2026-08-05'],
+        ['forecast', '2026-08-06'],
+        ['forecast', '2026-08-07'],
+        ['forecast', '2026-08-08'],
+        ['forecast', '2026-08-09'],
+      ]);
+      expect(exactTarget).toEqual(materialized.source.target);
+      expect(consumedRevision).not.toMatch(/(?:fake|test):/u);
+
+      const root = freshContainer();
+      const renderer = new CalendarRenderer(
+        root,
+        resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+        app,
+        index,
+        application,
+        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      );
+      renderer.mount();
+
+      try {
+        const materializedCard = Array.from(root.querySelectorAll<HTMLElement>('.task')).find(
+          (card) => card.querySelector("[data-recurrence-forecast='true']") === null,
+        );
+        expect(materializedCard).toBeDefined();
+        materializedCard
+          ?.querySelector<HTMLElement>('.tc-status-marker')
+          ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        await flushMicrotasks(30);
+
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(execute).toHaveBeenCalledWith({ type: 'toggle-completion', target: exactTarget });
+        expect(repository.content(path)).toBe(
+          '- [ ] Daily review #project 🔁 every day ➕ 2026-08-03 📅 2026-08-04\n' +
+            '- [x] Daily review #project 🔁 every day 📅 2026-08-03 ✅ 2026-08-03\n',
+        );
+
+        const persisted = index.list({ filePath: path });
+        const active = persisted.filter((candidate) => candidate.status === 'open');
+        expect(
+          active.map(({ planning, ref }) => ({ due: planning.due, revision: ref.revision })),
+        ).toEqual([{ due: '2026-08-04', revision: expect.any(String) }]);
+        expect(active[0]?.ref.revision).not.toBe(consumedRevision);
+        expect(persisted.filter((candidate) => candidate.status === 'done')).toHaveLength(1);
+
+        const afterProjection = projectionFor(rangeDates('2026-08-04', 7));
+        expect(
+          afterProjection.occurrences.map(({ kind, planning }) => [kind, planning.due]),
+        ).toEqual([
+          ['materialized', '2026-08-04'],
+          ['forecast', '2026-08-05'],
+          ['forecast', '2026-08-06'],
+          ['forecast', '2026-08-07'],
+          ['forecast', '2026-08-08'],
+          ['forecast', '2026-08-09'],
+          ['forecast', '2026-08-10'],
+        ]);
+        expect(new Set(afterProjection.occurrences.map(({ key }) => key)).size).toBe(
+          afterProjection.occurrences.length,
+        );
+
+        const beforeStaleRetry = repository.content(path);
+        await expect(
+          application.execute({ type: 'toggle-completion', target: exactTarget }),
+        ).resolves.toMatchObject({ type: 'conflict' });
+        expect(repository.content(path)).toBe(beforeStaleRetry);
+
+        const reloadedApp = await createAppWithFiles({ [path]: repository.content(path)! });
+        seedTaskCache(reloadedApp, path, [
+          { task: ' ', parent: -1, line: 0 },
+          { task: 'x', parent: -1, line: 1 },
+        ]);
+        const reloaded = new TaskIndex(reloadedApp, {
+          statusCatalog,
+          dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+          refAuthority: new TaskRefAuthority('cross-surface-reload'),
+        });
+        await reloaded.initialize();
+        try {
+          const reloadedPersisted = reloaded.list({ filePath: path });
+          const reloadedProjection = projectCalendarOccurrences(
+            reloaded.forCalendarProjection(rangeDates('2026-08-04', 7)),
+            { from: localDate('2026-08-04'), to: localDate('2026-08-10') },
+            { removeScheduledDate: false },
+          );
+          expect(
+            reloadedPersisted.map(({ status, planning, source }) => ({
+              status,
+              due: planning.due,
+              line: source.line,
+              markdown: source.originalMarkdown,
+            })),
+          ).toEqual([
+            {
+              status: 'open',
+              due: '2026-08-04',
+              line: 0,
+              markdown: '- [ ] Daily review #project 🔁 every day ➕ 2026-08-03 📅 2026-08-04',
+            },
+            {
+              status: 'done',
+              due: '2026-08-03',
+              line: 1,
+              markdown: '- [x] Daily review #project 🔁 every day 📅 2026-08-03 ✅ 2026-08-03',
+            },
+          ]);
+          expect(
+            reloadedPersisted.filter(
+              ({ status, planning }) => status === 'open' && planning.due === '2026-08-04',
+            ),
+          ).toHaveLength(1);
+          expect(reloadedPersisted[0]?.ref.revision).not.toBe(active[0]?.ref.revision);
+          expect(reloaded.resolve(active[0]!.ref)).toMatchObject({ type: 'conflict' });
+          expect(
+            reloadedProjection.occurrences.filter(
+              ({ kind, planning }) => kind === 'materialized' && planning.due === '2026-08-04',
+            ),
+          ).toHaveLength(1);
+          expect(new Set(reloadedProjection.occurrences.map(({ key }) => key)).size).toBe(
+            reloadedProjection.occurrences.length,
+          );
+          expect(repository.content(path)).not.toContain('🆔');
+        } finally {
+          reloaded.destroy();
+        }
+      } finally {
+        renderer.destroy();
+        index.destroy();
+      }
     });
 
     it('keeps a materialized nested recurrence owner with its exact target and ordinary overdue tasks', async () => {

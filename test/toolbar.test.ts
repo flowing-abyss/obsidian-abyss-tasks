@@ -1,11 +1,18 @@
+import type { App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { buildDefaultTaskStatuses } from '../src/settings/defaults';
+import { StatusRegistry } from '../src/status/StatusRegistry';
+import type { TaskApplicationApi } from '../src/tasks';
+import { CalendarRenderer } from '../src/ui/CalendarRenderer';
 import {
   Toolbar,
   type ToolbarCallbacks,
   type ToolbarState,
   type ViewEntry,
 } from '../src/ui/Toolbar';
-import { freshContainer } from './helpers';
+import { freshContainer, resolvedConfig, task, taskQueryApi, useRealMoment } from './helpers';
+
+useRealMoment();
 
 const VIEWS: ViewEntry[] = [
   { id: 'list', icon: '', label: 'List' },
@@ -303,6 +310,53 @@ describe('Toolbar', () => {
           ?.textContent,
       ).toBe('7');
       tb.destroy();
+    });
+
+    it('keeps toolbar statistics on persisted snapshots while the calendar renders forecasts', () => {
+      vi.setSystemTime(new Date('2026-08-03T12:00:00Z'));
+      const persisted = task({
+        title: 'Daily toolbar repeat',
+        recurrence: 'every day',
+        planning: { due: '2026-08-03' },
+        source: { filePath: 'persisted.md', line: 0 },
+      });
+      const source = {
+        root: persisted,
+        target: { type: 'task' as const, ref: persisted.ref },
+        node: persisted,
+      };
+      const list = vi.fn(() => [persisted]);
+      const forCalendarProjection = vi.fn(() => ({
+        materialized: [source],
+        recurringSources: [source],
+      }));
+      const queries = taskQueryApi({ list, forCalendarProjection });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target' }],
+      });
+      const root = freshContainer();
+      const renderer = new CalendarRenderer(
+        root,
+        resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+        {} as App,
+        queries,
+        { queries, execute },
+        new StatusRegistry(buildDefaultTaskStatuses()),
+      );
+
+      renderer.mount();
+
+      expect(root.querySelectorAll("[data-recurrence-forecast='true']").length).toBeGreaterThan(1);
+      expect(
+        root.querySelector('.statisticPopup li[data-group="due"] .stat-count')?.textContent,
+      ).toBe('1');
+      expect(
+        root.querySelector('.statisticPopup li[data-group="recurrence"] .stat-count')?.textContent,
+      ).toBe('1');
+      expect(list).toHaveBeenCalled();
+      expect(forCalendarProjection).toHaveBeenCalled();
+      renderer.destroy();
     });
 
     it('active style li highlights per currentStyle', () => {
