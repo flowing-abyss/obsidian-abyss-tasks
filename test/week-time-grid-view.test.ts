@@ -936,7 +936,9 @@ describe('WeekTimeGridView', () => {
     const preview = container.querySelector<HTMLElement>(
       '[data-tg-date="2026-07-07"] .tc-tg-boundary-preview',
     )!;
-    expect(preview.style.left).toBe('50%');
+    // Equal-time lanes are identity-stable: a.md owns column 0 even though bucket ordering places
+    // the pre-existing one-day destination before the prospective span segment.
+    expect(preview.style.left).toBe('0%');
     expect(preview.style.width).toBe('50%');
     const previewGeometry = { left: preview.style.left, width: preview.style.width };
 

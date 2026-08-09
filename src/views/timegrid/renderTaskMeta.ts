@@ -10,6 +10,7 @@ import {
 import {
   calendarOccurrenceForRender,
   type CalendarOccurrence,
+  type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../calendarOccurrences';
 
@@ -47,6 +48,7 @@ export function applyOccurrenceDomState(
   continuity: CalendarContinuity,
   spanRole: string,
 ): void {
+  element.addClass('tc-calendar-item');
   element.setAttribute('data-occurrence-state', occurrence.kind);
   element.setAttribute('data-continuity', continuity);
   element.setAttribute(
@@ -56,6 +58,47 @@ export function applyOccurrenceDomState(
   element.setAttribute('data-occurrence-key', occurrence.key);
   element.setAttribute('data-span-role', spanRole);
   element.setAttribute('data-segment-identity', `${occurrence.key}:${spanRole}`);
+}
+
+/**
+ * Keeps calendar title baselines stable without inventing an interactive control for forecasts or
+ * continuation pieces. The recurrence slot delegates its only visible content to the shared badge
+ * renderer, so every calendar surface retains one repeat icon implementation.
+ */
+export function renderCalendarLeadingSlots(
+  container: HTMLElement,
+  recurrence: string | undefined,
+  forecast: boolean,
+  renderControl?: (row: HTMLElement) => void,
+): void {
+  container.addClass('tc-calendar-leading-row');
+  const childCount = container.childElementCount;
+  renderControl?.(container);
+  container.setAttribute(
+    'data-control-slot',
+    container.childElementCount > childCount ? 'occupied' : 'reserved',
+  );
+  if (recurrence) {
+    renderRecurrenceBadge(container, recurrenceBadgeInput(recurrence, forecast));
+    container.setAttribute('data-recurrence-slot', 'occupied');
+  } else {
+    container.setAttribute('data-recurrence-slot', 'reserved');
+  }
+}
+
+export function renderCalendarProjectionIssues(
+  container: HTMLElement,
+  issues: readonly CalendarProjectionIssue[],
+): void {
+  container
+    .querySelectorAll<HTMLElement>(':scope > .tc-calendar-projection-diagnostic')
+    .forEach((element) => element.remove());
+  if (!issues.some((issue) => issue.code === 'forecast-limit-reached')) return;
+  container.createDiv({
+    cls: 'tc-calendar-projection-diagnostic',
+    attr: { 'aria-live': 'polite' },
+    text: 'More repeating occurrences are not shown',
+  });
 }
 
 export function bindMaterializedInteractions(

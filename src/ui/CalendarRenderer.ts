@@ -21,10 +21,12 @@ import {
   isForecastCalendarTask,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
+  type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
 import { ListView } from '../views/ListView';
 import { MonthView } from '../views/MonthView';
+import { renderCalendarProjectionIssues } from '../views/timegrid/renderTaskMeta';
 import { WeekView } from '../views/WeekView';
 import { mountAnchoredRecurrenceEditor } from './recurrence/RecurrenceEditor';
 import { showStatusMenuAt } from './statusMenu';
@@ -53,6 +55,7 @@ export class CalendarRenderer {
   private selectedDate: ReturnType<typeof window.moment>;
   private filterActive = false;
   private overdueHighlightActive = false;
+  private projectionIssues: readonly CalendarProjectionIssue[] = [];
   private activeStatGroup: string | null = null;
   private unsubscribe: (() => void) | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
@@ -121,7 +124,9 @@ export class CalendarRenderer {
 
     this.unsubscribe = this.queries.subscribe(() => {
       this.dismissRecurrenceEditor();
-      this.activeView?.patch(this.viewContainer!, this.calendarTasks(), this.buildConfig());
+      const tasks = this.calendarTasks();
+      this.activeView?.patch(this.viewContainer!, tasks, this.buildConfig());
+      renderCalendarProjectionIssues(this.viewContainer!, this.projectionIssues);
       this.updateToolbar();
     });
   }
@@ -297,6 +302,7 @@ export class CalendarRenderer {
       { from: localDate(dates[0]!), to: localDate(dates[dates.length - 1]!) },
       this.recurrencePolicy,
     );
+    this.projectionIssues = projection.issues;
     const projected = projection.occurrences.map(taskSnapshotForCalendarOccurrence);
     if (this.activeViewType !== 'list') return projected;
     return [
@@ -359,6 +365,7 @@ export class CalendarRenderer {
     }
 
     this.activeView.render(this.viewContainer, tasks, config);
+    renderCalendarProjectionIssues(this.viewContainer, this.projectionIssues);
     this.updateToolbar();
   }
 

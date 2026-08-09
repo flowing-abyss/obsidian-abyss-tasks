@@ -16,6 +16,8 @@
   --tc-calendar-item-pad-inline: 6px;
   --tc-calendar-item-rail: 3px;
   --tc-calendar-ghost-rail: var(--tc-calendar-item-rail);
+  --tc-calendar-border-width: 1px;
+  --tc-calendar-forecast-fill-strength: 6%;
   --tc-event-fill-strength: 11%;
   --tc-event-outline-strength: 24%;
   --tc-event-focus-tag-strength: 55%;
@@ -23,6 +25,28 @@
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
   --tc-preview-border-tag-strength: 35%;
+  --tc-calendar-surface: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
+    var(--background-primary)
+  );
+  --tc-calendar-surface-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength),
+    var(--background-primary)
+  );
+  --tc-calendar-border: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+    var(--background-primary)
+  );
+  --tc-calendar-border-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--background-modifier-border)
+  );
+  --tc-calendar-foreground: var(--tc-tag-text-color, var(--text-normal));
+  --tc-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
   /* Task 40 (Round 4): fixed contrast anchors consumed by --tc-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
      the full reasoning). Deliberately NOT theme-variable tokens like --text-normal: their whole
@@ -35,10 +59,44 @@
 }
 
 .theme-dark .tc-panel-view {
+  --tc-calendar-forecast-fill-strength: 9%;
   --tc-event-fill-strength: 14%;
   --tc-event-outline-strength: 32%;
   --tc-preview-fill-strength: 10%;
   --tc-preview-border-tag-strength: 55%;
+}
+
+/* Embedded/legacy calendar renderers are not always nested under `.tc-panel-view`, but they share
+   the same occurrence DOM axis. Give that host the semantic recurrence tokens without imposing a
+   palette or typography outside the active Obsidian theme. */
+.tasksCalendar {
+  --tc-calendar-forecast-fill-strength: 6%;
+  --tc-calendar-surface: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength, 11%),
+    var(--background-primary)
+  );
+  --tc-calendar-surface-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength),
+    var(--background-primary)
+  );
+  --tc-calendar-border: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength, 24%),
+    var(--background-primary)
+  );
+  --tc-calendar-border-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--background-modifier-border)
+  );
+  --tc-calendar-foreground: var(--text-normal);
+  --tc-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
+}
+
+.theme-dark .tasksCalendar {
+  --tc-calendar-forecast-fill-strength: 9%;
 }
 
 /* ============================================================
@@ -1456,9 +1514,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   left: 3.5em;
   right: 0;
   height: 1px;
-  background: var(--text-error);
+  background: var(--tc-calendar-now);
   z-index: 0;
-  opacity: 0.48;
   pointer-events: none;
 }
 
@@ -1469,8 +1526,87 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--text-error);
+  background: var(--tc-calendar-now);
   transform: translate(-50%, -50%);
+}
+
+/* Rebase tag-dependent tokens on the task root itself. Custom properties declared only on the
+   panel resolve against panel values; declaring these here lets each item's own `--tc-tag-color`
+   and contrast-selected `--tc-tag-text-color` participate in the semantic surface. */
+.tc-calendar-item {
+  --tc-calendar-surface: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength, 11%),
+    var(--background-primary)
+  );
+  --tc-calendar-surface-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength, 6%),
+    var(--background-primary)
+  );
+  --tc-calendar-border: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength, 24%),
+    var(--background-primary)
+  );
+  --tc-calendar-border-forecast: color-mix(
+    in srgb,
+    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--background-modifier-border)
+  );
+  --tc-calendar-foreground: var(--tc-tag-text-color, var(--text-normal));
+}
+
+/* Occurrence, continuity, and recurrence are visual axes on one calendar-item silhouette. The
+   semantic class is applied with those data attributes at the renderer boundary, so no state is
+   allowed to introduce its own padding/radius/type geometry. */
+.tc-tg-block.tc-calendar-item,
+.tc-tg-block-continuation.tc-calendar-item,
+.tc-tg-body.tc-calendar-item,
+.tc-tg-deadline-marker.tc-calendar-item,
+.tc-mg-plain.tc-calendar-item,
+.tc-mg-block-dot.tc-calendar-item,
+.tc-mg-span-segment.tc-calendar-item,
+.tc-mg-deadline-marker.tc-calendar-item {
+  border-radius: var(--tc-calendar-item-radius);
+  padding: 2px var(--tc-calendar-item-pad-inline);
+  font-size: var(--tc-calendar-item-font-size);
+}
+
+.tc-calendar-item[data-occurrence-state='forecast'] {
+  background: var(--tc-calendar-surface-forecast);
+  color: var(--tc-calendar-foreground);
+  outline: var(--tc-calendar-border-width) dotted var(--tc-calendar-border-forecast);
+  outline-offset: -1px;
+}
+
+.tc-calendar-leading-row.tc-tg-block-head,
+.tc-calendar-leading-row.tc-tg-body,
+.tc-calendar-leading-row.tc-tg-deadline-marker,
+.tc-calendar-leading-row.tc-mg-plain,
+.tc-calendar-leading-row.tc-mg-block-dot,
+.tc-calendar-leading-row.tc-mg-span-segment,
+.tc-calendar-leading-row.tc-mg-deadline-marker {
+  gap: 0.35em;
+}
+
+.tc-calendar-leading-row[data-control-slot='reserved']::before {
+  content: '';
+  box-sizing: border-box;
+  flex: 0 0 1.6em;
+  inline-size: 1.6em;
+  block-size: 1.6em;
+  pointer-events: none;
+}
+
+.tc-calendar-leading-row[data-control-slot='reserved'][data-recurrence-slot='reserved']::before {
+  flex-basis: calc(1.6em + 0.35em + 1rem);
+  inline-size: calc(1.6em + 0.35em + 1rem);
+}
+
+.tc-calendar-leading-row[data-control-slot='occupied'][data-recurrence-slot='reserved']
+  > .tc-status-marker {
+  margin-inline-end: calc(0.35em + 1rem);
 }
 
 .tc-tg-block {
@@ -1784,19 +1920,10 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 .tc-mg-plain,
 .tc-mg-deadline-marker {
   box-sizing: border-box;
-  background: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
-    var(--background-primary)
-  );
+  background: var(--tc-calendar-surface);
   border-inline-start: var(--tc-calendar-item-rail) solid
     var(--tc-tag-color, var(--interactive-accent));
-  box-shadow: inset 0 0 0 1px
-    color-mix(
-      in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
-      var(--background-primary)
-    );
+  box-shadow: inset 0 0 0 1px var(--tc-calendar-border);
 }
 
 .tc-tg-block:hover,
@@ -1903,11 +2030,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   padding: 2px var(--tc-calendar-item-pad-inline);
   font-size: var(--tc-calendar-item-font-size);
   overflow: hidden;
-  background: color-mix(
-    in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
-    var(--background-primary)
-  );
+  background: var(--tc-calendar-surface);
   /* Task 36: same flex-column layout as `.tc-tg-block` (see its own comment) so this segment's
      two in-flow rows — `.tc-tg-block-toprow` (subtitle+badges) and the title below — can
      participate in the same "collapse the subtitle first" shrink behavior at a short min-height,
@@ -1918,7 +2041,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   /* Same derivation as `.tc-tg-block`'s min-height, minus the marker (this segment has none):
      2*2px padding plus one legible line of the title's
      own font-size (this rule's `font-size: 0.8em`) at a generous 1.4 line-height. */
-  min-height: calc(1.4em + 4px);
+  min-height: calc(1.6em + 4px);
 }
 
 .tc-tg-drag-preview {
@@ -3407,6 +3530,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: hidden;
 }
 
+.tc-calendar-projection-diagnostic {
+  flex: 0 0 auto;
+  padding: var(--size-2-2) var(--size-4-2);
+  border-block-start: 1px dotted var(--background-modifier-border);
+  background: color-mix(in srgb, var(--background-secondary) 72%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+}
+
 /* ── List View ────────────────────────────────────────── */
 .tc-list-view {
   padding: 8px 0;
@@ -3849,6 +3982,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .tc-recurrence-badge[data-recurrence-forecast='true'] {
   outline: 1px dotted var(--text-faint);
   outline-offset: 1px;
+}
+
+.tc-calendar-leading-row > .tc-recurrence-badge {
+  width: 1rem;
+  min-width: 1rem;
+  padding: 0;
+  color: var(--tc-calendar-foreground);
 }
 
 .tc-repeat-chip .tc-recurrence-badge,

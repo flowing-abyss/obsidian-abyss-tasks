@@ -118,7 +118,11 @@ export function capMinHeightsPx(positioned: PositionedBlock[]): Map<PositionedBl
  * within each maximal overlapping cluster.
  */
 export function packOverlaps(blocks: readonly TimedBlockInput[]): PositionedBlock[] {
-  const sorted = [...blocks].sort((a, b) => a.startMinutes - b.startMinutes);
+  const sorted = [...blocks].sort(
+    (a, b) =>
+      a.startMinutes - b.startMinutes ||
+      taskLayoutIdentity(a.task).localeCompare(taskLayoutIdentity(b.task)),
+  );
   const positioned: PositionedBlock[] = [];
   let columnEnds: number[] = [];
   let cluster: PositionedBlock[] = [];

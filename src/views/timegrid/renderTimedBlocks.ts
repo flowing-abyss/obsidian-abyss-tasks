@@ -6,10 +6,6 @@ import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
-import {
-  recurrenceBadgeInput,
-  renderRecurrenceBadge,
-} from '../../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
@@ -31,6 +27,7 @@ import {
   bindForecastInteractions,
   bindMaterializedInteractions,
   hasCountBadges,
+  renderCalendarLeadingSlots,
   renderCountBadges,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
@@ -182,33 +179,33 @@ function renderTimedBlockHead(
   terminal: boolean,
   callbacks: TimedBlockCallbacks,
 ): void {
-  if (occurrence.kind === 'materialized' && terminal) {
-    renderStatusMarker(head, {
-      task,
-      registry: callbacks.statusRegistry,
-      interactive: true,
-      onLeftClick: () => callbacks.onToggle(task),
-      onContextMenu: (event) => {
-        event.stopPropagation();
-        const anchor = event.currentTarget as HTMLElement;
-        showStatusMenuAt(event, {
-          task,
-          registry: callbacks.statusRegistry,
-          onPickStatus: (status) => callbacks.onSetStatus(task, status),
-          onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
-          ...(callbacks.onEditRepeat && {
-            onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
-          }),
-        });
-      },
-    });
-  }
-  if (task.recurrence) {
-    renderRecurrenceBadge(
-      head,
-      recurrenceBadgeInput(task.recurrence, occurrence.kind === 'forecast'),
-    );
-  }
+  renderCalendarLeadingSlots(
+    head,
+    task.recurrence,
+    occurrence.kind === 'forecast',
+    occurrence.kind === 'materialized' && terminal
+      ? (slot) =>
+          renderStatusMarker(slot, {
+            task,
+            registry: callbacks.statusRegistry,
+            interactive: true,
+            onLeftClick: () => callbacks.onToggle(task),
+            onContextMenu: (event) => {
+              event.stopPropagation();
+              const anchor = event.currentTarget as HTMLElement;
+              showStatusMenuAt(event, {
+                task,
+                registry: callbacks.statusRegistry,
+                onPickStatus: (status) => callbacks.onSetStatus(task, status),
+                onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
+                ...(callbacks.onEditRepeat && {
+                  onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
+                }),
+              });
+            },
+          })
+      : undefined,
+  );
   if (terminal && occurrence.kind === 'materialized') {
     const title = head.createDiv({ cls: `tc-tg-block-title${statusTitleClass(task.status)}` });
     renderTaskText(title, task.markdownTitle, {

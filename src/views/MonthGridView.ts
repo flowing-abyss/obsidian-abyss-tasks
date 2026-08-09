@@ -5,10 +5,6 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { tagColorFor } from '../tags/tagColor';
 import { tagFillTextColorVar } from '../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../tasks';
-import {
-  recurrenceBadgeInput,
-  renderRecurrenceBadge,
-} from '../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
@@ -32,6 +28,7 @@ import {
   bindForecastInteractions,
   bindMaterializedInteractions,
   calendarOccurrenceLookup,
+  renderCalendarLeadingSlots,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
 } from './timegrid/renderTaskMeta';
@@ -339,13 +336,12 @@ export class MonthGridView extends BaseView {
       applyOccurrenceDomState(item, occurrence, 'single', spanRole);
       item.style.gridRow = String(slot + 1);
       this.applyTagFill(item, t, tagGroups);
-      bindMaterializedInteractions(occurrence, () => this.renderMarker(item, t));
-      if (t.recurrence) {
-        renderRecurrenceBadge(
-          item,
-          recurrenceBadgeInput(t.recurrence, occurrence.kind === 'forecast'),
-        );
-      }
+      renderCalendarLeadingSlots(
+        item,
+        t.recurrence,
+        occurrence.kind === 'forecast',
+        occurrence.kind === 'materialized' ? (slot) => this.renderMarker(slot, t) : undefined,
+      );
       if (kind === 'timed')
         item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });

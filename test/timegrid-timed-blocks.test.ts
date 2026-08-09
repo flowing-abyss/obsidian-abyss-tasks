@@ -3009,12 +3009,10 @@ describe('calendar surface style contract', () => {
     expect(terminal).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
     expect(terminal).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
     expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u);
-    expect(ghost).toMatch(/var\(--tc-event-fill-strength\)/u);
+    expect(ghost).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
     expect(sharedFill).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid/u);
-    expect(sharedFill).toMatch(/var\(--tc-event-fill-strength\)/u);
-    expect(sharedFill).toMatch(
-      /box-shadow\s*:\s*inset 0 0 0 1px[\s\S]*--tc-event-outline-strength/u,
-    );
+    expect(sharedFill).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(sharedFill).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
   });
 
   it('makes ghost proxy rails discoverable without enlarging literal terminal handles', () => {

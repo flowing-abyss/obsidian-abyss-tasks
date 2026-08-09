@@ -15,8 +15,12 @@ import { task } from './helpers';
 
 // Shared by packOverlaps/capMinHeightsPx below — both just need a
 // TimedBlockInput with a distinguishable task (line doubles as a cheap unique id for assertions).
-const timedBlockInput = (start: number, duration: number): TimedBlockInput => ({
-  task: task({ source: { line: start } }),
+const timedBlockInput = (
+  start: number,
+  duration: number,
+  filePath = `task-${start}.md`,
+): TimedBlockInput => ({
+  task: task({ source: { filePath, line: start } }),
   startMinutes: start,
   durationMinutes: duration,
 });
@@ -65,6 +69,21 @@ describe('packOverlaps', () => {
     ]);
     expect(new Set(result.map((b) => b.column)).size).toBe(3);
     expect(result.every((b) => b.columns === 3)).toBe(true);
+  });
+
+  it('assigns simultaneous blocks stable identity lanes independent of projection order', () => {
+    const a = timedBlockInput(9 * 60, 90, 'A.md');
+    const b = timedBlockInput(9 * 60, 90, 'B.md');
+    const columnsByPath = (inputs: readonly TimedBlockInput[]) =>
+      Object.fromEntries(
+        packOverlaps(inputs).map(({ task: positionedTask, column }) => [
+          positionedTask.source.filePath,
+          column,
+        ]),
+      );
+
+    expect(columnsByPath([b, a])).toEqual({ 'A.md': 0, 'B.md': 1 });
+    expect(columnsByPath([a, b])).toEqual({ 'A.md': 0, 'B.md': 1 });
   });
 
   it('a block ending exactly when another starts does not count as overlapping', () => {

@@ -1,4 +1,6 @@
 import moment from 'moment';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -33,6 +35,20 @@ useRealMoment();
 
 const fakeApp = {} as App;
 const registry = new StatusRegistry(buildDefaultTaskStatuses());
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+
+function declarationsFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
+  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
+  return match?.groups?.['body'] ?? '';
+}
+
+function declarationsForRuleContaining(...selectors: string[]): string {
+  for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
+    if (selectors.every((selector) => (match[1] ?? '').includes(selector))) return match[2] ?? '';
+  }
+  return '';
+}
 
 interface ForecastFixture {
   readonly occurrence: Extract<CalendarOccurrence, { readonly kind: 'forecast' }>;
@@ -424,6 +440,11 @@ describe('forecast rendering contract', () => {
         `${forecast!.occurrence.key}:${block.dataset['spanRole']}`,
       );
       expectForecastInert(block);
+      expect(block.classList.contains('tc-calendar-item')).toBe(true);
+      const head = block.querySelector<HTMLElement>('.tc-calendar-leading-row')!;
+      expect(head.dataset['controlSlot']).toBe('reserved');
+      expect(head.dataset['recurrenceSlot']).toBe('occupied');
+      expect(head.querySelector('.tc-status-marker')).toBeNull();
     }
   });
 
@@ -460,6 +481,245 @@ describe('forecast rendering contract', () => {
     expect(deadline.getAttribute('data-segment-identity')).toBe(
       `${forecast!.occurrence.key}:due-deadline`,
     );
+    for (const item of [body, deadline]) {
+      expect(item.classList.contains('tc-calendar-leading-row')).toBe(true);
+      expect(item.dataset['controlSlot']).toBe('reserved');
+      expect(item.dataset['recurrenceSlot']).toBe('occupied');
+      expect(item.querySelector('.tc-status-marker')).toBeNull();
+    }
+  });
+});
+
+describe('forecast visual system', () => {
+  it('reserves one control and recurrence slot for ordinary, recurring, and forecast month items', () => {
+    const ordinary = task({
+      title: 'Ordinary item',
+      planning: { due: '2026-08-09' },
+      source: { filePath: 'Ordinary.md', line: 1 },
+    });
+    const recurringMaterialized = materialized(
+      rootSource({
+        title: 'Materialized repeat',
+        recurrence: 'every week',
+        planning: { due: '2026-08-09' },
+        line: 2,
+      }),
+    ).task;
+    const forecast = forecasts(
+      rootSource({
+        title: 'Forecast repeat',
+        recurrence: 'every day',
+        planning: { due: '2026-08-08' },
+        line: 3,
+      }),
+      '2026-08-09',
+      '2026-08-09',
+    )[0]!.task;
+    const container = freshContainer();
+
+    new MonthGridView(monthCallbacks()).render(
+      container,
+      [forecast, ordinary, recurringMaterialized],
+      resolvedConfig({ startPosition: '2026-08' }),
+    );
+
+    const items = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-mg-date="2026-08-09"] .tc-mg-plain'),
+    );
+    expect(items).toHaveLength(3);
+    for (const item of items) {
+      expect(item.classList.contains('tc-calendar-item')).toBe(true);
+      expect(item.classList.contains('tc-calendar-leading-row')).toBe(true);
+      expect(item.dataset['controlSlot']).toMatch(/^(?:occupied|reserved)$/u);
+      expect(item.dataset['recurrenceSlot']).toMatch(/^(?:occupied|reserved)$/u);
+    }
+
+    const ordinaryItem = items.find((item) => item.textContent?.includes('Ordinary item'))!;
+    const materializedItem = items.find((item) =>
+      item.textContent?.includes('Materialized repeat'),
+    )!;
+    const forecastItem = items.find((item) => item.textContent?.includes('Forecast repeat'))!;
+    expect(ordinaryItem.dataset['controlSlot']).toBe('occupied');
+    expect(ordinaryItem.dataset['recurrenceSlot']).toBe('reserved');
+    expect(ordinaryItem.querySelector('.tc-status-marker')).not.toBeNull();
+    expect(ordinaryItem.querySelector('.tc-recurrence-badge')).toBeNull();
+    expect(materializedItem.dataset['controlSlot']).toBe('occupied');
+    expect(materializedItem.dataset['recurrenceSlot']).toBe('occupied');
+    expect(materializedItem.querySelector('.tc-status-marker')).not.toBeNull();
+    expect(materializedItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(forecastItem.dataset['controlSlot']).toBe('reserved');
+    expect(forecastItem.dataset['recurrenceSlot']).toBe('occupied');
+    expect(forecastItem.querySelector('.tc-status-marker')).toBeNull();
+    expect(forecastItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+  });
+
+  it('keeps separate month forecasts compact and orders timed occurrences before untimed ones', () => {
+    const timed = forecasts(
+      rootSource({
+        title: '09:00 forecast',
+        recurrence: 'every week',
+        planning: { due: '2026-08-02', time: '09:00' },
+        line: 10,
+      }),
+      '2026-08-09',
+      '2026-08-09',
+    )[0]!;
+    const untimed = forecasts(
+      rootSource({
+        title: 'Untimed forecast',
+        recurrence: 'every week',
+        planning: { due: '2026-08-02' },
+        line: 11,
+      }),
+      '2026-08-09',
+      '2026-08-09',
+    )[0]!;
+    const independent = forecasts(
+      rootSource({
+        title: 'Independent daily',
+        recurrence: 'every day',
+        planning: { due: '2026-08-07' },
+        line: 12,
+      }),
+      '2026-08-08',
+      '2026-08-10',
+    );
+    const container = freshContainer();
+
+    new MonthGridView(monthCallbacks()).render(
+      container,
+      [untimed.task, timed.task, ...independent.map(({ task: forecastTask }) => forecastTask)],
+      resolvedConfig({ startPosition: '2026-08' }),
+    );
+
+    const augustNinth = Array.from(
+      container.querySelectorAll<HTMLElement>(
+        '[data-mg-date="2026-08-09"] .tc-mg-block-dot, [data-mg-date="2026-08-09"] .tc-mg-plain',
+      ),
+    ).sort((left, right) => Number(left.style.gridRow) - Number(right.style.gridRow));
+    expect(augustNinth.slice(0, 2).map((item) => item.textContent)).toEqual([
+      expect.stringContaining('09:00 forecast'),
+      expect.stringContaining('Untimed forecast'),
+    ]);
+    const dailyItems = Array.from(
+      container.querySelectorAll<HTMLElement>('.tc-mg-plain[data-occurrence-state="forecast"]'),
+    ).filter((item) => item.textContent?.includes('Independent daily'));
+    expect(dailyItems).toHaveLength(3);
+    expect(new Set(dailyItems.map((item) => item.dataset['occurrenceKey'])).size).toBe(3);
+    expect(
+      container.querySelectorAll('.tc-mg-span-segment[data-occurrence-state="forecast"]'),
+    ).toHaveLength(0);
+  });
+
+  it('derives forecast surfaces and current time from theme tokens without fading task text', () => {
+    const lightTokens = declarationsFor('.tc-panel-view');
+    const darkTokens = declarationsFor('.theme-dark .tc-panel-view');
+    for (const token of [
+      '--tc-calendar-surface',
+      '--tc-calendar-surface-forecast',
+      '--tc-calendar-border',
+      '--tc-calendar-border-forecast',
+      '--tc-calendar-foreground',
+      '--tc-calendar-now',
+    ]) {
+      expect(lightTokens).toContain(token);
+    }
+    expect(darkTokens).toContain('--tc-calendar-forecast-fill-strength');
+    const itemTokens = declarationsFor('.tc-calendar-item');
+    expect(itemTokens).toMatch(
+      /--tc-calendar-surface\s*:\s*color-mix\([\s\S]*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+    );
+    expect(itemTokens).toMatch(
+      /--tc-calendar-surface-forecast\s*:\s*color-mix\([\s\S]*--tc-calendar-forecast-fill-strength/u,
+    );
+    expect(itemTokens).toContain('--tc-calendar-foreground: var(--tc-tag-text-color');
+
+    const forecastAxis = declarationsForRuleContaining(
+      ".tc-calendar-item[data-occurrence-state='forecast']",
+    );
+    expect(forecastAxis).toMatch(/background\s*:\s*var\(--tc-calendar-surface-forecast\)/u);
+    expect(forecastAxis).toMatch(
+      /outline\s*:\s*var\(--tc-calendar-border-width\) dotted var\(--tc-calendar-border-forecast\)/u,
+    );
+    expect(forecastAxis).not.toMatch(/opacity\s*:/u);
+
+    const geometry = declarationsForRuleContaining(
+      '.tc-tg-block.tc-calendar-item',
+      '.tc-tg-body.tc-calendar-item',
+      '.tc-mg-plain.tc-calendar-item',
+    );
+    expect(geometry).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
+    expect(geometry).toMatch(/padding\s*:\s*2px var\(--tc-calendar-item-pad-inline\)/u);
+    expect(geometry).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+    const materializedSurface = declarationsForRuleContaining(
+      '.tc-tg-block',
+      '.tc-tg-span-continuation',
+      '.tc-mg-plain',
+    );
+    expect(materializedSurface).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(materializedSurface).toMatch(
+      /box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u,
+    );
+    expect(
+      declarationsFor(
+        ".tc-calendar-leading-row[data-control-slot='reserved'][data-recurrence-slot='reserved']::before",
+      ),
+    ).toMatch(/flex-basis\s*:\s*calc\(1\.6em \+ 0\.35em \+ 1rem\)/u);
+
+    const nowLine = declarationsFor('.tc-tg-now-line');
+    expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
+    expect(nowLine).toMatch(/right\s*:\s*0/u);
+    expect(nowLine).toMatch(/background\s*:\s*var\(--tc-calendar-now\)/u);
+    expect(nowLine).toMatch(/z-index\s*:\s*0/u);
+    expect(nowLine).not.toMatch(/opacity\s*:/u);
+    expect(declarationsFor('.tc-tg-now-line-dot')).toMatch(
+      /background\s*:\s*var\(--tc-calendar-now\)/u,
+    );
+  });
+
+  it('renders the projection-limit diagnostic exactly once and politely in the modern calendar', () => {
+    const sources = [
+      task({
+        title: 'Long monthly A',
+        recurrence: 'every month',
+        planning: { due: '1000-01-31' },
+        source: { filePath: 'A.md', line: 0 },
+      }),
+      task({
+        title: 'Long monthly B',
+        recurrence: 'every month',
+        planning: { due: '1000-01-31' },
+        source: { filePath: 'B.md', line: 0 },
+      }),
+    ];
+    const queries = queryApiForTasks(() => sources);
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      fakeApp,
+      DEFAULT_SETTINGS,
+      queries,
+      registry,
+      undefined,
+      null,
+      null,
+      { queries, execute },
+    );
+    const root = freshContainer();
+    panel.mount(root);
+    (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
+    state.set('mode', 'calendar');
+
+    const diagnostics = root.querySelectorAll<HTMLElement>('.tc-calendar-projection-diagnostic');
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]?.textContent).toBe('More repeating occurrences are not shown');
+    expect(diagnostics[0]?.getAttribute('aria-live')).toBe('polite');
+
+    panel.destroy();
   });
 });
 

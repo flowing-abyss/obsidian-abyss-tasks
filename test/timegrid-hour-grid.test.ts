@@ -50,12 +50,14 @@ describe('renderHourGrid', () => {
       '.tc-mg-span-segment',
       '.tc-mg-plain',
     );
-    expect(fills).toMatch(
-      /var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength\)/u,
-    );
-    expect(fills).toMatch(/var\(--background-primary\)/u);
+    const itemTokens = declarationsFor('.tc-calendar-item');
+    expect(fills).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(fills).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
     expect(fills).not.toMatch(/transparent/u);
     expect(fills).toMatch(/border-inline-start\s*:/u);
+    expect(itemTokens).toMatch(
+      /--tc-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
+    );
 
     const hover = declarationsForRuleContaining(
       '.tc-tg-block:hover',
@@ -248,13 +250,18 @@ describe('renderHourGrid', () => {
 
   it('keeps the full-width now-line beneath timed task blocks', () => {
     const nowLine = declarationsFor('.tc-tg-now-line');
+    const calendarTokens = declarationsFor('.tc-panel-view');
     const taskBlock = declarationsFor('.tc-tg-block');
     const continuation = declarationsFor('.tc-tg-block-continuation');
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
     expect(nowLine).toMatch(/height\s*:\s*1px/u);
     expect(nowLine).toMatch(/z-index\s*:\s*0/u);
-    expect(nowLine).toMatch(/opacity\s*:\s*0\.48/u);
+    expect(nowLine).toMatch(/background\s*:\s*var\(--tc-calendar-now\)/u);
+    expect(nowLine).not.toMatch(/opacity\s*:/u);
+    expect(calendarTokens).toMatch(
+      /--tc-calendar-now\s*:\s*color-mix\(in srgb, var\(--text-error\) 48%, transparent\)/u,
+    );
     expect(taskBlock).toMatch(/z-index\s*:\s*2/u);
     expect(continuation).toMatch(/z-index\s*:\s*2/u);
   });
@@ -481,10 +488,12 @@ describe('tag-fill background (Round 3 Task 24: solid, not washed-out/gridline-b
       '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
       '.tc-mg-plain',
     );
-    expect(declarations).toMatch(
-      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
+    const itemTokens = declarationsFor('.tc-calendar-item');
+    expect(declarations).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(itemTokens).toMatch(
+      /--tc-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
     );
-    expect(declarations).not.toMatch(/transparent/u);
+    expect(itemTokens).not.toMatch(/--tc-calendar-surface\s*:\s*color-mix\([^;]*transparent/u);
   });
 });
 

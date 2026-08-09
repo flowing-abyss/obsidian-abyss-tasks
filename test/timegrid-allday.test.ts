@@ -369,9 +369,7 @@ describe('renderAllDayCell', () => {
     expect(declarations).toMatch(
       /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
-    expect(sharedSurface).toMatch(
-      /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
-    );
+    expect(sharedSurface).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
     expect(declarations).toMatch(/cursor\s*:\s*grab/u);
   });
 

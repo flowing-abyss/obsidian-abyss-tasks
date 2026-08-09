@@ -5,10 +5,6 @@ import { tagColorFor } from '../../tags/tagColor';
 import { tagFillTextColorVar } from '../../tags/tagFillContrast';
 import type { TaskPriority, TaskSnapshot } from '../../tasks';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
-import {
-  recurrenceBadgeInput,
-  renderRecurrenceBadge,
-} from '../../ui/recurrence/renderRecurrenceBadge';
 import { renderTaskText } from '../../ui/renderTaskText';
 import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
@@ -25,6 +21,7 @@ import {
   bindForecastInteractions,
   bindMaterializedInteractions,
   hasCountBadges,
+  renderCalendarLeadingSlots,
   renderCountBadges,
   type CalendarContinuity,
   type CalendarOccurrenceLookup,
@@ -180,33 +177,33 @@ function renderAllDayBody(
   // Status marker first: lets a user mark the item done without opening the modal. Its own
   // contextmenu handler stops propagation and opens the status/priority popover instead —
   // distinct from right-clicking this element's body below (opens the task modal).
-  if (occurrence.kind === 'materialized' && interactive) {
-    renderStatusMarker(el, {
-      task,
-      registry: callbacks.statusRegistry,
-      interactive: true,
-      onLeftClick: () => callbacks.onToggle(task),
-      onContextMenu: (ev) => {
-        ev.stopPropagation();
-        const anchor = ev.currentTarget as HTMLElement;
-        showStatusMenuAt(ev, {
-          task,
-          registry: callbacks.statusRegistry,
-          onPickStatus: (c) => callbacks.onSetStatus(task, c),
-          onPickPriority: (p) => callbacks.onSetPriority(task, p),
-          ...(callbacks.onEditRepeat && {
-            onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
-          }),
-        });
-      },
-    });
-  }
-  if (task.recurrence) {
-    renderRecurrenceBadge(
-      el,
-      recurrenceBadgeInput(task.recurrence, occurrence.kind === 'forecast'),
-    );
-  }
+  renderCalendarLeadingSlots(
+    el,
+    task.recurrence,
+    occurrence.kind === 'forecast',
+    occurrence.kind === 'materialized' && interactive
+      ? (slot) =>
+          renderStatusMarker(slot, {
+            task,
+            registry: callbacks.statusRegistry,
+            interactive: true,
+            onLeftClick: () => callbacks.onToggle(task),
+            onContextMenu: (ev) => {
+              ev.stopPropagation();
+              const anchor = ev.currentTarget as HTMLElement;
+              showStatusMenuAt(ev, {
+                task,
+                registry: callbacks.statusRegistry,
+                onPickStatus: (c) => callbacks.onSetStatus(task, c),
+                onPickPriority: (p) => callbacks.onSetPriority(task, p),
+                ...(callbacks.onEditRepeat && {
+                  onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
+                }),
+              });
+            },
+          })
+      : undefined,
+  );
   // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
   // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
   // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.tc-tg-block-head`.
@@ -607,33 +604,33 @@ export function renderAllDayCell(
     // Priority-colored border (color = priority convention); no tag fill — deadline
     // markers stay a compact pill, not a filled colored body (structural distinction).
     if (t.priority !== 'D') marker.setAttribute('data-priority', t.priority);
-    bindMaterializedInteractions(occurrence, () => {
-      renderStatusMarker(marker, {
-        task: t,
-        registry: callbacks.statusRegistry,
-        interactive: true,
-        onLeftClick: () => callbacks.onToggle(t),
-        onContextMenu: (ev) => {
-          ev.stopPropagation();
-          const anchor = ev.currentTarget as HTMLElement;
-          showStatusMenuAt(ev, {
-            task: t,
-            registry: callbacks.statusRegistry,
-            onPickStatus: (c) => callbacks.onSetStatus(t, c),
-            onPickPriority: (p) => callbacks.onSetPriority(t, p),
-            ...(callbacks.onEditRepeat && {
-              onEditRepeat: () => callbacks.onEditRepeat?.(t, anchor),
-            }),
-          });
-        },
-      });
-    });
-    if (t.recurrence) {
-      renderRecurrenceBadge(
-        marker,
-        recurrenceBadgeInput(t.recurrence, occurrence.kind === 'forecast'),
-      );
-    }
+    renderCalendarLeadingSlots(
+      marker,
+      t.recurrence,
+      occurrence.kind === 'forecast',
+      occurrence.kind === 'materialized'
+        ? (slot) =>
+            renderStatusMarker(slot, {
+              task: t,
+              registry: callbacks.statusRegistry,
+              interactive: true,
+              onLeftClick: () => callbacks.onToggle(t),
+              onContextMenu: (ev) => {
+                ev.stopPropagation();
+                const anchor = ev.currentTarget as HTMLElement;
+                showStatusMenuAt(ev, {
+                  task: t,
+                  registry: callbacks.statusRegistry,
+                  onPickStatus: (c) => callbacks.onSetStatus(t, c),
+                  onPickPriority: (p) => callbacks.onSetPriority(t, p),
+                  ...(callbacks.onEditRepeat && {
+                    onEditRepeat: () => callbacks.onEditRepeat?.(t, anchor),
+                  }),
+                });
+              },
+            })
+        : undefined,
+    );
     marker.createSpan({ text: '📅 ' });
     // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
     // and all-day span/plain items above — previously this title had no status class at all.

@@ -862,7 +862,8 @@ describe('MonthGridView', () => {
     expect(identityRule).toMatch(
       /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
-    expect(identityRule).toMatch(/--tc-event-fill-strength/u);
+    expect(identityRule).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(identityRule).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
     expect(css).not.toMatch(/\.tc-mg-deadline-marker\[data-priority=/u);
   });
 
@@ -1697,9 +1698,7 @@ describe('MonthGridView', () => {
       expect(ghostDeclarations).toMatch(
         /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
       );
-      expect(sharedSurface).toMatch(
-        /background\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\) var\(--tc-event-fill-strength\),\s*var\(--background-primary\)\s*\)/u,
-      );
+      expect(sharedSurface).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
       expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
     });
 
@@ -1717,10 +1716,8 @@ describe('MonthGridView', () => {
       expect(ghost.classList.contains('tc-tg-span-continuation')).toBe(true);
       expect(ghost.classList.contains('tc-mg-span-segment')).toBe(true);
       expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-      expect(winningCssDeclaration(ghost, 'background')).toContain('var(--tc-event-fill-strength)');
-      expect(winningCssDeclaration(terminal, 'background')).toContain(
-        'var(--tc-event-fill-strength)',
-      );
+      expect(winningCssDeclaration(ghost, 'background')).toBe('var(--tc-calendar-surface)');
+      expect(winningCssDeclaration(terminal, 'background')).toBe('var(--tc-calendar-surface)');
       expect(winningCssDeclaration(ghost, 'border-inline-start')).toContain('dashed');
     });
 

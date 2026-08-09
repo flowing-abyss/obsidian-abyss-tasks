@@ -71,6 +71,7 @@ import {
   isForecastCalendarTask,
   projectCalendarOccurrences,
   taskSnapshotForCalendarOccurrence,
+  type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
@@ -86,6 +87,7 @@ import {
   minutesToTimeString,
   timeStringToMinutes,
 } from '../views/timegrid/layout';
+import { renderCalendarProjectionIssues } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { ProjectsPanel } from './projects/ProjectsPanel';
@@ -814,6 +816,7 @@ export class CenterPanel {
 
     const currentCalendarContent = (): {
       readonly config: ResolvedConfig;
+      readonly issues: readonly CalendarProjectionIssue[];
       readonly tasks: TaskSnapshot[];
     } => {
       const firstDayOfWeek =
@@ -844,6 +847,7 @@ export class CenterPanel {
       );
       return {
         config,
+        issues: occurrences.issues,
         tasks: occurrences.occurrences.map(taskSnapshotForCalendarOccurrence),
       };
     };
@@ -868,7 +872,7 @@ export class CenterPanel {
 
       this.calViewInstance?.destroy();
       viewContainer.empty();
-      const { config, tasks } = currentCalendarContent();
+      const { config, issues, tasks } = currentCalendarContent();
 
       // Only scroll-to-now when this (viewType, date) pair is new. Explicit same-date refreshes
       // must not jump back to center; query patches do not invoke this full-mount path.
@@ -997,6 +1001,7 @@ export class CenterPanel {
         shouldScrollToNow,
         preservedScrollTop,
       );
+      renderCalendarProjectionIssues(viewContainer, issues);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
@@ -1012,8 +1017,9 @@ export class CenterPanel {
         this.restoredKeyboardSequences.delete(pendingQueueSequence);
       }
       const renderGeneration = ++this.calendarRenderGeneration;
-      const { config, tasks } = currentCalendarContent();
+      const { config, issues, tasks } = currentCalendarContent();
       this.calViewInstance.patch(viewContainer, tasks, config);
+      renderCalendarProjectionIssues(viewContainer, issues);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
