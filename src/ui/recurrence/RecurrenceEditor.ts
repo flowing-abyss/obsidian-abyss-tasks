@@ -131,6 +131,18 @@ function parserMessage(result: Extract<RecurrenceParseResult, { type: 'invalid' 
   return 'Enter a supported repeat rule.';
 }
 
+function withoutTerminalWhenDone(raw: string): string {
+  let base = raw.trim().replace(/\s+/gu, ' ');
+  const suffix = 'when done';
+  while (base.toLowerCase().endsWith(suffix)) {
+    const suffixStart = base.length - suffix.length;
+    const preceding = base.charAt(suffixStart - 1);
+    if (suffixStart > 0 && preceding?.trim().length !== 0) break;
+    base = base.slice(0, suffixStart).trimEnd();
+  }
+  return base;
+}
+
 export function mountRecurrenceEditor(options: RecurrenceEditorOptions): RecurrenceEditorHandle {
   const task = selectedTask(options.source);
   const reference = referenceDate(options.source, options.policy);
@@ -183,6 +195,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const refresh = (): void => {
     const parsed = parseState();
+    if (state.mode === 'advanced' && parsed.type === 'valid') {
+      state.whenDone = parsed.whenDone;
+    }
     const message = validationMessage(parsed);
     const preview = options.container.querySelector<HTMLElement>('.tc-recurrence-preview-rule');
     if (preview) {
@@ -517,7 +532,8 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.whenDone = whenDoneInput.checked;
       if (state.mode === 'advanced') {
         const parsed = parseRecurrenceRule(state.advancedRaw);
-        const base = parsed.type === 'valid' ? parsed.canonical : state.advancedRaw.trim();
+        const base =
+          parsed.type === 'valid' ? parsed.canonical : withoutTerminalWhenDone(state.advancedRaw);
         state.advancedRaw = `${base}${state.whenDone ? ' when done' : ''}`;
         const raw = options.container.querySelector<HTMLInputElement>('.tc-recurrence-raw');
         if (raw) raw.value = state.advancedRaw;
@@ -572,6 +588,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   const keyHandler = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
       event.preventDefault();
+      event.stopPropagation();
       options.onClose();
       if (previousFocus instanceof HTMLElement) previousFocus.focus();
       return;

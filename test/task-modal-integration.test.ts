@@ -198,10 +198,19 @@ describe('TaskModal with real RightPanel', () => {
     });
     modal.open(current);
 
-    click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-repeat-chip')!);
+    const repeatChip = activeDocument.querySelector<HTMLElement>('.tc-modal .tc-repeat-chip')!;
+    click(repeatChip);
 
     expect(activeDocument.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
     expect(activeDocument.querySelectorAll('.tc-modal .tc-recurrence-editor')).toHaveLength(1);
     expect(activeDocument.querySelector('.tc-modal .tc-recurrence-popover')).not.toBeNull();
+
+    activeDocument
+      .querySelector<HTMLElement>('.tc-modal .tc-recurrence-editor')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
+    expect(activeDocument.querySelector('.tc-modal .tc-recurrence-popover')).toBeNull();
+    expect(activeDocument.activeElement).toBe(repeatChip);
   });
 });

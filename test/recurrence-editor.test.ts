@@ -242,6 +242,64 @@ describe('mountRecurrenceEditor', () => {
     });
   });
 
+  it.each([
+    [false, 'every day when done', true, 'every week on Sunday when done'],
+    [true, 'every day', false, 'every week on Sunday'],
+  ] as const)(
+    'carries valid advanced completion state into presets %#',
+    (initialWhenDone, advancedRule, expectedChecked, expectedPresetRule) => {
+      const { container } = mount();
+      const controlsWhenDone = container.querySelector<HTMLInputElement>(
+        '.tc-recurrence-when-done',
+      )!;
+      if (initialWhenDone) {
+        controlsWhenDone.checked = true;
+        controlsWhenDone.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      click(button(container, 'Advanced'));
+      const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+
+      input(raw, advancedRule);
+
+      expect(container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')?.checked).toBe(
+        expectedChecked,
+      );
+      click(button(container, 'Weekly'));
+      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+        expectedPresetRule,
+      );
+    },
+  );
+
+  it('keeps completion suffix toggles idempotent for an invalid advanced rule', () => {
+    const { container } = mount();
+    click(button(container, 'Advanced'));
+    const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+    const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
+    input(raw, 'weekly');
+
+    whenDone.checked = true;
+    whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(raw.value).toBe('weekly when done');
+
+    whenDone.checked = true;
+    whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(raw.value).toBe('weekly when done');
+
+    whenDone.checked = false;
+    whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(raw.value).toBe('weekly');
+
+    whenDone.checked = true;
+    whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(raw.value).toBe('weekly when done');
+
+    input(raw, 'weekly   when   done');
+    whenDone.checked = false;
+    whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(raw.value).toBe('weekly');
+  });
+
   it('clears recurrence and on-completion atomically', async () => {
     const root = task({ recurrence: 'every day', onCompletion: 'delete' });
     const { container, onSubmit, onClose } = mount({
