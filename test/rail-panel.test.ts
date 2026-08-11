@@ -4,6 +4,70 @@ import { RailPanel } from '../src/panels/RailPanel';
 import { freshContainer } from './helpers';
 
 describe('RailPanel', () => {
+  function foreignSettingsHarness() {
+    const iframe = document.createElement('iframe');
+    document.body.appendChild(iframe);
+    const ownerDocument = iframe.contentDocument!;
+    const ownerWindow = ownerDocument.defaultView!;
+    const NativeMutationObserver = ownerWindow.MutationObserver;
+    const observers: TrackingMutationObserver[] = [];
+
+    class TrackingMutationObserver extends NativeMutationObserver {
+      readonly observeCalls: Array<{
+        target: Node;
+        options?: MutationObserverInit;
+      }> = [];
+      disconnectCalls = 0;
+
+      constructor(callback: MutationCallback) {
+        super(callback);
+        observers.push(this);
+      }
+
+      override observe(target: Node, options?: MutationObserverInit): void {
+        this.observeCalls.push({ target, options });
+        super.observe(target, options);
+      }
+
+      override disconnect(): void {
+        this.disconnectCalls += 1;
+        super.disconnect();
+      }
+    }
+
+    Object.defineProperty(ownerWindow, 'MutationObserver', {
+      configurable: true,
+      value: TrackingMutationObserver,
+    });
+
+    let modalEl: HTMLElement | undefined;
+    const setting = {
+      open: vi.fn(() => {
+        modalEl = ownerDocument.createElement('div');
+        modalEl.className = 'modal mod-settings';
+        ownerDocument.body.appendChild(modalEl);
+        setting.modalEl = modalEl;
+      }),
+      openTabById: vi.fn(),
+      modalEl,
+    };
+
+    return {
+      iframe,
+      ownerDocument,
+      observers,
+      setting,
+      modal: () => setting.modalEl!,
+      restore: () => {
+        Object.defineProperty(ownerWindow, 'MutationObserver', {
+          configurable: true,
+          value: NativeMutationObserver,
+        });
+        iframe.remove();
+      },
+    };
+  }
+
   it('renders 4 mode buttons + 1 settings button', () => {
     const state = new AppState();
     const app = { setting: { open: vi.fn(), openTabById: vi.fn() } };
@@ -109,6 +173,65 @@ describe('RailPanel', () => {
     )!;
     btn.click();
     expect(openTabById).toHaveBeenCalledWith('task-calendar');
+  });
+
+  it.each(['projects', 'search'] as const)(
+    'deactivates Settings after its foreign-document modal closes while %s remains active',
+    async (mode) => {
+      const harness = foreignSettingsHarness();
+      const state = new AppState();
+      state.set('mode', mode);
+      const panel = new RailPanel(state, { setting: harness.setting });
+
+      try {
+        panel.mount(freshContainer());
+        const settingsButton =
+          panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+        settingsButton.click();
+
+        expect(
+          Array.from(panel['el'].querySelectorAll('.tc-rail-btn.is-active')).map((button) =>
+            button.getAttribute('aria-label'),
+          ),
+        ).toEqual([mode === 'projects' ? 'Projects' : 'Search', 'Settings']);
+        expect(harness.observers).toHaveLength(1);
+        expect(harness.observers[0]!.observeCalls).toEqual([
+          {
+            target: harness.ownerDocument.body,
+            options: { childList: true, subtree: true },
+          },
+        ]);
+
+        harness.modal().remove();
+        await vi.waitFor(() => expect(settingsButton.classList.contains('is-active')).toBe(false));
+
+        expect(
+          panel['el'].querySelector('.tc-rail-btn.is-active')?.getAttribute('aria-label'),
+        ).toBe(mode === 'projects' ? 'Projects' : 'Search');
+        expect(harness.observers[0]!.disconnectCalls).toBe(1);
+      } finally {
+        panel.destroy();
+        harness.restore();
+      }
+    },
+  );
+
+  it('disconnects the foreign-document Settings observer when destroyed', () => {
+    const harness = foreignSettingsHarness();
+    const panel = new RailPanel(new AppState(), { setting: harness.setting });
+
+    try {
+      panel.mount(freshContainer());
+      panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
+      expect(harness.observers).toHaveLength(1);
+
+      panel.destroy();
+
+      expect(harness.observers[0]!.disconnectCalls).toBe(1);
+      expect(panel['el'].children).toHaveLength(0);
+    } finally {
+      harness.restore();
+    }
   });
 
   it('settings button click with undefined setting does not throw', () => {

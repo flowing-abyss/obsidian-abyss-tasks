@@ -17,10 +17,21 @@ const ITEMS: RailItem[] = [
 export class RailPanel {
   private el!: HTMLElement;
   private offMode?: () => void;
+  private settingsLifecycle: {
+    button: HTMLElement;
+    modal: HTMLElement;
+    observer: MutationObserver;
+  } | null = null;
 
   constructor(
     private state: AppState,
-    private app: { setting?: { open?: () => void; openTabById?: (id: string) => void } },
+    private app: {
+      setting?: {
+        open?: () => void;
+        openTabById?: (id: string) => void;
+        modalEl?: HTMLElement;
+      };
+    },
   ) {}
 
   mount(container: HTMLElement): void {
@@ -30,11 +41,13 @@ export class RailPanel {
   }
 
   destroy(): void {
+    this.disposeSettingsLifecycle();
     this.offMode?.();
     this.el?.empty();
   }
 
   private render(): void {
+    this.disposeSettingsLifecycle();
     this.el.empty();
     const mode = this.state.get('mode');
 
@@ -58,16 +71,29 @@ export class RailPanel {
     });
     setIcon(settingsBtn, 'settings');
     settingsBtn.addEventListener('click', () => {
+      this.disposeSettingsLifecycle();
       this.app.setting?.open?.();
       this.app.setting?.openTabById?.('task-calendar');
+      const modal = this.app.setting?.modalEl;
+      const OwnerMutationObserver = modal?.ownerDocument.defaultView?.MutationObserver;
+      if (!modal?.isConnected || !OwnerMutationObserver) return;
       settingsBtn.addClass('is-active');
-      const mo = new MutationObserver(() => {
-        if (!activeDocument.querySelector('.modal-container .modal')) {
-          settingsBtn.removeClass('is-active');
-          mo.disconnect();
+      let observer!: MutationObserver;
+      observer = new OwnerMutationObserver(() => {
+        const lifecycle = this.settingsLifecycle;
+        if (lifecycle?.modal === modal && lifecycle.observer === observer && !modal.isConnected) {
+          this.disposeSettingsLifecycle();
         }
       });
-      mo.observe(activeDocument.body, { childList: true, subtree: true });
+      this.settingsLifecycle = { button: settingsBtn, modal, observer };
+      observer.observe(modal.ownerDocument.body, { childList: true, subtree: true });
     });
+  }
+
+  private disposeSettingsLifecycle(): void {
+    const lifecycle = this.settingsLifecycle;
+    this.settingsLifecycle = null;
+    lifecycle?.observer.disconnect();
+    lifecycle?.button.removeClass('is-active');
   }
 }
