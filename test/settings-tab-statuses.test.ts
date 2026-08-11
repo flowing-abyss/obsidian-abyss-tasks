@@ -376,4 +376,32 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
     tab.containerEl.remove();
   });
+
+  it('restores focus to the clear button when its active filter has no icon results', () => {
+    addIcon('alert-triangle', '<svg><path d="M12 2 2 22h20z" /></svg>');
+    const captured: CapturedText[] = [];
+    const restore = patchAddText(captured);
+    const { tab, plugin } = makeTab({ withCustomStatus: true });
+    restore();
+    activeDocument.body.append(tab.containerEl);
+    const body = openStatusesSection(tab);
+    const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
+    const card = Array.from(body.querySelectorAll<HTMLElement>('.tc-settings-card')).find(
+      (candidate) => candidate.textContent?.includes(status.name),
+    )!;
+    const search = captured.find(
+      (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
+    )!;
+
+    search.invokeChange('no-matching-icon');
+    const clear = card.querySelector<HTMLButtonElement>('.tc-status-icon-clear')!;
+    expect(card.querySelector('.tc-status-icon-empty')).not.toBeNull();
+    clear.focus();
+    clear.click();
+
+    const replacement = card.querySelector<HTMLButtonElement>('.tc-status-icon-clear')!;
+    expect(status.icon).toBe('');
+    expect(activeDocument.activeElement).toBe(replacement);
+    tab.containerEl.remove();
+  });
 });

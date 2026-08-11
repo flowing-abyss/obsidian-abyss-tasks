@@ -4832,14 +4832,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow-y: auto;
   padding: 4px 0;
 }
-.tc-tag-picker-item {
+.tc-tag-picker-modal button.tc-tag-picker-item {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
   width: calc(100% - 12px);
+  box-sizing: border-box;
+  appearance: none;
   border: 0;
   background: transparent;
+  box-shadow: none;
   color: inherit;
   font: inherit;
   text-align: left;
@@ -4848,24 +4851,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin: 1px 6px;
   user-select: none;
 }
-.tc-tag-picker-item:hover {
+.tc-tag-picker-modal button.tc-tag-picker-item:hover {
   background: var(--background-modifier-hover);
 }
-.tc-tag-picker-item--checked {
+.tc-tag-picker-modal button.tc-tag-picker-item--checked {
   background: var(--background-modifier-active-hover);
 }
 .tc-tag-picker-item--partial {
   opacity: 0.7;
 }
-.tc-tag-picker-item--removing {
+.tc-tag-picker-modal button.tc-tag-picker-item--removing {
   background: rgba(var(--color-red-rgb), 0.08);
 }
-.tc-tag-picker-item--removing .tc-tag-picker-icon {
+.tc-tag-picker-modal button.tc-tag-picker-item--removing .tc-tag-picker-icon {
   color: var(--color-red);
 }
-.tc-tag-picker-item--removing .tc-tag-picker-label {
+.tc-tag-picker-modal button.tc-tag-picker-item--removing .tc-tag-picker-label {
   text-decoration: line-through;
   opacity: 0.7;
+}
+.tc-tag-picker-modal button.tc-tag-picker-item:focus-visible,
+.tc-status-icon-field button.tc-status-icon-result:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 .tc-tag-picker-icon {
   width: 16px;
@@ -5720,28 +5728,31 @@ body.tc-modal-open .popover.hover-popover {
   padding: 8px;
   margin-top: 8px;
 }
-.tc-status-icon-result {
+.tc-status-icon-field button.tc-status-icon-result {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 30px;
   height: 30px;
   padding: 0;
+  box-sizing: border-box;
+  appearance: none;
   border: 0;
   background: transparent;
+  box-shadow: none;
   color: inherit;
   font: inherit;
   border-radius: 4px;
   cursor: pointer;
 }
-.tc-status-icon-result:hover {
+.tc-status-icon-field button.tc-status-icon-result:hover {
   background: var(--background-modifier-hover);
 }
-.tc-status-icon-result.is-selected {
+.tc-status-icon-field button.tc-status-icon-result.is-selected {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-.tc-status-icon-result.is-selected .tc-status-icon-result-icon {
+.tc-status-icon-field button.tc-status-icon-result.is-selected .tc-status-icon-result-icon {
   color: var(--text-on-accent);
 }
 .tc-status-icon-result-icon {

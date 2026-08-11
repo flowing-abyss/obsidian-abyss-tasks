@@ -1135,22 +1135,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .slice(0, 48);
         if (ids.length === 0) {
           resultsEl.createDiv({ cls: 'tc-status-icon-empty', text: 'No icons found' });
-          return;
-        }
-        for (const iconId of ids) {
-          const cell = resultsEl.createEl('button', {
-            cls: `tc-status-icon-result${iconId === def.icon ? ' is-selected' : ''}`,
-            attr: {
-              type: 'button',
-              title: iconId,
-              'data-icon': iconId,
-              'aria-label': `Select icon ${iconId}`,
-              'aria-pressed': String(iconId === def.icon),
-            },
-          });
-          const iconPreview = cell.createSpan({ cls: 'tc-status-icon-result-icon' });
-          setIcon(iconPreview, iconId);
-          cell.addEventListener('click', () => selectIcon(iconId));
+        } else {
+          for (const iconId of ids) {
+            const cell = resultsEl.createEl('button', {
+              cls: `tc-status-icon-result${iconId === def.icon ? ' is-selected' : ''}`,
+              attr: {
+                type: 'button',
+                title: iconId,
+                'data-icon': iconId,
+                'aria-label': `Select icon ${iconId}`,
+                'aria-pressed': String(iconId === def.icon),
+              },
+            });
+            const iconPreview = cell.createSpan({ cls: 'tc-status-icon-result-icon' });
+            setIcon(iconPreview, iconId);
+            cell.addEventListener('click', () => selectIcon(iconId));
+          }
         }
 
         if (focusIcon !== undefined) {
