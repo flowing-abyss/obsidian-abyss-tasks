@@ -111,6 +111,24 @@ describe('showDatePickerPopover', () => {
     outsideHost.owner.remove();
   });
 
+  it('lets forward focus traversal leave without restoring the anchor after delayed cleanup', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const next = owner.createEl('button', { text: 'Next control' });
+    anchor.focus();
+    showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
+    vi.advanceTimersByTime(0);
+    const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    expect(owner.ownerDocument.activeElement).toBe(input);
+
+    next.focus();
+    vi.advanceTimersByTime(201);
+
+    expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.ownerDocument.activeElement).toBe(next);
+    owner.remove();
+  });
+
   it('creates and focuses the input in the owner document', () => {
     vi.useFakeTimers();
     const ownerDocument = document.implementation.createHTMLDocument('owner');

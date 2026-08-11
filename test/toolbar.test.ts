@@ -591,6 +591,26 @@ describe('Toolbar', () => {
       tb.destroy();
     });
 
+    it('treats a nested active-trigger SVG mousedown as inside before click toggle-closes', () => {
+      const { callbacks } = makeCallbacks();
+      activeDocument.body.append(container);
+      const tb = new Toolbar(container, VIEWS, callbacks);
+      tb.update({ ...baseState, currentView: 'month' });
+      const trigger = container.querySelector<HTMLButtonElement>('.monthView')!;
+      const icon = trigger.querySelector<SVGElement>('svg')!;
+      const popup = container.querySelector<HTMLElement>('.weekViewContext')!;
+      trigger.click();
+      vi.advanceTimersByTime(1);
+
+      icon.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      expect(popup.classList.contains('active')).toBe(true);
+      icon.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+      expect(popup.classList.contains('active')).toBe(false);
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      tb.destroy();
+    });
+
     it('stat popup: outside mousedown closes it (after timer advances)', () => {
       const { callbacks } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);

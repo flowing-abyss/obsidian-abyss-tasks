@@ -7,6 +7,7 @@ export interface DatePickerPopoverOptions {
   readonly initialValue?: string;
   readonly onPick: (value: string) => void;
   readonly onClose?: () => void;
+  readonly restoreFocus?: () => void;
 }
 
 const ownerCleanups = new WeakMap<HTMLElement, () => void>();
@@ -90,7 +91,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     event.stopPropagation();
     cleanup();
   };
-  const cleanup = (): void => {
+  const cleanup = (restoreFocus = true): void => {
     if (closed) return;
     closed = true;
     if (registrationTimer !== undefined) clearOwnerTimeout(registrationTimer);
@@ -104,7 +105,10 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     ownerDocument.removeEventListener('scroll', position, true);
     popover.remove();
     if (ownerCleanups.get(options.owner) === cleanup) ownerCleanups.delete(options.owner);
-    if (options.anchor.isConnected) options.anchor.focus({ preventScroll: true });
+    if (restoreFocus) {
+      if (options.restoreFocus) options.restoreFocus();
+      else if (options.anchor.isConnected) options.anchor.focus({ preventScroll: true });
+    }
     options.onClose?.();
   };
   ownerCleanups.set(options.owner, cleanup);
@@ -119,7 +123,12 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     }
   });
   input.addEventListener('blur', () => {
-    blurTimer = setOwnerTimeout(cleanup, 200);
+    if (closed) return;
+    if (blurTimer !== undefined) clearOwnerTimeout(blurTimer);
+    blurTimer = setOwnerTimeout(() => {
+      blurTimer = undefined;
+      cleanup(false);
+    }, 200);
   });
 
   registrationTimer = setOwnerTimeout(() => {

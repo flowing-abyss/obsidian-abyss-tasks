@@ -1377,6 +1377,116 @@ describe('forecast interaction contract', () => {
     anchor.remove();
   });
 
+  it('lets the forecast menu shrink and wrap inside owner viewports narrower than 12rem', () => {
+    const style = installCalendarStyles();
+    const menu = activeDocument.body.createDiv({
+      cls: 'tc-status-popover tc-forecast-context-menu',
+    });
+    const item = menu.createEl('button', { text: 'Open source task with a long label' });
+
+    expect(winningDeclaration(style, menu, 'box-sizing')?.value).toBe('border-box');
+    expect(winningDeclaration(style, menu, 'min-width')?.value).toBe(
+      'min(12rem, calc(100vw - 16px))',
+    );
+    expect(winningDeclaration(style, menu, 'max-width')?.value).toBe(
+      'min(16rem, calc(100vw - 16px))',
+    );
+    expect(winningDeclaration(style, item, 'min-width')?.value).toBe('0px');
+    expect(winningDeclaration(style, item, 'white-space')?.value).toBe('normal');
+    expect(winningDeclaration(style, item, 'overflow-wrap')?.value).toBe('anywhere');
+  });
+
+  it('uses a secondary document owner window for forecast geometry and exact lifecycle', () => {
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    const ownerWindow = frame.contentWindow as Window & typeof globalThis;
+    for (const method of ['createDiv', 'createEl'] as const) {
+      Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
+        configurable: true,
+        value: HTMLElement.prototype[method],
+      });
+    }
+    vi.spyOn(ownerWindow, 'innerWidth', 'get').mockReturnValue(160);
+    vi.spyOn(ownerWindow, 'innerHeight', 'get').mockReturnValue(120);
+    let ownerRectCalls = 0;
+    const OwnerDOMRect = ownerWindow.DOMRect;
+    class TrackingDOMRect extends OwnerDOMRect {
+      constructor(x = 0, y = 0, width = 0, height = 0) {
+        super(x, y, width, height);
+        ownerRectCalls++;
+      }
+    }
+    Object.defineProperty(ownerWindow, 'DOMRect', {
+      configurable: true,
+      value: TrackingDOMRect,
+    });
+    const createOwnerDiv = ownerDocument.body.createDiv.bind(ownerDocument.body);
+    const createMeasuredDiv = ((...args: Parameters<typeof createOwnerDiv>) => {
+      const element = createOwnerDiv(...args);
+      if (element.classList.contains('tc-forecast-context-menu')) {
+        Object.defineProperty(element, 'getBoundingClientRect', {
+          configurable: true,
+          value: () => rect(0, 0, 120, 80),
+        });
+      }
+      return element;
+    }) as typeof ownerDocument.body.createDiv;
+    Object.defineProperty(ownerDocument.body, 'createDiv', {
+      configurable: true,
+      value: createMeasuredDiv,
+    });
+    const add = vi.spyOn(ownerDocument, 'addEventListener');
+    const remove = vi.spyOn(ownerDocument, 'removeEventListener');
+    const primaryAdd = vi.spyOn(activeDocument, 'addEventListener');
+    const source = rootSource({
+      title: 'Secondary owner forecast',
+      recurrence: 'every day',
+      planning: { due: localDate('2026-08-08') },
+    });
+    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const owner = createForecastContextMenuOwner(ownerDocument);
+    forecastMenuOwners.push(owner);
+    const anchor = ownerDocument.body.createEl('button');
+    anchor.focus();
+
+    try {
+      owner.open(
+        anchor,
+        new ownerWindow.MouseEvent('contextmenu', { clientX: 150, clientY: 110 }),
+        forecast.occurrence,
+        {},
+      );
+      const menu = ownerDocument.querySelector<HTMLElement>('.tc-forecast-context-menu')!;
+      expect(menu.ownerDocument).toBe(ownerDocument);
+      expect(menu.style.left).toBe('32px');
+      expect(menu.style.top).toBe('30px');
+      expect(ownerRectCalls).toBe(2);
+      const registrations = add.mock.calls.filter(
+        ([type]) => type === 'keydown' || type === 'mousedown',
+      );
+      expect(registrations).toHaveLength(2);
+      expect(
+        primaryAdd.mock.calls.filter(([type]) => type === 'keydown' || type === 'mousedown'),
+      ).toHaveLength(0);
+
+      ownerDocument.dispatchEvent(
+        new ownerWindow.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      expect(ownerDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(anchor);
+      for (const registration of registrations)
+        expect(remove.mock.calls).toContainEqual(registration);
+    } finally {
+      owner.dismiss({ restoreFocus: false });
+      frame.remove();
+    }
+  });
+
   it('owns one dismissible forecast menu and ignores callbacks from superseded handles', () => {
     const firstSource = rootSource({
       title: 'First forecast source',

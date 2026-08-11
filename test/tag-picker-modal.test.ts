@@ -1,10 +1,45 @@
-import { App } from 'obsidian';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { App, Modal } from 'obsidian';
+import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
 
 interface TagPickerHarness {
   modal: TagPickerModal;
   onCommit: ReturnType<typeof vi.fn>;
+}
+
+interface ModalHostSeam {
+  readonly open: MockInstance<Modal['open']>;
+  readonly close: MockInstance<Modal['close']>;
+  dispose(modal: Modal): void;
+}
+
+function installInheritedModalHostEscapeSeam(): ModalHostSeam {
+  const cleanups = new WeakMap<Modal, () => void>();
+  const inheritedClose = Modal.prototype.close;
+  const close = vi.spyOn(Modal.prototype, 'close').mockImplementation(function (this: Modal) {
+    cleanups.get(this)?.();
+    inheritedClose.call(this);
+    this.containerEl.remove();
+  });
+  const open = vi.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+    this.onOpen();
+    const modal = this;
+    const ownerDocument = modal.containerEl.ownerDocument;
+    const onKeydown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !event.defaultPrevented) modal.close();
+    };
+    const cleanup = (): void => {
+      ownerDocument.removeEventListener('keydown', onKeydown);
+      cleanups.delete(modal);
+    };
+    cleanups.set(modal, cleanup);
+    ownerDocument.addEventListener('keydown', onKeydown);
+  });
+  return {
+    open,
+    close,
+    dispose: (modal) => cleanups.get(modal)?.(),
+  };
 }
 
 function makeTagPicker(
@@ -13,6 +48,7 @@ function makeTagPicker(
     partialTags?: string[];
     tags?: string[];
   } = {},
+  initialize = true,
 ): TagPickerHarness {
   const app = new App();
   (app.metadataCache as unknown as { getTags: () => Record<string, number> }).getTags = () =>
@@ -25,8 +61,10 @@ function makeTagPicker(
     new Set(opts.partialTags ?? ['#some']),
     onCommit,
   );
-  activeDocument.body.append(modal.containerEl);
-  modal.onOpen();
+  if (initialize) {
+    activeDocument.body.append(modal.containerEl);
+    modal.onOpen();
+  }
   return { modal, onCommit };
 }
 
@@ -35,6 +73,8 @@ function tagButton(modal: TagPickerModal, tag: string): HTMLButtonElement {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   activeDocument.body.empty();
 });
 
@@ -75,20 +115,34 @@ describe('TagPickerModal', () => {
     expect(activeDocument.activeElement).toBe(removing);
   });
 
-  it('lets Escape bubble to the modal host while committing pending tag changes on close', () => {
-    const { modal, onCommit } = makeTagPicker({ currentTags: [], partialTags: [] });
-    const item = tagButton(modal, '#none');
-    item.focus();
-    item.click();
-    const escaped = vi.fn();
-    modal.containerEl.addEventListener('keydown', escaped);
-    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+  it('lets the opened Obsidian modal host close on Escape and commit pending changes', () => {
+    vi.useFakeTimers();
+    const host = installInheritedModalHostEscapeSeam();
+    const { modal, onCommit } = makeTagPicker({ currentTags: [], partialTags: [] }, false);
+    activeDocument.body.append(modal.containerEl);
+    modal.open();
 
-    tagButton(modal, '#none').dispatchEvent(event);
+    try {
+      const item = tagButton(modal, '#none');
+      item.focus();
+      item.click();
+      const event = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
 
-    expect(event.defaultPrevented).toBe(false);
-    expect(escaped).toHaveBeenCalledOnce();
-    modal.close();
-    expect(onCommit).toHaveBeenCalledWith(['#none'], []);
+      tagButton(modal, '#none').dispatchEvent(event);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(host.open).toHaveBeenCalledOnce();
+      expect(host.close).toHaveBeenCalledOnce();
+      expect(modal.containerEl.isConnected).toBe(false);
+      expect(modal.contentEl.childElementCount).toBe(0);
+      expect(onCommit).toHaveBeenCalledWith(['#none'], []);
+    } finally {
+      host.dispose(modal);
+      vi.clearAllTimers();
+    }
   });
 });

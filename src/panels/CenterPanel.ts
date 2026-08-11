@@ -157,6 +157,7 @@ export class CenterPanel {
   private calUnsubscribe: (() => void) | null = null;
   private calendarPickerCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
+  private pendingTaskDateFocus: { key: string; settled: boolean } | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
   private viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private forecastMenuOwner: ForecastContextMenuOwner | null = null;
@@ -421,6 +422,7 @@ export class CenterPanel {
 
   destroy(): void {
     this.cancelKeyboardInteraction();
+    this.pendingTaskDateFocus = null;
     this.clearSearchShell();
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
@@ -486,6 +488,7 @@ export class CenterPanel {
       });
       window.setTimeout(() => input.focus(), 0);
     });
+    this.restorePendingTaskDateFocus();
   }
 
   private destroyCalendarView(): void {
@@ -649,6 +652,7 @@ export class CenterPanel {
     this.renderAddTaskBar();
     this.reconcileTaskSelection(this.visibleTaskKeys());
     this.updateSelectionVisuals();
+    this.restorePendingTaskDateFocus();
   }
 
   private renderCalendarMode(): void {
@@ -1492,12 +1496,14 @@ export class CenterPanel {
 
     if (!query) {
       host.createEl('p', { cls: 'tc-empty-state', text: 'Type to search tasks…' });
+      this.restorePendingTaskDateFocus();
       return;
     }
 
     const matchingTasks = [...searchTaskList(this.queries.list(), query)];
     if (matchingTasks.length === 0) {
       host.createDiv({ cls: 'tc-center-empty', text: 'No results' });
+      this.restorePendingTaskDateFocus();
       return;
     }
     this.renderFlat(host, matchingTasks);
@@ -1525,6 +1531,7 @@ export class CenterPanel {
         { capture: true },
       );
     });
+    this.restorePendingTaskDateFocus();
   }
 
   private renderWithGrouping(container: HTMLElement, tasks: TaskSnapshot[]): void {
@@ -3220,6 +3227,7 @@ export class CenterPanel {
 
   private openTaskDatePicker(anchor: HTMLElement, tasks: readonly TaskSnapshot[]): void {
     this.clearTaskDatePicker();
+    const focusKey = this.taskDateTriggerKey(anchor);
     const firstDue = tasks[0]?.planning.due;
     const initialValue =
       firstDue && tasks.every((task) => task.planning.due === firstDue) ? firstDue : undefined;
@@ -3232,8 +3240,22 @@ export class CenterPanel {
       onPick: (inputValue) => {
         try {
           const value = localDate(inputValue);
-          if (tasks.length === 1) void this.setTaskDue(tasks[0]!, value);
-          else void this.applyDueInOrder(tasks, value);
+          const pendingFocus = focusKey ? { key: focusKey, settled: false } : undefined;
+          if (pendingFocus) this.pendingTaskDateFocus = pendingFocus;
+          const update =
+            tasks.length === 1
+              ? this.setTaskDue(tasks[0]!, value)
+              : this.applyDueInOrder(tasks, value);
+          if (pendingFocus) {
+            const restoreAfterUpdate = (): void => {
+              if (this.pendingTaskDateFocus !== pendingFocus) return;
+              pendingFocus.settled = true;
+              if (this.searchResultsFrame === null) {
+                this.restorePendingTaskDateFocus(pendingFocus.key);
+              }
+            };
+            void update.then(restoreAfterUpdate, restoreAfterUpdate);
+          }
         } catch {
           // Native date inputs are normally valid; malformed programmatic values remain a no-op.
         }
@@ -3241,12 +3263,43 @@ export class CenterPanel {
       onClose: () => {
         this.taskDatePickerCleanup = null;
       },
+      ...(focusKey !== undefined && {
+        restoreFocus: () => this.focusTaskDateTrigger(focusKey),
+      }),
     });
     this.taskDatePickerCleanup = cleanup;
   }
 
   private clearTaskDatePicker(): void {
     this.taskDatePickerCleanup?.();
+  }
+
+  private taskDateTriggerKey(anchor: HTMLElement): string | undefined {
+    const card = anchor.closest<HTMLElement>('.tc-task-card');
+    const filePath = card?.dataset['filePath'];
+    const line = card?.dataset['line'];
+    return card && this.el.contains(card) && filePath !== undefined && line !== undefined
+      ? `${filePath}:${line}`
+      : undefined;
+  }
+
+  private focusTaskDateTrigger(key: string): void {
+    const card = Array.from(this.el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+      (candidate) =>
+        `${candidate.dataset['filePath'] ?? ''}:${candidate.dataset['line'] ?? ''}` === key,
+    );
+    if (!card?.isConnected) return;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView?.({ block: 'nearest' });
+  }
+
+  private restorePendingTaskDateFocus(expectedKey?: string): void {
+    const pending = this.pendingTaskDateFocus;
+    if (pending === null || (expectedKey !== undefined && pending.key !== expectedKey)) return;
+    this.focusTaskDateTrigger(pending.key);
+    if (pending.settled && this.pendingTaskDateFocus === pending) {
+      this.pendingTaskDateFocus = null;
+    }
   }
 
   private taskKey(task: TaskSnapshot): string {

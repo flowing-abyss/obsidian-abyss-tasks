@@ -760,6 +760,8 @@ export class RightPanel {
           textarea.blur();
         }
         if (e.key === 'Escape') {
+          e.preventDefault();
+          e.stopPropagation();
           saved = true;
           textarea.remove();
           showText();
@@ -1088,9 +1090,6 @@ export class RightPanel {
       else void this.updateStart(task, input.value);
       this.removeAnchoredSurface(pop);
     });
-    input.addEventListener('blur', () =>
-      this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
-    );
     this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
 
     const clearBtn = inputRow.createEl('button', {
@@ -1107,6 +1106,7 @@ export class RightPanel {
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(pop, anchor, undefined, {
+      focusLeaveDelay: 200,
       onCleanup: () => {
         if (previousPopupRole) anchor.setAttribute('aria-haspopup', previousPopupRole);
         else anchor.removeAttribute('aria-haspopup');

@@ -939,6 +939,75 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('keeps the date popover open while focus traverses to Clear beyond the blur delay', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    const outside = ownerDocument.createElement('button');
+    outside.textContent = 'Outside';
+    ownerDocument.body.append(outside);
+    state.set('taskStack', [task({ title: 'Date traversal', planning: { due: '2026-08-11' } })]);
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
+    vi.useFakeTimers();
+
+    try {
+      click(chip);
+      vi.runOnlyPendingTimers();
+      const popover = el.querySelector<HTMLElement>('.tc-date-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.tc-date-input')!;
+      const clear = popover.querySelector<HTMLButtonElement>('[aria-label="Clear date"]')!;
+      expect(ownerDocument.activeElement).toBe(input);
+
+      clear.focus();
+      vi.advanceTimersByTime(250);
+      expect(el.querySelector('.tc-date-popover')).toBe(popover);
+      expect(ownerDocument.activeElement).toBe(clear);
+
+      outside.focus();
+      vi.advanceTimersByTime(250);
+      expect(el.querySelector('.tc-date-popover')).toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
+  });
+
+  it('cancels pending date focus-leave cleanup when the panel is destroyed', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    const outside = ownerDocument.createElement('button');
+    ownerDocument.body.append(outside);
+    state.set('taskStack', [task({ title: 'Date cleanup', planning: { due: '2026-08-11' } })]);
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
+    vi.useFakeTimers();
+    const clearTimeout = vi.spyOn(ownerDocument.defaultView!, 'clearTimeout');
+
+    try {
+      click(chip);
+      vi.runOnlyPendingTimers();
+      outside.focus();
+      clearTimeout.mockClear();
+
+      panel.destroy();
+
+      expect(clearTimeout).toHaveBeenCalledWith(expect.any(Number));
+      vi.advanceTimersByTime(250);
+      expect(el.querySelector('.tc-date-popover')).toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
+  });
+
   it('clears a scheduled-only task through the visible Date chip and refreshes the UI', async () => {
     const ref: TaskRef = { filePath: 'f.md', line: 0, revision: 'old' };
     const freshRef: TaskRef = { ...ref, revision: 'fresh' };

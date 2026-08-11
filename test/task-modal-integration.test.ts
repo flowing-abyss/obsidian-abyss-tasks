@@ -13,6 +13,7 @@ import {
   createAppWithFiles,
   flushMicrotasks,
   task,
+  taskComment,
   taskQueryApi,
   testStatusRegistry,
 } from './helpers';
@@ -311,6 +312,11 @@ describe('TaskModal with real RightPanel', () => {
       ownedSelector: '.tc-subtask-new-input',
     },
     {
+      surface: 'inline comment editor',
+      openSelector: '.tc-comment-text',
+      ownedSelector: '.tc-comment-edit-input',
+    },
+    {
       surface: 'inline tag dropdown',
       openSelector: '+ tag',
       ownedSelector: '.tc-tag-input',
@@ -319,6 +325,7 @@ describe('TaskModal with real RightPanel', () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Nested Escape\n' });
     const current = task({
       title: 'Nested Escape',
+      comments: [taskComment({ text: 'Nested comment' })],
       source: {
         filePath: 'f.md',
         line: 0,

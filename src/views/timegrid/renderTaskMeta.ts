@@ -203,11 +203,12 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
       const height = measured.height || menu.offsetHeight;
       const viewportWidth = realm?.innerWidth ?? width + 16;
       const viewportHeight = realm?.innerHeight ?? height + 16;
-      const point = new DOMRect(event.clientX, event.clientY, 0, 0);
+      const Rect = realm?.DOMRect ?? DOMRect;
+      const point = new Rect(event.clientX, event.clientY, 0, 0);
       const placement = anchoredPlacement({
         anchor: point,
         floating: { width, height },
-        boundary: new DOMRect(0, 0, viewportWidth, viewportHeight),
+        boundary: new Rect(0, 0, viewportWidth, viewportHeight),
         gap: 0,
         edgeGap: 8,
         preferred: 'below-start',

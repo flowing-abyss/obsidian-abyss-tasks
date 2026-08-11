@@ -226,7 +226,7 @@ export class Toolbar {
       if (
         this.activePopup !== owned ||
         popup.contains(event.target as Node) ||
-        event.target === trigger
+        trigger.contains(event.target as Node)
       ) {
         return;
       }

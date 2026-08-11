@@ -455,6 +455,92 @@ describe('CenterPanel task date context menus', () => {
     expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('44px');
   });
 
+  it('restores custom-date focus to the matching replacement card after refresh', () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+
+    try {
+      execute.mockImplementation(() => {
+        panel.refresh();
+        return Promise.resolve({
+          type: 'io-error',
+          cause: 'test',
+          contentState: 'unchanged',
+        });
+      });
+      originalCard.focus();
+      openMenu(originalCard);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.focus();
+      input.value = '2026-08-02';
+
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+
+      const replacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+      expect(originalCard.isConnected).toBe(false);
+      expect(replacement).not.toBe(originalCard);
+      expect(replacement.dataset['filePath']).toBe('a.md');
+      expect(replacement.dataset['line']).toBe('0');
+      expect(activeDocument.activeElement).toBe(replacement);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('keeps bulk custom-date focus on the final replacement across per-task refreshes', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first, second]);
+    activeDocument.body.append(el);
+    const cards = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
+    const replacements: HTMLElement[] = [];
+
+    try {
+      for (const card of cards) {
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      }
+      execute.mockImplementation(() => {
+        panel.refresh();
+        replacements.push(
+          Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+            (card) => card.dataset['line'] === '0',
+          )!,
+        );
+        return Promise.resolve({
+          type: 'io-error',
+          cause: 'test',
+          contentState: 'unchanged',
+        });
+      });
+      originalTrigger.focus();
+      openMenu(originalTrigger);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(replacements).toHaveLength(2);
+      expect(originalTrigger.isConnected).toBe(false);
+      expect(replacements[0]!.isConnected).toBe(false);
+      expect(replacements[1]!.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(replacements[1]);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('sets and clears Tomorrow from the single menu', async () => {
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
     const items = captureMenu();

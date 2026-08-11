@@ -41,6 +41,19 @@ const PICKER_DIV_GEOMETRY = {
 };
 
 describe('native picker button visual reset', () => {
+  it('restores a theme-token focus-visible outline after the legacy toolbar reset', () => {
+    const baseSelector = '.tasksCalendar button';
+    const focusSelector = '.tasksCalendar button:focus-visible';
+    const focus = declarationsFor(focusSelector);
+
+    expect(
+      compareSpecificity(specificity(focusSelector), specificity(baseSelector)),
+    ).toBeGreaterThan(0);
+    expect(focus).toContain('outline: 2px solid var(--interactive-accent)');
+    expect(focus).toContain('outline-offset: 2px');
+    expect(css.indexOf(`${focusSelector} {`)).toBeGreaterThan(css.indexOf(`${baseSelector} {`));
+  });
+
   it.each([
     '.tc-tag-picker-modal button.tc-tag-picker-item',
     '.tc-status-icon-field button.tc-status-icon-result',
