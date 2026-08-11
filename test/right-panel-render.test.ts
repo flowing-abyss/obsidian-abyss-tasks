@@ -871,7 +871,7 @@ describe('RightPanel popovers', () => {
   });
 
   it('date chip click → date popover appears', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
     state.set('taskStack', [
       task({
         title: 'D',
@@ -888,6 +888,55 @@ describe('RightPanel popovers', () => {
     click(dateChip);
     expect(el.querySelector('.tc-date-popover')).not.toBeNull();
     expect(el.querySelector('.tc-date-input')).not.toBeNull();
+    panel.destroy();
+  });
+
+  it('owns Escape in the mounted document and restores focus from the date popover', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [
+      task({
+        title: 'Keyboard date',
+        planning: { due: '2026-08-11' },
+        source: {
+          originalMarkdown: '- [ ] Keyboard date 📅 2026-08-11',
+          originalBlock: '- [ ] Keyboard date 📅 2026-08-11',
+        },
+      }),
+    ]);
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
+    const escapedToDocument = vi.fn();
+    ownerDocument.addEventListener('keydown', escapedToDocument);
+
+    try {
+      chip.focus();
+      click(chip);
+      await tick();
+      const popover = el.querySelector<HTMLElement>('.tc-date-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.tc-date-input')!;
+      expect(ownerDocument.activeElement).toBe(input);
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBe(true);
+      expect(escapedToDocument).not.toHaveBeenCalled();
+      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(chip);
+    } finally {
+      ownerDocument.removeEventListener('keydown', escapedToDocument);
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
   });
 
   it('clears a scheduled-only task through the visible Date chip and refreshes the UI', async () => {

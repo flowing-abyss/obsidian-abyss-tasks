@@ -1076,6 +1076,7 @@ export class RightPanel {
       this.removeAnchoredSurface(pop);
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
+    this.dismissMenuOnOutsideClick(pop, anchor);
   }
 
   private showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
