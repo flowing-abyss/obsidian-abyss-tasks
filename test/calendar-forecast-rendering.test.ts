@@ -838,10 +838,18 @@ describe('forecast visual system', () => {
       item.textContent?.includes('Materialized repeat'),
     )!;
     const forecastItem = items.find((item) => item.textContent?.includes('Forecast repeat'))!;
+    const style = installCalendarStyles();
     expect(ordinaryItem.dataset['controlSlot']).toBe('occupied');
     expect(ordinaryItem.dataset['recurrenceSlot']).toBe('reserved');
     expect(ordinaryItem.querySelector('.tc-status-marker')).not.toBeNull();
     expect(ordinaryItem.querySelector('.tc-recurrence-badge')).toBeNull();
+    expect(
+      winningDeclaration(
+        style,
+        ordinaryItem.querySelector<HTMLElement>('.tc-status-marker')!,
+        'margin-inline-end',
+      ),
+    ).toBeUndefined();
     expect(materializedItem.dataset['controlSlot']).toBe('occupied');
     expect(materializedItem.dataset['recurrenceSlot']).toBe('occupied');
     expect(materializedItem.querySelector('.tc-status-marker')).not.toBeNull();
@@ -850,6 +858,28 @@ describe('forecast visual system', () => {
     expect(forecastItem.dataset['recurrenceSlot']).toBe('occupied');
     expect(forecastItem.querySelector('.tc-status-marker')).toBeNull();
     expect(forecastItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+  });
+
+  it('keeps only a checkbox-sized control slot when a calendar leading row has no recurrence badge', () => {
+    const style = installCalendarStyles();
+
+    for (const surface of [
+      'tc-tg-block-head',
+      'tc-tg-body',
+      'tc-tg-deadline-marker',
+      'tc-mg-plain',
+      'tc-mg-block-dot',
+      'tc-mg-span-segment',
+      'tc-mg-deadline-marker',
+    ]) {
+      const ghost = activeDocument.createElement('div');
+      ghost.className = `tc-calendar-leading-row ${surface}`;
+      ghost.setAttribute('data-control-slot', 'reserved');
+      ghost.setAttribute('data-recurrence-slot', 'reserved');
+
+      expect(winningDeclaration(style, ghost, 'flex-basis', 'before')?.value).toBe('1.6em');
+      expect(winningDeclaration(style, ghost, 'inline-size', 'before')?.value).toBe('1.6em');
+    }
   });
 
   it('keeps separate month forecasts compact and orders timed occurrences before untimed ones', () => {
@@ -959,12 +989,6 @@ describe('forecast visual system', () => {
     expect(materializedSurface).toMatch(
       /box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u,
     );
-    expect(
-      declarationsFor(
-        ".tc-calendar-leading-row[data-control-slot='reserved'][data-recurrence-slot='reserved']::before",
-      ),
-    ).toMatch(/flex-basis\s*:\s*calc\(1\.6em \+ 0\.35em \+ 1rem\)/u);
-
     const nowLine = declarationsFor('.tc-tg-now-line');
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);

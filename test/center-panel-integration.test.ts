@@ -1,6 +1,6 @@
 import moment from 'moment';
 import { TFile, type App } from 'obsidian';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
@@ -36,6 +36,10 @@ import {
 const TODAY = moment().format('YYYY-MM-DD');
 
 useRealMoment();
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQueryApi {
   const list = (query?: TaskQuery): readonly TaskSnapshot[] =>
@@ -1353,6 +1357,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   });
 
   it('routes a materialized nested recurrence owner through its subtask target', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-09T12:00:00Z'));
     const baseRoot = task({ title: 'Root' });
     const child = {
       ref: {
@@ -1431,6 +1437,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
     clickCalendarView(el, 'Day');
     const timedBlock = el.querySelector<HTMLElement>('.tc-tg-block');
+    expect(timedBlock).not.toBeNull();
     expect(timedBlock?.getAttribute('tabindex')).toBeNull();
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
   });

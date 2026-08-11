@@ -1623,16 +1623,6 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   pointer-events: none;
 }
 
-.tc-calendar-leading-row[data-control-slot='reserved'][data-recurrence-slot='reserved']::before {
-  flex-basis: calc(1.6em + 0.35em + 1rem);
-  inline-size: calc(1.6em + 0.35em + 1rem);
-}
-
-.tc-calendar-leading-row[data-control-slot='occupied'][data-recurrence-slot='reserved']
-  > .tc-status-marker {
-  margin-inline-end: calc(0.35em + 1rem);
-}
-
 .tc-tg-block {
   position: absolute;
   /* Explicit, deliberate stacking (not DOM-order accident): above the hour-grid lines
