@@ -207,6 +207,38 @@ describe('mountRecurrenceEditor', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it('owns Cmd+Enter before a host document shortcut can intercept it', async () => {
+    const interceptHostShortcut = (event: KeyboardEvent): void => {
+      if (event.key !== 'Enter' || !event.metaKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    activeDocument.addEventListener('keydown', interceptHostShortcut, true);
+    try {
+      const { container, onSubmit, onClose } = mount();
+      activeDocument.body.appendChild(container);
+      click(button(container, 'Weekdays'));
+      const target = button(container, 'Weekdays');
+
+      const shortcut = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      target.dispatchEvent(shortcut);
+      await flushMicrotasks();
+
+      expect(shortcut.defaultPrevented).toBe(true);
+      expect(onSubmit).toHaveBeenCalledWith({
+        recurrence: { type: 'set', value: 'every weekday' },
+      });
+      expect(onClose).toHaveBeenCalledOnce();
+    } finally {
+      activeDocument.removeEventListener('keydown', interceptHostShortcut, true);
+    }
+  });
+
   it.each([
     {
       name: 'default Keep',

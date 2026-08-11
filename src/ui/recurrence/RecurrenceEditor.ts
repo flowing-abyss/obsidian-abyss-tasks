@@ -676,11 +676,28 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     }
   };
 
+  const ownerWindow = options.container.ownerDocument.defaultView;
+  const submitShortcutHandler = (event: KeyboardEvent): void => {
+    if (
+      event.key !== 'Enter' ||
+      (!event.metaKey && !event.ctrlKey) ||
+      !event.target ||
+      !options.container.contains(event.target as Node)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void submit();
+  };
+
+  ownerWindow?.addEventListener('keydown', submitShortcutHandler, true);
   options.container.addEventListener('keydown', keyHandler);
   render();
 
   return {
     destroy: () => {
+      ownerWindow?.removeEventListener('keydown', submitShortcutHandler, true);
       options.container.removeEventListener('keydown', keyHandler);
       options.container.empty();
     },
