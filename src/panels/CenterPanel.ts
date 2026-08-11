@@ -157,7 +157,13 @@ export class CenterPanel {
   private calUnsubscribe: (() => void) | null = null;
   private calendarPickerCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private taskDatePickerCleanup: (() => void) | null = null;
-  private pendingTaskDateFocus: { key: string; settled: boolean } | null = null;
+  private taskCardRenderGeneration = 0;
+  private taskDateFocusContinuityKey: string | null = null;
+  private pendingTaskDateFocus: {
+    key: string;
+    armedRenderGeneration: number;
+    changed: boolean;
+  } | null = null;
   private recurrenceEditorCleanup: (() => void) | null = null;
   private viewStatePopoverCleanup: ((restoreFocus?: boolean) => void) | null = null;
   private forecastMenuOwner: ForecastContextMenuOwner | null = null;
@@ -390,6 +396,11 @@ export class CenterPanel {
       // body focused. That is renderer lifecycle, not an explicit user focus transfer, so it
       // must not revoke the restoration that will target the replacement block after commit.
       if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
+      const taskDateFocusKey = this.taskDateFocusContinuityKey;
+      if (taskDateFocusKey !== null && this.taskDateTriggerKey(target) !== taskDateFocusKey) {
+        this.pendingTaskDateFocus = null;
+        this.taskDateFocusContinuityKey = null;
+      }
       const block = target.closest<HTMLElement>('.tc-tg-block');
       if (block && this.el.contains(block)) {
         this.retainTimedBlockFocus(block);
@@ -423,6 +434,7 @@ export class CenterPanel {
   destroy(): void {
     this.cancelKeyboardInteraction();
     this.pendingTaskDateFocus = null;
+    this.taskDateFocusContinuityKey = null;
     this.clearSearchShell();
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
@@ -488,7 +500,7 @@ export class CenterPanel {
       });
       window.setTimeout(() => input.focus(), 0);
     });
-    this.restorePendingTaskDateFocus();
+    this.completeTaskCardRender();
   }
 
   private destroyCalendarView(): void {
@@ -652,7 +664,7 @@ export class CenterPanel {
     this.renderAddTaskBar();
     this.reconcileTaskSelection(this.visibleTaskKeys());
     this.updateSelectionVisuals();
-    this.restorePendingTaskDateFocus();
+    this.completeTaskCardRender();
   }
 
   private renderCalendarMode(): void {
@@ -1496,14 +1508,14 @@ export class CenterPanel {
 
     if (!query) {
       host.createEl('p', { cls: 'tc-empty-state', text: 'Type to search tasks…' });
-      this.restorePendingTaskDateFocus();
+      this.completeTaskCardRender();
       return;
     }
 
     const matchingTasks = [...searchTaskList(this.queries.list(), query)];
     if (matchingTasks.length === 0) {
       host.createDiv({ cls: 'tc-center-empty', text: 'No results' });
-      this.restorePendingTaskDateFocus();
+      this.completeTaskCardRender();
       return;
     }
     this.renderFlat(host, matchingTasks);
@@ -1531,7 +1543,7 @@ export class CenterPanel {
         { capture: true },
       );
     });
-    this.restorePendingTaskDateFocus();
+    this.completeTaskCardRender();
   }
 
   private renderWithGrouping(container: HTMLElement, tasks: TaskSnapshot[]): void {
@@ -3201,16 +3213,26 @@ export class CenterPanel {
     await this.setTaskDue(task, task.planning.due === value ? null : value);
   }
 
-  private async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<void> {
+  private async setTaskDue(task: TaskSnapshot, value: LocalDate | null): Promise<boolean> {
     const command = calendarPatchCommand(task, {
       due: value === null ? { type: 'clear' } : { type: 'set', value },
     });
-    if (!command || !this.tasks) return;
-    presentTaskCommandResult(await this.tasks.execute(command));
+    if (!command || !this.tasks) return false;
+    const result = await this.tasks.execute(command);
+    presentTaskCommandResult(result);
+    return result.type === 'ok' && result.changed;
   }
 
-  private async applyDueInOrder(tasks: readonly TaskSnapshot[], value: LocalDate): Promise<void> {
-    for (const task of tasks) await this.setTaskDue(task, value);
+  private async applyDueInOrder(
+    tasks: readonly TaskSnapshot[],
+    value: LocalDate,
+  ): Promise<boolean> {
+    let changed = false;
+    for (const task of tasks) {
+      const taskChanged = await this.setTaskDue(task, value);
+      changed = taskChanged || changed;
+    }
+    return changed;
   }
 
   private async applyBulkDuePreset(
@@ -3240,21 +3262,33 @@ export class CenterPanel {
       onPick: (inputValue) => {
         try {
           const value = localDate(inputValue);
-          const pendingFocus = focusKey ? { key: focusKey, settled: false } : undefined;
-          if (pendingFocus) this.pendingTaskDateFocus = pendingFocus;
+          const pendingFocus = focusKey
+            ? {
+                key: focusKey,
+                armedRenderGeneration: this.taskCardRenderGeneration,
+                changed: false,
+              }
+            : undefined;
+          if (pendingFocus) {
+            this.pendingTaskDateFocus = pendingFocus;
+            this.taskDateFocusContinuityKey = pendingFocus.key;
+          }
           const update =
             tasks.length === 1
               ? this.setTaskDue(tasks[0]!, value)
               : this.applyDueInOrder(tasks, value);
           if (pendingFocus) {
-            const restoreAfterUpdate = (): void => {
+            const settleFocus = (changed: boolean): void => {
               if (this.pendingTaskDateFocus !== pendingFocus) return;
-              pendingFocus.settled = true;
-              if (this.searchResultsFrame === null) {
-                this.restorePendingTaskDateFocus(pendingFocus.key);
+              if (!changed) {
+                this.clearTaskDateFocusContinuity(pendingFocus.key);
+                return;
               }
+              pendingFocus.changed = true;
+              this.releaseSettledTaskDateFocus(pendingFocus);
             };
-            void update.then(restoreAfterUpdate, restoreAfterUpdate);
+            const abandonFocus = (): void => settleFocus(false);
+            void update.then(settleFocus, abandonFocus);
           }
         } catch {
           // Native date inputs are normally valid; malformed programmatic values remain a no-op.
@@ -3283,23 +3317,51 @@ export class CenterPanel {
       : undefined;
   }
 
-  private focusTaskDateTrigger(key: string): void {
+  private focusTaskDateTrigger(key: string): boolean {
     const card = Array.from(this.el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
       (candidate) =>
         `${candidate.dataset['filePath'] ?? ''}:${candidate.dataset['line'] ?? ''}` === key,
     );
-    if (!card?.isConnected) return;
+    if (!card?.isConnected) return false;
     card.focus({ preventScroll: true });
     card.scrollIntoView?.({ block: 'nearest' });
+    return true;
   }
 
-  private restorePendingTaskDateFocus(expectedKey?: string): void {
+  private completeTaskCardRender(): void {
+    this.taskCardRenderGeneration += 1;
+    const continuityKey = this.taskDateFocusContinuityKey;
+    const restored = continuityKey !== null && this.focusTaskDateTrigger(continuityKey);
+    if (continuityKey !== null && !restored) {
+      this.clearTaskDateFocusContinuity(continuityKey);
+      return;
+    }
     const pending = this.pendingTaskDateFocus;
-    if (pending === null || (expectedKey !== undefined && pending.key !== expectedKey)) return;
-    this.focusTaskDateTrigger(pending.key);
-    if (pending.settled && this.pendingTaskDateFocus === pending) {
+    if (pending?.changed) this.releaseSettledTaskDateFocus(pending, restored);
+  }
+
+  private releaseSettledTaskDateFocus(
+    pending: NonNullable<CenterPanel['pendingTaskDateFocus']>,
+    restored = this.focusTaskDateTrigger(pending.key),
+  ): void {
+    if (
+      this.pendingTaskDateFocus !== pending ||
+      !pending.changed ||
+      this.taskCardRenderGeneration <= pending.armedRenderGeneration
+    ) {
+      return;
+    }
+    this.pendingTaskDateFocus = null;
+    if (!restored && this.taskDateFocusContinuityKey === pending.key) {
+      this.taskDateFocusContinuityKey = null;
+    }
+  }
+
+  private clearTaskDateFocusContinuity(key: string): void {
+    if (this.pendingTaskDateFocus?.key === key) {
       this.pendingTaskDateFocus = null;
     }
+    if (this.taskDateFocusContinuityKey === key) this.taskDateFocusContinuityKey = null;
   }
 
   private taskKey(task: TaskSnapshot): string {

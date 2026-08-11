@@ -4,7 +4,7 @@ import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import {
   flushMicrotasks,
   freshContainer,
@@ -132,6 +132,34 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
   return new DOMRect(left, top, width, height);
 }
 
+async function withQueuedAnimationFrames(
+  run: (flush: () => void, callbacks: Map<number, FrameRequestCallback>) => Promise<void>,
+): Promise<void> {
+  const callbacks = new Map<number, FrameRequestCallback>();
+  let nextFrame = 1;
+  const requestAnimationFrame = window.requestAnimationFrame;
+  const cancelAnimationFrame = window.cancelAnimationFrame;
+  window.requestAnimationFrame = ((callback: FrameRequestCallback): number => {
+    const frame = nextFrame++;
+    callbacks.set(frame, callback);
+    return frame;
+  }) as typeof window.requestAnimationFrame;
+  window.cancelAnimationFrame = ((frame: number): void => {
+    callbacks.delete(frame);
+  }) as typeof window.cancelAnimationFrame;
+
+  try {
+    await run(() => {
+      const queued = [...callbacks.values()];
+      callbacks.clear();
+      for (const callback of queued) callback(0);
+    }, callbacks);
+  } finally {
+    window.requestAnimationFrame = requestAnimationFrame;
+    window.cancelAnimationFrame = cancelAnimationFrame;
+  }
+}
+
 function relevantDateTitles(items: readonly CapturedMenuItem[]): string[] {
   return items
     .map((item) => item.title__)
@@ -162,6 +190,34 @@ function makeCenter(
   const el = freshContainer();
   panel.mount(el);
   return { el, state, tm, execute, panel };
+}
+
+function changedTaskResult(
+  originalTask: TaskSnapshot,
+): Awaited<ReturnType<TaskApplicationApi['execute']>> {
+  const due = localDate('2026-08-02');
+  const markdown = `${originalTask.source.originalMarkdown} 📅 ${due}`;
+  const changedTask: TaskSnapshot = {
+    ...originalTask,
+    ref: { ...originalTask.ref, revision: `${originalTask.ref.revision}:due:${due}` },
+    planning: { ...originalTask.planning, due },
+    source: { ...originalTask.source, originalMarkdown: markdown, originalBlock: markdown },
+  };
+  return {
+    type: 'ok',
+    changed: true,
+    outcome: { type: 'task', task: changedTask },
+  };
+}
+
+function unchangedTaskResult(
+  unchangedTask: TaskSnapshot,
+): Awaited<ReturnType<TaskApplicationApi['execute']>> {
+  return {
+    type: 'ok',
+    changed: false,
+    outcome: { type: 'task', task: unchangedTask },
+  };
 }
 
 describe('CenterPanel drag source', () => {
@@ -493,6 +549,207 @@ describe('CenterPanel task date context menus', () => {
     }
   });
 
+  it('waits for a changed command replacement render when settlement precedes notification', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      originalCard.focus();
+      openMenu(originalCard);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      panel.refresh();
+
+      const replacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+      expect(execute).toHaveBeenCalledOnce();
+      expect(originalCard.isConnected).toBe(false);
+      expect(replacement).not.toBe(originalCard);
+      expect(activeDocument.activeElement).toBe(replacement);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('retains focus through every deferred bulk replacement after all commands settle', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first, second]);
+    activeDocument.body.append(el);
+    const cards = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
+
+    try {
+      for (const card of cards) {
+        card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      }
+      execute
+        .mockResolvedValueOnce(changedTaskResult(first))
+        .mockResolvedValueOnce(changedTaskResult(second));
+      originalTrigger.focus();
+      openMenu(originalTrigger);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      panel.refresh();
+      const firstReplacement = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+        (card) => card.dataset['line'] === '0',
+      )!;
+      panel.refresh();
+
+      const finalReplacement = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+        (card) => card.dataset['line'] === '0',
+      )!;
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(originalTrigger.isConnected).toBe(false);
+      expect(firstReplacement.isConnected).toBe(false);
+      expect(finalReplacement.isConnected).toBe(true);
+      expect(activeDocument.activeElement).toBe(finalReplacement);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('stops changed-command continuity after focus intentionally leaves the replacement', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      openMenu(card);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      panel.refresh();
+      outside.focus();
+
+      panel.refresh();
+
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      panel.destroy();
+      outside.remove();
+      el.remove();
+    }
+  });
+
+  it('does not resurrect focus after a completed render proves the changed task absent', async () => {
+    const items = captureMenu();
+    const tasks = [first];
+    const { el, execute, panel } = makeCenter(tasks);
+    activeDocument.body.append(el);
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      openMenu(card);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      panel.refresh();
+      expect(activeDocument.activeElement).toBe(el.querySelector<HTMLElement>('.tc-task-card'));
+
+      tasks.splice(0);
+      panel.refresh();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+      tasks.push(first);
+      panel.refresh();
+
+      expect(el.querySelector('.tc-task-card')).not.toBeNull();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('preserves changed focus across coalesced and later search result frames until departure', async () => {
+    const items = captureMenu();
+    const searchable = task({
+      title: 'focus needle',
+      tags: ['#task/inbox'],
+      source: {
+        filePath: 'search.md',
+        line: 2,
+        originalMarkdown: '- [ ] focus needle #task/inbox',
+        originalBlock: '- [ ] focus needle #task/inbox',
+      },
+    });
+    const { el, execute, panel, state } = makeCenter([searchable]);
+    activeDocument.body.append(el);
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(searchable));
+      await withQueuedAnimationFrames(async (flush, callbacks) => {
+        state.set('mode', 'search');
+        await flushMicrotasks();
+        state.set('searchQuery', 'focus needle');
+        flush();
+        const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+        originalCard.focus();
+        openMenu(originalCard);
+        items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+        const input = el.querySelector<HTMLInputElement>(
+          '.tc-date-picker-popover input[type="date"]',
+        )!;
+        input.value = '2026-08-02';
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await flushMicrotasks();
+
+        panel.refresh();
+        panel.refresh();
+        panel.refresh();
+        expect(callbacks).toHaveLength(1);
+        flush();
+        const coalescedReplacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+        expect(originalCard.isConnected).toBe(false);
+        expect(activeDocument.activeElement).toBe(coalescedReplacement);
+
+        panel.refresh();
+        expect(callbacks).toHaveLength(1);
+        flush();
+        const laterReplacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+        expect(coalescedReplacement.isConnected).toBe(false);
+        expect(activeDocument.activeElement).toBe(laterReplacement);
+
+        outside.focus();
+        panel.refresh();
+        flush();
+        expect(activeDocument.activeElement).toBe(outside);
+      });
+    } finally {
+      panel.destroy();
+      outside.remove();
+      el.remove();
+    }
+  });
+
   it('keeps bulk custom-date focus on the final replacement across per-task refreshes', async () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first, second]);
@@ -505,6 +762,7 @@ describe('CenterPanel task date context menus', () => {
       for (const card of cards) {
         card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
       }
+      const changedTasks = [first, second];
       execute.mockImplementation(() => {
         panel.refresh();
         replacements.push(
@@ -512,11 +770,7 @@ describe('CenterPanel task date context menus', () => {
             (card) => card.dataset['line'] === '0',
           )!,
         );
-        return Promise.resolve({
-          type: 'io-error',
-          cause: 'test',
-          contentState: 'unchanged',
-        });
+        return Promise.resolve(changedTaskResult(changedTasks[replacements.length - 1]!));
       });
       originalTrigger.focus();
       openMenu(originalTrigger);
@@ -535,6 +789,62 @@ describe('CenterPanel task date context menus', () => {
       expect(replacements[0]!.isConnected).toBe(false);
       expect(replacements[1]!.isConnected).toBe(true);
       expect(activeDocument.activeElement).toBe(replacements[1]);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it.each([
+    ['an unchanged command', unchangedTaskResult(first)],
+    ['a failed command', { type: 'io-error', cause: 'test', contentState: 'unchanged' } as const],
+  ])('does not carry focus into a later unrelated refresh after %s', async (_case, result) => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      execute.mockResolvedValue(result);
+      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      openMenu(card);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.value = '2026-08-02';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+
+      panel.refresh();
+
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('does not carry focus into a later unrelated refresh after custom-date cancellation', () => {
+    vi.useFakeTimers();
+    const items = captureMenu();
+    const { el, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      openMenu(card);
+      items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
+      vi.runOnlyPendingTimers();
+      const input = el.querySelector<HTMLInputElement>(
+        '.tc-date-picker-popover input[type="date"]',
+      )!;
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+
+      panel.refresh();
+
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
     } finally {
       panel.destroy();
       el.remove();
