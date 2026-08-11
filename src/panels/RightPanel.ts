@@ -1094,12 +1094,14 @@ export class RightPanel {
       { value: 'E', label: 'Low' },
       { value: 'F', label: 'Lowest' },
     ];
+    let selectedOption: HTMLButtonElement | undefined;
     for (const opt of options) {
       const isActive = currentPriority === opt.value;
       const btn = pop.createEl('button', {
         cls: `tc-priority-option${isActive ? ' is-active' : ''}`,
         attr: { 'data-priority': opt.value },
       });
+      if (isActive) selectedOption = btn;
       const checkEl = btn.createEl('span', { cls: 'tc-priority-option-check' });
       if (isActive) setIcon(checkEl, 'check');
       const flagEl = btn.createEl('span', { cls: 'tc-priority-option-flag' });
@@ -1119,28 +1121,13 @@ export class RightPanel {
         anchor.setAttribute('data-priority', opt.value);
         anchor.className = `tc-chip tc-priority-chip tc-priority-chip--${opt.value}${opt.value === 'D' ? ' tc-chip-empty' : ''}`;
         this.removeAnchoredSurface(pop);
+        anchor.focus({ preventScroll: true });
         void this.updatePriority(task, opt.value);
       });
     }
     this.positionAnchoredSurface(pop, anchor, 'below-start');
-    const ownerWindow = this.el.ownerDocument.defaultView;
-    const placementCleanup = this.anchoredSurfaceCleanups.get(pop);
-    const dismiss = (): void => this.removeAnchoredSurface(pop);
-    let listening = false;
-    let registrationTimer = ownerWindow?.setTimeout(() => {
-      registrationTimer = undefined;
-      this.el.addEventListener('click', dismiss, { once: true });
-      listening = true;
-    }, 0);
-    const cleanup = (): void => {
-      placementCleanup?.();
-      if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
-      if (listening) this.el.removeEventListener('click', dismiss);
-      if (this.anchoredSurfaceCleanups.get(pop) === cleanup) {
-        this.anchoredSurfaceCleanups.delete(pop);
-      }
-    };
-    this.anchoredSurfaceCleanups.set(pop, cleanup);
+    this.dismissMenuOnOutsideClick(pop, anchor);
+    selectedOption?.focus({ preventScroll: true });
   }
 
   private positionAnchoredSurface(

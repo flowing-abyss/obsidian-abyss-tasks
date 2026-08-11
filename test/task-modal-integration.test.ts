@@ -254,4 +254,43 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
     expect(activeDocument.activeElement).toBe(marker);
   });
+
+  it('keeps the modal open when Escape dismisses its focused priority popover', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal priority ⏬\n' });
+    const current = task({
+      title: 'Modal priority',
+      priority: 'F',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Modal priority ⏬',
+        originalBlock: '- [ ] Modal priority ⏬',
+      },
+    });
+    const queries: TaskQueryApi = taskQueryApi({
+      list: () => [current],
+      resolve: () => ({ type: 'exact', task: current }),
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(current);
+    const chip = activeDocument.querySelector<HTMLButtonElement>('.tc-modal .tc-priority-chip')!;
+
+    chip.focus();
+    click(chip);
+    const selected = activeDocument.querySelector<HTMLButtonElement>(
+      '.tc-modal .tc-priority-option.is-active',
+    )!;
+    expect(activeDocument.activeElement).toBe(selected);
+
+    selected.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+
+    expect(activeDocument.querySelector('.tc-modal .tc-priority-popover')).toBeNull();
+    expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
+    expect(activeDocument.activeElement).toBe(chip);
+  });
 });

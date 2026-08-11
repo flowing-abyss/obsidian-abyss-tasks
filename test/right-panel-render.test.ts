@@ -1045,17 +1045,18 @@ describe('RightPanel popovers', () => {
   });
 
   it('priority chip click → priority popover appears with options', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
     click(chip);
     const pop = el.querySelector('.tc-priority-popover');
     expect(pop).not.toBeNull();
     expect(pop?.querySelectorAll('.tc-priority-option').length).toBe(6);
+    panel.destroy();
   });
 
   it('priority popover options use the shared menu option structure', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'F' })]);
     const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
     click(chip);
@@ -1072,10 +1073,57 @@ describe('RightPanel popovers', () => {
     expect(active?.querySelector('.tc-priority-option-flag')).not.toBeNull();
     expect(active?.querySelector('.tc-priority-option-label')?.textContent).toBe('Lowest');
     expect(active?.querySelector('.tc-priority-option-check')).not.toBeNull();
+    panel.destroy();
+  });
+
+  it('moves focus into the selected priority option and owns Escape dismissal', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [task({ title: 'Keyboard priority', priority: 'F' })]);
+    const chip = el.querySelector<HTMLButtonElement>('.tc-priority-chip')!;
+    const escapedToDocument = vi.fn();
+    ownerDocument.addEventListener('keydown', escapedToDocument);
+
+    try {
+      chip.focus();
+      click(chip);
+      const popover = el.querySelector<HTMLElement>('.tc-priority-popover')!;
+      const selected = popover.querySelector<HTMLButtonElement>('.tc-priority-option.is-active')!;
+
+      expect(popover.contains(ownerDocument.activeElement)).toBe(true);
+      expect(ownerDocument.activeElement).toBe(selected);
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      selected.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBe(true);
+      expect(escapedToDocument).not.toHaveBeenCalled();
+      expect(el.querySelector('.tc-priority-popover')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(chip);
+
+      click(chip);
+      const highest = el.querySelector<HTMLButtonElement>(
+        '.tc-priority-option[data-priority="A"]',
+      )!;
+      click(highest);
+      expect(el.querySelector('.tc-priority-popover')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(chip);
+    } finally {
+      ownerDocument.removeEventListener('keydown', escapedToDocument);
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
   });
 
   it('converts viewport placement to a bordered and scrolled panel padding box', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
     Object.defineProperty(el, 'getBoundingClientRect', {
@@ -1106,6 +1154,7 @@ describe('RightPanel popovers', () => {
     expect(popover.parentElement).toBe(el);
     expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
     expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('62px');
+    panel.destroy();
     measure.mockRestore();
   });
 
@@ -1128,21 +1177,14 @@ describe('RightPanel popovers', () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     vi.useFakeTimers();
-    const addListener = vi.spyOn(el, 'addEventListener');
+    const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
     click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
     click(el.querySelector<HTMLElement>('.tc-chip-time')!);
     vi.runOnlyPendingTimers();
 
     expect(
-      addListener.mock.calls.some(
-        ([type, , options]) =>
-          type === 'click' &&
-          typeof options === 'object' &&
-          options !== null &&
-          'once' in options &&
-          options.once === true,
-      ),
+      addListener.mock.calls.some(([type, , options]) => type === 'click' && options === true),
     ).toBe(false);
   });
 
@@ -1150,21 +1192,14 @@ describe('RightPanel popovers', () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     vi.useFakeTimers();
-    const addListener = vi.spyOn(el, 'addEventListener');
+    const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
     click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
     panel.destroy();
     vi.runOnlyPendingTimers();
 
     expect(
-      addListener.mock.calls.some(
-        ([type, , options]) =>
-          type === 'click' &&
-          typeof options === 'object' &&
-          options !== null &&
-          'once' in options &&
-          options.once === true,
-      ),
+      addListener.mock.calls.some(([type, , options]) => type === 'click' && options === true),
     ).toBe(false);
   });
 
@@ -1172,27 +1207,23 @@ describe('RightPanel popovers', () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     vi.useFakeTimers();
-    const addListener = vi.spyOn(el, 'addEventListener');
-    const removeListener = vi.spyOn(el, 'removeEventListener');
+    const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
+    const removeListener = vi.spyOn(el.ownerDocument, 'removeEventListener');
 
     click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
     vi.runOnlyPendingTimers();
     const dismissalListener = addListener.mock.calls.find(
-      ([type, , options]) =>
-        type === 'click' &&
-        typeof options === 'object' &&
-        options !== null &&
-        'once' in options &&
-        options.once === true,
+      ([type, , options]) => type === 'click' && options === true,
     )?.[1];
     state.set('taskStack', [task({ title: 'Replacement', priority: 'C' })]);
 
     expect(dismissalListener).toBeDefined();
-    expect(removeListener).toHaveBeenCalledWith('click', dismissalListener);
+    expect(removeListener).toHaveBeenCalledWith('click', dismissalListener, true);
   });
 
   it('outside click dismisses the priority popover', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
+    activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
     click(chip);
@@ -1203,6 +1234,8 @@ describe('RightPanel popovers', () => {
     const title = el.querySelector<HTMLElement>('.tc-right-title-view')!;
     click(title);
     expect(el.querySelector('.tc-priority-popover')).toBeNull();
+    panel.destroy();
+    el.remove();
   });
 });
 
