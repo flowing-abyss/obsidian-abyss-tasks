@@ -38,6 +38,20 @@ function makeCallbacks(): { callbacks: ToolbarCallbacks; spies: ToolbarSpies } {
   return { spies, callbacks: spies as unknown as ToolbarCallbacks };
 }
 
+function secondaryDocument(): { ownerDocument: Document; remove: () => void } {
+  const frame = document.createElement('iframe');
+  document.body.append(frame);
+  const ownerDocument = frame.contentDocument!;
+  const ownerWindow = frame.contentWindow as Window & typeof globalThis;
+  for (const method of ['createDiv', 'createEl', 'empty', 'addClass'] as const) {
+    Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
+      configurable: true,
+      value: HTMLElement.prototype[method],
+    });
+  }
+  return { ownerDocument, remove: () => frame.remove() };
+}
+
 const baseState: ToolbarState = {
   currentView: 'month',
   currentTitle: 'June 2026',
@@ -396,6 +410,117 @@ describe('Toolbar', () => {
   });
 
   describe('popup dismissal', () => {
+    it('owns accessible popup focus and keyboard activation in the toolbar document', () => {
+      const secondary = secondaryDocument();
+      const { ownerDocument } = secondary;
+      const ownerContainer = ownerDocument.createElement('div');
+      ownerDocument.body.append(ownerContainer);
+      const { callbacks, spies } = makeCallbacks();
+      const tb = new Toolbar(ownerContainer, VIEWS, callbacks);
+      tb.update({ ...baseState, currentView: 'month', currentStyle: 'style3' });
+      const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
+      const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
+
+      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expect(popup.getAttribute('role')).toBe('menu');
+
+      trigger.focus();
+      trigger.click();
+      const selected = popup.querySelector<HTMLElement>('li[data-style="style3"]')!;
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(ownerDocument.activeElement).toBe(selected);
+      expect(selected.getAttribute('role')).toBe('menuitemradio');
+      expect(selected.getAttribute('aria-checked')).toBe('true');
+
+      selected.dispatchEvent(
+        new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+      );
+      expect(spies.onStyleChange).toHaveBeenCalledWith('style3');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expect(ownerDocument.activeElement).toBe(trigger);
+      tb.destroy();
+      secondary.remove();
+    });
+
+    it('uses one exact owner-document lifecycle for Escape, toggle, update, and destroy', () => {
+      const secondary = secondaryDocument();
+      const { ownerDocument } = secondary;
+      const ownerContainer = ownerDocument.createElement('div');
+      ownerDocument.body.append(ownerContainer);
+      const addSpy = vi.spyOn(ownerDocument, 'addEventListener');
+      const removeSpy = vi.spyOn(ownerDocument, 'removeEventListener');
+      const globalAddSpy = vi.spyOn(activeDocument, 'addEventListener');
+      const { callbacks } = makeCallbacks();
+      const tb = new Toolbar(ownerContainer, VIEWS, callbacks);
+      tb.update({ ...baseState, currentView: 'month' });
+      const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
+      const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
+      const registrations = (): (typeof addSpy.mock.calls)[number][] => {
+        vi.runAllTimers();
+        return addSpy.mock.calls.filter(([type]) => type === 'mousedown' || type === 'keydown');
+      };
+      const expectRemoved = (registered: (typeof addSpy.mock.calls)[number][]): void => {
+        expect(registered).toHaveLength(2);
+        for (const listener of registered) expect(removeSpy.mock.calls).toContainEqual(listener);
+      };
+
+      trigger.focus();
+      trigger.click();
+      let registered = registrations();
+      ownerDocument.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(popup.classList.contains('active')).toBe(false);
+      expect(ownerDocument.activeElement).toBe(trigger);
+      expectRemoved(registered);
+
+      trigger.click();
+      registered = registrations().slice(-2);
+      trigger.click();
+      expect(popup.classList.contains('active')).toBe(false);
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expectRemoved(registered);
+
+      trigger.click();
+      registered = registrations().slice(-2);
+      tb.update({ ...baseState, currentView: 'month', currentTitle: 'August 2026' });
+      expect(popup.classList.contains('active')).toBe(false);
+      expectRemoved(registered);
+
+      trigger.click();
+      registered = registrations().slice(-2);
+      tb.destroy();
+      expectRemoved(registered);
+      expect(globalAddSpy).not.toHaveBeenCalled();
+      secondary.remove();
+    });
+
+    it('gives the statistics popup menu semantics, initial focus, and Enter activation', () => {
+      activeDocument.body.append(container);
+      const { callbacks, spies } = makeCallbacks();
+      const tb = new Toolbar(container, VIEWS, callbacks);
+      const trigger = container.querySelector<HTMLButtonElement>('.statistic')!;
+      const popup = container.querySelector<HTMLElement>('.statisticPopup')!;
+      trigger.focus();
+      trigger.click();
+
+      const first = popup.querySelector<HTMLElement>('li[data-group="done"]')!;
+      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(popup.getAttribute('role')).toBe('menu');
+      expect(first.getAttribute('role')).toBe('menuitemradio');
+      expect(activeDocument.activeElement).toBe(first);
+
+      first.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      expect(spies.onStatFilter).toHaveBeenCalledWith('done');
+      expect(first.getAttribute('aria-checked')).toBe('true');
+      tb.destroy();
+      container.remove();
+    });
+
     it('style popup: outside mousedown closes it (after timer advances)', () => {
       const { callbacks } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);

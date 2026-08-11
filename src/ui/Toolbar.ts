@@ -48,6 +48,8 @@ export interface ToolbarCallbacks {
 
 export class Toolbar {
   private el: HTMLElement;
+  private ownerDocument: Document;
+  private ownerWindow: Window;
   private currentBtn: HTMLButtonElement;
   private viewButtons = new Map<string, HTMLButtonElement>();
   private filterBtn: HTMLButtonElement;
@@ -55,12 +57,22 @@ export class Toolbar {
   private statBtn: HTMLButtonElement;
   private statPopup: HTMLElement;
   private statEls: Record<string, HTMLElement> = {};
-  private activeCloseHandler: ((e: MouseEvent) => void) | null = null;
   private stylePopup: HTMLElement;
-  private styleCloseHandler: ((e: MouseEvent) => void) | null = null;
+  private activePopup:
+    | {
+        popup: HTMLElement;
+        trigger: HTMLButtonElement;
+        registrationTimer: number;
+        listening: boolean;
+        onDocumentKeydown: (event: KeyboardEvent) => void;
+        onDocumentMousedown: (event: MouseEvent) => void;
+      }
+    | undefined;
   private currentView = '';
 
   constructor(container: HTMLElement, views: ViewEntry[], callbacks: ToolbarCallbacks) {
+    this.ownerDocument = container.ownerDocument;
+    this.ownerWindow = this.ownerDocument.defaultView ?? activeWindow;
     this.el = container.createDiv('buttons');
     // eslint-disable-next-line obsidianmd/no-static-styles-assignment
     this.el.style.position = 'relative';
@@ -74,14 +86,23 @@ export class Toolbar {
           callbacks.onViewSwitch(v.id);
         }
       });
+      btn.setAttribute('aria-haspopup', 'menu');
+      btn.setAttribute('aria-expanded', 'false');
       this.viewButtons.set(v.id, btn);
     }
 
     // Style picker popup (weekViewContext) — triggered by clicking active view button
-    this.stylePopup = this.el.createEl('ul', { cls: 'weekViewContext' });
+    this.stylePopup = this.el.createEl('ul', { cls: 'weekViewContext', attr: { role: 'menu' } });
     for (let i = 1; i <= 11; i++) {
       const style = `style${i}`;
-      const li = this.stylePopup.createEl('li', { attr: { 'data-style': style } });
+      const li = this.stylePopup.createEl('li', {
+        attr: {
+          'data-style': style,
+          role: 'menuitemradio',
+          tabindex: '-1',
+          'aria-checked': 'false',
+        },
+      });
       const liIcon = li.createDiv({ cls: `liIcon iconStyle${i}` });
       for (let j = 0; j < 7; j++) liIcon.createDiv('box');
       li.createEl('span', { text: `Style ${i}` });
@@ -89,8 +110,9 @@ export class Toolbar {
         this.stylePopup.querySelectorAll('li').forEach((el) => el.classList.remove('active'));
         li.classList.add('active');
         callbacks.onStyleChange(style);
-        this.closeStylePopup();
+        this.closePopup(true);
       });
+      this.bindKeyboardActivation(li);
     }
     this.currentBtn = this.makeBtn('current', '', '', () => callbacks.onToday());
     this.makeBtn('previous', ARROW_LEFT, '', () => callbacks.onPrev());
@@ -100,9 +122,11 @@ export class Toolbar {
     });
     this.statBtn = this.makeBtn('statistic', '📊', '', () => this.toggleStatPopup());
     this.statBtn.setAttribute('percentage', '');
+    this.statBtn.setAttribute('aria-haspopup', 'menu');
+    this.statBtn.setAttribute('aria-expanded', 'false');
 
     // Statistics popup
-    this.statPopup = this.el.createEl('ul', { cls: 'statisticPopup' });
+    this.statPopup = this.el.createEl('ul', { cls: 'statisticPopup', attr: { role: 'menu' } });
     const statDefs: Array<[string, string, string]> = [
       ['done', '✅', 'Done'],
       ['due', '📅', 'Due'],
@@ -112,24 +136,45 @@ export class Toolbar {
       ['dailyNote', '📄', 'Daily'],
     ];
     for (const [group, icon, label] of statDefs) {
-      const li = this.statPopup.createEl('li', { attr: { 'data-group': group } });
+      const li = this.statPopup.createEl('li', {
+        attr: {
+          'data-group': group,
+          role: 'menuitemradio',
+          tabindex: '-1',
+          'aria-checked': 'false',
+        },
+      });
       li.createEl('span', { cls: 'stat-label', text: label });
       const countSpanEl = li.createEl('span', { cls: 'stat-count', text: '0' });
-      const iconSpan = activeDocument.createElement('span');
+      const iconSpan = this.ownerDocument.createElement('span');
       iconSpan.textContent = icon + ' ';
       li.prepend(iconSpan);
       this.statEls[group] = countSpanEl;
       li.addEventListener('click', () => {
         const isActive = li.classList.contains('active');
-        this.statPopup.querySelectorAll('li').forEach((el) => el.classList.remove('active'));
+        this.statPopup.querySelectorAll('li').forEach((el) => {
+          el.classList.remove('active');
+          el.setAttribute('aria-checked', 'false');
+        });
         if (!isActive) {
           li.classList.add('active');
+          li.setAttribute('aria-checked', 'true');
           callbacks.onStatFilter(group);
         } else {
           callbacks.onStatFilter(null);
         }
       });
+      this.bindKeyboardActivation(li);
     }
+  }
+
+  private bindKeyboardActivation(item: HTMLElement): void {
+    item.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      event.stopPropagation();
+      item.click();
+    });
   }
 
   private makeBtn(
@@ -145,55 +190,88 @@ export class Toolbar {
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       onClick();
-      btn.blur();
     });
     return btn;
   }
 
   private toggleStylePopup(btn: HTMLButtonElement): void {
-    const isActive = !this.stylePopup.classList.contains('active');
-    if (isActive) {
-      this.stylePopup.style.left = btn.offsetLeft + 'px';
-      this.stylePopup.style.top = this.el.offsetHeight + 'px';
-      this.stylePopup.classList.add('active');
-      const closeHandler = (e: MouseEvent) => {
-        if (!this.stylePopup.contains(e.target as Node)) {
-          this.closeStylePopup();
-        }
-      };
-      this.styleCloseHandler = closeHandler;
-      window.setTimeout(() => activeDocument.addEventListener('mousedown', closeHandler), 0);
-    } else {
-      this.closeStylePopup();
+    if (this.activePopup?.popup === this.stylePopup) {
+      this.closePopup(true);
+      return;
     }
-  }
-
-  private closeStylePopup(): void {
-    this.stylePopup.classList.remove('active');
-    if (this.styleCloseHandler) {
-      activeDocument.removeEventListener('mousedown', this.styleCloseHandler);
-      this.styleCloseHandler = null;
-    }
+    this.stylePopup.style.left = btn.offsetLeft + 'px';
+    this.stylePopup.style.top = this.el.offsetHeight + 'px';
+    this.openPopup(this.stylePopup, btn);
   }
 
   private toggleStatPopup(): void {
-    const isActive = this.statBtn.classList.toggle('active');
-    this.statPopup.classList.toggle('active', isActive);
-    if (isActive) {
-      const closePopup = (e: MouseEvent) => {
-        if (!this.statPopup.contains(e.target as Node) && e.target !== this.statBtn) {
-          this.statPopup.classList.remove('active');
-          this.statBtn.classList.remove('active');
-          activeDocument.removeEventListener('mousedown', closePopup);
-          this.activeCloseHandler = null;
-        }
-      };
-      this.activeCloseHandler = closePopup;
-      window.setTimeout(() => activeDocument.addEventListener('mousedown', closePopup), 0);
+    if (this.activePopup?.popup === this.statPopup) {
+      this.closePopup(true);
+      return;
     }
+    this.openPopup(this.statPopup, this.statBtn);
+  }
+
+  private openPopup(popup: HTMLElement, trigger: HTMLButtonElement): void {
+    this.closePopup(false);
+    popup.classList.add('active');
+    if (popup === this.statPopup) trigger.classList.add('active');
+    trigger.setAttribute('aria-expanded', 'true');
+    let owned: NonNullable<Toolbar['activePopup']>;
+    const onDocumentKeydown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || this.activePopup !== owned) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.closePopup(true);
+    };
+    const onDocumentMousedown = (event: MouseEvent): void => {
+      if (
+        this.activePopup !== owned ||
+        popup.contains(event.target as Node) ||
+        event.target === trigger
+      ) {
+        return;
+      }
+      this.closePopup(true);
+    };
+    owned = {
+      popup,
+      trigger,
+      registrationTimer: this.ownerWindow.setTimeout(() => {
+        if (this.activePopup !== owned) return;
+        owned.listening = true;
+        this.ownerDocument.addEventListener('mousedown', onDocumentMousedown, true);
+        this.ownerDocument.addEventListener('keydown', onDocumentKeydown, true);
+      }, 0),
+      listening: false,
+      onDocumentKeydown,
+      onDocumentMousedown,
+    };
+    this.activePopup = owned;
+    const selected = popup.querySelector<HTMLElement>('[aria-checked="true"]');
+    const first = popup.querySelector<HTMLElement>(
+      '[role^="menuitem"]:not([aria-disabled="true"])',
+    );
+    (selected ?? first)?.focus({ preventScroll: true });
+  }
+
+  private closePopup(restoreFocus: boolean): void {
+    const owned = this.activePopup;
+    if (!owned) return;
+    this.activePopup = undefined;
+    this.ownerWindow.clearTimeout(owned.registrationTimer);
+    if (owned.listening) {
+      this.ownerDocument.removeEventListener('mousedown', owned.onDocumentMousedown, true);
+      this.ownerDocument.removeEventListener('keydown', owned.onDocumentKeydown, true);
+    }
+    owned.popup.classList.remove('active');
+    if (owned.popup === this.statPopup) owned.trigger.classList.remove('active');
+    owned.trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus && owned.trigger.isConnected) owned.trigger.focus({ preventScroll: true });
   }
 
   update(state: ToolbarState): void {
+    this.closePopup(true);
     this.currentView = state.currentView;
     this.currentBtn.textContent = state.currentTitle;
     this.filterBtn.classList.toggle('active', state.filterActive);
@@ -203,7 +281,9 @@ export class Toolbar {
     }
     // Sync active style in picker
     this.stylePopup.querySelectorAll('li').forEach((li) => {
-      li.classList.toggle('active', li.getAttribute('data-style') === state.currentStyle);
+      const selected = li.getAttribute('data-style') === state.currentStyle;
+      li.classList.toggle('active', selected);
+      li.setAttribute('aria-checked', String(selected));
     });
     if (this.statEls['done']) this.statEls['done'].textContent = String(state.stats.done);
     if (this.statEls['due']) this.statEls['due'].textContent = String(state.stats.due);
@@ -216,19 +296,19 @@ export class Toolbar {
       this.statEls['dailyNote'].textContent = String(state.stats.dailyNote);
 
     // Reconcile active stat group highlight
-    this.statPopup.querySelectorAll('li').forEach((li) => li.classList.remove('active'));
+    this.statPopup.querySelectorAll('li').forEach((li) => {
+      li.classList.remove('active');
+      li.setAttribute('aria-checked', 'false');
+    });
     if (state.activeStatGroup !== null) {
       const activeLi = this.statPopup.querySelector(`li[data-group="${state.activeStatGroup}"]`);
       activeLi?.classList.add('active');
+      activeLi?.setAttribute('aria-checked', 'true');
     }
   }
 
   destroy(): void {
-    if (this.activeCloseHandler !== null) {
-      activeDocument.removeEventListener('mousedown', this.activeCloseHandler);
-      this.activeCloseHandler = null;
-    }
-    this.closeStylePopup();
+    this.closePopup(false);
     this.el.remove();
   }
 }

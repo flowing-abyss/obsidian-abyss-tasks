@@ -527,10 +527,12 @@ export class CenterPanel {
       }
       picker.removeEventListener('keydown', onKeyDown);
       picker.remove();
+      anchor.setAttribute('aria-expanded', 'false');
       if (this.calendarPickerCleanup === cleanup) this.calendarPickerCleanup = null;
       if (restoreFocus && anchor.isConnected) anchor.focus();
     };
     this.calendarPickerCleanup = cleanup;
+    anchor.setAttribute('aria-expanded', 'true');
     picker.addEventListener('keydown', onKeyDown);
     const selectedOption = picker.querySelector<HTMLElement>('button.is-active');
     const firstOption = picker.querySelector<HTMLElement>('button:not(:disabled)');
@@ -667,8 +669,14 @@ export class CenterPanel {
     setIcon(prevBtn, 'chevron-left');
 
     const titleGroup = leftGroup.createDiv({ cls: 'tc-cal-nav-title-group' });
-    const monthBtn = titleGroup.createEl('button', { cls: 'tc-cal-nav-month' });
-    const yearBtn = titleGroup.createEl('button', { cls: 'tc-cal-nav-year' });
+    const monthBtn = titleGroup.createEl('button', {
+      cls: 'tc-cal-nav-month',
+      attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
+    });
+    const yearBtn = titleGroup.createEl('button', {
+      cls: 'tc-cal-nav-year',
+      attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
+    });
 
     const nextBtn = leftGroup.createEl('button', {
       cls: 'tc-cal-nav-btn',

@@ -36,9 +36,11 @@ function mockPopoverRect(width: number, height: number): void {
 
 describe('showDatePickerPopover', () => {
   it('prefills the initial value and commits change exactly once', () => {
+    vi.useFakeTimers();
     const { anchor, boundary, owner } = host();
     const onPick = vi.fn();
     const onClose = vi.fn();
+    anchor.focus();
     showDatePickerPopover({
       owner,
       anchor,
@@ -48,6 +50,7 @@ describe('showDatePickerPopover', () => {
       onClose,
     });
     const input = owner.querySelector<HTMLInputElement>('input[type="date"]')!;
+    vi.runAllTimers();
 
     expect(input.value).toBe('2026-07-30');
     expect(input.getAttribute('aria-label')).toBe('Set date');
@@ -58,6 +61,7 @@ describe('showDatePickerPopover', () => {
     expect(onPick).toHaveBeenCalledWith('2026-08-02');
     expect(onClose).toHaveBeenCalledOnce();
     expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.ownerDocument.activeElement).toBe(anchor);
     owner.remove();
   });
 
@@ -66,6 +70,7 @@ describe('showDatePickerPopover', () => {
     const { anchor, boundary, owner } = host();
     const onPick = vi.fn();
     const onClose = vi.fn();
+    anchor.focus();
     showDatePickerPopover({ owner, anchor, boundary, onPick, onClose });
     vi.runAllTimers();
 
@@ -76,6 +81,7 @@ describe('showDatePickerPopover', () => {
     expect(onClose).toHaveBeenCalledOnce();
     expect(event.defaultPrevented).toBe(true);
     expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.ownerDocument.activeElement).toBe(anchor);
     owner.remove();
   });
 
@@ -93,6 +99,7 @@ describe('showDatePickerPopover', () => {
 
     const outsideHost = host();
     const outsideClose = vi.fn();
+    outsideHost.anchor.focus();
     showDatePickerPopover({ ...outsideHost, onPick: vi.fn(), onClose: outsideClose });
     vi.runAllTimers();
     outsideHost.owner.ownerDocument.body.dispatchEvent(
@@ -100,6 +107,7 @@ describe('showDatePickerPopover', () => {
     );
     expect(outsideClose).toHaveBeenCalledOnce();
     expect(outsideHost.owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(outsideHost.owner.ownerDocument.activeElement).toBe(outsideHost.anchor);
     outsideHost.owner.remove();
   });
 
@@ -290,6 +298,7 @@ describe('showDatePickerPopover', () => {
     vi.useFakeTimers();
     const { anchor, boundary, owner } = host();
     const onClose = vi.fn();
+    anchor.focus();
     const cleanup = showDatePickerPopover({
       owner,
       anchor,
@@ -306,6 +315,29 @@ describe('showDatePickerPopover', () => {
 
     expect(onClose).toHaveBeenCalledOnce();
     expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.ownerDocument.activeElement).toBe(anchor);
+    owner.remove();
+  });
+
+  it('removes the exact owner-document listeners on external cleanup', () => {
+    vi.useFakeTimers();
+    const ownerDocument = document.implementation.createHTMLDocument('owner');
+    const { anchor, boundary, owner } = host(ownerDocument);
+    const addSpy = vi.spyOn(ownerDocument, 'addEventListener');
+    const removeSpy = vi.spyOn(ownerDocument, 'removeEventListener');
+    anchor.focus();
+    const cleanup = showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
+    vi.runAllTimers();
+    const registrations = addSpy.mock.calls.filter(
+      ([type]) => type === 'mousedown' || type === 'keydown',
+    );
+
+    cleanup();
+
+    expect(registrations).toHaveLength(2);
+    for (const registration of registrations) {
+      expect(removeSpy.mock.calls).toContainEqual(registration);
+    }
     owner.remove();
   });
 });

@@ -104,6 +104,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     ownerDocument.removeEventListener('scroll', position, true);
     popover.remove();
     if (ownerCleanups.get(options.owner) === cleanup) ownerCleanups.delete(options.owner);
+    if (options.anchor.isConnected) options.anchor.focus({ preventScroll: true });
     options.onClose?.();
   };
   ownerCleanups.set(options.owner, cleanup);

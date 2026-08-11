@@ -2,6 +2,7 @@ import { setIcon } from 'obsidian';
 import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
 import type { LocalDate, TaskNodeRef, TaskSnapshot } from '../../tasks';
+import { anchoredPlacement } from '../../ui/anchoredPlacement';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import {
   recurrenceBadgeInput,
@@ -187,8 +188,6 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
         cls: 'tc-status-popover tc-forecast-context-menu',
         attr: { role: 'menu' },
       });
-      menu.style.left = `${event.clientX}px`;
-      menu.style.top = `${event.clientY}px`;
       const edit = menu.createEl('button', {
         cls: 'tc-forecast-context-menu-edit-repeat',
         attr: { type: 'button', role: 'menuitem' },
@@ -199,6 +198,22 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
         attr: { type: 'button', role: 'menuitem' },
         text: 'Open source task',
       });
+      const measured = menu.getBoundingClientRect();
+      const width = measured.width || menu.offsetWidth;
+      const height = measured.height || menu.offsetHeight;
+      const viewportWidth = realm?.innerWidth ?? width + 16;
+      const viewportHeight = realm?.innerHeight ?? height + 16;
+      const point = new DOMRect(event.clientX, event.clientY, 0, 0);
+      const placement = anchoredPlacement({
+        anchor: point,
+        floating: { width, height },
+        boundary: new DOMRect(0, 0, viewportWidth, viewportHeight),
+        gap: 0,
+        edgeGap: 8,
+        preferred: 'below-start',
+      });
+      menu.style.left = `${placement.left}px`;
+      menu.style.top = `${placement.top}px`;
       let owned: ActiveMenu;
       const onDocumentKeydown = (keyboardEvent: KeyboardEvent): void => {
         if (keyboardEvent.key !== 'Escape' || active !== owned) return;

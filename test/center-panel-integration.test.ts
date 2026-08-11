@@ -1574,6 +1574,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         activeDocument.body.append(harness.el);
         const anchor = harness.el.querySelector<HTMLElement>(anchorSelector)!;
         anchor.click();
+        expect(anchor.getAttribute('aria-expanded')).toBe('true');
         await flushMicrotasks();
         const registration = [...addSpy.mock.calls].reverse().find(([type]) => type === 'click');
         expect(registration).toBeDefined();
@@ -1588,6 +1589,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       try {
         const selected = await openHarness();
         selected.el.querySelector<HTMLElement>(`${pickerSelector} ${optionSelector}`)!.click();
+        expect(selected.anchor.getAttribute('aria-expanded')).toBe('false');
         expect(wasRemoved(selected.registration!)).toBe(true);
         selected.panel.destroy();
         selected.el.remove();
@@ -1595,12 +1597,14 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         const toggled = await openHarness();
         toggled.anchor.click();
         expect(toggled.el.querySelector(pickerSelector)).toBeNull();
+        expect(toggled.anchor.getAttribute('aria-expanded')).toBe('false');
         expect(wasRemoved(toggled.registration!)).toBe(true);
         toggled.panel.destroy();
         toggled.el.remove();
 
         const destroyed = await openHarness();
         destroyed.panel.destroy();
+        expect(destroyed.anchor.getAttribute('aria-expanded')).toBe('false');
         expect(wasRemoved(destroyed.registration!)).toBe(true);
         destroyed.el.remove();
       } finally {
@@ -1649,8 +1653,11 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         ({ panel, el } = await makeCalendarPanel());
         activeDocument.body.append(el);
         const anchor = el.querySelector<HTMLElement>(anchorSelector)!;
+        expect(anchor.getAttribute('aria-haspopup')).toBe('dialog');
+        expect(anchor.getAttribute('aria-expanded')).toBe('false');
         anchor.focus();
         anchor.click();
+        expect(anchor.getAttribute('aria-expanded')).toBe('true');
 
         const picker = el.querySelector<HTMLElement>(pickerSelector)!;
         const selected = picker.querySelector<HTMLElement>(`${optionSelector}.is-active`)!;
@@ -1677,6 +1684,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         expect(escape.defaultPrevented).toBe(true);
         expect(documentKeydown).not.toHaveBeenCalled();
         expect(el.querySelector(pickerSelector)).toBeNull();
+        expect(anchor.getAttribute('aria-expanded')).toBe('false');
         expect(activeDocument.activeElement).toBe(anchor);
 
         anchor.click();
@@ -1687,6 +1695,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
         expect(activeDocument.activeElement).toBe(reopenedSelected);
         reopenedSelected.click();
         expect(el.querySelector(pickerSelector)).toBeNull();
+        expect(anchor.getAttribute('aria-expanded')).toBe('false');
         expect(activeDocument.activeElement).toBe(anchor);
 
         await flushMicrotasks();

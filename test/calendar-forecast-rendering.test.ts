@@ -52,6 +52,10 @@ const registry = new StatusRegistry(buildDefaultTaskStatuses());
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 const forecastMenuOwners: ForecastContextMenuOwner[] = [];
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
+}
+
 function declarationsFor(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
   const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
@@ -491,6 +495,7 @@ function expectForecastInert(element: HTMLElement): void {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks();
   forecastMenuOwners.splice(0).forEach((owner) => owner.dismiss({ restoreFocus: false }));
   activeDocument
     .querySelectorAll('.tc-forecast-context-menu')
@@ -1327,6 +1332,49 @@ describe('forecast interaction contract', () => {
     expect(callbacks.onToggle).not.toHaveBeenCalled();
     expect(callbacks.onSetStatus).not.toHaveBeenCalled();
     expect(callbacks.onSetPriority).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { edge: 'top-left', x: -20, y: -20 },
+    { edge: 'top-right', x: 290, y: -20 },
+    { edge: 'bottom-left', x: -20, y: 190 },
+    { edge: 'bottom-right', x: 290, y: 190 },
+  ])('measures and clamps the forecast menu inside the owner viewport at $edge', ({ x, y }) => {
+    const ownerWindow = activeDocument.defaultView!;
+    vi.spyOn(ownerWindow, 'innerWidth', 'get').mockReturnValue(300);
+    vi.spyOn(ownerWindow, 'innerHeight', 'get').mockReturnValue(200);
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('tc-forecast-context-menu')) return rect(0, 0, 120, 80);
+      return realRect.call(this);
+    });
+    const source = rootSource({
+      title: 'Viewport forecast',
+      recurrence: 'every day',
+      planning: { due: localDate('2026-08-08') },
+    });
+    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const owner = createForecastContextMenuOwner(activeDocument);
+    forecastMenuOwners.push(owner);
+    const anchor = activeDocument.body.createEl('button');
+
+    owner.open(
+      anchor,
+      new MouseEvent('contextmenu', { clientX: x, clientY: y }),
+      forecast.occurrence,
+      {},
+    );
+
+    const menu = activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu')!;
+    const left = Number.parseFloat(menu.style.left);
+    const top = Number.parseFloat(menu.style.top);
+    expect(left).toBeGreaterThanOrEqual(8);
+    expect(top).toBeGreaterThanOrEqual(8);
+    expect(left + 120).toBeLessThanOrEqual(292);
+    expect(top + 80).toBeLessThanOrEqual(192);
+    anchor.remove();
   });
 
   it('owns one dismissible forecast menu and ignores callbacks from superseded handles', () => {
