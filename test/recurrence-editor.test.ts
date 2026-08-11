@@ -25,6 +25,21 @@ function keydown(element: Element, key: string, metaKey = false): void {
   element.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey, bubbles: true }));
 }
 
+function submitShortcut(
+  element: Element,
+  modifiers: { readonly metaKey?: boolean; readonly ctrlKey?: boolean },
+): KeyboardEvent {
+  const OwnerKeyboardEvent = element.ownerDocument.defaultView!.KeyboardEvent;
+  const event = new OwnerKeyboardEvent('keydown', {
+    key: 'Enter',
+    ...modifiers,
+    bubbles: true,
+    cancelable: true,
+  });
+  element.dispatchEvent(event);
+  return event;
+}
+
 interface MountedEditor {
   readonly container: HTMLElement;
   readonly handle: RecurrenceEditorHandle;
@@ -237,6 +252,116 @@ describe('mountRecurrenceEditor', () => {
     } finally {
       activeDocument.removeEventListener('keydown', interceptHostShortcut, true);
     }
+  });
+
+  it('submits a valid rule from Ctrl+Enter', async () => {
+    const { container, onSubmit, onClose } = mount();
+    activeDocument.body.appendChild(container);
+    click(button(container, 'Weekdays'));
+
+    const shortcut = submitShortcut(button(container, 'Weekdays'), { ctrlKey: true });
+    await flushMicrotasks();
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledWith({
+      recurrence: { type: 'set', value: 'every weekday' },
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['Cmd+Enter', { metaKey: true }],
+    ['Ctrl+Enter', { ctrlKey: true }],
+  ] as const)('blocks invalid recurrence from %s without submitting', async (_name, modifiers) => {
+    const { container, onSubmit, onClose } = mount();
+    activeDocument.body.appendChild(container);
+    click(button(container, 'Advanced'));
+    const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+    input(raw, 'not a recurrence rule');
+
+    const shortcut = submitShortcut(raw, modifiers);
+    await flushMicrotasks();
+
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(container.querySelector('.tc-recurrence-status')?.textContent).not.toBe('');
+    expect(button(container, 'Save repeat').disabled).toBe(true);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('ignores a submit shortcut whose target is outside the mounted editor', async () => {
+    const { container, onSubmit, onClose } = mount();
+    activeDocument.body.appendChild(container);
+    click(button(container, 'Weekdays'));
+    const outside = activeDocument.body.createEl('button', { text: 'Outside' });
+
+    const shortcut = submitShortcut(outside, { metaKey: true });
+    await flushMicrotasks();
+
+    expect(shortcut.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('owns submit shortcuts in the editor owner realm', async () => {
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    const ownerWindow = frame.contentWindow as Window & typeof globalThis;
+    for (const method of ['createDiv', 'createEl', 'createSpan', 'empty'] as const) {
+      Object.defineProperty(ownerWindow.HTMLElement.prototype, method, {
+        configurable: true,
+        value: HTMLElement.prototype[method],
+      });
+    }
+    const root = task({ planning: { due: '2026-08-09' } });
+    const container = ownerDocument.body.createDiv();
+    const onSubmit = vi
+      .fn<(patch: TaskPatch) => Promise<TaskCommandResult>>()
+      .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task', task: root } });
+    const onClose = vi.fn();
+    const handle = mountRecurrenceEditor({
+      container,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit,
+      onClose,
+    });
+    mounted.push(handle);
+
+    click(button(container, 'Weekdays'));
+    const shortcut = submitShortcut(button(container, 'Weekdays'), { metaKey: true });
+    await flushMicrotasks();
+
+    expect(shortcut).toBeInstanceOf(ownerWindow.KeyboardEvent);
+    expect(shortcut.defaultPrevented).toBe(true);
+    expect(onSubmit).toHaveBeenCalledWith({
+      recurrence: { type: 'set', value: 'every weekday' },
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+    frame.remove();
+  });
+
+  it('removes the exact owner-window capture listener on destroy', async () => {
+    const ownerWindow = activeDocument.defaultView!;
+    const add = vi.spyOn(ownerWindow, 'addEventListener');
+    const remove = vi.spyOn(ownerWindow, 'removeEventListener');
+    const { container, handle, onSubmit } = mount();
+    activeDocument.body.appendChild(container);
+    const registration = add.mock.calls.find(
+      ([type, _listener, options]) => type === 'keydown' && options === true,
+    );
+    expect(registration).toBeDefined();
+    const listener = registration![1];
+
+    handle.destroy();
+
+    expect(remove).toHaveBeenCalledWith('keydown', listener, true);
+    const replacement = container.createEl('button', { text: 'Replacement' });
+    const shortcut = submitShortcut(replacement, { metaKey: true });
+    await flushMicrotasks();
+    expect(shortcut.defaultPrevented).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it.each([
