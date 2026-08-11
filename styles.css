@@ -4838,6 +4838,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 8px;
   padding: 6px 14px;
   width: calc(100% - 12px);
+  height: auto;
+  min-height: 0;
   box-sizing: border-box;
   appearance: none;
   border: 0;
@@ -4846,6 +4848,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: inherit;
   font: inherit;
   text-align: left;
+  white-space: normal;
   cursor: pointer;
   border-radius: var(--radius-s);
   margin: 1px 6px;
@@ -4857,10 +4860,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .tc-tag-picker-modal button.tc-tag-picker-item--checked {
   background: var(--background-modifier-active-hover);
 }
+.tc-tag-picker-modal button.tc-tag-picker-item--checked:hover {
+  background: var(--background-modifier-active-hover);
+}
 .tc-tag-picker-item--partial {
   opacity: 0.7;
 }
 .tc-tag-picker-modal button.tc-tag-picker-item--removing {
+  background: rgba(var(--color-red-rgb), 0.08);
+}
+.tc-tag-picker-modal button.tc-tag-picker-item--removing:hover {
   background: rgba(var(--color-red-rgb), 0.08);
 }
 .tc-tag-picker-modal button.tc-tag-picker-item--removing .tc-tag-picker-icon {

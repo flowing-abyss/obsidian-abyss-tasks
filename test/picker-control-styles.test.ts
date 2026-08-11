@@ -29,6 +29,16 @@ function compareSpecificity(
 }
 
 const OBSIDIAN_BUTTON_SELECTOR = 'button:not(.clickable-icon)';
+const OBSIDIAN_BASE_BUTTON_SELECTOR = 'button';
+const OBSIDIAN_BASE_BUTTON_DECLARATIONS = {
+  height: 'var(--input-height)',
+  'white-space': 'nowrap',
+};
+const PICKER_DIV_GEOMETRY = {
+  height: 'auto',
+  'min-height': '0',
+  'white-space': 'normal',
+};
 
 describe('native picker button visual reset', () => {
   it.each([
@@ -51,6 +61,28 @@ describe('native picker button visual reset', () => {
     ]) {
       expect(declarations).toContain(declaration);
     }
+    expect(
+      compareSpecificity(specificity(selector), specificity(OBSIDIAN_BASE_BUTTON_SELECTOR)),
+    ).toBeGreaterThan(0);
+  });
+
+  it('keeps tag rows content-height and wrapping instead of inheriting the base button geometry', () => {
+    const selector = '.tc-tag-picker-modal button.tc-tag-picker-item';
+    const declarations = declarationsFor(selector);
+
+    expect(
+      compareSpecificity(specificity(selector), specificity(OBSIDIAN_BASE_BUTTON_SELECTOR)),
+    ).toBeGreaterThan(0);
+    for (const [property, value] of Object.entries(PICKER_DIV_GEOMETRY)) {
+      if (property in OBSIDIAN_BASE_BUTTON_DECLARATIONS) {
+        expect(value).not.toBe(
+          OBSIDIAN_BASE_BUTTON_DECLARATIONS[
+            property as keyof typeof OBSIDIAN_BASE_BUTTON_DECLARATIONS
+          ],
+        );
+      }
+      expect(declarations).toContain(`${property}: ${value}`);
+    }
   });
 
   it('retains a focus-visible ring and checked/removing tag state after the reset', () => {
@@ -70,5 +102,26 @@ describe('native picker button visual reset', () => {
     expect(css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item--removing')).toBeGreaterThan(
       css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item {'),
     );
+  });
+
+  it('keeps checked and removing backgrounds ahead of the ordinary hover state', () => {
+    const hover = '.tc-tag-picker-modal button.tc-tag-picker-item:hover';
+    const checkedHover = '.tc-tag-picker-modal button.tc-tag-picker-item--checked:hover';
+    const removingHover = '.tc-tag-picker-modal button.tc-tag-picker-item--removing:hover';
+
+    expect(declarationsFor(checkedHover)).toContain(
+      'background: var(--background-modifier-active-hover)',
+    );
+    expect(declarationsFor(removingHover)).toContain(
+      'background: rgba(var(--color-red-rgb), 0.08)',
+    );
+    expect(
+      compareSpecificity(specificity(checkedHover), specificity(hover)),
+    ).toBeGreaterThanOrEqual(0);
+    expect(
+      compareSpecificity(specificity(removingHover), specificity(hover)),
+    ).toBeGreaterThanOrEqual(0);
+    expect(css.indexOf(checkedHover)).toBeGreaterThan(css.indexOf(hover));
+    expect(css.indexOf(removingHover)).toBeGreaterThan(css.indexOf(hover));
   });
 });
