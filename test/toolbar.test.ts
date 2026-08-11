@@ -40,6 +40,7 @@ function makeCallbacks(): { callbacks: ToolbarCallbacks; spies: ToolbarSpies } {
 
 function secondaryDocument(): { ownerDocument: Document; remove: () => void } {
   const frame = document.createElement('iframe');
+  frame.dataset['tcToolbarTest'] = 'true';
   document.body.append(frame);
   const ownerDocument = frame.contentDocument!;
   const ownerWindow = frame.contentWindow as Window & typeof globalThis;
@@ -70,6 +71,11 @@ describe('Toolbar', () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
+    activeDocument
+      .querySelectorAll('iframe[data-tc-toolbar-test]')
+      .forEach((element) => element.remove());
+    container.remove();
   });
 
   describe('construction', () => {
@@ -246,6 +252,43 @@ describe('Toolbar', () => {
   });
 
   describe('update(state)', () => {
+    it('advertises the style popup only on the current view and moves ownership on update', () => {
+      const { callbacks } = makeCallbacks();
+      const tb = new Toolbar(container, VIEWS, callbacks);
+      const buttons = {
+        list: container.querySelector<HTMLButtonElement>('.listView')!,
+        month: container.querySelector<HTMLButtonElement>('.monthView')!,
+        week: container.querySelector<HTMLButtonElement>('.weekView')!,
+      };
+      const expectOwner = (current: keyof typeof buttons): void => {
+        for (const [id, button] of Object.entries(buttons)) {
+          expect(button.getAttribute('aria-haspopup'), id).toBe(id === current ? 'menu' : null);
+          expect(button.getAttribute('aria-expanded'), id).toBe(id === current ? 'false' : null);
+        }
+      };
+
+      for (const button of Object.values(buttons)) {
+        expect(button.getAttribute('aria-haspopup')).toBeNull();
+        expect(button.getAttribute('aria-expanded')).toBeNull();
+      }
+
+      tb.update({ ...baseState, currentView: 'month' });
+      expectOwner('month');
+      buttons.month.click();
+      expect(buttons.month.getAttribute('aria-expanded')).toBe('true');
+
+      tb.update({ ...baseState, currentView: 'week' });
+      expectOwner('week');
+      buttons.week.click();
+      expect(buttons.week.getAttribute('aria-expanded')).toBe('true');
+      buttons.week.click();
+      expectOwner('week');
+
+      tb.update({ ...baseState, currentView: 'list' });
+      expectOwner('list');
+      tb.destroy();
+    });
+
     it('currentBtn textContent = currentTitle', () => {
       const { callbacks } = makeCallbacks();
       const tb = new Toolbar(container, VIEWS, callbacks);
@@ -416,31 +459,35 @@ describe('Toolbar', () => {
       const ownerContainer = ownerDocument.createElement('div');
       ownerDocument.body.append(ownerContainer);
       const { callbacks, spies } = makeCallbacks();
-      const tb = new Toolbar(ownerContainer, VIEWS, callbacks);
-      tb.update({ ...baseState, currentView: 'month', currentStyle: 'style3' });
-      const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
-      const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
+      let tb: Toolbar | undefined;
+      try {
+        tb = new Toolbar(ownerContainer, VIEWS, callbacks);
+        tb.update({ ...baseState, currentView: 'month', currentStyle: 'style3' });
+        const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
+        const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
 
-      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
-      expect(trigger.getAttribute('aria-expanded')).toBe('false');
-      expect(popup.getAttribute('role')).toBe('menu');
+        expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(popup.getAttribute('role')).toBe('menu');
 
-      trigger.focus();
-      trigger.click();
-      const selected = popup.querySelector<HTMLElement>('li[data-style="style3"]')!;
-      expect(trigger.getAttribute('aria-expanded')).toBe('true');
-      expect(ownerDocument.activeElement).toBe(selected);
-      expect(selected.getAttribute('role')).toBe('menuitemradio');
-      expect(selected.getAttribute('aria-checked')).toBe('true');
+        trigger.focus();
+        trigger.click();
+        const selected = popup.querySelector<HTMLElement>('li[data-style="style3"]')!;
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(ownerDocument.activeElement).toBe(selected);
+        expect(selected.getAttribute('role')).toBe('menuitemradio');
+        expect(selected.getAttribute('aria-checked')).toBe('true');
 
-      selected.dispatchEvent(
-        new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
-      );
-      expect(spies.onStyleChange).toHaveBeenCalledWith('style3');
-      expect(trigger.getAttribute('aria-expanded')).toBe('false');
-      expect(ownerDocument.activeElement).toBe(trigger);
-      tb.destroy();
-      secondary.remove();
+        selected.dispatchEvent(
+          new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
+        );
+        expect(spies.onStyleChange).toHaveBeenCalledWith('style3');
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(ownerDocument.activeElement).toBe(trigger);
+      } finally {
+        tb?.destroy();
+        secondary.remove();
+      }
     });
 
     it('uses one exact owner-document lifecycle for Escape, toggle, update, and destroy', () => {
@@ -452,48 +499,56 @@ describe('Toolbar', () => {
       const removeSpy = vi.spyOn(ownerDocument, 'removeEventListener');
       const globalAddSpy = vi.spyOn(activeDocument, 'addEventListener');
       const { callbacks } = makeCallbacks();
-      const tb = new Toolbar(ownerContainer, VIEWS, callbacks);
-      tb.update({ ...baseState, currentView: 'month' });
-      const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
-      const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
-      const registrations = (): (typeof addSpy.mock.calls)[number][] => {
-        vi.runAllTimers();
-        return addSpy.mock.calls.filter(([type]) => type === 'mousedown' || type === 'keydown');
-      };
-      const expectRemoved = (registered: (typeof addSpy.mock.calls)[number][]): void => {
-        expect(registered).toHaveLength(2);
-        for (const listener of registered) expect(removeSpy.mock.calls).toContainEqual(listener);
-      };
+      let tb: Toolbar | undefined;
+      try {
+        tb = new Toolbar(ownerContainer, VIEWS, callbacks);
+        tb.update({ ...baseState, currentView: 'month' });
+        const trigger = ownerContainer.querySelector<HTMLButtonElement>('.monthView')!;
+        const popup = ownerContainer.querySelector<HTMLElement>('.weekViewContext')!;
+        const registrations = (): (typeof addSpy.mock.calls)[number][] => {
+          vi.runAllTimers();
+          return addSpy.mock.calls.filter(([type]) => type === 'mousedown' || type === 'keydown');
+        };
+        const expectRemoved = (registered: (typeof addSpy.mock.calls)[number][]): void => {
+          expect(registered).toHaveLength(2);
+          for (const listener of registered) expect(removeSpy.mock.calls).toContainEqual(listener);
+        };
 
-      trigger.focus();
-      trigger.click();
-      let registered = registrations();
-      ownerDocument.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
-      );
-      expect(popup.classList.contains('active')).toBe(false);
-      expect(ownerDocument.activeElement).toBe(trigger);
-      expectRemoved(registered);
+        trigger.focus();
+        trigger.click();
+        let registered = registrations();
+        ownerDocument.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+        expect(popup.classList.contains('active')).toBe(false);
+        expect(ownerDocument.activeElement).toBe(trigger);
+        expectRemoved(registered);
 
-      trigger.click();
-      registered = registrations().slice(-2);
-      trigger.click();
-      expect(popup.classList.contains('active')).toBe(false);
-      expect(trigger.getAttribute('aria-expanded')).toBe('false');
-      expectRemoved(registered);
+        trigger.click();
+        registered = registrations().slice(-2);
+        trigger.click();
+        expect(popup.classList.contains('active')).toBe(false);
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expectRemoved(registered);
 
-      trigger.click();
-      registered = registrations().slice(-2);
-      tb.update({ ...baseState, currentView: 'month', currentTitle: 'August 2026' });
-      expect(popup.classList.contains('active')).toBe(false);
-      expectRemoved(registered);
+        trigger.click();
+        registered = registrations().slice(-2);
+        tb.update({ ...baseState, currentView: 'month', currentTitle: 'August 2026' });
+        expect(popup.classList.contains('active')).toBe(false);
+        expectRemoved(registered);
 
-      trigger.click();
-      registered = registrations().slice(-2);
-      tb.destroy();
-      expectRemoved(registered);
-      expect(globalAddSpy).not.toHaveBeenCalled();
-      secondary.remove();
+        trigger.click();
+        registered = registrations().slice(-2);
+        tb.destroy();
+        expectRemoved(registered);
+        expect(globalAddSpy).not.toHaveBeenCalled();
+      } finally {
+        tb?.destroy();
+        addSpy.mockRestore();
+        removeSpy.mockRestore();
+        globalAddSpy.mockRestore();
+        secondary.remove();
+      }
     });
 
     it('gives the statistics popup menu semantics, initial focus, and Enter activation', () => {

@@ -86,8 +86,6 @@ export class Toolbar {
           callbacks.onViewSwitch(v.id);
         }
       });
-      btn.setAttribute('aria-haspopup', 'menu');
-      btn.setAttribute('aria-expanded', 'false');
       this.viewButtons.set(v.id, btn);
     }
 
@@ -270,15 +268,27 @@ export class Toolbar {
     if (restoreFocus && owned.trigger.isConnected) owned.trigger.focus({ preventScroll: true });
   }
 
+  private updateViewButtons(currentView: string): void {
+    for (const [id, btn] of this.viewButtons) {
+      const isCurrent = id === currentView;
+      btn.classList.toggle('active', isCurrent);
+      if (isCurrent) {
+        btn.setAttribute('aria-haspopup', 'menu');
+        btn.setAttribute('aria-expanded', 'false');
+      } else {
+        btn.removeAttribute('aria-haspopup');
+        btn.removeAttribute('aria-expanded');
+      }
+    }
+  }
+
   update(state: ToolbarState): void {
     this.closePopup(true);
     this.currentView = state.currentView;
     this.currentBtn.textContent = state.currentTitle;
     this.filterBtn.classList.toggle('active', state.filterActive);
     this.overdueBtn.classList.toggle('active', state.overdueHighlightActive);
-    for (const [id, btn] of this.viewButtons) {
-      btn.classList.toggle('active', id === state.currentView);
-    }
+    this.updateViewButtons(state.currentView);
     // Sync active style in picker
     this.stylePopup.querySelectorAll('li').forEach((li) => {
       const selected = li.getAttribute('data-style') === state.currentStyle;
