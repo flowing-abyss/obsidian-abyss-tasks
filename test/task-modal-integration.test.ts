@@ -293,4 +293,70 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
     expect(activeDocument.activeElement).toBe(chip);
   });
+
+  it.each([
+    {
+      surface: 'title editor',
+      openSelector: '.tc-right-title-view',
+      ownedSelector: '.tc-right-title-edit',
+    },
+    {
+      surface: 'description editor',
+      openSelector: '.tc-right-desc-view',
+      ownedSelector: '.tc-right-desc-edit',
+    },
+    {
+      surface: 'add-subtask editor',
+      openSelector: '.tc-subtask-add-row',
+      ownedSelector: '.tc-subtask-new-input',
+    },
+    {
+      surface: 'inline tag dropdown',
+      openSelector: '+ tag',
+      ownedSelector: '.tc-tag-input',
+    },
+  ])('keeps the modal open when Escape cancels its $surface', async (entry) => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Nested Escape\n' });
+    const current = task({
+      title: 'Nested Escape',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Nested Escape',
+        originalBlock: '- [ ] Nested Escape',
+      },
+    });
+    const queries = taskQueryApi({
+      list: () => [current],
+      resolve: () => ({ type: 'exact', task: current }),
+    });
+    Object.defineProperty(app.metadataCache, 'getTags', {
+      configurable: true,
+      value: () => ({ '#alpha': 1 }),
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(current);
+
+    const opener = entry.openSelector.startsWith('.')
+      ? activeDocument.querySelector<HTMLElement>(`.tc-modal ${entry.openSelector}`)
+      : Array.from(activeDocument.querySelectorAll<HTMLElement>('.tc-modal .tc-chip-add')).find(
+          (candidate) => candidate.textContent === entry.openSelector,
+        );
+    click(opener!);
+    const owned = activeDocument.querySelector<HTMLElement>(`.tc-modal ${entry.ownedSelector}`)!;
+    const escape = new KeyboardEvent('keydown', {
+      key: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    });
+    owned.dispatchEvent(escape);
+    await flushMicrotasks();
+
+    expect(escape.defaultPrevented).toBe(true);
+    expect(activeDocument.querySelector(`.tc-modal ${entry.ownedSelector}`)).toBeNull();
+    expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
+  });
 });

@@ -1065,6 +1065,202 @@ describe('RightPanel popovers', () => {
     }
   });
 
+  it('keeps the time popover open while focus traverses its controls beyond the blur delay', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    const outside = ownerDocument.createElement('button');
+    outside.textContent = 'Outside';
+    ownerDocument.body.append(outside);
+    state.set('taskStack', [
+      task({ title: 'Keyboard traversal', planning: { time: '09:15', duration: 45 } }),
+    ]);
+    const chip = el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    vi.useFakeTimers();
+
+    try {
+      click(chip);
+      vi.runOnlyPendingTimers();
+      const popover = el.querySelector<HTMLElement>('.tc-time-popover')!;
+      const timeInput = popover.querySelector<HTMLInputElement>('.tc-time-input')!;
+      const clearTime = popover.querySelector<HTMLButtonElement>('[aria-label="Clear time"]')!;
+      const durationInput = popover.querySelector<HTMLInputElement>('.tc-duration-input')!;
+      const clearDuration = popover.querySelector<HTMLButtonElement>(
+        '[aria-label="Clear duration"]',
+      )!;
+
+      expect(ownerDocument.activeElement).toBe(timeInput);
+      for (const control of [clearTime, durationInput, clearDuration]) {
+        control.focus();
+        vi.advanceTimersByTime(250);
+        expect(el.querySelector('.tc-time-popover')).toBe(popover);
+        expect(ownerDocument.activeElement).toBe(control);
+      }
+
+      outside.focus();
+      vi.advanceTimersByTime(250);
+      expect(el.querySelector('.tc-time-popover')).toBeNull();
+    } finally {
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
+  });
+
+  it('exposes truthful popup roles and expanded state on every RightPanel overlay trigger', async () => {
+    const { panel, state, el, app } = await makePanel();
+    activeDocument.body.append(el);
+    Object.defineProperty(app.metadataCache, 'getTags', {
+      configurable: true,
+      value: () => ({ '#alpha': 1 }),
+    });
+    state.set('taskStack', [task({ title: 'Overlay roles' })]);
+
+    const inlineTagTrigger = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.tc-chip-add'),
+    ).find((candidate) => candidate.textContent === '+ tag')!;
+    const cases = [
+      [
+        el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!,
+        '.tc-task-context-menu',
+        'menu',
+      ],
+      [el.querySelector<HTMLButtonElement>('.tc-chip-time')!, '.tc-time-popover', 'dialog'],
+      [inlineTagTrigger, '.tc-tag-dropdown', 'listbox'],
+      [el.querySelector<HTMLButtonElement>('.tc-chip-add-date')!, '.tc-add-date-menu', 'menu'],
+      [
+        el.querySelector<HTMLButtonElement>('.tc-priority-chip')!,
+        '.tc-priority-popover',
+        'listbox',
+      ],
+    ] as const;
+
+    try {
+      for (const [trigger, popupSelector, popupRole] of cases) {
+        expect(trigger.getAttribute('aria-haspopup')).toBe(popupRole);
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+
+        click(trigger);
+        const popup = el.querySelector<HTMLElement>(popupSelector)!;
+        expect(popup.getAttribute('role')).toBe(popupRole);
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+        click(trigger);
+        expect(el.querySelector(popupSelector)).toBeNull();
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      }
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('updates the +date trigger while its menu hands ownership to the date dialog', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [task({ title: 'Add a date' })]);
+    const trigger = el.querySelector<HTMLButtonElement>('.tc-chip-add-date')!;
+
+    try {
+      click(trigger);
+      click(el.querySelector<HTMLElement>('.tc-add-date-menu-item')!);
+      const dialog = el.querySelector<HTMLElement>('.tc-date-popover')!;
+
+      expect(dialog.getAttribute('role')).toBe('dialog');
+      expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+
+      dialog.querySelector<HTMLInputElement>('.tc-date-input')!.dispatchEvent(
+        new ownerDocument.defaultView!.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
+  });
+
+  it('owns inline-tag Escape/outside/toggle/rerender/destroy cleanup in its mounted document', async () => {
+    const { panel, state, el, app } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    const outside = ownerDocument.createElement('button');
+    outside.textContent = 'Outside';
+    ownerDocument.body.append(outside);
+    Object.defineProperty(app.metadataCache, 'getTags', {
+      configurable: true,
+      value: () => ({ '#alpha': 1, '#beta': 1 }),
+    });
+    const escapedToDocument = vi.fn();
+    ownerDocument.addEventListener('keydown', escapedToDocument);
+    state.set('taskStack', [task({ title: 'Tag lifecycle' })]);
+
+    const trigger = (): HTMLButtonElement =>
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chip-add')).find(
+        (candidate) => candidate.textContent === '+ tag',
+      )!;
+
+    try {
+      const escapeTrigger = trigger();
+      escapeTrigger.focus();
+      click(escapeTrigger);
+      const input = el.querySelector<HTMLInputElement>('.tc-tag-input')!;
+      expect(ownerDocument.activeElement).toBe(input);
+      const escape = new ownerDocument.defaultView!.KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(true);
+      expect(escapedToDocument).not.toHaveBeenCalled();
+      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
+      expect(ownerDocument.activeElement).toBe(escapeTrigger);
+
+      click(escapeTrigger);
+      await tick();
+      click(outside);
+      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
+
+      click(escapeTrigger);
+      click(escapeTrigger);
+      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
+      expect(escapeTrigger.classList.contains('tc-chip-add--hidden')).toBe(false);
+
+      click(escapeTrigger);
+      const rerenderedSurface = el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap')!;
+      state.set('taskStack', [task({ title: 'Rerendered tag lifecycle' })]);
+      expect(rerenderedSurface.isConnected).toBe(false);
+      expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
+
+      const destroyTrigger = trigger();
+      click(destroyTrigger);
+      const destroyedSurface = el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap')!;
+      panel.destroy();
+      expect(destroyedSurface.isConnected).toBe(false);
+      expect(destroyTrigger.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      ownerDocument.removeEventListener('keydown', escapedToDocument);
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
+  });
+
   it('editing the duration input sends one validated duration patch', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] T ⏰ 15:00' });
     const state = new AppState();

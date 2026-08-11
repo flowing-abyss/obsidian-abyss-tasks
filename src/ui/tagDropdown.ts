@@ -1,12 +1,14 @@
 import type { App } from 'obsidian';
 
+let nextTagDropdownId = 0;
+
 export function showTagDropdown(
   container: HTMLElement,
   app: App,
   getTagColor: (tag: string) => string | undefined,
   onCommit: (tag: string) => void,
   onClose?: () => void,
-): void {
+): HTMLElement {
   container.querySelector('.tc-tag-dropdown-wrap')?.remove();
 
   const rawTags = Object.keys(
@@ -27,16 +29,31 @@ export function showTagDropdown(
     });
 
   const wrap = container.createDiv({ cls: 'tc-tag-dropdown-wrap' });
+  const dropdownId = `tc-tag-dropdown-${nextTagDropdownId++}`;
   const input = wrap.createEl('input', {
     cls: 'tc-tag-input',
-    attr: { type: 'text', placeholder: '#Tag', autocomplete: 'off' },
+    attr: {
+      type: 'text',
+      placeholder: '#Tag',
+      autocomplete: 'off',
+      role: 'combobox',
+      'aria-autocomplete': 'list',
+      'aria-controls': dropdownId,
+      'aria-expanded': 'false',
+    },
   });
-  const dropdown = wrap.createDiv({ cls: 'tc-tag-dropdown' });
-  let activeIdx = -1;
+  const dropdown = wrap.createDiv({
+    cls: 'tc-tag-dropdown',
+    attr: { id: dropdownId, role: 'listbox', 'aria-label': 'Available tags' },
+  });
+  let activeTag: string | undefined;
+  let closed = false;
 
   const close = (): void => {
-    wrap.remove();
+    if (closed) return;
+    closed = true;
     onClose?.();
+    wrap.remove();
   };
 
   const commit = (value: string): void => {
@@ -47,18 +64,27 @@ export function showTagDropdown(
 
   const renderOptions = (query: string): void => {
     dropdown.empty();
-    activeIdx = -1;
     const q = query.toLowerCase().replace(/^#/, '');
     const filtered = q
       ? sortedTags.filter((t) => t.slice(1).toLowerCase().includes(q))
       : sortedTags;
+    if (activeTag !== undefined && !filtered.includes(activeTag)) activeTag = undefined;
     if (filtered.length === 0) {
       dropdown.addClass('tc-tag-dropdown--hidden');
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
       return;
     }
     dropdown.removeClass('tc-tag-dropdown--hidden');
+    input.setAttribute('aria-expanded', 'true');
     for (const tag of filtered) {
-      const opt = dropdown.createDiv({ cls: 'tc-tag-dropdown-opt', text: tag });
+      const optionId = `${dropdownId}-option-${sortedTags.indexOf(tag)}`;
+      const active = tag === activeTag;
+      const opt = dropdown.createDiv({
+        cls: `tc-tag-dropdown-opt${active ? ' is-active' : ''}`,
+        text: tag,
+        attr: { id: optionId, role: 'option', 'aria-selected': String(active) },
+      });
       const color = getTagColor(tag);
       if (color) opt.setCssProps({ '--tc-tag-opt-color': color });
       opt.addEventListener('mousedown', (e) => {
@@ -66,16 +92,21 @@ export function showTagDropdown(
         commit(tag);
       });
     }
+    const active = dropdown.querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active');
+    if (active) input.setAttribute('aria-activedescendant', active.id);
+    else input.removeAttribute('aria-activedescendant');
   };
 
   const updateActive = (delta: number): void => {
-    const opts = dropdown.querySelectorAll<HTMLElement>('.tc-tag-dropdown-opt');
+    const opts = Array.from(dropdown.querySelectorAll<HTMLElement>('.tc-tag-dropdown-opt'));
     if (opts.length === 0) return;
-    opts[activeIdx]?.removeClass('is-active');
-    activeIdx = Math.max(0, Math.min(opts.length - 1, activeIdx + delta));
-    const next = opts[activeIdx];
-    next?.addClass('is-active');
-    next?.scrollIntoView({ block: 'nearest' });
+    const activeIdx = opts.findIndex((option) => option.getAttribute('aria-selected') === 'true');
+    const nextIdx = Math.max(0, Math.min(opts.length - 1, activeIdx + delta));
+    activeTag = opts[nextIdx]?.textContent ?? undefined;
+    renderOptions(input.value);
+    dropdown
+      .querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active')
+      ?.scrollIntoView?.({ block: 'nearest' });
   };
 
   input.addEventListener('input', () => renderOptions(input.value));
@@ -91,14 +122,18 @@ export function showTagDropdown(
       return;
     }
     if (e.key === 'Enter') {
-      const active = dropdown.querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active');
-      commit(active ? (active.textContent ?? '') : input.value);
+      e.preventDefault();
+      commit(activeTag ?? input.value);
       return;
     }
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
   });
-  input.addEventListener('blur', () => window.setTimeout(close, 200));
 
   renderOptions('');
   input.focus();
+  return wrap;
 }

@@ -331,7 +331,12 @@ export class RightPanel {
     const menuBtn = headerActions.createEl('button', {
       cls: 'tc-right-action-btn',
       text: '⋯',
-      attr: { title: 'More actions', 'aria-label': 'More actions' },
+      attr: {
+        title: 'More actions',
+        'aria-label': 'More actions',
+        'aria-haspopup': 'menu',
+        'aria-expanded': 'false',
+      },
     });
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -358,7 +363,11 @@ export class RightPanel {
       const timeChip = chips.createEl('button', {
         cls: `tc-chip tc-chip-time${task.planning.time ? '' : ' tc-chip-empty'}`,
         text: timeChipText,
-        attr: { title: 'Set time & duration' },
+        attr: {
+          title: 'Set time & duration',
+          'aria-haspopup': 'dialog',
+          'aria-expanded': 'false',
+        },
       });
       timeChip.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -389,12 +398,18 @@ export class RightPanel {
         this.renderTagChip(chips, task, tag);
       }
       // Add tag
-      const addTagBtn = chips.createEl('button', { cls: 'tc-chip tc-chip-add', text: '+ tag' });
-      addTagBtn.addEventListener('click', () => {
-        addTagBtn.addClass('tc-chip-add--hidden');
-        this.showTagInput(chips, task, addTagBtn, () =>
-          addTagBtn.removeClass('tc-chip-add--hidden'),
-        );
+      const addTagBtn = chips.createEl('button', {
+        cls: 'tc-chip tc-chip-add',
+        text: '+ tag',
+        attr: {
+          'aria-label': 'Add tag',
+          'aria-haspopup': 'listbox',
+          'aria-expanded': 'false',
+        },
+      });
+      addTagBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        this.showTagInput(chips, task, addTagBtn);
       });
     }
 
@@ -458,6 +473,7 @@ export class RightPanel {
       input.addEventListener('keydown', (e: KeyboardEvent) => {
         if (e.key === 'Enter') void commit();
         if (e.key === 'Escape') {
+          e.preventDefault();
           close();
         }
       });
@@ -829,7 +845,12 @@ export class RightPanel {
     const addBtn = container.createEl('button', {
       cls: 'tc-chip tc-chip-add tc-chip-add-date',
       text: '+ date',
-      attr: { title: 'Add start or plan date', 'aria-label': 'Add start or plan date' },
+      attr: {
+        title: 'Add start or plan date',
+        'aria-label': 'Add start or plan date',
+        'aria-haspopup': 'menu',
+        'aria-expanded': 'false',
+      },
     });
     addBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -907,7 +928,11 @@ export class RightPanel {
     const chip = container.createEl('button', {
       cls: `tc-chip tc-priority-chip tc-priority-chip--${task.priority ?? 'D'}${task.priority === 'D' ? ' tc-chip-empty' : ''}`,
       text: labels[task.priority] ?? 'Priority',
-      attr: { 'data-priority': task.priority ?? 'D' },
+      attr: {
+        'data-priority': task.priority ?? 'D',
+        'aria-haspopup': 'listbox',
+        'aria-expanded': 'false',
+      },
     });
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1040,7 +1065,12 @@ export class RightPanel {
     this.clearPopovers();
     if (already) return;
 
-    const pop = this.el.createDiv({ cls: 'tc-popover tc-date-popover tc-popover-anchored' });
+    const previousPopupRole = anchor.getAttribute('aria-haspopup');
+    anchor.setAttribute('aria-haspopup', 'dialog');
+    const pop = this.el.createDiv({
+      cls: 'tc-popover tc-date-popover tc-popover-anchored',
+      attr: { role: 'dialog', 'aria-label': `Set ${field === 'scheduled' ? 'plan' : field} date` },
+    });
 
     let currentValue: string | undefined;
     if (field === 'due') currentValue = task.planning.due ?? task.planning.scheduled;
@@ -1076,7 +1106,12 @@ export class RightPanel {
       this.removeAnchoredSurface(pop);
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
-    this.dismissMenuOnOutsideClick(pop, anchor);
+    this.dismissMenuOnOutsideClick(pop, anchor, undefined, {
+      onCleanup: () => {
+        if (previousPopupRole) anchor.setAttribute('aria-haspopup', previousPopupRole);
+        else anchor.removeAttribute('aria-haspopup');
+      },
+    });
   }
 
   private showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
@@ -1084,7 +1119,10 @@ export class RightPanel {
     this.clearPopovers();
     if (already) return;
 
-    const pop = this.el.createDiv({ cls: 'tc-popover tc-priority-popover tc-popover-anchored' });
+    const pop = this.el.createDiv({
+      cls: 'tc-popover tc-priority-popover tc-popover-anchored',
+      attr: { role: 'listbox', 'aria-label': 'Priority' },
+    });
 
     const currentPriority = anchor.getAttribute('data-priority') ?? task.priority ?? 'D';
     const options: Array<{ value: string; label: string }> = [
@@ -1100,7 +1138,11 @@ export class RightPanel {
       const isActive = currentPriority === opt.value;
       const btn = pop.createEl('button', {
         cls: `tc-priority-option${isActive ? ' is-active' : ''}`,
-        attr: { 'data-priority': opt.value },
+        attr: {
+          'data-priority': opt.value,
+          role: 'option',
+          'aria-selected': String(isActive),
+        },
       });
       if (isActive) selectedOption = btn;
       const checkEl = btn.createEl('span', { cls: 'tc-priority-option-check' });
@@ -1212,19 +1254,25 @@ export class RightPanel {
     return Number.isFinite(numeric) ? numeric : fallback;
   }
 
-  private showTagInput(
-    container: HTMLElement,
-    task: TaskLike,
-    _anchor: HTMLElement,
-    onClose?: () => void,
-  ): void {
-    showTagDropdown(
+  private showTagInput(container: HTMLElement, task: TaskLike, anchor: HTMLElement): void {
+    const existing = this.el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap');
+    if (existing) {
+      this.removeAnchoredSurface(existing);
+      return;
+    }
+    let surface!: HTMLElement;
+    surface = showTagDropdown(
       container,
       this.app,
       (tag) => this.getTagColor(tag),
       (tag) => void this.addTag(task, tag),
-      onClose,
+      () => this.removeAnchoredSurface(surface),
     );
+    anchor.addClass('tc-chip-add--hidden');
+    this.dismissMenuOnOutsideClick(surface, anchor, () => this.removeAnchoredSurface(surface), {
+      focusLeaveDelay: 200,
+      onCleanup: () => anchor.removeClass('tc-chip-add--hidden'),
+    });
   }
 
   // ---- Write-back helpers ----
@@ -1477,7 +1525,10 @@ export class RightPanel {
     this.clearPopovers();
     if (already) return;
 
-    const pop = this.el.createDiv({ cls: 'tc-popover tc-time-popover tc-popover-anchored' });
+    const pop = this.el.createDiv({
+      cls: 'tc-popover tc-time-popover tc-popover-anchored',
+      attr: { role: 'dialog', 'aria-label': 'Set time and duration' },
+    });
 
     const inputRow = pop.createDiv({ cls: 'tc-popover-input-row' });
     const input = inputRow.createEl('input', {
@@ -1488,9 +1539,6 @@ export class RightPanel {
     input.addEventListener('change', () => {
       void this.updateTime(task, input.value).then(() => this.removeAnchoredSurface(pop));
     });
-    input.addEventListener('blur', () =>
-      this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
-    );
 
     const clearBtn = inputRow.createEl('button', {
       cls: 'tc-popover-clear-icon-btn',
@@ -1520,10 +1568,6 @@ export class RightPanel {
         const done = minutes ? this.updateDuration(task, minutes) : this.clearDuration(task);
         void done.then(() => this.removeAnchoredSurface(pop));
       });
-      durationInput.addEventListener('blur', () =>
-        this.el.ownerDocument.defaultView?.setTimeout(() => this.removeAnchoredSurface(pop), 200),
-      );
-
       const clearDurationBtn = durationRow.createEl('button', {
         cls: 'tc-popover-clear-icon-btn',
         attr: { title: 'Clear duration', 'aria-label': 'Clear duration' },
@@ -1536,7 +1580,7 @@ export class RightPanel {
     }
 
     this.positionAnchoredSurface(pop, anchor, 'below-start');
-    this.dismissMenuOnOutsideClick(pop, anchor);
+    this.dismissMenuOnOutsideClick(pop, anchor, undefined, { focusLeaveDelay: 200 });
   }
 
   private async updateTime(task: TaskLike, time: string): Promise<void> {
@@ -1603,11 +1647,14 @@ export class RightPanel {
     menu: HTMLElement,
     anchor: HTMLElement,
     dismissSurface: () => void = () => this.removeAnchoredSurface(menu),
+    options: { focusLeaveDelay?: number; onCleanup?: () => void } = {},
   ): void {
     const ownerDocument = this.el.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const placementCleanup = this.anchoredSurfaceCleanups.get(menu);
     let listening = false;
+    let focusLeaveTimer: number | undefined;
+    anchor.setAttribute('aria-expanded', 'true');
     const dismiss = (e: MouseEvent): void => {
       if (!menu.contains(e.target as Node) && e.target !== anchor) {
         dismissSurface();
@@ -1620,7 +1667,19 @@ export class RightPanel {
       dismissSurface();
       anchor.focus({ preventScroll: true });
     };
+    const dismissAfterFocusLeaves = (): void => {
+      if (options.focusLeaveDelay === undefined) return;
+      if (focusLeaveTimer !== undefined) ownerWindow?.clearTimeout(focusLeaveTimer);
+      focusLeaveTimer = ownerWindow?.setTimeout(() => {
+        focusLeaveTimer = undefined;
+        const activeElement = ownerDocument.activeElement;
+        if (!menu.contains(activeElement) && activeElement !== anchor) dismissSurface();
+      }, options.focusLeaveDelay);
+    };
     ownerDocument.addEventListener('keydown', dismissOnEscape, true);
+    if (options.focusLeaveDelay !== undefined) {
+      menu.addEventListener('focusout', dismissAfterFocusLeaves);
+    }
     let registrationTimer = ownerWindow?.setTimeout(() => {
       registrationTimer = undefined;
       ownerDocument.addEventListener('click', dismiss, true);
@@ -1629,8 +1688,14 @@ export class RightPanel {
     const cleanup = (): void => {
       placementCleanup?.();
       if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
+      if (focusLeaveTimer !== undefined) ownerWindow?.clearTimeout(focusLeaveTimer);
       if (listening) ownerDocument.removeEventListener('click', dismiss, true);
       ownerDocument.removeEventListener('keydown', dismissOnEscape, true);
+      if (options.focusLeaveDelay !== undefined) {
+        menu.removeEventListener('focusout', dismissAfterFocusLeaves);
+      }
+      anchor.setAttribute('aria-expanded', 'false');
+      options.onCleanup?.();
       if (this.anchoredSurfaceCleanups.get(menu) === cleanup) {
         this.anchoredSurfaceCleanups.delete(menu);
       }
