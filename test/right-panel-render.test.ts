@@ -1006,7 +1006,7 @@ describe('RightPanel popovers', () => {
   });
 
   it('time chip click → popover has both a time input and a duration input', async () => {
-    const { state, el } = await makePanel();
+    const { panel, state, el } = await makePanel();
     state.set('taskStack', [
       task({
         title: 'T',
@@ -1025,6 +1025,44 @@ describe('RightPanel popovers', () => {
     const durationInput = el.querySelector<HTMLInputElement>('.tc-duration-input')!;
     expect(durationInput).not.toBeNull();
     expect(durationInput.value).toBe('1h30m');
+    panel.destroy();
+  });
+
+  it('owns Escape in the mounted document and restores focus from the time popover', async () => {
+    const { panel, state, el } = await makePanel();
+    const frame = activeDocument.body.createEl('iframe');
+    const ownerDocument = frame.contentDocument!;
+    ownerDocument.body.append(ownerDocument.adoptNode(el));
+    state.set('taskStack', [task({ title: 'Keyboard time', planning: { time: '09:15' } })]);
+    const chip = el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const escapedToDocument = vi.fn();
+    ownerDocument.addEventListener('keydown', escapedToDocument);
+
+    try {
+      chip.focus();
+      click(chip);
+      await tick();
+      const popover = el.querySelector<HTMLElement>('.tc-time-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.tc-time-input')!;
+      expect(ownerDocument.activeElement).toBe(input);
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBe(true);
+      expect(escapedToDocument).not.toHaveBeenCalled();
+      expect(el.querySelector('.tc-time-popover')).toBeNull();
+      expect(ownerDocument.activeElement).toBe(chip);
+    } finally {
+      ownerDocument.removeEventListener('keydown', escapedToDocument);
+      panel.destroy();
+      el.remove();
+      frame.remove();
+    }
   });
 
   it('editing the duration input sends one validated duration patch', async () => {
@@ -1222,7 +1260,7 @@ describe('RightPanel popovers', () => {
     expect(removeDocumentListener).toHaveBeenCalledWith('scroll', expect.any(Function), true);
   });
 
-  it('does not install priority dismissal after another surface closes it before the timer', async () => {
+  it('cancels deferred priority dismissal when another owned surface replaces it', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
     vi.useFakeTimers();
@@ -1232,9 +1270,12 @@ describe('RightPanel popovers', () => {
     click(el.querySelector<HTMLElement>('.tc-chip-time')!);
     vi.runOnlyPendingTimers();
 
-    expect(
-      addListener.mock.calls.some(([type, , options]) => type === 'click' && options === true),
-    ).toBe(false);
+    const installedDismissals = addListener.mock.calls.filter(
+      ([type, , options]) => type === 'click' && options === true,
+    );
+    expect(installedDismissals).toHaveLength(1);
+    expect(el.querySelector('.tc-priority-popover')).toBeNull();
+    expect(el.querySelector('.tc-time-popover')).not.toBeNull();
   });
 
   it('does not install priority dismissal after destroy before the timer', async () => {

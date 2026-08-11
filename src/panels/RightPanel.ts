@@ -1536,6 +1536,7 @@ export class RightPanel {
     }
 
     this.positionAnchoredSurface(pop, anchor, 'below-start');
+    this.dismissMenuOnOutsideClick(pop, anchor);
   }
 
   private async updateTime(task: TaskLike, time: string): Promise<void> {
