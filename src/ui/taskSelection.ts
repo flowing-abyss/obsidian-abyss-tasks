@@ -36,18 +36,10 @@ export function rebuildTaskSelection(
     const stale = staleStack[index];
     if (!parent || !stale || 'source' in stale) break;
     const candidates = parent.subtasks;
-    const child =
-      candidates.find(
-        (candidate) =>
-          candidate.ref.relativeLine === stale.ref.relativeLine &&
-          candidate.ref.originalBlock === stale.ref.originalBlock,
-      ) ??
-      (() => {
-        const matches = candidates.filter(
-          (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
-        );
-        return matches.length === 1 ? matches[0] : undefined;
-      })();
+    const matches = candidates.filter(
+      (candidate) => candidate.ref.originalBlock === stale.ref.originalBlock,
+    );
+    const child = matches.length === 1 ? matches[0] : undefined;
     if (!child) break;
     stack.push(child);
   }

@@ -199,6 +199,111 @@ describe('TaskIndex lifecycle and events', () => {
     expect(intermediateRevision).not.toBe(initialRevision);
     expect(restoredRevision).not.toBe(initialRevision);
     expect(restoredRevision).not.toBe(intermediateRevision);
+    expect(index.resolve({ filePath: 'task.md', line: 0, revision: initialRevision })).toEqual({
+      type: 'uncertain',
+      ref: { filePath: 'task.md', line: 0, revision: initialRevision },
+    });
+    index.destroy();
+  });
+
+  it('does not resolve a different task that replaces the observed stale line', async () => {
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': '- [ ] observed\n' }, authority);
+    await index.initialize();
+    const observed = index.list()[0]!;
+
+    fireChanged(mdFile(app, 'task.md'), '- [ ] replacement\n', taskCache());
+
+    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
+    index.destroy();
+  });
+
+  it('rebases a changed root only inside byte-identical neighboring anchors', async () => {
+    const initial = ['- [ ] before', '- [ ] observed', '- [ ] after'].join('\n');
+    const changed = ['- [ ] before', '- [ ] edited externally', '- [ ] after'].join('\n');
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': initial }, authority);
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 2 },
+    ]);
+    await index.initialize();
+    const observed = index.list()[1]!;
+
+    fireChanged(mdFile(app, 'task.md'), changed, {
+      listItems: [
+        { task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } },
+        { task: ' ', parent: -1, position: { start: { line: 1 }, end: { line: 1 } } },
+        { task: ' ', parent: -1, position: { start: { line: 2 }, end: { line: 2 } } },
+      ],
+    } as CachedMetadata);
+
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'rebased',
+      previous: { title: 'observed' },
+      current: { title: 'edited externally' },
+      evidence: 'anchored-range',
+    });
+    index.destroy();
+  });
+
+  it('keeps only the current per-file reconciliation transition', async () => {
+    const initial = ['- [ ] before', '- [ ] observed', '- [ ] after'].join('\n');
+    const second = ['- [ ] before', '- [ ] second', '- [ ] after'].join('\n');
+    const third = ['- [ ] before', '- [ ] third', '- [ ] after'].join('\n');
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': initial }, authority);
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 2 },
+    ]);
+    await index.initialize();
+    const observed = index.list()[1]!;
+    const cache = {
+      listItems: [
+        { task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } },
+        { task: ' ', parent: -1, position: { start: { line: 1 }, end: { line: 1 } } },
+        { task: ' ', parent: -1, position: { start: { line: 2 }, end: { line: 2 } } },
+      ],
+    } as CachedMetadata;
+
+    fireChanged(mdFile(app, 'task.md'), second, cache);
+    const secondSnapshot = index.list()[1]!;
+    expect(index.resolve(observed.ref).type).toBe('rebased');
+    fireChanged(mdFile(app, 'task.md'), third, cache);
+
+    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
+    expect(index.resolve(secondSnapshot.ref).type).toBe('rebased');
+    index.destroy();
+  });
+
+  it('expires a transition on the next observed file generation even when tasks are unchanged', async () => {
+    const initial = ['- [ ] before', '- [ ] observed', '- [ ] after'].join('\n');
+    const changed = ['- [ ] before', '- [ ] edited', '- [ ] after'].join('\n');
+    const authority = new TaskRefAuthority('index-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': initial }, authority);
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 2 },
+    ]);
+    await index.initialize();
+    const observed = index.list()[1]!;
+    const cache = {
+      listItems: [
+        { task: ' ', parent: -1, position: { start: { line: 0 }, end: { line: 0 } } },
+        { task: ' ', parent: -1, position: { start: { line: 1 }, end: { line: 1 } } },
+        { task: ' ', parent: -1, position: { start: { line: 2 }, end: { line: 2 } } },
+      ],
+    } as CachedMetadata;
+
+    fireChanged(mdFile(app, 'task.md'), changed, cache);
+    expect(index.resolve(observed.ref).type).toBe('rebased');
+    fireChanged(mdFile(app, 'task.md'), changed, cache);
+
+    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
     index.destroy();
   });
 

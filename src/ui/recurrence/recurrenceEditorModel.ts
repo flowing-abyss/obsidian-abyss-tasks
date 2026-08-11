@@ -27,7 +27,8 @@ export type YearlyChoice =
       readonly day: number;
     };
 
-type RecurrenceUnit = 'days' | 'weeks' | 'months' | 'years';
+export type Preset = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly';
+export type Unit = 'days' | 'weeks' | 'months' | 'years';
 
 const WEEKDAYS: readonly Weekday[] = [
   'Monday',
@@ -86,14 +87,14 @@ function naturalList(values: readonly string[]): string {
   return `${values.slice(0, -1).join(', ')} and ${values[values.length - 1]}`;
 }
 
-function unitRule(interval: number, unit: RecurrenceUnit): string {
+function unitRule(interval: number, unit: Unit): string {
   const singular = unit.slice(0, -1);
   return interval === 1 ? `every ${singular}` : `every ${String(interval)} ${unit}`;
 }
 
 function serializeControls(input: {
   readonly interval: number;
-  readonly unit: RecurrenceUnit;
+  readonly unit: Unit;
   readonly weekdays: readonly Weekday[];
   readonly monthly: MonthlyChoice;
   readonly yearly: YearlyChoice;
@@ -122,7 +123,7 @@ function serializeControls(input: {
 
 export function buildRecurrenceRule(input: {
   readonly interval: number;
-  readonly unit: RecurrenceUnit;
+  readonly unit: Unit;
   readonly weekdays: readonly Weekday[];
   readonly monthly: MonthlyChoice;
   readonly yearly: YearlyChoice;

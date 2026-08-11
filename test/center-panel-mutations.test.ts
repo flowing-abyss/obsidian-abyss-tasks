@@ -69,7 +69,9 @@ async function makePanel(
       const found = snapshots.find(
         (snapshot) => snapshot.ref.filePath === ref.filePath && snapshot.ref.line === ref.line,
       );
-      return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
+      return found
+        ? { type: 'exact', task: found, basis: { observed: found } }
+        : { type: 'not-found', ref };
     },
   });
   const repository = new ObsidianTaskRepository(app, {

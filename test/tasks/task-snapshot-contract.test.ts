@@ -162,24 +162,22 @@ describe('TaskSnapshot contract', () => {
     index.destroy();
   });
 
-  it('resolves exact, unique drift, conflict, not-found, and ambiguous references safely', async () => {
+  it('resolves exact, proven drift, uncertainty, and ambiguous references safely', async () => {
     const { index, fireChanged, file } = await snapshotIndex('- [ ] same');
     const observed = index.list()[0]!;
     expect(index.resolve(observed.ref)).toMatchObject({ type: 'exact', task: { title: 'same' } });
 
     fireChanged(file, ['plain', '- [ ] same'].join('\n'), cache([1]));
     expect(index.resolve(observed.ref)).toMatchObject({
-      type: 'exact',
-      task: { source: { line: 1 } },
+      type: 'rebased',
+      current: { source: { line: 1 } },
+      evidence: 'byte-identical-relocation',
     });
 
     fireChanged(file, '- [ ] changed', cache([0]));
-    expect(index.resolve(observed.ref)).toMatchObject({
-      type: 'conflict',
-      current: { title: 'changed' },
-    });
+    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
     expect(index.resolve({ ...observed.ref, line: 50 })).toEqual({
-      type: 'not-found',
+      type: 'uncertain',
       ref: { ...observed.ref, line: 50 },
     });
 

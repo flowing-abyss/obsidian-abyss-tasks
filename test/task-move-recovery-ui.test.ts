@@ -45,6 +45,10 @@ function partial(): TaskCommandResult {
   return { type: 'partial', operation: 'move', recovery };
 }
 
+function exact(task: TaskSnapshot): TaskResolution {
+  return { type: 'exact', task, basis: { observed: task } };
+}
+
 function taskApi(
   resolveResult: TaskResolution,
   executeResult: TaskCommandResult = {
@@ -86,7 +90,7 @@ function openRecovery(
 describe('partial move recovery presentation', () => {
   it('routes a project drop through ProjectManager and opens recovery for its partial result', async () => {
     const app = await createAppWithFiles({});
-    const tasks = taskApi({ type: 'exact', task: snapshot(source) });
+    const tasks = taskApi(exact(snapshot(source)));
     const manager = { moveTaskToProject: vi.fn().mockResolvedValue(partial()) };
     const open = vi.spyOn(TaskMoveRecoveryModal.prototype, 'open').mockImplementation(() => {});
 
@@ -98,7 +102,7 @@ describe('partial move recovery presentation', () => {
 
   it('opens the recovery UI for a partial result instead of treating it as success', async () => {
     const app = await createAppWithFiles({});
-    const tasks = taskApi({ type: 'exact', task: snapshot(source) });
+    const tasks = taskApi(exact(snapshot(source)));
     const open = vi.spyOn(TaskMoveRecoveryModal.prototype, 'open').mockImplementation(() => {});
 
     presentTaskMoveResult(app, tasks, partial());
@@ -108,7 +112,7 @@ describe('partial move recovery presentation', () => {
 
   it('shows that both copies exist and offers explicit keep-both/remove-original choices', async () => {
     const app = await createAppWithFiles({});
-    const tasks = taskApi({ type: 'exact', task: snapshot(source) });
+    const tasks = taskApi(exact(snapshot(source)));
 
     const modal = openRecovery(app, tasks);
 
@@ -127,7 +131,7 @@ describe('partial move recovery presentation', () => {
   it('resolves immediately before deleting an exact original ref', async () => {
     const app = await createAppWithFiles({});
     const exact = snapshot(source);
-    const tasks = taskApi({ type: 'exact', task: exact });
+    const tasks = taskApi({ type: 'exact', task: exact, basis: { observed: exact } });
     const modal = openRecovery(app, tasks);
 
     button(modal.contentEl, 'Remove original').click();
@@ -148,7 +152,13 @@ describe('partial move recovery presentation', () => {
       '  - [ ] newer child',
     ].join('\n');
     const changed = snapshot({ ...source, revision: 'new-revision' }, changedBlock);
-    const tasks = taskApi({ type: 'conflict', current: changed });
+    const tasks = taskApi({
+      type: 'rebased',
+      previous: snapshot(source),
+      current: changed,
+      evidence: 'authority-transition',
+      basis: { observed: snapshot(source) },
+    });
     const modal = openRecovery(app, tasks);
 
     button(modal.contentEl, 'Remove original').click();
@@ -169,7 +179,7 @@ describe('partial move recovery presentation', () => {
     const app = await createAppWithFiles({});
     const exact = snapshot(source);
     const tasks = taskApi(
-      { type: 'exact', task: exact },
+      { type: 'exact', task: exact, basis: { observed: exact } },
       {
         type: 'io-error',
         cause: 'process-error',
@@ -195,7 +205,7 @@ describe('partial move recovery presentation', () => {
     const app = await createAppWithFiles({});
     const exact = snapshot(source);
     const tasks = taskApi(
-      { type: 'exact', task: exact },
+      { type: 'exact', task: exact, basis: { observed: exact } },
       {
         type: 'io-error',
         cause: 'read-error',

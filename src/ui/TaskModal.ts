@@ -11,6 +11,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../tasks';
+import { isDirtyDraft } from './taskDraftContinuity';
 import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from './taskSelection';
 
 export class TaskModal {
@@ -144,33 +145,29 @@ export class TaskModal {
 
   private applyResolution(resolution: TaskResolution, stack: TaskSelectionNode[]): void {
     this.clearResolutionMessage();
-    const rootRef = stack[0] ? rootTaskRef(stack[0]) : undefined;
-    const ownWrite = Boolean(
-      rootRef && this.ownedWriteRef && this.sameRef(rootRef, this.ownedWriteRef),
-    );
     this.ownedWriteRef = undefined;
-    if (resolution.type === 'exact') {
-      this.innerState?.set('taskStack', rebuildTaskSelection(resolution.task, stack));
-      return;
-    }
-    if (ownWrite && resolution.type === 'conflict') {
-      this.innerState?.set('taskStack', rebuildTaskSelection(resolution.current, stack));
+    if (resolution.type === 'exact' || resolution.type === 'rebased') {
+      const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+      const draft = this.innerPanel?.captureDraftState();
+      this.innerState?.set('taskStack', rebuildTaskSelection(current, stack));
+      this.innerPanel?.restoreDraftState(draft, current);
       return;
     }
     if (resolution.type === 'not-found') {
+      const draft = this.innerPanel?.captureDraftState();
+      if (isDirtyDraft(draft)) {
+        this.innerState?.set('taskStack', []);
+        this.innerPanel?.detachDraftState(draft);
+        return;
+      }
       this.close();
       return;
     }
-    if (resolution.type === 'conflict') {
+    if (resolution.type === 'uncertain') {
       const banner = this.createResolutionMessage(
-        'tc-task-selection-stale',
-        'This task changed outside the calendar.',
+        'tc-task-selection-uncertain',
+        'This task could not be identified safely after the file changed.',
       );
-      this.addAction(banner, 'Reload', 'tc-task-selection-reload', () => {
-        const stale = this.innerState?.get('taskStack') ?? [];
-        this.innerState?.set('taskStack', rebuildTaskSelection(resolution.current, stale));
-        this.clearResolutionMessage();
-      });
       this.addAction(banner, 'Close', 'tc-task-selection-close', () => this.close());
       return;
     }
@@ -182,7 +179,9 @@ export class TaskModal {
       const label = `${candidate.root.title} — ${candidate.root.source.filePath}:${candidate.root.source.line + 1}`;
       this.addAction(banner, label, 'tc-task-selection-candidate', () => {
         const stale = this.innerState?.get('taskStack') ?? [];
+        const draft = this.innerPanel?.captureDraftState();
         this.innerState?.set('taskStack', rebuildTaskSelection(candidate.root, stale));
+        this.innerPanel?.restoreDraftState(draft, candidate.root);
         this.clearResolutionMessage();
       });
     }

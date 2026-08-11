@@ -8,11 +8,14 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
+import type { RecurrenceEditorDraft } from '../taskDraftContinuity';
 import type { TaskSelectionNode } from '../taskSelection';
 import {
   buildRecurrenceRule,
   recurrencePresetRule,
   type MonthlyChoice,
+  type Preset,
+  type Unit,
   type Weekday,
   type YearlyChoice,
 } from './recurrenceEditorModel';
@@ -32,6 +35,8 @@ export interface RecurrenceEditorHandle {
   destroy(): void;
   dismiss(): void;
   focus(): void;
+  captureDraftState(): RecurrenceEditorDraft;
+  restoreDraftState(draft: RecurrenceEditorDraft): void;
 }
 
 export interface AnchoredRecurrenceEditorOptions extends Omit<
@@ -42,8 +47,6 @@ export interface AnchoredRecurrenceEditorOptions extends Omit<
   readonly onClose?: () => void;
 }
 
-type Preset = 'daily' | 'weekdays' | 'weekly' | 'monthly' | 'yearly';
-type Unit = 'days' | 'weeks' | 'months' | 'years';
 type Month = Extract<YearlyChoice, { type: 'date' }>['month'];
 
 interface EditorState {
@@ -59,6 +62,7 @@ interface EditorState {
   onCompletion: 'keep' | 'delete';
   submitting: boolean;
   submissionError: string | undefined;
+  dirty: boolean;
 }
 
 const WEEKDAYS: readonly Weekday[] = [
@@ -179,6 +183,27 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     onCompletion: task?.onCompletion ?? 'keep',
     submitting: false,
     submissionError: undefined,
+    dirty: false,
+  };
+
+  const controlKey = (element: Element | null): string | undefined => {
+    if (!(element instanceof HTMLElement) || !options.container.contains(element)) return undefined;
+    if (element.matches('.tc-recurrence-raw')) return 'custom';
+    if (element.matches('.tc-recurrence-interval')) return 'interval';
+    if (element.matches('[name="recurrence-weekday"]')) {
+      return `weekday:${(element as HTMLInputElement).value}`;
+    }
+    return element.getAttribute('aria-label') ?? undefined;
+  };
+
+  const controlForKey = (
+    key: string | undefined,
+  ): HTMLInputElement | HTMLSelectElement | undefined => {
+    if (!key) return undefined;
+    const controls = [
+      ...options.container.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'),
+    ];
+    return controls.find((control) => controlKey(control) === key);
   };
 
   const parseState = (): RecurrenceParseResult => {
@@ -340,6 +365,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     if (preset === 'monthly') state.unit = 'months';
     if (preset === 'yearly') state.unit = 'years';
     state.submissionError = undefined;
+    state.dirty = true;
     render();
   };
 
@@ -350,9 +376,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const interval = cadence.createEl('input', {
       cls: 'tc-recurrence-interval',
       attr: {
-        type: 'number',
-        min: '1',
-        step: '1',
+        type: 'text',
+        inputmode: 'numeric',
+        pattern: '[0-9]*',
         value: state.intervalText,
         'aria-label': 'Repeat interval',
         'aria-describedby': diagnosticId,
@@ -363,6 +389,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.intervalText = interval.value;
       state.preset = undefined;
       state.submissionError = undefined;
+      state.dirty = true;
       refresh();
     });
     const unit = cadence.createEl('select', { attr: { 'aria-label': 'Repeat unit' } });
@@ -377,6 +404,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.yearly = { type: 'same-date' };
       state.weekdays = reference ? [weekdayForReference(reference)] : ['Monday'];
       state.submissionError = undefined;
+      state.dirty = true;
       render();
     });
 
@@ -397,6 +425,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
             ? [...state.weekdays, weekday]
             : state.weekdays.filter((candidate) => candidate !== weekday);
           state.submissionError = undefined;
+          state.dirty = true;
           refresh();
         });
       }
@@ -425,6 +454,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         state.monthly = { type: 'weekday', ordinal: 1, weekday: 'Monday' };
       }
       state.submissionError = undefined;
+      state.dirty = true;
       render();
     });
     if (state.monthly.type === 'day') {
@@ -442,6 +472,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       });
       day.addEventListener('input', () => {
         state.monthly = { type: 'day', day: Number(day.value) };
+        state.dirty = true;
         refresh();
       });
     }
@@ -467,11 +498,13 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
           ...state.monthly,
           ordinal: Number(ordinal.value) as 1 | 2 | 3 | 4 | -1 | -2,
         };
+        state.dirty = true;
         refresh();
       });
       weekday.addEventListener('change', () => {
         if (state.monthly.type !== 'weekday') return;
         state.monthly = { ...state.monthly, weekday: weekday.value as Weekday };
+        state.dirty = true;
         refresh();
       });
     }
@@ -486,6 +519,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.yearly =
         pattern.value === 'date' ? { type: 'date', month: 1, day: 1 } : { type: 'same-date' };
       state.submissionError = undefined;
+      state.dirty = true;
       render();
     });
     if (state.yearly.type !== 'date') return;
@@ -513,11 +547,13 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     month.addEventListener('change', () => {
       if (state.yearly.type !== 'date') return;
       state.yearly = { ...state.yearly, month: Number(month.value) as Month };
+      state.dirty = true;
       refresh();
     });
     day.addEventListener('input', () => {
       if (state.yearly.type !== 'date') return;
       state.yearly = { ...state.yearly, day: Number(day.value) };
+      state.dirty = true;
       refresh();
     });
   };
@@ -545,6 +581,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.mode = 'advanced';
       state.preset = undefined;
       state.submissionError = undefined;
+      state.dirty = true;
       render();
     });
 
@@ -586,6 +623,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       raw.addEventListener('input', () => {
         state.advancedRaw = raw.value;
         state.submissionError = undefined;
+        state.dirty = true;
         refresh();
       });
     } else {
@@ -610,6 +648,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         if (raw) raw.value = state.advancedRaw;
       }
       state.submissionError = undefined;
+      state.dirty = true;
       refresh();
     });
 
@@ -622,6 +661,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     addOption(completed, 'delete', 'Delete completed task', state.onCompletion === 'delete');
     completed.addEventListener('change', () => {
       state.onCompletion = completed.value as 'keep' | 'delete';
+      state.dirty = true;
       refresh();
     });
 
@@ -695,6 +735,61 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   options.container.addEventListener('keydown', keyHandler);
   render();
 
+  const captureDraftState = (): RecurrenceEditorDraft => {
+    const active = options.container.ownerDocument.activeElement;
+    const input =
+      active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement
+        ? active
+        : undefined;
+    return {
+      mode: state.mode === 'advanced' ? 'custom' : 'structured',
+      ...(state.preset !== undefined && { preset: state.preset }),
+      intervalText: state.intervalText,
+      unit: state.unit,
+      weekdays: [...state.weekdays],
+      monthly: state.monthly,
+      yearly: state.yearly,
+      whenDone: state.whenDone,
+      onCompletion: state.onCompletion,
+      customDraft: state.advancedRaw,
+      ...(controlKey(active) !== undefined && { focusedControl: controlKey(active) }),
+      ...(input?.selectionStart !== null &&
+        input?.selectionStart !== undefined && {
+          selectionStart: input.selectionStart,
+        }),
+      ...(input?.selectionEnd !== null &&
+        input?.selectionEnd !== undefined && {
+          selectionEnd: input.selectionEnd,
+        }),
+      dirty: state.dirty,
+    };
+  };
+
+  const restoreDraftState = (draft: RecurrenceEditorDraft): void => {
+    state.mode = draft.mode === 'custom' ? 'advanced' : 'controls';
+    state.preset = draft.preset;
+    state.intervalText = draft.intervalText;
+    state.unit = draft.unit;
+    state.weekdays = [...draft.weekdays];
+    state.monthly = draft.monthly;
+    state.yearly = draft.yearly;
+    state.whenDone = draft.whenDone;
+    state.onCompletion = draft.onCompletion;
+    state.advancedRaw = draft.customDraft;
+    state.dirty = draft.dirty;
+    state.submissionError = undefined;
+    render();
+    const control = controlForKey(draft.focusedControl);
+    control?.focus();
+    if (
+      control instanceof HTMLInputElement &&
+      draft.selectionStart !== undefined &&
+      draft.selectionEnd !== undefined
+    ) {
+      control.setSelectionRange(draft.selectionStart, draft.selectionEnd);
+    }
+  };
+
   return {
     destroy: () => {
       ownerWindow?.removeEventListener('keydown', submitShortcutHandler, true);
@@ -710,6 +805,8 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       );
       focusTarget?.focus();
     },
+    captureDraftState,
+    restoreDraftState,
   };
 }
 
@@ -777,5 +874,14 @@ export function mountAnchoredRecurrenceEditor(
   }, 0);
   ownerWindow?.setTimeout(() => editor?.focus(), 0);
 
-  return { destroy, dismiss: () => editor?.dismiss(), focus: () => editor?.focus() };
+  return {
+    destroy,
+    dismiss: () => editor?.dismiss(),
+    focus: () => editor?.focus(),
+    captureDraftState: () => {
+      if (!editor) throw new Error('recurrence-editor-unavailable');
+      return editor.captureDraftState();
+    },
+    restoreDraftState: (draft) => editor?.restoreDraftState(draft),
+  };
 }

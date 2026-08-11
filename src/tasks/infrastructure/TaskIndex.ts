@@ -12,11 +12,18 @@ import type {
   TaskIndexEvent,
   TaskQuery,
   TaskQueryApi,
-  TaskResolution,
 } from '../application/TaskApplicationApi';
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
+import {
+  reconcileRootTransitions,
+  taskReconciliationKey,
+  type ProvenRootRevisionOverride,
+  type ProvenRootTransition,
+  type RootReconciliationBasis,
+  type TaskResolution,
+} from '../domain/taskReconciliation';
 import type {
   LocalDate,
   SubtaskSnapshot,
@@ -54,6 +61,20 @@ interface FileObservation {
   readonly file: TFile;
   readonly path: string;
   readonly generation: number;
+}
+
+interface FileReconciliationTransition {
+  readonly fromGeneration: number;
+  readonly toGeneration: number;
+  readonly roots: ReadonlyMap<
+    string,
+    {
+      readonly previous: TaskSnapshot;
+      readonly current: TaskSnapshot;
+      readonly evidence: ProvenRootTransition['evidence'];
+      readonly basis: RootReconciliationBasis;
+    }
+  >;
 }
 
 function momentToRegex(format: string): RegExp {
@@ -444,6 +465,8 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     (source) => calendarRangeForPlanning(source.node.planning),
   );
   private readonly recurringSourcesByFile = new Map<string, readonly CalendarTaskSource[]>();
+  private readonly fileGenerations = new Map<string, number>();
+  private readonly reconciliationTransitions = new Map<string, FileReconciliationTransition>();
   private listeners: Listener[] = [];
   private readonly pendingFiles = new Set<string>();
   private fileLifecycles = new WeakMap<TFile, FileLifecycle>();
@@ -563,16 +586,54 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
       return { type: 'ambiguous', candidates: matches.map(cloneCandidate) };
     }
     if (current?.ref.revision === ref.revision) {
-      return { type: 'exact', task: cloneTaskSnapshot(current) };
+      const task = cloneTaskSnapshot(current);
+      return { type: 'exact', task, basis: { observed: cloneTaskSnapshot(task) } };
     }
-    if (matches.length === 1) return { type: 'exact', task: cloneTaskSnapshot(matches[0]!) };
+    const transition = this.reconciliationTransitions
+      .get(ref.filePath)
+      ?.roots.get(taskReconciliationKey(ref));
+    if (transition) {
+      return {
+        type: 'rebased',
+        previous: cloneTaskSnapshot(transition.previous),
+        current: cloneTaskSnapshot(transition.current),
+        evidence: transition.evidence,
+        basis: {
+          observed: cloneTaskSnapshot(transition.basis.observed),
+          ...(transition.basis.previousRootAnchor && {
+            previousRootAnchor: { ...transition.basis.previousRootAnchor },
+          }),
+          ...(transition.basis.nextRootAnchor && {
+            nextRootAnchor: { ...transition.basis.nextRootAnchor },
+          }),
+          ...(transition.basis.authorityTransition && {
+            authorityTransition: { ...transition.basis.authorityTransition },
+          }),
+        },
+      };
+    }
+    if (matches.length === 1) {
+      const currentTask = cloneTaskSnapshot(matches[0]!);
+      const observedTask = cloneTaskSnapshot(currentTask);
+      const observed: TaskSnapshot = {
+        ...observedTask,
+        ref: { ...ref },
+        source: { ...observedTask.source, line: ref.line },
+      };
+      return {
+        type: 'rebased',
+        previous: observed,
+        current: currentTask,
+        evidence: 'byte-identical-relocation',
+        basis: { observed },
+      };
+    }
     if (sourceMatches.length > 1) {
       return { type: 'ambiguous', candidates: sourceMatches.map(cloneCandidate) };
     }
-    if (sourceMatches.length === 1) {
-      return { type: 'conflict', current: cloneTaskSnapshot(sourceMatches[0]!) };
+    if (current || sourceMatches.length === 1 || tasks.length > 0) {
+      return { type: 'uncertain', ref: { ...ref } };
     }
-    if (current) return { type: 'conflict', current: cloneTaskSnapshot(current) };
     return { type: 'not-found', ref: { ...ref } };
   }
 
@@ -595,6 +656,8 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.fileLifecycles = new WeakMap();
     this.pendingReads.clear();
     this.taskMap.clear();
+    this.fileGenerations.clear();
+    this.reconciliationTransitions.clear();
     this.calendarDateIndex.clear();
     this.recurringSourcesByFile.clear();
   }
@@ -618,7 +681,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         // The empty replacement still wins for the observed lifecycle generation.
       }
       if (!this.isCurrent(observation)) return false;
-      this.replaceFile(path, []);
+      this.replaceFile(path, [], [], true);
       return true;
     }
     try {
@@ -632,11 +695,13 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           forceContentFallback ? cacheWithContentFallback(content, cache) : cache!,
           true,
         ),
+        [],
+        true,
       );
       return true;
     } catch {
       if (!this.isCurrent(observation)) return false;
-      this.replaceFile(path, []);
+      this.replaceFile(path, [], [], true);
       return true;
     }
   }
@@ -646,8 +711,18 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     content: string,
     cache: CachedMetadata,
     allocateSuccessor = false,
+    captureAuthorityTransitions?: (transitions: readonly ProvenRootRevisionOverride[]) => void,
   ): readonly TaskSnapshot[] {
-    const overrides = this.options.refAuthority?.observe(filePath, content) ?? [];
+    const authorityObservation = this.options.refAuthority?.observeTransition(filePath, content);
+    const overrides = authorityObservation?.roots ?? [];
+    if (authorityObservation) {
+      captureAuthorityTransitions?.(
+        overrides.map((override) => ({
+          ...override,
+          previousRevision: authorityObservation.expectedRevision,
+        })),
+      );
+    }
     if (!cache.listItems) return [];
     // Preserve the legacy raw-line shape (`\r` stays attached under CRLF) for compatibility
     // consumers while TaskBlockEditor independently owns exact block revision bytes.
@@ -763,13 +838,17 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);
+    let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
     const tasks = this.parseFile(
       filePath,
       content,
       { ...cache, ...(frontmatter && { frontmatter }) },
       true,
+      (transitions) => {
+        authorityTransitions = transitions;
+      },
     );
-    if (this.replaceFile(filePath, tasks)) this.queueChanged(filePath);
+    if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
     return tasks.map(cloneTaskSnapshot);
   }
 
@@ -804,9 +883,23 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     return this.locator.revision(source);
   }
 
-  private replaceFile(filePath: string, tasks: readonly TaskSnapshot[]): boolean {
+  private replaceFile(
+    filePath: string,
+    tasks: readonly TaskSnapshot[],
+    authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
+    advanceGenerationOnUnchanged = false,
+  ): boolean {
     const current = this.taskMap.get(filePath) ?? [];
     const changed = JSON.stringify(current) !== JSON.stringify(tasks);
+    if (!changed && !advanceGenerationOnUnchanged) return false;
+    const fromGeneration = this.fileGenerations.get(filePath) ?? 0;
+    const toGeneration = fromGeneration + 1;
+    this.fileGenerations.set(filePath, toGeneration);
+    this.reconciliationTransitions.set(filePath, {
+      fromGeneration,
+      toGeneration,
+      roots: reconcileRootTransitions(current, tasks, authorityTransitions),
+    });
     if (!changed) return false;
     if (tasks.length > 0) this.taskMap.set(filePath, tasks);
     else this.taskMap.delete(filePath);
@@ -833,10 +926,17 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           return;
         }
         this.advance(file, path);
-        const changed = this.replaceFile(
+        let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
+        const tasks = this.parseFile(
           path,
-          this.parseFile(path, data, cacheWithContentFallback(data, cache), true),
+          data,
+          cacheWithContentFallback(data, cache),
+          true,
+          (transitions) => {
+            authorityTransitions = transitions;
+          },
         );
+        const changed = this.replaceFile(path, tasks, authorityTransitions, true);
         if (changed) this.queueChanged(path);
       }),
     );

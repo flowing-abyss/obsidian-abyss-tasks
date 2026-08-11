@@ -1,4 +1,7 @@
+import type { RootRevisionOverride } from '../domain/taskReconciliation';
 import type { TaskRef, TaskSnapshot } from '../domain/types';
+
+export type { RootRevisionOverride } from '../domain/taskReconciliation';
 
 export interface TaskRefEvidence {
   readonly source: string;
@@ -6,16 +9,15 @@ export interface TaskRefEvidence {
   readonly generation: string;
 }
 
-export interface RootRevisionOverride {
-  readonly line: number;
-  readonly source: string;
-  readonly revision: string;
-}
-
 export interface TaskRefTransition {
   readonly filePath: string;
   readonly candidateFingerprint: string;
   readonly candidateLength: number;
+  readonly expectedRevision: string;
+  readonly roots: readonly RootRevisionOverride[];
+}
+
+export interface TaskRefAuthorityObservation {
   readonly expectedRevision: string;
   readonly roots: readonly RootRevisionOverride[];
 }
@@ -136,10 +138,14 @@ export class TaskRefAuthority {
   }
 
   observe(filePath: string, content: string): readonly RootRevisionOverride[] {
+    return this.observeTransition(filePath, content)?.roots ?? [];
+  }
+
+  observeTransition(filePath: string, content: string): TaskRefAuthorityObservation | undefined {
     const transition = this.transitions.get(filePath);
-    if (!transition || !matches(transition, content)) return [];
+    if (!transition || !matches(transition, content)) return undefined;
     transition.observed = true;
-    return transition.roots;
+    return { expectedRevision: transition.expectedRevision, roots: transition.roots };
   }
 
   commit(token: object): void {

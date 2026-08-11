@@ -35,7 +35,10 @@ import {
   whenPasteSettled,
 } from '../ui/attachmentDrop';
 import { LinkEditModal } from '../ui/LinkEditModal';
-import { mountRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
+import {
+  mountRecurrenceEditor,
+  type RecurrenceEditorHandle,
+} from '../ui/recurrence/RecurrenceEditor';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
@@ -45,6 +48,11 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { showStatusMenuAt } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
+import {
+  draftPlainText,
+  rebaseRightPanelDraft,
+  type RightPanelDraftState,
+} from '../ui/taskDraftContinuity';
 import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 
@@ -97,6 +105,11 @@ export class RightPanel {
   private md = new Component();
   private onSuccessfulMutation?: (ref?: TaskRef) => void;
   private anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
+  private recurrenceDraftEditor?: {
+    readonly target: TaskNodeRef;
+    readonly handle: RecurrenceEditorHandle;
+    readonly surface: HTMLElement;
+  };
 
   constructor(
     private state: AppState,
@@ -121,6 +134,155 @@ export class RightPanel {
     this.clearAnchoredSurfaces();
     this.el?.empty();
     this.md.unload();
+  }
+
+  captureDraftState(): RightPanelDraftState | undefined {
+    if (!this.el) return undefined;
+    const stack = this.state.get('taskStack');
+    const task = stack[stack.length - 1];
+    const target = task ? this.planningTarget(task) : undefined;
+    const active = this.el.ownerDocument.activeElement;
+    const recurrence = this.recurrenceDraftEditor;
+    if (recurrence) {
+      const editor = recurrence.handle.captureDraftState();
+      const hadFocus = active !== null && recurrence.surface.contains(active);
+      if (editor.dirty || hadFocus) {
+        return {
+          kind: 'recurrence-editor',
+          target: recurrence.target,
+          editor,
+          hadFocus,
+        };
+      }
+    }
+    if (!task || !target) return undefined;
+
+    const textDraft = (element: HTMLInputElement | HTMLTextAreaElement, base: string) => ({
+      value: element.value,
+      selectionStart: element.selectionStart ?? 0,
+      selectionEnd: element.selectionEnd ?? 0,
+      hadFocus: active === element,
+      dirty: element.value !== base,
+    });
+    const candidates: RightPanelDraftState[] = [];
+    const title = this.el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit');
+    if (title) {
+      candidates.push({
+        kind: 'title',
+        target: { type: 'title', target },
+        ...textDraft(title, task.markdownTitle),
+      });
+    }
+    const description = this.el.querySelector<HTMLTextAreaElement>('.tc-right-desc-edit');
+    if (description) {
+      candidates.push({
+        kind: 'description',
+        target: { type: 'description', target },
+        ...textDraft(description, task.description ?? ''),
+      });
+    }
+    const commentEdit = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input');
+    if (commentEdit) {
+      const row = commentEdit.closest('.tc-comment-row');
+      const rows = [...this.el.querySelectorAll('.tc-comment-row')];
+      const comment = row ? task.comments[rows.indexOf(row)] : undefined;
+      if (comment) {
+        candidates.push({
+          kind: 'existing-comment',
+          target: { type: 'comment', ref: comment.ref },
+          ...textDraft(commentEdit, comment.text),
+        });
+      }
+    }
+    const newSubtask = this.el.querySelector<HTMLInputElement>('.tc-subtask-new-input');
+    if (newSubtask) {
+      candidates.push({ kind: 'new-subtask', parent: target, ...textDraft(newSubtask, '') });
+    }
+    const newComment = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-input');
+    if (newComment) {
+      candidates.push({ kind: 'new-comment', parent: target, ...textDraft(newComment, '') });
+    }
+    return (
+      candidates.find((candidate) => candidate.hadFocus) ??
+      candidates.find((candidate) =>
+        candidate.kind === 'recurrence-editor' ? candidate.editor.dirty : candidate.dirty,
+      )
+    );
+  }
+
+  restoreDraftState(draft: RightPanelDraftState | undefined, currentRoot: TaskSnapshot): void {
+    if (!draft) return;
+    const rebased = rebaseRightPanelDraft(draft, currentRoot);
+    if (!rebased) {
+      if (draft.kind === 'recurrence-editor' ? draft.editor.dirty : draft.dirty) {
+        this.renderDetachedDraft(draft);
+      }
+      return;
+    }
+    const stack = this.state.get('taskStack');
+    const task = stack[stack.length - 1];
+    if (!task) {
+      this.renderDetachedDraft(rebased);
+      return;
+    }
+    if (rebased.kind === 'recurrence-editor') {
+      const chip = this.el.querySelector<HTMLElement>('.tc-repeat-chip');
+      if (!chip) return;
+      this.showRecurrencePopover(chip, task, stack);
+      this.recurrenceDraftEditor?.handle.restoreDraftState(rebased.editor);
+      return;
+    }
+
+    let edit: HTMLInputElement | HTMLTextAreaElement | null;
+    if (rebased.kind === 'title') {
+      this.el.querySelector<HTMLElement>('.tc-right-title-view')?.click();
+      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit');
+    } else if (rebased.kind === 'description') {
+      this.el.querySelector<HTMLElement>('.tc-right-desc-view')?.click();
+      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-right-desc-edit');
+    } else if (rebased.kind === 'existing-comment') {
+      const index = task.comments.findIndex(
+        (comment) =>
+          comment.ref.relativeLine === rebased.target.ref.relativeLine &&
+          comment.ref.originalMarkdown === rebased.target.ref.originalMarkdown,
+      );
+      const row = this.el.querySelectorAll<HTMLElement>('.tc-comment-row')[index];
+      row?.querySelector<HTMLElement>('.tc-comment-text')?.click();
+      edit = row?.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input') ?? null;
+    } else if (rebased.kind === 'new-subtask') {
+      this.el.querySelector<HTMLElement>('.tc-subtask-add-row')?.click();
+      edit = this.el.querySelector<HTMLInputElement>('.tc-subtask-new-input');
+    } else {
+      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-input');
+    }
+    if (!edit) {
+      if (rebased.dirty) this.renderDetachedDraft(rebased);
+      return;
+    }
+    edit.value = rebased.value;
+    edit.setSelectionRange(rebased.selectionStart, rebased.selectionEnd);
+    if (rebased.hadFocus) edit.focus();
+  }
+
+  detachDraftState(draft: RightPanelDraftState | undefined): void {
+    if (draft) this.renderDetachedDraft(draft);
+  }
+
+  private renderDetachedDraft(draft: RightPanelDraftState): void {
+    this.el.querySelector('.tc-detached-draft')?.remove();
+    const detached = this.el.createDiv({ cls: 'tc-detached-draft' });
+    detached.createDiv({ text: 'Unsaved draft from a task that is no longer available:' });
+    detached.createEl('pre', { text: draftPlainText(draft) });
+    const copy = detached.createEl('button', { cls: 'tc-detached-draft-copy', text: 'Copy' });
+    copy.addEventListener('click', () => {
+      void this.el.ownerDocument.defaultView?.navigator.clipboard?.writeText(draftPlainText(draft));
+    });
+    const discard = detached.createEl('button', {
+      cls: 'tc-detached-draft-discard',
+      text: 'Discard',
+    });
+    discard.addEventListener('click', () => detached.remove());
+    this.el.prepend(detached);
   }
 
   private render(): void {
@@ -990,12 +1152,14 @@ export class RightPanel {
       onSubmit: (patch) => this.executePlanningPatch(task, patch),
       onClose: () => this.removeAnchoredSurface(popover),
     });
+    this.recurrenceDraftEditor = { target, handle, surface: popover };
     const title = popover.querySelector<HTMLElement>('.tc-recurrence-title');
     if (title?.id) popover.setAttribute('aria-labelledby', title.id);
     this.positionAnchoredSurface(popover, anchor, 'below-start');
     const placementCleanup = this.anchoredSurfaceCleanups.get(popover);
     const editorCleanup = (): void => {
       handle.destroy();
+      if (this.recurrenceDraftEditor?.surface === popover) this.recurrenceDraftEditor = undefined;
       placementCleanup?.();
       if (this.anchoredSurfaceCleanups.get(popover) === editorCleanup) {
         this.anchoredSurfaceCleanups.delete(popover);
@@ -1051,6 +1215,7 @@ export class RightPanel {
       surface.remove();
     }
     this.anchoredSurfaceCleanups.clear();
+    this.recurrenceDraftEditor = undefined;
   }
 
   /**

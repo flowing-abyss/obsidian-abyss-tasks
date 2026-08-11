@@ -25,6 +25,9 @@ vi.mock('../src/panels/RightPanel', () => ({
     return {
       mount: (el: HTMLElement) => el.createDiv({ cls: 'tc-right-header-actions' }),
       destroy: vi.fn(),
+      captureDraftState: vi.fn(),
+      restoreDraftState: vi.fn(),
+      detachDraftState: vi.fn(),
     };
   }),
 }));
@@ -86,7 +89,7 @@ describe('revision-aware TaskModal refresh', () => {
   it('retains the ref and replaces the selection only on exact resolution', () => {
     const observed = snapshot('old');
     const fresh = { ...observed, presentation: { linkCount: 0, noteColor: '#fff' } };
-    const h = queryHarness({ type: 'exact', task: fresh });
+    const h = queryHarness({ type: 'exact', task: fresh, basis: { observed } });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
     h.changed();
@@ -99,13 +102,18 @@ describe('revision-aware TaskModal refresh', () => {
     expect(h.unsubscribe).toHaveBeenCalledOnce();
   });
 
-  it('reanchors an acknowledged plugin-owned write while external conflicts remain stale', () => {
+  it('silently follows a proven external edit without rendering stale actions', () => {
     const observed = snapshot('old', 'Observed');
     const current = snapshot('new', 'Current');
-    const h = queryHarness({ type: 'conflict', current });
+    const h = queryHarness({
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'anchored-range',
+      basis: { observed },
+    });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
-    captured.acknowledgeOwnWrite?.();
     h.changed();
     expect(captured.state?.get('taskStack')[0]).toMatchObject({
       title: 'Current',
@@ -119,7 +127,7 @@ describe('revision-aware TaskModal refresh', () => {
     const first = snapshot('first', 'First');
     const second = snapshot('second', 'Second');
     const external = snapshot('external', 'External');
-    const h = queryHarness({ type: 'conflict', current: external });
+    const h = queryHarness({ type: 'uncertain', ref: external.ref });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(first);
     captured.state?.set('taskStack', [second]);
@@ -127,23 +135,20 @@ describe('revision-aware TaskModal refresh', () => {
     captured.state?.set('taskStack', [first]);
     h.changed();
     expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'First' });
-    expect(activeDocument.body.querySelector('.tc-task-selection-stale')).not.toBeNull();
+    expect(activeDocument.body.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
     modal.close();
   });
 
-  it('keeps the observed task and shows explicit reload/close actions on conflict', () => {
+  it('keeps the observed task and offers no writing action when reconciliation is uncertain', () => {
     const observed = snapshot('old', 'Observed');
-    const current = snapshot('new', 'Current');
-    const h = queryHarness({ type: 'conflict', current });
+    const h = queryHarness({ type: 'uncertain', ref: observed.ref });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'Observed' });
-    const banner = activeDocument.body.querySelector('.tc-task-selection-stale');
-    expect(banner?.textContent).toContain('changed');
-    expect(banner?.querySelectorAll('button')).toHaveLength(2);
-    (banner?.querySelector('.tc-task-selection-reload') as HTMLButtonElement).click();
-    expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'Current' });
+    const banner = activeDocument.body.querySelector('.tc-task-selection-uncertain');
+    expect(banner?.textContent).toContain('identified safely');
+    expect(banner?.querySelectorAll('button')).toHaveLength(1);
     modal.close();
   });
 
@@ -272,5 +277,16 @@ describe('revision-aware nested selection rebuild', () => {
     expect(rebuildTaskSelection(candidateRoot, [staleRoot, staleRoot.subtasks[0]!])).toHaveLength(
       1,
     );
+  });
+
+  it('does not let a duplicate child at the stale line capture the selection', () => {
+    const staleRoot = withChild(snapshot('same', 'Root'), '  - [ ] Child');
+    const child = staleRoot.subtasks[0]!;
+    const candidateRoot = {
+      ...staleRoot,
+      subtasks: [child, { ...child, ref: { ...child.ref, relativeLine: 3 } }],
+    };
+
+    expect(rebuildTaskSelection(candidateRoot, [staleRoot, child])).toHaveLength(1);
   });
 });

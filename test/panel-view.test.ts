@@ -305,21 +305,13 @@ describe('PanelView', () => {
         source: { ...root.source, filePath: 'other.md', line: 0 },
       };
       state.set('taskStack', [otherRoot]);
-      const source = taskApplication.index.list()[0]!;
-      const external = {
-        ...source,
-        ref: { filePath: 'other.md', line: 0, revision: 'other-new' },
-        title: 'External',
-        markdownTitle: 'External',
-        source: { ...source.source, filePath: 'other.md', line: 0 },
-      };
       (
         view as unknown as {
-          applyResolution(result: { type: 'conflict'; current: typeof external }): void;
+          applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'conflict', current: external });
+      ).applyResolution({ type: 'uncertain', ref: otherRoot.ref });
       expect(state.get('taskStack')[0]).toBe(otherRoot);
-      expect(view.contentEl.querySelector('.tc-task-selection-stale')).not.toBeNull();
+      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
     });
 
     it('rejects a late write acknowledgement after selection switched away from its root', () => {
@@ -337,19 +329,13 @@ describe('PanelView', () => {
         first.ref,
       );
       state.set('taskStack', [firstView]);
-      const external = {
-        ...first,
-        ref: { ...first.ref, revision: 'external' },
-        title: 'External',
-        markdownTitle: 'External',
-      };
       (
         view as unknown as {
-          applyResolution(result: { type: 'conflict'; current: typeof external }): void;
+          applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'conflict', current: external });
+      ).applyResolution({ type: 'uncertain', ref: first.ref });
       expect(state.get('taskStack')[0]).toBe(firstView);
-      expect(view.contentEl.querySelector('.tc-task-selection-stale')).not.toBeNull();
+      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
     });
 
     it('converges a selected Center or Left command immediately and accepts the next index event', () => {
@@ -383,7 +369,7 @@ describe('PanelView', () => {
       expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
     });
 
-    it('clears an index-conflict banner when the matching command result wins the race', () => {
+    it('clears an index-uncertainty banner when the matching command result wins the race', () => {
       const state = (view as unknown as { state: AppState }).state;
       const observed = taskApplication.index.list()[0]!;
       const updated = {
@@ -394,10 +380,10 @@ describe('PanelView', () => {
       state.set('taskStack', [observed]);
       (
         view as unknown as {
-          applyResolution(resolution: { type: 'conflict'; current: typeof updated }): void;
+          applyResolution(resolution: { type: 'uncertain'; ref: TaskRef }): void;
         }
-      ).applyResolution({ type: 'conflict', current: updated });
-      expect(view.contentEl.querySelector('.tc-task-selection-stale')).not.toBeNull();
+      ).applyResolution({ type: 'uncertain', ref: observed.ref });
+      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
 
       (
         view as unknown as {

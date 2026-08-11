@@ -91,7 +91,9 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
       const found = getTasks().find(
         (item) => item.ref.filePath === ref.filePath && item.ref.line === ref.line,
       );
-      return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
+      return found
+        ? { type: 'exact', task: found, basis: { observed: found } }
+        : { type: 'not-found', ref };
     },
   });
 }
@@ -1460,7 +1462,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     });
     const queries = taskQueryApi({
       list: () => [recurring],
-      resolve: () => ({ type: 'exact', task: recurring }),
+      resolve: () => ({ type: 'exact', task: recurring, basis: { observed: recurring } }),
     });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
       type: 'ok',

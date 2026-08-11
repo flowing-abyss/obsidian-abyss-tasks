@@ -3,6 +3,7 @@ import type { Clock, TaskCommand, TaskCommandResult, TaskStatusTarget } from '..
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { StatusCatalog } from '../domain/StatusCatalog';
+import type { TaskResolution } from '../domain/taskReconciliation';
 import type {
   SubtaskRef,
   SubtaskSnapshot,
@@ -88,6 +89,32 @@ function snapshotForTarget(
     current = next;
   }
   return current;
+}
+
+function resolvedStatusSelection(
+  resolution: Extract<TaskResolution, { readonly type: 'exact' | 'rebased' }>,
+  target: TaskStatusTarget,
+): {
+  readonly root: TaskSnapshot;
+  readonly target: TaskStatusTarget;
+  readonly current: TaskSnapshot | SubtaskSnapshot | undefined;
+} {
+  if (resolution.type === 'rebased') {
+    const rebasedTarget = rebaseStatusTarget(target, resolution.current.ref);
+    return {
+      root: resolution.current,
+      target: rebasedTarget,
+      current:
+        resolution.evidence === 'byte-identical-relocation'
+          ? snapshotForTarget(resolution.current, rebasedTarget)
+          : undefined,
+    };
+  }
+  return {
+    root: resolution.task,
+    target,
+    current: snapshotForTarget(resolution.task, target),
+  };
 }
 
 function statusForRuleType(type: 'todo' | 'in-progress' | 'done' | 'cancelled'): TaskStatus {
@@ -361,10 +388,9 @@ export class TaskApplicationService implements TaskApplicationApi {
     const rootRef = rootRefOf(command.target);
     const recent = this.recentFor(command.target);
     const resolution = recent
-      ? { type: 'exact' as const, task: recent }
+      ? { type: 'exact' as const, task: recent, basis: { observed: recent } }
       : this.queries.resolve(rootRef);
-    if (resolution.type === 'conflict') return { result: resolution };
-    if (resolution.type === 'not-found') {
+    if (resolution.type === 'not-found' || resolution.type === 'uncertain') {
       return { result: { type: 'not-found', target: command.target } };
     }
     if (resolution.type === 'ambiguous') {
@@ -378,8 +404,9 @@ export class TaskApplicationService implements TaskApplicationApi {
         },
       };
     }
-    const current = snapshotForTarget(resolution.task, command.target);
-    if (!current) return { result: { type: 'conflict', current: resolution.task } };
+    const resolved = resolvedStatusSelection(resolution, command.target);
+    if (!resolved.current) return { result: { type: 'conflict', current: resolved.root } };
+    const current = resolved.current;
     const currentRule = this.statusCatalog.ruleForSymbol(current.statusSymbol);
     const currentSemanticStatus = currentRule
       ? statusForRuleType(currentRule.type)
@@ -408,7 +435,7 @@ export class TaskApplicationService implements TaskApplicationApi {
       (rule.type === 'done' || rule.type === 'cancelled');
     const recurrence = this.prepareRecurrenceCompletion(
       current,
-      command.target,
+      resolved.target,
       currentSemanticStatus,
       rule,
       settings,
@@ -417,7 +444,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     return {
       command: {
         type: 'set-status',
-        target: command.target,
+        target: resolved.target,
         symbol: sameConfiguredStatus ? current.statusSymbol : rule.symbol,
         ...(entersStampedState && { stamp: this.clock.today() }),
         ...(rule.type === 'done' && {
@@ -470,9 +497,12 @@ export class TaskApplicationService implements TaskApplicationApi {
   ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
     const recent = this.recentFor({ type: 'task', ref: command.ref });
     const resolution = recent
-      ? { type: 'exact' as const, task: recent }
+      ? { type: 'exact' as const, task: recent, basis: { observed: recent } }
       : this.queries.resolve(command.ref);
-    if (resolution.type === 'exact' && moveExceedsDateBounds(resolution.task, command)) {
+    let resolved: TaskSnapshot | undefined;
+    if (resolution.type === 'exact') resolved = resolution.task;
+    if (resolution.type === 'rebased') resolved = resolution.current;
+    if (resolved && moveExceedsDateBounds(resolved, command)) {
       return {
         result: {
           type: 'invalid',

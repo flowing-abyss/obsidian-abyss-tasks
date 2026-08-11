@@ -19,6 +19,7 @@ import type {
   TaskRef,
   TaskResolution,
 } from '../tasks';
+import { isDirtyDraft } from '../ui/taskDraftContinuity';
 import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from '../ui/taskSelection';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
@@ -262,34 +263,26 @@ export class PanelView extends ItemView {
   private applyResolution(resolution: TaskResolution): void {
     const stack = this.state.get('taskStack');
     this.clearSelectionMessage();
-    const rootRef = stack[0] ? rootTaskRef(stack[0]) : undefined;
-    const ownWrite = Boolean(
-      rootRef && this.ownedWriteRef && this.sameRef(rootRef, this.ownedWriteRef),
-    );
     this.ownedWriteRef = undefined;
-    if (resolution.type === 'exact') {
-      this.state.set('taskStack', rebuildTaskSelection(resolution.task, stack));
-      return;
-    }
-    if (ownWrite && resolution.type === 'conflict') {
-      this.state.set('taskStack', rebuildTaskSelection(resolution.current, stack));
+    if (resolution.type === 'exact' || resolution.type === 'rebased') {
+      const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+      const draft = this.right.captureDraftState();
+      this.state.set('taskStack', rebuildTaskSelection(current, stack));
+      this.right.restoreDraftState(draft, current);
       return;
     }
     if (resolution.type === 'not-found') {
+      const draft = this.right.captureDraftState();
       this.state.set('taskStack', []);
+      if (isDirtyDraft(draft)) this.right.detachDraftState(draft);
       this.createSelectionMessage('tc-task-selection-missing', 'This task no longer exists.');
       return;
     }
-    if (resolution.type === 'conflict') {
+    if (resolution.type === 'uncertain') {
       const banner = this.createSelectionMessage(
-        'tc-task-selection-stale',
-        'This task changed outside the calendar.',
+        'tc-task-selection-uncertain',
+        'This task could not be identified safely after the file changed.',
       );
-      this.addSelectionAction(banner, 'Reload', 'tc-task-selection-reload', () => {
-        const stale = this.state.get('taskStack');
-        this.state.set('taskStack', rebuildTaskSelection(resolution.current, stale));
-        this.clearSelectionMessage();
-      });
       this.addSelectionAction(banner, 'Close', 'tc-task-selection-close', () => {
         this.state.set('taskStack', []);
         this.clearSelectionMessage();
@@ -304,7 +297,9 @@ export class PanelView extends ItemView {
       const label = `${candidate.root.title} — ${candidate.root.source.filePath}:${candidate.root.source.line + 1}`;
       this.addSelectionAction(banner, label, 'tc-task-selection-candidate', () => {
         const stale = this.state.get('taskStack');
+        const draft = this.right.captureDraftState();
         this.state.set('taskStack', rebuildTaskSelection(candidate.root, stale));
+        this.right.restoreDraftState(draft, candidate.root);
         this.clearSelectionMessage();
       });
     }

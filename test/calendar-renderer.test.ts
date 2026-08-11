@@ -679,7 +679,7 @@ describe('CalendarRenderer', () => {
             ),
           ).toHaveLength(1);
           expect(reloadedPersisted[0]?.ref.revision).not.toBe(active[0]?.ref.revision);
-          expect(reloaded.resolve(active[0]!.ref)).toMatchObject({ type: 'conflict' });
+          expect(reloaded.resolve(active[0]!.ref)).toMatchObject({ type: 'uncertain' });
           expect(
             reloadedProjection.occurrences.filter(
               ({ kind, planning }) => kind === 'materialized' && planning.due === '2026-08-04',

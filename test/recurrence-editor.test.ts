@@ -5,6 +5,7 @@ import {
   mountRecurrenceEditor,
   type RecurrenceEditorHandle,
 } from '../src/ui/recurrence/RecurrenceEditor';
+import { draftPlainText, type RightPanelDraftState } from '../src/ui/taskDraftContinuity';
 import { flushMicrotasks, freshContainer, task } from './helpers';
 
 function click(element: Element): void {
@@ -92,6 +93,60 @@ afterEach(() => {
 });
 
 describe('mountRecurrenceEditor', () => {
+  it('serializes every structured draft field for detached display and copy', () => {
+    const root = task();
+    const draft: RightPanelDraftState = {
+      kind: 'recurrence-editor',
+      target: { type: 'task', ref: root.ref },
+      hadFocus: true,
+      editor: {
+        mode: 'structured',
+        intervalText: '03',
+        unit: 'weeks',
+        weekdays: ['Monday', 'Friday'],
+        monthly: { type: 'same-date' },
+        yearly: { type: 'same-date' },
+        whenDone: true,
+        onCompletion: 'delete',
+        customDraft: 'stale custom value',
+        dirty: true,
+      },
+    };
+
+    expect(draftPlainText(draft)).toContain('every 3 weeks on Monday and Friday when done');
+    expect(draftPlainText(draft)).toContain('interval: 03');
+    expect(draftPlainText(draft)).toContain('on completion: delete');
+    expect(draftPlainText(draft)).not.toContain('stale custom value');
+  });
+
+  it.each(['custom', 'structured'] as const)(
+    'captures and restores a dirty %s draft with focus and selection',
+    (mode) => {
+      const first = mount();
+      activeDocument.body.append(first.container);
+      if (mode === 'custom') click(button(first.container, 'Advanced'));
+      const firstEdit = first.container.querySelector<HTMLInputElement>(
+        mode === 'custom' ? '.tc-recurrence-raw' : '.tc-recurrence-interval',
+      )!;
+      input(firstEdit, mode === 'custom' ? 'every 13 days' : '12345');
+      firstEdit.focus();
+      firstEdit.setSelectionRange(2, 5);
+
+      const draft = first.handle.captureDraftState();
+      const second = mount();
+      activeDocument.body.append(second.container);
+      second.handle.restoreDraftState(draft);
+
+      const restored = second.container.querySelector<HTMLInputElement>(
+        mode === 'custom' ? '.tc-recurrence-raw' : '.tc-recurrence-interval',
+      )!;
+      expect(restored.value).toBe(mode === 'custom' ? 'every 13 days' : '12345');
+      expect(restored.selectionStart).toBe(2);
+      expect(restored.selectionEnd).toBe(5);
+      expect(activeDocument.activeElement).toBe(restored);
+    },
+  );
+
   it('turns presets into adaptive controls and one canonical preview line', () => {
     const { container } = mount();
 

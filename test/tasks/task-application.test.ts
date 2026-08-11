@@ -7,6 +7,7 @@ import type {
   TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import type { TaskResolution } from '../../src/tasks/domain/taskReconciliation';
 import type {
   SubtaskSnapshot,
   TaskNodeRef,
@@ -47,7 +48,15 @@ function queries(): TaskQueryApi {
 }
 
 function exactQueries(task: TaskSnapshot): TaskQueryApi {
-  return { ...queries(), resolve: () => ({ type: 'exact', task }) };
+  return { ...queries(), resolve: () => exactResolution(task) };
+}
+
+function exactResolution(task: TaskSnapshot): TaskResolution {
+  return { type: 'exact', task, basis: { observed: task } };
+}
+
+function uncertainResolution(task: TaskSnapshot = snapshot()): TaskResolution {
+  return { type: 'uncertain', ref: task.ref };
 }
 
 const statuses = new StatusCatalog([
@@ -186,7 +195,8 @@ describe('TaskApplicationService planning commands', () => {
       ...queries(),
       resolve: () => {
         if (result.type === 'not-found') return { type: 'not-found', ref };
-        return result;
+        if (result.type === 'ambiguous') return result;
+        return { type: 'uncertain', ref };
       },
     };
 
@@ -693,7 +703,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: snapshot() }),
+      resolve: () => exactResolution(snapshot()),
     };
     clock.today.mockClear();
 
@@ -740,7 +750,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: done }),
+      resolve: () => exactResolution(done),
     };
     clock.today.mockClear();
 
@@ -766,7 +776,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: uppercaseDone }),
+      resolve: () => exactResolution(uppercaseDone),
     };
     clock.today.mockClear();
 
@@ -799,7 +809,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: done }),
+      resolve: () => exactResolution(done),
     };
     clock.today.mockClear();
 
@@ -832,7 +842,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: cancelled }),
+      resolve: () => exactResolution(cancelled),
     };
     clock.today.mockClear();
 
@@ -873,9 +883,7 @@ describe('TaskApplicationService planning commands', () => {
     const laggingQueries: TaskQueryApi = {
       ...queries(),
       resolve: (target) =>
-        target.revision === ref.revision
-          ? { type: 'exact', task: snapshot() }
-          : { type: 'conflict', current: snapshot() },
+        target.revision === ref.revision ? exactResolution(snapshot()) : uncertainResolution(),
     };
     const application = service({ edit }, laggingQueries);
     const first = await application.execute({
@@ -970,8 +978,8 @@ describe('TaskApplicationService planning commands', () => {
       ...queries(),
       resolve: (target) =>
         target.revision === ref.revision
-          ? { type: 'exact', task: rootWithChild }
-          : { type: 'conflict', current: rootWithChild },
+          ? exactResolution(rootWithChild)
+          : uncertainResolution(rootWithChild),
     };
     const application = service({ edit }, laggingQueries);
     const first = await application.execute({
@@ -1013,7 +1021,7 @@ describe('TaskApplicationService planning commands', () => {
       .mockResolvedValueOnce({ type: 'conflict', current: external });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: snapshot() }),
+      resolve: () => exactResolution(snapshot()),
     };
     const application = service({ edit }, exactQueries);
     const first = await application.execute({
@@ -1045,7 +1053,7 @@ describe('TaskApplicationService planning commands', () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'current-index-revision' } };
     const laggingQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'conflict', current }),
+      resolve: () => uncertainResolution(current),
     };
     const application = service({ edit }, laggingQueries);
     let firstReturned: TaskSnapshot | undefined;
@@ -1066,16 +1074,16 @@ describe('TaskApplicationService planning commands', () => {
         type: 'toggle-completion',
         target: { type: 'task', ref: firstReturned.ref },
       }),
-    ).resolves.toEqual({ type: 'conflict', current });
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref: firstReturned.ref } });
     expect(edit).toHaveBeenCalledTimes(65);
   });
 
-  it('returns a stale conflict before toggling and does not read Clock', async () => {
+  it('returns not-found for an uncertain stale selection before toggling and does not read Clock', async () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'new' } };
     const edit = vi.fn<TaskRepository['edit']>();
     const staleQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'conflict', current }),
+      resolve: () => uncertainResolution(current),
     };
     clock.today.mockClear();
 
@@ -1084,7 +1092,7 @@ describe('TaskApplicationService planning commands', () => {
         type: 'toggle-completion',
         target: { type: 'task', ref },
       }),
-    ).resolves.toEqual({ type: 'conflict', current });
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref } });
     expect(edit).not.toHaveBeenCalled();
     expect(clock.today).not.toHaveBeenCalled();
   });
@@ -1102,7 +1110,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const exactQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => ({ type: 'exact', task: unknown }),
+      resolve: () => exactResolution(unknown),
     };
     clock.today.mockClear();
     const application = new TaskApplicationService(
@@ -1356,9 +1364,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const laggingQueries: TaskQueryApi = {
       ...queries(),
       resolve: (target) =>
-        target.revision === ref.revision
-          ? { type: 'exact', task: current }
-          : { type: 'conflict', current },
+        target.revision === ref.revision ? exactResolution(current) : uncertainResolution(current),
     };
     const application = new TaskApplicationService(
       laggingQueries,
@@ -1394,7 +1400,10 @@ describe('TaskApplicationService recurrence completion routing', () => {
         target: first.outcome.completed!.target,
         symbol: 'x',
       }),
-    ).resolves.toEqual({ type: 'conflict', current });
+    ).resolves.toEqual({
+      type: 'not-found',
+      target: first.outcome.completed!.target,
+    });
     expect(edit).toHaveBeenCalledOnce();
     expect(completeRecurrence).toHaveBeenCalledOnce();
   });
@@ -1462,9 +1471,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const laggingQueries: TaskQueryApi = {
       ...queries(),
       resolve: (target) =>
-        target.revision === ref.revision
-          ? { type: 'exact', task: current }
-          : { type: 'conflict', current },
+        target.revision === ref.revision ? exactResolution(current) : uncertainResolution(current),
     };
     const application = new TaskApplicationService(
       laggingQueries,
@@ -1485,7 +1492,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
         target: outcome.completed.target,
         symbol: '/',
       }),
-    ).resolves.toEqual({ type: 'conflict', current });
+    ).resolves.toEqual({ type: 'not-found', target: outcome.completed.target });
     expect(edit).not.toHaveBeenCalled();
 
     await expect(
@@ -1518,9 +1525,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const laggingQueries: TaskQueryApi = {
       ...queries(),
       resolve: (target) =>
-        target.revision === ref.revision
-          ? { type: 'conflict', current }
-          : { type: 'exact', task: active },
+        target.revision === ref.revision ? uncertainResolution(current) : exactResolution(active),
     };
     const application = new TaskApplicationService(
       laggingQueries,
@@ -1546,7 +1551,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
         target: { type: 'task', ref },
         symbol: 'x',
       }),
-    ).resolves.toEqual({ type: 'conflict', current });
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref } });
     expect(completeRecurrence).toHaveBeenCalledOnce();
   });
 });

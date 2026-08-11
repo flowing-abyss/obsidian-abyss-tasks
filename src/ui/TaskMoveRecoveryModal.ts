@@ -40,8 +40,13 @@ export class TaskMoveRecoveryModal extends Modal {
       case 'exact':
         await this.removeOriginal(resolution.task.ref);
         break;
-      case 'conflict':
+      case 'rebased':
         this.renderConflict(resolution.current);
+        break;
+      case 'uncertain':
+        this.renderStopped(
+          'The original task could not be identified safely. Nothing was removed.',
+        );
         break;
       case 'not-found':
         this.renderStopped('The original task could not be found. Nothing was removed.');

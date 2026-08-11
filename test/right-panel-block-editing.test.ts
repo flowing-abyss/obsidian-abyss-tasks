@@ -149,6 +149,175 @@ async function panelWith(
 }
 
 describe('RightPanel block editing', () => {
+  it.each([
+    {
+      kind: 'title',
+      open: '.tc-right-title-view',
+      edit: '.tc-right-title-edit',
+    },
+    {
+      kind: 'description',
+      open: '.tc-right-desc-view',
+      edit: '.tc-right-desc-edit',
+    },
+    {
+      kind: 'existing-comment',
+      open: '.tc-comment-text',
+      edit: '.tc-comment-edit-input',
+    },
+    {
+      kind: 'new-subtask',
+      open: '.tc-subtask-add-row',
+      edit: '.tc-subtask-new-input',
+    },
+  ] as const)(
+    'retains dirty $kind text, focus, and selection across a proven refresh',
+    async (entry) => {
+      const initial = snapshot('old');
+      const execute = vi.fn<TaskApplicationApi['execute']>();
+      const { panel, state } = await panelWith(initial, execute);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      container.querySelector<HTMLElement>(entry.open)!.click();
+      await flushMicrotasks();
+      const edit = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit)!;
+      edit.value = 'local unsaved';
+      edit.focus();
+      edit.setSelectionRange(3, 8);
+
+      const draft = panel.captureDraftState();
+      const current = {
+        ...snapshot('current'),
+        title: 'external title',
+        markdownTitle: 'external title',
+      };
+      state.set('taskStack', [current]);
+      panel.restoreDraftState(draft, current);
+
+      const restored = container.querySelector<HTMLInputElement | HTMLTextAreaElement>(entry.edit)!;
+      expect(restored).not.toBeNull();
+      expect(restored.value).toBe('local unsaved');
+      expect(restored.selectionStart).toBe(3);
+      expect(restored.selectionEnd).toBe(8);
+      expect(activeDocument.activeElement).toBe(restored);
+      expect(execute).not.toHaveBeenCalled();
+      panel.destroy();
+    },
+  );
+
+  it('retains a dirty new-comment draft across a proven refresh', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const edit = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    edit.value = 'local unsaved';
+    edit.focus();
+    edit.setSelectionRange(3, 8);
+
+    const draft = panel.captureDraftState();
+    const current = snapshot('current');
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(draft, current);
+
+    const restored = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    expect(restored.value).toBe('local unsaved');
+    expect(restored.selectionStart).toBe(3);
+    expect(restored.selectionEnd).toBe(8);
+    expect(activeDocument.activeElement).toBe(restored);
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('detaches a dirty draft when its target disappears', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-comment-text')!.click();
+    const edit = container.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input')!;
+    edit.value = 'local unsaved';
+    edit.focus();
+
+    const draft = panel.captureDraftState();
+    const current = { ...snapshot('current'), comments: [] };
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(draft, current);
+
+    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain('local unsaved');
+    expect(container.querySelector('.tc-detached-draft-copy')).not.toBeNull();
+    expect(container.querySelector('.tc-detached-draft-discard')).not.toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('detaches instead of attaching a comment draft to a duplicate at the stale line', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-comment-text')!.click();
+    const edit = container.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input')!;
+    edit.value = 'local duplicate-sensitive draft';
+
+    const draft = panel.captureDraftState();
+    const original = initial.comments[0]!;
+    const current = {
+      ...snapshot('current'),
+      comments: [original, { ...original, ref: { ...original.ref, relativeLine: 4 } }],
+    };
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(draft, current);
+
+    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain(
+      'local duplicate-sensitive draft',
+    );
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('retains a structured recurrence draft focus after deferred popover autofocus', async () => {
+    const initial = { ...snapshot('old'), recurrence: 'every day' };
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      container.querySelector<HTMLElement>('.tc-repeat-chip')!.click();
+      container.querySelector<HTMLButtonElement>('[data-recurrence-preset="daily"]')!.click();
+      const interval = container.querySelector<HTMLInputElement>('.tc-recurrence-interval')!;
+      interval.value = '12345';
+      interval.dispatchEvent(new Event('input', { bubbles: true }));
+      interval.focus();
+      interval.setSelectionRange(2, 5);
+
+      const draft = panel.captureDraftState();
+      const current = { ...snapshot('current'), recurrence: 'every day' };
+      state.set('taskStack', [current]);
+      panel.restoreDraftState(draft, current);
+      await new Promise<void>((resolve) => {
+        activeDocument.defaultView?.setTimeout(resolve, 0);
+      });
+
+      const restored = container.querySelector<HTMLInputElement>('.tc-recurrence-interval')!;
+      expect(restored.value).toBe('12345');
+      expect(restored.selectionStart).toBe(2);
+      expect(restored.selectionEnd).toBe(5);
+      expect(activeDocument.activeElement).toBe(restored);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('deletes a root through the API and preserves newer navigation on a late result', async () => {
     const initial = snapshot('old');
     let resolve!: (result: TaskCommandResult) => void;

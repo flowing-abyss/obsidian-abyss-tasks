@@ -52,7 +52,9 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
       const current = snapshots(source).find(
         (task) => task.ref.filePath === ref.filePath && task.ref.line === ref.line,
       );
-      return current ? { type: 'exact', task: current } : { type: 'not-found', ref };
+      return current
+        ? { type: 'exact', task: current, basis: { observed: current } }
+        : { type: 'not-found', ref };
     },
   });
   return {

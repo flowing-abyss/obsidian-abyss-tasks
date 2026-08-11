@@ -80,7 +80,9 @@ export function queryApiForTasks(
       const found = getTasks().find(
         (task) => task.ref.filePath === ref.filePath && task.ref.line === ref.line,
       );
-      return found ? { type: 'exact', task: found } : { type: 'not-found', ref };
+      return found
+        ? { type: 'exact', task: found, basis: { observed: found } }
+        : { type: 'not-found', ref };
     },
     ...(onSubscribe && { subscribe: onSubscribe }),
   });

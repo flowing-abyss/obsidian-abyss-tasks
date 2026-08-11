@@ -30,6 +30,121 @@ describe('TaskModal with real RightPanel', () => {
     activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
   });
 
+  it('preserves a dirty focused title through a proven silent refresh', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      title: 'external',
+      markdownTitle: 'external',
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] external',
+        originalBlock: '- [ ] external',
+      },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-right-title-view')!);
+    const edit = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-right-title-edit',
+    )!;
+    edit.value = 'local unsaved';
+    edit.focus();
+    edit.setSelectionRange(3, 8);
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'anchored-range',
+      basis: { observed },
+    };
+
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    const restored = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-right-title-edit',
+    )!;
+    expect(restored.value).toBe('local unsaved');
+    expect(restored.selectionStart).toBe(3);
+    expect(restored.selectionEnd).toBe(8);
+    expect(activeDocument.activeElement).toBe(restored);
+    expect(activeDocument.querySelector('.tc-task-selection-stale')).toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('keeps a missing modal open only to expose its detached dirty draft', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    )!;
+    comment.value = 'local unsaved';
+    comment.focus();
+    resolution = { type: 'not-found', ref: observed.ref };
+
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
+    expect(activeDocument.querySelector('.tc-modal .tc-detached-draft')?.textContent).toContain(
+      'local unsaved',
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it('shares the header status control, rebuilds command results, and owns its refresh', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [w] Modal task\n' });
     const registry = testStatusRegistry();
@@ -59,7 +174,7 @@ describe('TaskModal with real RightPanel', () => {
       },
     });
     let listener: ((event: TaskIndexEvent) => void) | undefined;
-    let resolution: TaskResolution = { type: 'exact', task: current };
+    let resolution: TaskResolution = { type: 'exact', task: current, basis: { observed: current } };
     const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
       resolve: () => resolution,
@@ -160,7 +275,13 @@ describe('TaskModal with real RightPanel', () => {
       statusSymbol: '-',
       priority: 'B',
     });
-    resolution = { type: 'conflict', current: refreshed };
+    resolution = {
+      type: 'rebased',
+      previous: current,
+      current: refreshed,
+      evidence: 'authority-transition',
+      basis: { observed: current },
+    };
     listener?.({ type: 'changed', files: ['f.md'] });
 
     const refreshedMarker = activeDocument.querySelector<HTMLElement>(
@@ -189,7 +310,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
-      resolve: () => ({ type: 'exact', task: current }),
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
       type: 'ok',
@@ -231,7 +352,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
-      resolve: () => ({ type: 'exact', task: current }),
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -270,7 +391,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries: TaskQueryApi = taskQueryApi({
       list: () => [current],
-      resolve: () => ({ type: 'exact', task: current }),
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
     modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
       queries,
@@ -335,7 +456,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     const queries = taskQueryApi({
       list: () => [current],
-      resolve: () => ({ type: 'exact', task: current }),
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
     });
     Object.defineProperty(app.metadataCache, 'getTags', {
       configurable: true,
