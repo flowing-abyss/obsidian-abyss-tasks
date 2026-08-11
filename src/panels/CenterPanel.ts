@@ -390,17 +390,16 @@ export class CenterPanel {
     this.offs.push(() => this.el.removeEventListener('keydown', onKeyDown));
     const onFocusIn = (event: FocusEvent): void => {
       const target = event.target;
-      if (!isRealmHTMLElement(target)) return;
-      const ownerDocument = this.el.ownerDocument;
-      // Removing the active block during a calendar remount temporarily leaves the document
-      // body focused. That is renderer lifecycle, not an explicit user focus transfer, so it
-      // must not revoke the restoration that will target the replacement block after commit.
-      if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
       const taskDateFocusKey = this.taskDateFocusContinuityKey;
       if (taskDateFocusKey !== null && this.taskDateTriggerKey(target) !== taskDateFocusKey) {
-        this.pendingTaskDateFocus = null;
-        this.taskDateFocusContinuityKey = null;
+        this.abandonTaskDateFocus();
       }
+      if (!isRealmHTMLElement(target)) return;
+      const ownerDocument = this.el.ownerDocument;
+      // Calendar remount removal can leave body as activeElement without emitting focusin. An
+      // actual body focusin has already revoked task-date ownership above; timed-block restoration
+      // still treats body/documentElement as transient renderer state.
+      if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
       const block = target.closest<HTMLElement>('.tc-tg-block');
       if (block && this.el.contains(block)) {
         this.retainTimedBlockFocus(block);
@@ -411,8 +410,17 @@ export class CenterPanel {
     const ownerDocument = this.el.ownerDocument;
     ownerDocument.addEventListener('focusin', onFocusIn);
     this.offs.push(() => ownerDocument.removeEventListener('focusin', onFocusIn));
+    const onPointerDown = (event: PointerEvent): void => {
+      const taskDateFocusKey = this.taskDateFocusContinuityKey;
+      if (taskDateFocusKey !== null && this.taskDateTriggerKey(event.target) !== taskDateFocusKey) {
+        this.abandonTaskDateFocus();
+      }
+    };
+    ownerDocument.addEventListener('pointerdown', onPointerDown, true);
+    this.offs.push(() => ownerDocument.removeEventListener('pointerdown', onPointerDown, true));
     const ownerWindow = ownerDocument.defaultView;
     const onOwnerWindowBlur = (): void => {
+      this.abandonTaskDateFocus();
       if (this.pendingTimedBlockFocus) this.cancelKeyboardInteraction();
     };
     ownerWindow?.addEventListener('blur', onOwnerWindowBlur);
@@ -433,8 +441,7 @@ export class CenterPanel {
 
   destroy(): void {
     this.cancelKeyboardInteraction();
-    this.pendingTaskDateFocus = null;
-    this.taskDateFocusContinuityKey = null;
+    this.abandonTaskDateFocus();
     this.clearSearchShell();
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
@@ -3308,8 +3315,12 @@ export class CenterPanel {
     this.taskDatePickerCleanup?.();
   }
 
-  private taskDateTriggerKey(anchor: HTMLElement): string | undefined {
-    const card = anchor.closest<HTMLElement>('.tc-task-card');
+  private taskDateTriggerKey(target: EventTarget | null): string | undefined {
+    if (!target || !('ownerDocument' in target)) return undefined;
+    const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
+    const ownerWindow = ownerDocument?.defaultView;
+    if (!ownerWindow || !(target instanceof ownerWindow.Element)) return undefined;
+    const card = target.closest<HTMLElement>('.tc-task-card');
     const filePath = card?.dataset['filePath'];
     const line = card?.dataset['line'];
     return card && this.el.contains(card) && filePath !== undefined && line !== undefined
@@ -3362,6 +3373,11 @@ export class CenterPanel {
       this.pendingTaskDateFocus = null;
     }
     if (this.taskDateFocusContinuityKey === key) this.taskDateFocusContinuityKey = null;
+  }
+
+  private abandonTaskDateFocus(): void {
+    this.pendingTaskDateFocus = null;
+    this.taskDateFocusContinuityKey = null;
   }
 
   private taskKey(task: TaskSnapshot): string {

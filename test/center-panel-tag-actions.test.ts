@@ -7,7 +7,6 @@ import { TagManager } from '../src/tags/TagManager';
 import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import {
   flushMicrotasks,
-  freshContainer,
   makeCenterPanelForTest,
   makeStubStore,
   task,
@@ -125,11 +124,17 @@ function captureMenu(): CapturedMenuItem[] {
 }
 
 function openMenu(card: HTMLElement): void {
-  card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  const OwnerMouseEvent = card.ownerDocument.defaultView?.MouseEvent ?? MouseEvent;
+  card.dispatchEvent(new OwnerMouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return new DOMRect(left, top, width, height);
+}
+
+function ownerEvent(ownerWindow: Window, type: string, init?: EventInit): Event {
+  const OwnerEvent = (ownerWindow as unknown as { Event: typeof Event }).Event;
+  return new OwnerEvent(type, init);
 }
 
 async function withQueuedAnimationFrames(
@@ -160,6 +165,63 @@ async function withQueuedAnimationFrames(
   }
 }
 
+function installObsidianDomHelpers(ownerWindow: Window): void {
+  const ownerRealm = ownerWindow as unknown as typeof globalThis;
+  const prototypePairs: Array<[object, object]> = [
+    [HTMLElement.prototype, ownerRealm.HTMLElement.prototype],
+    [Element.prototype, ownerRealm.Element.prototype],
+    [Node.prototype, ownerRealm.Node.prototype],
+  ];
+  for (const [source, target] of prototypePairs) {
+    for (const name of Object.getOwnPropertyNames(source)) {
+      if (name === 'constructor' || name in target) continue;
+      const descriptor = Object.getOwnPropertyDescriptor(source, name);
+      if (descriptor) Object.defineProperty(target, name, descriptor);
+    }
+  }
+
+  const createEl = function (
+    this: HTMLElement,
+    tag: string,
+    options: { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+  ): HTMLElement {
+    const child = this.ownerDocument.createElement(tag);
+    const classes = Array.isArray(options.cls) ? options.cls : options.cls?.split(' ');
+    if (classes) child.classList.add(...classes.filter(Boolean));
+    if (options.text !== undefined) child.textContent = options.text;
+    for (const [name, value] of Object.entries(options.attr ?? {})) {
+      child.setAttribute(name, value);
+    }
+    this.append(child);
+    return child;
+  };
+  Object.defineProperties(ownerRealm.HTMLElement.prototype, {
+    createEl: { configurable: true, value: createEl },
+    createDiv: {
+      configurable: true,
+      value: function (
+        this: HTMLElement,
+        value:
+          | string
+          | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+      ) {
+        return createEl.call(this, 'div', typeof value === 'string' ? { cls: value } : value);
+      },
+    },
+    createSpan: {
+      configurable: true,
+      value: function (
+        this: HTMLElement,
+        value:
+          | string
+          | { cls?: string | string[]; text?: string; attr?: Record<string, string> } = {},
+      ) {
+        return createEl.call(this, 'span', typeof value === 'string' ? { cls: value } : value);
+      },
+    },
+  });
+}
+
 function relevantDateTitles(items: readonly CapturedMenuItem[]): string[] {
   return items
     .map((item) => item.title__)
@@ -170,6 +232,7 @@ function makeCenter(
   tasks: TaskSnapshot[] = [],
   settings: Partial<CalendarSettings> = {},
   pinnedTags: string[] = [],
+  ownerDocument: Document = activeDocument,
 ) {
   const state = new AppState();
   state.set('selectedList', 'inbox');
@@ -187,7 +250,7 @@ function makeCenter(
     queries,
     execute,
   });
-  const el = freshContainer();
+  const el = ownerDocument.createElement('div');
   panel.mount(el);
   return { el, state, tm, execute, panel };
 }
@@ -218,6 +281,27 @@ function unchangedTaskResult(
     changed: false,
     outcome: { type: 'task', task: unchangedTask },
   };
+}
+
+async function settleChangedCustomDate(
+  el: HTMLElement,
+  items: readonly CapturedMenuItem[],
+): Promise<HTMLElement> {
+  const ownerWindow = el.ownerDocument.defaultView;
+  if (!ownerWindow) throw new Error('missing owner window');
+  const card = el.querySelector<HTMLElement>('.tc-task-card');
+  if (!card) throw new Error('missing task card');
+  card.focus();
+  openMenu(card);
+  items
+    .find((item) => item.title__ === 'Set date…')
+    ?.onClick__?.(new ownerWindow.MouseEvent('click'));
+  const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]');
+  if (!input) throw new Error('missing custom date input');
+  input.value = '2026-08-02';
+  input.dispatchEvent(ownerEvent(ownerWindow, 'change', { bubbles: true }));
+  await flushMicrotasks();
+  return card;
 }
 
 describe('CenterPanel drag source', () => {
@@ -577,6 +661,161 @@ describe('CenterPanel task date context menus', () => {
     } finally {
       panel.destroy();
       el.remove();
+    }
+  });
+
+  it('abandons deferred custom-date focus when the mounted window blurs', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const original = await settleChangedCustomDate(el, items);
+
+      el.ownerDocument.defaultView?.dispatchEvent(new Event('blur'));
+      panel.refresh();
+
+      const replacement = el.querySelector<HTMLElement>('.tc-task-card');
+      expect(original.isConnected).toBe(false);
+      expect(replacement).not.toBeNull();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('abandons deferred custom-date focus after a pointer targets document background', async () => {
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first]);
+    activeDocument.body.append(el);
+
+    try {
+      execute.mockResolvedValue(changedTaskResult(first));
+      const original = await settleChangedCustomDate(el, items);
+      const ownerWindow = el.ownerDocument.defaultView;
+      if (!ownerWindow) throw new Error('missing owner window');
+
+      el.ownerDocument.body.dispatchEvent(
+        ownerEvent(ownerWindow, 'pointerdown', { bubbles: true, cancelable: true }),
+      );
+      panel.refresh();
+
+      const replacement = el.querySelector<HTMLElement>('.tc-task-card');
+      expect(original.isConnected).toBe(false);
+      expect(replacement).not.toBeNull();
+      expect(activeDocument.activeElement).toBe(activeDocument.body);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it.each(['body', 'documentElement'] as const)(
+    'abandons deferred custom-date focus after explicit focus enters %s',
+    async (targetName) => {
+      const items = captureMenu();
+      const { el, execute, panel } = makeCenter([first]);
+      activeDocument.body.append(el);
+      const target = el.ownerDocument[targetName];
+      const previousTabIndex = target.getAttribute('tabindex');
+
+      try {
+        execute.mockResolvedValue(changedTaskResult(first));
+        const original = await settleChangedCustomDate(el, items);
+        target.tabIndex = -1;
+        target.focus();
+        expect(activeDocument.activeElement).toBe(target);
+
+        panel.refresh();
+
+        expect(original.isConnected).toBe(false);
+        expect(activeDocument.activeElement).toBe(target);
+      } finally {
+        panel.destroy();
+        if (previousTabIndex === null) target.removeAttribute('tabindex');
+        else target.setAttribute('tabindex', previousTabIndex);
+        el.remove();
+      }
+    },
+  );
+
+  it('uses the mounted document and window for task-date departure ownership and cleanup', async () => {
+    const iframe = activeDocument.createElement('iframe');
+    activeDocument.body.append(iframe);
+    const ownerDocument = iframe.contentDocument;
+    const ownerWindow = iframe.contentWindow;
+    if (!ownerDocument || !ownerWindow) throw new Error('missing iframe realm');
+    installObsidianDomHelpers(ownerWindow);
+    const addDocumentListener = vi.spyOn(ownerDocument, 'addEventListener');
+    const removeDocumentListener = vi.spyOn(ownerDocument, 'removeEventListener');
+    const addWindowListener = vi.spyOn(ownerWindow, 'addEventListener');
+    const removeWindowListener = vi.spyOn(ownerWindow, 'removeEventListener');
+    const items = captureMenu();
+    const { el, execute, panel } = makeCenter([first], {}, [], ownerDocument);
+    ownerDocument.body.append(el);
+    let destroyed = false;
+
+    try {
+      const focusRegistration = addDocumentListener.mock.calls.find(([type]) => type === 'focusin');
+      const pointerRegistration = addDocumentListener.mock.calls.find(
+        ([type]) => type === 'pointerdown',
+      );
+      const blurRegistration = addWindowListener.mock.calls.find(([type]) => type === 'blur');
+      execute.mockResolvedValue(changedTaskResult(first));
+      const original = await settleChangedCustomDate(el, items);
+
+      window.dispatchEvent(new Event('blur'));
+      activeDocument.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+      panel.refresh();
+      const ownerReplacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const ownerActiveAfterPrimaryDeparture = ownerDocument.activeElement;
+
+      ownerWindow.dispatchEvent(ownerEvent(ownerWindow, 'blur'));
+      panel.refresh();
+      const finalReplacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const ownerActiveAfterOwnerBlur = ownerDocument.activeElement;
+      panel.destroy();
+      destroyed = true;
+
+      expect(original.isConnected).toBe(false);
+      expect(ownerReplacement).not.toBeNull();
+      expect(ownerReplacement).not.toBe(original);
+      expect(ownerActiveAfterPrimaryDeparture).toBe(ownerReplacement);
+      expect(finalReplacement).not.toBeNull();
+      expect(finalReplacement).not.toBe(ownerReplacement);
+      expect(ownerActiveAfterOwnerBlur).toBe(ownerDocument.body);
+      expect(focusRegistration).toBeDefined();
+      expect(pointerRegistration).toBeDefined();
+      expect(blurRegistration).toBeDefined();
+      expect(
+        removeDocumentListener.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'focusin' &&
+            listener === focusRegistration?.[1] &&
+            options === focusRegistration?.[2],
+        ),
+      ).toBe(true);
+      expect(
+        removeDocumentListener.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'pointerdown' &&
+            listener === pointerRegistration?.[1] &&
+            options === pointerRegistration?.[2],
+        ),
+      ).toBe(true);
+      expect(
+        removeWindowListener.mock.calls.some(
+          ([type, listener, options]) =>
+            type === 'blur' &&
+            listener === blurRegistration?.[1] &&
+            options === blurRegistration?.[2],
+        ),
+      ).toBe(true);
+    } finally {
+      if (!destroyed) panel.destroy();
+      iframe.remove();
     }
   });
 
