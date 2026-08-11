@@ -5,8 +5,8 @@ import { freshContainer } from './helpers';
 
 describe('RailPanel', () => {
   function foreignSettingsHarness() {
-    const iframe = document.createElement('iframe');
-    document.body.appendChild(iframe);
+    const iframe = activeDocument.createElement('iframe');
+    activeDocument.body.appendChild(iframe);
     const ownerDocument = iframe.contentDocument!;
     const ownerWindow = ownerDocument.defaultView!;
     const NativeMutationObserver = ownerWindow.MutationObserver;
@@ -18,9 +18,11 @@ describe('RailPanel', () => {
         options?: MutationObserverInit;
       }> = [];
       disconnectCalls = 0;
+      private readonly callback: MutationCallback;
 
       constructor(callback: MutationCallback) {
         super(callback);
+        this.callback = callback;
         observers.push(this);
       }
 
@@ -32,6 +34,10 @@ describe('RailPanel', () => {
       override disconnect(): void {
         this.disconnectCalls += 1;
         super.disconnect();
+      }
+
+      deliverStaleCallback(): void {
+        this.callback([], this);
       }
     }
 
@@ -230,6 +236,71 @@ describe('RailPanel', () => {
       expect(harness.observers[0]!.disconnectCalls).toBe(1);
       expect(panel['el'].children).toHaveLength(0);
     } finally {
+      harness.restore();
+    }
+  });
+
+  it('ignores a stale foreign-document observer after Settings is opened again', async () => {
+    const harness = foreignSettingsHarness();
+    const panel = new RailPanel(new AppState(), { setting: harness.setting });
+
+    try {
+      panel.mount(freshContainer());
+      const settingsButton =
+        panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!;
+      settingsButton.click();
+      const staleModal = harness.modal();
+      const staleObserver = harness.observers[0]!;
+
+      settingsButton.click();
+      const currentModal = harness.modal();
+      const currentObserver = harness.observers[1]!;
+
+      expect(staleObserver.disconnectCalls).toBe(1);
+      expect(currentObserver.disconnectCalls).toBe(0);
+      expect(settingsButton.classList.contains('is-active')).toBe(true);
+
+      staleModal.remove();
+      staleObserver.deliverStaleCallback();
+
+      expect(settingsButton.classList.contains('is-active')).toBe(true);
+      expect(currentObserver.disconnectCalls).toBe(0);
+
+      currentModal.remove();
+      await vi.waitFor(() => expect(settingsButton.classList.contains('is-active')).toBe(false));
+      expect(currentObserver.disconnectCalls).toBe(1);
+    } finally {
+      panel.destroy();
+      harness.restore();
+    }
+  });
+
+  it('disconnects the exact Settings observer when a mode render replaces its button', () => {
+    const harness = foreignSettingsHarness();
+    const state = new AppState();
+    state.set('mode', 'projects');
+    const panel = new RailPanel(state, { setting: harness.setting });
+
+    try {
+      panel.mount(freshContainer());
+      panel['el'].querySelector<HTMLButtonElement>('[aria-label="Settings"]')!.click();
+      const observer = harness.observers[0]!;
+      expect(observer.disconnectCalls).toBe(0);
+
+      state.set('mode', 'search');
+
+      expect(observer.disconnectCalls).toBe(1);
+      expect(harness.observers).toHaveLength(1);
+      expect(panel['el'].querySelector('.tc-rail-btn.is-active')?.getAttribute('aria-label')).toBe(
+        'Search',
+      );
+      expect(
+        panel['el']
+          .querySelector<HTMLButtonElement>('[aria-label="Settings"]')!
+          .classList.contains('is-active'),
+      ).toBe(false);
+    } finally {
+      panel.destroy();
       harness.restore();
     }
   });
