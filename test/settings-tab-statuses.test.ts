@@ -1,4 +1,4 @@
-import { App, Setting } from 'obsidian';
+import { addIcon, App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
@@ -321,5 +321,59 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     await Promise.resolve();
     expect(status.icon).toBe('');
     expect(plugin.saveSettings).toHaveBeenCalled();
+  });
+
+  it('filters custom icon choices as native pressed buttons and keeps selection focus after rerender', async () => {
+    addIcon('alert-triangle', '<svg><path d="M12 2 2 22h20z" /></svg>');
+    const captured: CapturedText[] = [];
+    const restore = patchAddText(captured);
+    const { tab, plugin } = makeTab({ withCustomStatus: true });
+    restore();
+    activeDocument.body.append(tab.containerEl);
+    const body = openStatusesSection(tab);
+    const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
+    const card = Array.from(body.querySelectorAll<HTMLElement>('.tc-settings-card')).find(
+      (candidate) => candidate.textContent?.includes(status.name),
+    )!;
+    const search = captured.find(
+      (input) => card.contains(input.el) && input.el.placeholder === 'Search lucide icons…',
+    )!;
+
+    search.invokeChange('alert-triangle');
+
+    const results = Array.from(card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'));
+    const clear = results.find((result) => result.title === 'No icon')!;
+    const selected = results.find((result) => result.title === 'alert-triangle')!;
+    expect(clear).toBeInstanceOf(HTMLButtonElement);
+    expect(clear.tabIndex).toBe(0);
+    expect(clear.getAttribute('aria-pressed')).toBe('false');
+    expect(selected).toBeInstanceOf(HTMLButtonElement);
+    expect(selected.getAttribute('aria-pressed')).toBe('true');
+    expect(results).toHaveLength(2);
+
+    clear.focus();
+    clear.click();
+
+    const cleared = Array.from(
+      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+    ).find((result) => result.title === 'No icon')!;
+    expect(status.icon).toBe('');
+    expect(cleared.getAttribute('aria-pressed')).toBe('true');
+    expect(activeDocument.activeElement).toBe(cleared);
+
+    const icon = Array.from(
+      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+    ).find((result) => result.title === 'alert-triangle')!;
+    icon.focus();
+    icon.click();
+
+    const reselected = Array.from(
+      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+    ).find((result) => result.title === 'alert-triangle')!;
+    expect(status.icon).toBe('alert-triangle');
+    expect(reselected.getAttribute('aria-pressed')).toBe('true');
+    expect(activeDocument.activeElement).toBe(reselected);
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+    tab.containerEl.remove();
   });
 });

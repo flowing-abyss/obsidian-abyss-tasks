@@ -73,10 +73,10 @@ export class TagPickerModal extends Modal {
       if (state === 'unchecked') this.pending.set(tag, true);
       else this.pending.delete(tag);
     }
-    this.renderList(this.searchEl.value);
+    this.renderList(this.searchEl.value, tag);
   }
 
-  private renderList(query: string): void {
+  private renderList(query: string, focusTag?: string): void {
     this.listEl.empty();
     const q = query.toLowerCase().replace(/^#/, '');
     const filtered = q
@@ -90,11 +90,24 @@ export class TagPickerModal extends Modal {
     if (filtered.length === 0) {
       this.listEl.createDiv({ cls: 'tc-tag-picker-empty', text: 'No tags found' });
     }
+
+    if (focusTag) {
+      const item = Array.from(this.listEl.querySelectorAll<HTMLButtonElement>('[data-tag]')).find(
+        (button) => button.dataset['tag'] === focusTag,
+      );
+      item?.focus({ preventScroll: true });
+    }
   }
 
   private renderItem(tag: string): void {
     const state = this.effectiveState(tag);
-    const item = this.listEl.createDiv({ cls: `tc-tag-picker-item tc-tag-picker-item--${state}` });
+    let pressed = 'false';
+    if (state === 'partial') pressed = 'mixed';
+    else if (state === 'checked') pressed = 'true';
+    const item = this.listEl.createEl('button', {
+      cls: `tc-tag-picker-item tc-tag-picker-item--${state}`,
+      attr: { type: 'button', 'data-tag': tag, 'aria-pressed': pressed },
+    });
 
     const iconEl = item.createSpan({ cls: 'tc-tag-picker-icon' });
     if (state === 'checked') setIcon(iconEl, 'check');
@@ -105,10 +118,7 @@ export class TagPickerModal extends Modal {
     const color = this.getTagColor(tag);
     if (color) labelEl.setCssProps({ '--tc-tag-picker-color': color });
 
-    item.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      this.toggle(tag);
-    });
+    item.addEventListener('click', () => this.toggle(tag));
   }
 
   onClose(): void {

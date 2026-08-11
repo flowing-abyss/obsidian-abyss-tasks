@@ -1093,7 +1093,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         return out;
       })();
 
-      let renderResults: (query: string) => void = () => {};
+      let renderResults: (query: string, focusIcon?: string) => void = () => {};
 
       new Setting(iconInputHost).setName('Search icons').addText((t) =>
         t
@@ -1103,23 +1103,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
       const resultsEl = iconInputHost.createDiv({ cls: 'tc-status-icon-results' });
-      renderResults = (query: string) => {
+      renderResults = (query: string, focusIcon?: string) => {
         resultsEl.empty();
+
+        const selectIcon = (iconId: string): void => {
+          def.icon = iconId;
+          void this.persistStatuses();
+          renderResults(query, iconId);
+          updatePreview();
+          this.renderStatusHeaderPreview(def.id);
+        };
 
         // "No icon" is always the first cell — the only way to clear a
         // previously-set icon back to the empty (plain to-do-style) chip.
-        const clearCell = resultsEl.createDiv({
+        const clearCell = resultsEl.createEl('button', {
           cls: `tc-status-icon-result tc-status-icon-clear${def.icon === '' ? ' is-selected' : ''}`,
-          attr: { title: 'No icon' },
+          attr: {
+            type: 'button',
+            title: 'No icon',
+            'data-icon': '',
+            'aria-label': 'Clear icon',
+            'aria-pressed': String(def.icon === ''),
+          },
         });
         clearCell.createSpan({ cls: 'tc-status-icon-result-icon', text: '—' });
-        clearCell.addEventListener('click', () => {
-          def.icon = '';
-          void this.persistStatuses();
-          renderResults(query);
-          updatePreview();
-          this.renderStatusHeaderPreview(def.id);
-        });
+        clearCell.addEventListener('click', () => selectIcon(''));
 
         const q = query.trim().toLowerCase();
         const ids = allIconIds
@@ -1130,19 +1138,26 @@ export class CalendarSettingsTab extends PluginSettingTab {
           return;
         }
         for (const iconId of ids) {
-          const cell = resultsEl.createDiv({
+          const cell = resultsEl.createEl('button', {
             cls: `tc-status-icon-result${iconId === def.icon ? ' is-selected' : ''}`,
-            attr: { title: iconId },
+            attr: {
+              type: 'button',
+              title: iconId,
+              'data-icon': iconId,
+              'aria-label': `Select icon ${iconId}`,
+              'aria-pressed': String(iconId === def.icon),
+            },
           });
           const iconPreview = cell.createSpan({ cls: 'tc-status-icon-result-icon' });
           setIcon(iconPreview, iconId);
-          cell.addEventListener('click', () => {
-            def.icon = iconId;
-            void this.persistStatuses();
-            renderResults(query);
-            updatePreview();
-            this.renderStatusHeaderPreview(def.id);
-          });
+          cell.addEventListener('click', () => selectIcon(iconId));
+        }
+
+        if (focusIcon !== undefined) {
+          const cell = Array.from(
+            resultsEl.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+          ).find((button) => button.dataset['icon'] === focusIcon);
+          cell?.focus({ preventScroll: true });
         }
       };
       renderResults('');
