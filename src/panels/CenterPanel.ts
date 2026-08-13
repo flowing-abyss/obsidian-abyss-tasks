@@ -1606,7 +1606,9 @@ export class CenterPanel {
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
 
-    renderStatusMarker(card, {
+    const mainRow = card.createDiv({ cls: 'tc-task-card-main-row' });
+
+    renderStatusMarker(mainRow, {
       task,
       registry: this.statusRegistry,
       onLeftClick: () => void this.toggleTask(task),
@@ -1634,7 +1636,7 @@ export class CenterPanel {
     const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
     const suppressToday = sel === 'today' && d === today;
 
-    const body = card.createDiv({ cls: 'tc-task-body' });
+    const body = mainRow.createDiv({ cls: 'tc-task-body' });
     const titleRow = body.createDiv({ cls: 'tc-task-title-row' });
 
     if (task.recurrence) {
@@ -1668,7 +1670,7 @@ export class CenterPanel {
       onEditLink: (occ, token) => this.editTaskLink(task, occ, token),
     });
     if (task.description) {
-      const descEl = body.createDiv({ cls: 'tc-task-desc' });
+      const descEl = card.createDiv({ cls: 'tc-task-desc' });
       // Render the first description line as markdown so links are clickable here too.
       // No onEditLink: the card is a compact preview; link editing happens in the panel.
       renderTaskText(descEl, task.description.split('\n')[0] ?? '', {
@@ -1686,7 +1688,7 @@ export class CenterPanel {
     const hasRightMeta =
       showSourceNote || (d && !suppressToday) || task.planning.time || tags.length > 0;
     if (hasRightMeta) {
-      const metaRight = card.createDiv({ cls: 'tc-task-meta-right' });
+      const metaRight = mainRow.createDiv({ cls: 'tc-task-meta-right' });
 
       // Date + optional time: date part and time part are separately clickable
       if (d && !suppressToday) {
@@ -1806,11 +1808,11 @@ export class CenterPanel {
     });
 
     // Delete button (visible on hover)
-    const deleteBtn = card.createEl('button', {
+    const deleteBtn = mainRow.createEl('button', {
       cls: 'tc-task-delete-btn',
       attr: { title: 'Delete task', 'aria-label': 'Delete task' },
-      text: '×',
     });
+    setIcon(deleteBtn, 'x');
     deleteBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       void this.deleteTask(task);

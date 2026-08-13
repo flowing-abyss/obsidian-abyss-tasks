@@ -3001,14 +3001,31 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Task card */
 .tc-task-card {
+  --tc-task-card-marker-size: 19px;
+  --tc-task-card-primary-gap: 8px;
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
   padding: 8px 12px;
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.1s;
   position: relative;
+}
+.tc-task-card-main-row {
+  display: flex;
+  align-items: center;
+  gap: var(--tc-task-card-primary-gap);
+  width: 100%;
+  min-width: 0;
+}
+.tc-task-card-main-row > .tc-status-marker {
+  width: var(--tc-task-card-marker-size);
+  height: var(--tc-task-card-marker-size);
+  min-width: var(--tc-task-card-marker-size);
+  flex-basis: var(--tc-task-card-marker-size);
 }
 .tc-task-card:hover {
   background: var(--background-modifier-hover);
@@ -3109,7 +3126,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 .tc-task-title-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
 }
@@ -3134,6 +3151,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.tc-task-card > .tc-task-desc {
+  margin-top: 0;
+  margin-inline-start: calc(var(--tc-task-card-marker-size) + var(--tc-task-card-primary-gap));
+}
 .tc-task-pills {
   display: flex;
   align-items: center;
@@ -3141,12 +3162,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-wrap: wrap;
 }
 .tc-task-meta-right {
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   flex-wrap: nowrap;
-  padding-top: 2px;
+  overflow: hidden;
 }
 .tc-task-date {
   font-size: 11px;
@@ -3281,13 +3303,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   justify-content: center;
   border-radius: 4px;
   flex-shrink: 0;
-  align-self: center;
   transition:
     opacity 0.1s,
     color 0.1s,
     background 0.1s;
   padding: 0;
   line-height: 1;
+}
+.tc-task-delete-btn svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 .tc-task-card:hover .tc-task-delete-btn {
   opacity: 1;

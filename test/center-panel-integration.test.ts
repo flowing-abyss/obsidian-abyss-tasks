@@ -1,5 +1,5 @@
 import moment from 'moment';
-import { TFile, type App } from 'obsidian';
+import { addIcon, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -168,6 +168,93 @@ async function makePanel(
     app,
   };
 }
+
+describe('CenterPanel task-card primary row', () => {
+  fixedToday('2026-06-25');
+
+  it('keeps every primary control in one row and renders the description below it', () => {
+    const snapshot = task({
+      title: 'Pay Migaku',
+      recurrence: 'every week',
+      tags: ['#task/regular'],
+      planning: { due: '2026-08-05' },
+      description: 'Renew before the next lesson',
+      source: { filePath: 'regular-tasks.md', line: 4 },
+    });
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'Migaku');
+    const panel = makeStaticPanel(state, [snapshot]);
+    addIcon('x', '<svg data-lucide="x"><path d="M18 6 6 18M6 6l12 12" /></svg>');
+    try {
+      panel.mount(freshContainer());
+
+      const card = panel['el'].querySelector<HTMLElement>('.tc-task-card')!;
+      const mainRow = card.querySelector<HTMLElement>('.tc-task-card-main-row')!;
+      expect(Array.from(mainRow.children, (child) => child.className)).toEqual([
+        expect.stringContaining('tc-status-marker'),
+        'tc-task-body',
+        'tc-task-meta-right',
+        'tc-task-delete-btn',
+      ]);
+
+      const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
+      const recurrence = titleRow.querySelector<HTMLElement>('.tc-recurrence-badge')!;
+      expect(recurrence.nextElementSibling?.classList.contains('tc-task-title')).toBe(true);
+
+      const description = card.querySelector<HTMLElement>('.tc-task-desc')!;
+      expect(description.parentElement).toBe(card);
+      expect(description.previousElementSibling).toBe(mainRow);
+
+      const deleteButton = mainRow.querySelector<HTMLButtonElement>('.tc-task-delete-btn')!;
+      expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
+      expect(deleteButton.textContent).toBe('');
+    } finally {
+      panel.destroy();
+      removeIcon('x');
+    }
+  });
+
+  it('does not reserve a recurrence slot for an ordinary one-line task', () => {
+    const snapshot = task({
+      title: 'Ordinary task',
+      source: { filePath: 'inbox.md', line: 2 },
+    });
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'Ordinary');
+    const panel = makeStaticPanel(state, [snapshot]);
+    panel.mount(freshContainer());
+
+    const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
+    const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
+    expect(titleRow.querySelector('.tc-recurrence-badge')).toBeNull();
+    expect(titleRow.firstElementChild?.classList.contains('tc-task-title')).toBe(true);
+    expect(mainRow.querySelector('.tc-task-desc')).toBeNull();
+    panel.destroy();
+  });
+
+  it('keeps a long wrapped title inside the same primary-row body', () => {
+    const snapshot = task({
+      title:
+        'A deliberately long task title that wraps on a narrow center panel without moving its controls',
+      planning: { due: '2026-08-05', time: localTime('09:30') },
+      source: { filePath: 'inbox.md', line: 3 },
+    });
+    const state = new AppState();
+    state.set('mode', 'search');
+    state.set('searchQuery', 'deliberately');
+    const panel = makeStaticPanel(state, [snapshot]);
+    panel.mount(freshContainer());
+
+    const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
+    const body = mainRow.querySelector<HTMLElement>('.tc-task-body')!;
+    expect(body.querySelector('.tc-task-title')).not.toBeNull();
+    expect(mainRow.querySelector('.tc-task-meta-right')).not.toBeNull();
+    expect(panel['el'].querySelector('.tc-task-card > .tc-task-desc')).toBeNull();
+    panel.destroy();
+  });
+});
 
 describe('CenterPanel list selection', () => {
   it('excludes a date-less task from today while retaining an explicitly planned task from the same daily note', () => {

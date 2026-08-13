@@ -11,6 +11,48 @@ function declarationsFor(selector: string): string {
 }
 
 describe('CenterPanel task metadata styles', () => {
+  it('uses one centered primary-row contract without compensating offsets', () => {
+    const card = declarationsFor('.tc-task-card');
+    const mainRow = declarationsFor('.tc-task-card-main-row');
+    const titleRow = declarationsFor('.tc-task-title-row');
+    const metadata = declarationsFor('.tc-task-meta-right');
+    const deleteButton = declarationsFor('.tc-task-delete-btn');
+
+    expect(card).toContain('flex-direction: column');
+    expect(card).toContain('min-width: 0');
+    expect(mainRow).toContain('display: flex');
+    expect(mainRow).toContain('align-items: center');
+    expect(mainRow).toContain('width: 100%');
+    expect(mainRow).toContain('min-width: 0');
+    expect(titleRow).toContain('align-items: center');
+    expect(metadata).not.toContain('padding-top');
+    expect(deleteButton).not.toContain('align-self');
+  });
+
+  it('keeps descriptions title-aligned while narrow primary rows contain their content', () => {
+    const description = declarationsFor('.tc-task-card > .tc-task-desc');
+    const body = declarationsFor('.tc-task-body');
+    const metadata = declarationsFor('.tc-task-meta-right');
+
+    expect(description).toContain('margin-inline-start:');
+    expect(description).toContain('var(--tc-task-card-marker-size)');
+    expect(description).toContain('var(--tc-task-card-primary-gap)');
+    expect(body).toContain('min-width: 0');
+    expect(metadata).toContain('min-width: 0');
+    expect(metadata).toContain('overflow: hidden');
+  });
+
+  it('keeps hover and selection states paint-only so controls do not shift', () => {
+    for (const selector of [
+      '.tc-task-card:hover',
+      '.tc-task-card.is-selected',
+      '.tc-task-card.tc-multi-selected',
+    ]) {
+      const declarations = declarationsFor(selector);
+      expect(declarations).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
+    }
+  });
+
   it('separates and vertically centers date and time icons from their labels', () => {
     const dateTimePart = declarationsFor('.tc-task-date-part,\n.tc-task-time-part');
     const dateIcon = declarationsFor('.tc-date-icon');
