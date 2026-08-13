@@ -1795,7 +1795,7 @@ export class RightPanel {
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
-    this.applyPlanningResult(result, target);
+    this.applyPlanningResult(result, target, undefined, submission);
     this.settleDraftSubmission(submission, result);
     return result.type === 'ok';
   }
@@ -1904,7 +1904,7 @@ export class RightPanel {
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
-    this.applyPlanningResult(result, target, initiatingStack);
+    this.applyPlanningResult(result, target, initiatingStack, submission);
     this.settleDraftSubmission(submission, result);
     return result.type === 'ok';
   }
@@ -1971,7 +1971,7 @@ export class RightPanel {
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
-    this.applyPlanningResult(result, target);
+    this.applyPlanningResult(result, target, undefined, submission);
     this.settleDraftSubmission(submission, result);
     return result;
   }
@@ -1980,6 +1980,7 @@ export class RightPanel {
     result: TaskCommandResult,
     target: PlanningTarget,
     initiatingStack?: readonly TaskLike[],
+    submission?: object,
   ): void {
     presentTaskCommandResult(result);
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
@@ -1992,12 +1993,17 @@ export class RightPanel {
       (initiatingStack === undefined || stack === initiatingStack)
     ) {
       const root = result.outcome.task;
+      const draft =
+        result.changed && submission
+          ? this.captureDraftStateForOwnedTransition(initiatingRoot, root.ref, submission)
+          : this.captureDraftState();
       this.state.set(
         'taskStack',
         target.type === 'subtask'
           ? rebuildPlanningTargetStack(root, target)
           : rebuildTaskSelection(root, stack),
       );
+      this.restoreDraftState(draft, root);
     }
     if (result.changed) this.onSuccessfulMutation?.(result.outcome.task.ref);
   }

@@ -153,6 +153,48 @@ async function panelWith(
 }
 
 describe('RightPanel block editing', () => {
+  it('preserves the full DOM draft bundle when an add-comment command is a no-op', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: initial },
+    });
+    const { panel } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      container.querySelector<HTMLElement>('.tc-right-title-view')!.click();
+      await flushMicrotasks();
+      const title = container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+      title.value = 'unsaved title';
+      title.focus();
+      title.setSelectionRange(2, 7);
+      const comment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      comment.value = 'already present';
+      comment.setSelectionRange(3, 10);
+
+      comment.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks(20);
+
+      const restoredTitle = container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+      const restoredComment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      expect(restoredTitle.value).toBe('unsaved title');
+      expect(restoredTitle.selectionStart).toBe(2);
+      expect(restoredTitle.selectionEnd).toBe(7);
+      expect(restoredComment.value).toBe('already present');
+      expect(restoredComment.selectionStart).toBe(3);
+      expect(restoredComment.selectionEnd).toBe(10);
+      expect(activeDocument.activeElement).toBe(restoredTitle);
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('preserves simultaneous dirty title and new-comment drafts across refresh', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

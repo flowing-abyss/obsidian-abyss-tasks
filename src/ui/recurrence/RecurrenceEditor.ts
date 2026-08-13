@@ -140,15 +140,23 @@ function addOption(
 }
 
 function withoutTerminalWhenDone(raw: string): string {
-  let base = raw.trim().replace(/\s+/gu, ' ');
-  const suffix = 'when done';
-  while (base.toLowerCase().endsWith(suffix)) {
-    const suffixStart = base.length - suffix.length;
-    const preceding = base.charAt(suffixStart - 1);
-    if (suffixStart > 0 && preceding?.trim().length !== 0) break;
-    base = base.slice(0, suffixStart).trimEnd();
+  let base = raw.trimEnd();
+  while (true) {
+    let cursor = base.length;
+    if (base.slice(cursor - 'done'.length, cursor).toLowerCase() !== 'done') return base;
+    cursor -= 'done'.length;
+    if (cursor === 0 || !/\s/u.test(base[cursor - 1] ?? '')) return base;
+    while (cursor > 0 && /\s/u.test(base[cursor - 1] ?? '')) cursor--;
+    if (base.slice(cursor - 'when'.length, cursor).toLowerCase() !== 'when') return base;
+    cursor -= 'when'.length;
+    if (cursor > 0 && !/\s/u.test(base[cursor - 1] ?? '')) return base;
+    base = base.slice(0, cursor).trimEnd();
   }
-  return base;
+}
+
+function withTerminalWhenDone(raw: string, whenDone: boolean): string {
+  const base = withoutTerminalWhenDone(raw);
+  return `${base}${whenDone ? ' when done' : ''}`;
 }
 
 export function mountRecurrenceEditor(options: RecurrenceEditorOptions): RecurrenceEditorHandle {
@@ -660,6 +668,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       },
     });
     customButton.addEventListener('click', () => {
+      state.customDraft = withTerminalWhenDone(state.customDraft, state.whenDone);
       state.mode = 'custom';
       state.preset = undefined;
       state.submissionError = undefined;
@@ -701,10 +710,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     whenDoneInput.addEventListener('change', () => {
       state.whenDone = whenDoneInput.checked;
       if (state.mode === 'custom') {
-        const parsed = parseRecurrenceRule(state.customDraft);
-        const base =
-          parsed.type === 'valid' ? parsed.canonical : withoutTerminalWhenDone(state.customDraft);
-        state.customDraft = `${base}${state.whenDone ? ' when done' : ''}`;
+        state.customDraft = withTerminalWhenDone(state.customDraft, state.whenDone);
         const raw = options.container.querySelector<HTMLInputElement>('.tc-recurrence-raw');
         if (raw) raw.value = state.customDraft;
       }

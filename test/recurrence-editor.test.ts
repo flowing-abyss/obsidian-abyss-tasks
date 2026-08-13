@@ -221,6 +221,61 @@ describe('mountRecurrenceEditor', () => {
     );
   });
 
+  it.each([
+    {
+      initialRule: 'every 3 weeks on Monday',
+      presetWhenDone: true,
+      expectedCustom: 'every 3 weeks on Monday when done',
+      expectedPreset: 'every month when done',
+    },
+    {
+      initialRule: 'every 3 weeks on Monday when done',
+      presetWhenDone: false,
+      expectedCustom: 'every 3 weeks on Monday',
+      expectedPreset: 'every month',
+    },
+    {
+      initialRule: 'weekly   custom',
+      presetWhenDone: true,
+      expectedCustom: 'weekly   custom when done',
+      expectedPreset: 'every month when done',
+    },
+    {
+      initialRule: 'weekly   custom when   done',
+      presetWhenDone: false,
+      expectedCustom: 'weekly   custom',
+      expectedPreset: 'every month',
+    },
+  ] as const)(
+    'syncs preset when-done=$presetWhenDone into the preserved Custom rule and back',
+    ({ initialRule, presetWhenDone, expectedCustom, expectedPreset }) => {
+      const { container } = mount();
+      click(button(container, 'Custom'));
+      input(
+        container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!,
+        initialRule,
+      );
+      click(button(container, 'Daily'));
+      const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
+      whenDone.checked = presetWhenDone;
+      whenDone.dispatchEvent(new Event('change', { bubbles: true }));
+
+      click(button(container, 'Custom'));
+
+      expect(
+        container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')?.value,
+      ).toBe(expectedCustom);
+      expect(container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')?.checked).toBe(
+        presetWhenDone,
+      );
+
+      click(button(container, 'Monthly'));
+      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+        expectedPreset,
+      );
+    },
+  );
+
   it('keeps empty diagnostics addressable without reserving visual rows', () => {
     const { container } = mount();
     const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;

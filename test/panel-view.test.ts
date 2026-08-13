@@ -461,6 +461,47 @@ describe('PanelView', () => {
       expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
     });
 
+    it('preserves the full RightPanel DOM draft bundle while a no-op Center command converges', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const observed = taskApplication.index.list()[0]!;
+      state.set('taskStack', [observed]);
+      activeDocument.body.append(view.contentEl);
+      view.contentEl.querySelector<HTMLElement>('.tc-right-title-view')!.click();
+      await flushMicrotasks();
+      const title = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+      title.value = 'unsaved title';
+      title.focus();
+      title.setSelectionRange(1, 6);
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      comment.value = 'unsaved comment';
+      comment.setSelectionRange(2, 9);
+      const execute = vi.spyOn(taskApplication.tasks, 'execute');
+
+      (
+        view as unknown as {
+          convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void;
+        }
+      ).convergeOwnCommand(observed.ref, {
+        type: 'ok',
+        outcome: { type: 'task', task: observed },
+        changed: false,
+      });
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+
+      const restoredTitle =
+        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+      const restoredComment =
+        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      expect(restoredTitle.value).toBe('unsaved title');
+      expect(restoredTitle.selectionStart).toBe(1);
+      expect(restoredTitle.selectionEnd).toBe(6);
+      expect(restoredComment.value).toBe('unsaved comment');
+      expect(restoredComment.selectionStart).toBe(2);
+      expect(restoredComment.selectionEnd).toBe(9);
+      expect(activeDocument.activeElement).toBe(restoredTitle);
+      expect(execute).not.toHaveBeenCalled();
+    });
+
     it('keeps uncertainty silent when the matching command result wins the race', () => {
       const state = (view as unknown as { state: AppState }).state;
       const observed = taskApplication.index.list()[0]!;
