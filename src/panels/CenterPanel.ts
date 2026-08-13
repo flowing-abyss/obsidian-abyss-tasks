@@ -27,6 +27,7 @@ import {
   localDate,
   localTime,
   shiftLocalDate,
+  type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
   type TaskCommandResult,
@@ -212,6 +213,7 @@ export class CenterPanel {
     private projectStore: ProjectStore | null = null,
     private projectManager: ProjectManager | null = null,
     private tasks?: TaskApplicationApi,
+    private commentTimeContext?: CommentTimeContextProvider,
   ) {
     this.onSaveSettings = onSaveSettings;
     if (tasks) {
@@ -258,6 +260,7 @@ export class CenterPanel {
       this.settings,
       this.queries,
       this.tasks,
+      this.commentTimeContext,
     );
 
     // Initialize per-list state before first render

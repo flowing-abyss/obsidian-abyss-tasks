@@ -43,3 +43,4 @@ export type {
   TaskTextTarget,
 } from './domain/types';
 export { durationMinutes, localDate, localTime } from './domain/validation';
+export { systemCommentTimeContext } from './infrastructure/commentTimeContext';

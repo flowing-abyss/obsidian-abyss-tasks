@@ -2,7 +2,7 @@ import { MarkdownRenderChild, Platform, type Plugin } from 'obsidian';
 import { DEFAULT_VIEW_CONFIG } from '../settings/defaults';
 import type { CalendarSettings, CodeBlockParams, ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskApplicationApi, TaskQueryApi } from '../tasks';
+import { systemCommentTimeContext, type TaskApplicationApi, type TaskQueryApi } from '../tasks';
 import { CalendarRenderer } from '../ui/CalendarRenderer';
 
 // Note: if 'yaml' is not available as a dependency, use a simple key:value line parser
@@ -84,6 +84,7 @@ export function registerCodeBlock(
       statusRegistry,
       settings.taskPrefix,
       settings.recurrence,
+      systemCommentTimeContext,
     );
 
     // MarkdownRenderChild ensures cleanup when the block leaves the DOM

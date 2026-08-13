@@ -5,6 +5,7 @@ import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import {
   localDate,
+  type CommentTimeContextProvider,
   type LocalDate,
   type RecurrencePolicy,
   type TaskApplicationApi,
@@ -78,10 +79,18 @@ export class CalendarRenderer {
     private statusRegistry: StatusRegistry,
     private taskPrefix = '',
     private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
+    private commentTimeContext?: CommentTimeContextProvider,
   ) {
     this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
     this.forecastMenuOwner = createForecastContextMenuOwner(rootEl.ownerDocument);
-    this.taskModal = new TaskModal(app, statusRegistry, undefined, queries, tasks);
+    this.taskModal = new TaskModal(
+      app,
+      statusRegistry,
+      undefined,
+      queries,
+      tasks,
+      commentTimeContext,
+    );
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
       this.selectedDate = resolveWeekStartPosition(

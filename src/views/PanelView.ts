@@ -156,6 +156,7 @@ export class PanelView extends ItemView {
       projectStore,
       projectManager,
       selectionTasks,
+      this.commentTimeContext,
     );
     this.right = new RightPanel(
       this.state,

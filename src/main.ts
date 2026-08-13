@@ -14,6 +14,7 @@ import { TaskApplicationService } from './tasks/application/TaskApplicationServi
 import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
+import { systemCommentTimeContext } from './tasks/infrastructure/commentTimeContext';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from './tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -77,15 +78,7 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
-    const commentTimeContext: CommentTimeContextProvider = () => {
-      const nowEpochMs = Date.now();
-      return {
-        nowEpochMs,
-        today: localDate(window.moment(nowEpochMs).format('YYYY-MM-DD')),
-        locale: window.moment.locale(),
-        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-      };
-    };
+    const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 
     this.registerView(
       PANEL_VIEW_TYPE,
@@ -137,6 +130,7 @@ export default class TaskCalendarPlugin extends Plugin {
         this.statusRegistry,
         this.settings.taskPrefix,
         this.settings.recurrence,
+        commentTimeContext,
       );
       renderer.mount();
     };

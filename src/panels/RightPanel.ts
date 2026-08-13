@@ -65,29 +65,6 @@ import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '..
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
-function systemCommentTimeContext(): CommentTimeContext {
-  const nowEpochMs = Date.now();
-  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const parts = new Intl.DateTimeFormat('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    timeZone,
-  }).formatToParts(nowEpochMs);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((candidate) => candidate.type === type)?.value;
-  const year = part('year');
-  const month = part('month');
-  const day = part('day');
-  if (!year || !month || !day) throw new Error('comment-time-context-unavailable');
-  return {
-    nowEpochMs,
-    today: localDate(`${year}-${month}-${day}`),
-    locale: window.navigator.language || 'en-US',
-    timeZone,
-  };
-}
-
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
   readonly ref: TaskRef;
@@ -196,7 +173,7 @@ export class RightPanel {
     private tasks?: TaskApplicationApi,
     private onRenderHeaderActions?: (actions: HTMLElement) => void,
     private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
-    private commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext,
+    private commentTimeContext?: CommentTimeContextProvider,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -634,7 +611,7 @@ export class RightPanel {
       return;
     }
     const task = stack[stack.length - 1]!;
-    this.renderTask(task, stack, this.commentTimeContext());
+    this.renderTask(task, stack, this.commentTimeContext?.());
     this.renderDetachedDraftTray();
   }
 
@@ -785,7 +762,7 @@ export class RightPanel {
   private renderTask(
     task: TaskLike,
     stack: TaskLike[],
-    commentTimeContext: CommentTimeContext,
+    commentTimeContext?: CommentTimeContext,
   ): void {
     // Breadcrumb — shows only the parent path (current task is in the title input)
     if (stack.length > 1) {
@@ -1221,7 +1198,7 @@ export class RightPanel {
     container: HTMLElement,
     comment: TaskCommentSnapshot,
     task: TaskLike,
-    commentTimeContext: CommentTimeContext,
+    commentTimeContext?: CommentTimeContext,
   ): void {
     const row = container.createDiv({ cls: 'tc-comment-row' });
     enableAttachmentDrop(row, {
@@ -1229,7 +1206,7 @@ export class RightPanel {
       sourcePath: rootTaskRef(task).filePath,
       onLinks: (links) => void this.updateComment(task, comment, `${comment.text} ${links}`.trim()),
     });
-    if (comment.timestamp) {
+    if (comment.timestamp && commentTimeContext) {
       row.createEl('span', {
         cls: 'tc-comment-date',
         text: formatCommentTimeLabel({ timestamp: comment.timestamp, ...commentTimeContext }),
