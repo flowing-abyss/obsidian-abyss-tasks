@@ -50,7 +50,7 @@ export interface AnchoredRecurrenceEditorOptions extends Omit<
 type Month = Extract<YearlyChoice, { type: 'date' }>['month'];
 
 interface EditorState {
-  mode: 'controls' | 'advanced';
+  mode: 'structured' | 'custom';
   preset: Preset | undefined;
   intervalText: string;
   unit: Unit;
@@ -58,7 +58,7 @@ interface EditorState {
   monthly: MonthlyChoice;
   yearly: YearlyChoice;
   whenDone: boolean;
-  advancedRaw: string;
+  customDraft: string;
   onCompletion: 'keep' | 'delete';
   submitting: boolean;
   submissionError: string | undefined;
@@ -172,7 +172,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   const existing = task?.recurrence;
   const existingParsed = existing === undefined ? undefined : parseRecurrenceRule(existing);
   const state: EditorState = {
-    mode: existing === undefined ? 'controls' : 'advanced',
+    mode: existing === undefined ? 'structured' : 'custom',
     preset: existing === undefined ? 'daily' : undefined,
     intervalText: '1',
     unit: 'days',
@@ -180,7 +180,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     monthly: { type: 'same-date' },
     yearly: { type: 'same-date' },
     whenDone: existingParsed?.type === 'valid' ? existingParsed.whenDone : false,
-    advancedRaw: existing ?? 'every day',
+    customDraft: existing ?? 'every day',
     onCompletion: task?.onCompletion ?? 'keep',
     submitting: false,
     submissionError: undefined,
@@ -201,7 +201,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const parseState = (): RecurrenceParseResult => {
-    if (state.mode === 'advanced') return parseRecurrenceRule(state.advancedRaw);
+    if (state.mode === 'custom') return parseRecurrenceRule(state.customDraft);
     if (state.preset === 'weekdays') {
       return parseRecurrenceRule(`every weekday${state.whenDone ? ' when done' : ''}`);
     }
@@ -215,11 +215,27 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     });
   };
 
+  const canonicalPreset = (): Preset | undefined => {
+    if (state.mode === 'custom') return undefined;
+    const parsed = parseState();
+    if (parsed.type === 'invalid') return undefined;
+    const candidates: readonly (readonly [Preset, string])[] = [
+      ['daily', 'every day'],
+      ['weekdays', 'every weekday'],
+      ...(reference === undefined
+        ? []
+        : ([['weekly', recurrencePresetRule('weekly', reference)]] as const)),
+      ['monthly', 'every month'],
+      ['yearly', 'every year'],
+    ];
+    return candidates.find(([, rule]) => parsed.canonical === rule)?.[0];
+  };
+
   const validationMessage = (parsed: RecurrenceParseResult): string => {
     if (options.ownershipConflict) return 'Remove the nested repeat conflict first.';
     if (!reference) return 'Add a date before setting a repeat.';
     if (
-      state.mode === 'controls' &&
+      state.mode === 'structured' &&
       state.preset !== 'weekdays' &&
       (!Number.isSafeInteger(Number(state.intervalText)) || Number(state.intervalText) < 1)
     ) {
@@ -231,7 +247,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const refresh = (): void => {
     const parsed = parseState();
-    if (state.mode === 'advanced' && parsed.type === 'valid') {
+    if (state.mode === 'custom' && parsed.type === 'valid') {
       state.whenDone = parsed.whenDone;
     }
     const message = validationMessage(parsed);
@@ -245,33 +261,48 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       preview.textContent = previewText;
     }
     const status = options.container.querySelector<HTMLElement>('.tc-recurrence-status');
-    if (status) status.textContent = message;
+    if (status) {
+      status.textContent = message;
+      status.hidden = message.length === 0;
+    }
     const warning = options.container.querySelector<HTMLElement>('.tc-recurrence-delete-warning');
     if (warning) {
       warning.textContent =
         state.onCompletion === 'delete'
           ? 'Completing this repeat deletes the finished task and its owned sub-tasks.'
           : '';
+      warning.hidden = state.onCompletion !== 'delete';
     }
     const whenDoneControl = options.container.querySelector<HTMLInputElement>(
       '.tc-recurrence-when-done',
     );
-    if (whenDoneControl && state.mode === 'advanced' && parsed.type === 'valid') {
+    if (whenDoneControl && state.mode === 'custom' && parsed.type === 'valid') {
       whenDoneControl.checked = parsed.whenDone;
     }
     const save = options.container.querySelector<HTMLButtonElement>('.tc-recurrence-save');
     if (save) save.disabled = state.submitting || message.length > 0 || parsed.type === 'invalid';
+    const pressedPreset = canonicalPreset();
+    for (const button of options.container.querySelectorAll<HTMLButtonElement>(
+      '.tc-recurrence-presets button',
+    )) {
+      const preset = button.dataset['recurrencePreset'] as Preset | undefined;
+      const custom = button.dataset['recurrenceMode'] === 'custom';
+      button.setAttribute(
+        'aria-pressed',
+        String(custom ? state.mode === 'custom' : preset !== undefined && preset === pressedPreset),
+      );
+    }
     const invalidInterval =
-      state.mode === 'controls' &&
+      state.mode === 'structured' &&
       state.preset !== 'weekdays' &&
       (!Number.isSafeInteger(Number(state.intervalText)) || Number(state.intervalText) < 1);
     const invalidMonthDay =
-      state.mode === 'controls' &&
+      state.mode === 'structured' &&
       state.unit === 'months' &&
       state.monthly.type === 'day' &&
       (!Number.isSafeInteger(state.monthly.day) || state.monthly.day < 1 || state.monthly.day > 31);
     const invalidYearlyDay =
-      state.mode === 'controls' &&
+      state.mode === 'structured' &&
       state.unit === 'years' &&
       state.yearly.type === 'date' &&
       (!Number.isSafeInteger(state.yearly.day) || state.yearly.day < 1 || state.yearly.day > 31);
@@ -286,10 +317,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       ?.setAttribute('aria-invalid', String(invalidYearlyDay));
     options.container
       .querySelector<HTMLElement>('.tc-recurrence-raw')
-      ?.setAttribute(
-        'aria-invalid',
-        String(state.mode === 'advanced' && parsed.type === 'invalid'),
-      );
+      ?.setAttribute('aria-invalid', String(state.mode === 'custom' && parsed.type === 'invalid'));
   };
 
   const submit = async (): Promise<void> => {
@@ -346,7 +374,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const setPreset = (preset: Preset): void => {
-    state.mode = 'controls';
+    state.mode = 'structured';
     state.preset = preset;
     state.intervalText = '1';
     state.monthly = { type: 'same-date' };
@@ -599,28 +627,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       text: 'Repeat',
       attr: { id: titleId },
     });
-    const advanced = heading.createEl('button', {
-      cls: `tc-recurrence-advanced${state.mode === 'advanced' ? ' is-selected' : ''}`,
-      text: 'Advanced',
-      attr: {
-        type: 'button',
-        'aria-pressed': String(state.mode === 'advanced'),
-        'data-recurrence-focus-key': 'advanced',
-      },
-    });
-    advanced.addEventListener('click', () => {
-      const parsed = parseState();
-      if (parsed.type === 'valid') state.advancedRaw = parsed.raw;
-      state.mode = 'advanced';
-      state.preset = undefined;
-      state.submissionError = undefined;
-      state.dirty = true;
-      render();
-    });
-
     const presets = editor.createDiv({
       cls: 'tc-recurrence-presets',
-      attr: { role: 'group', 'aria-label': 'Repeat presets' },
+      attr: { role: 'group', 'aria-label': 'Repeat pattern' },
     });
     for (const [preset, label] of [
       ['daily', 'Daily'],
@@ -635,19 +644,35 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
           type: 'button',
           'data-recurrence-preset': preset,
           'data-recurrence-focus-key': `preset:${preset}`,
-          'aria-pressed': String(state.mode === 'controls' && state.preset === preset),
+          'aria-pressed': String(state.mode === 'structured' && canonicalPreset() === preset),
         },
       });
       presetButton.addEventListener('click', () => setPreset(preset));
     }
+    const customButton = presets.createEl('button', {
+      text: 'Custom',
+      attr: {
+        type: 'button',
+        'data-recurrence-mode': 'custom',
+        'data-recurrence-focus-key': 'custom-mode',
+        'aria-pressed': String(state.mode === 'custom'),
+      },
+    });
+    customButton.addEventListener('click', () => {
+      state.mode = 'custom';
+      state.preset = undefined;
+      state.submissionError = undefined;
+      state.dirty = true;
+      render();
+    });
 
     const controls = editor.createDiv({ cls: 'tc-recurrence-controls' });
-    if (state.mode === 'advanced') {
+    if (state.mode === 'custom') {
       const raw = controls.createEl('input', {
         cls: 'tc-recurrence-raw',
         attr: {
           type: 'text',
-          value: state.advancedRaw,
+          value: state.customDraft,
           'aria-label': 'Recurrence rule',
           'aria-describedby': diagnosticId,
           'aria-invalid': 'false',
@@ -656,7 +681,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         },
       });
       raw.addEventListener('input', () => {
-        state.advancedRaw = raw.value;
+        state.customDraft = raw.value;
         state.submissionError = undefined;
         state.dirty = true;
         refresh();
@@ -674,13 +699,13 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     whenDone.createSpan({ text: 'Repeat from completion date' });
     whenDoneInput.addEventListener('change', () => {
       state.whenDone = whenDoneInput.checked;
-      if (state.mode === 'advanced') {
-        const parsed = parseRecurrenceRule(state.advancedRaw);
+      if (state.mode === 'custom') {
+        const parsed = parseRecurrenceRule(state.customDraft);
         const base =
-          parsed.type === 'valid' ? parsed.canonical : withoutTerminalWhenDone(state.advancedRaw);
-        state.advancedRaw = `${base}${state.whenDone ? ' when done' : ''}`;
+          parsed.type === 'valid' ? parsed.canonical : withoutTerminalWhenDone(state.customDraft);
+        state.customDraft = `${base}${state.whenDone ? ' when done' : ''}`;
         const raw = options.container.querySelector<HTMLInputElement>('.tc-recurrence-raw');
-        if (raw) raw.value = state.advancedRaw;
+        if (raw) raw.value = state.customDraft;
       }
       state.submissionError = undefined;
       state.dirty = true;
@@ -783,7 +808,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         ? active
         : undefined;
     return {
-      mode: state.mode === 'advanced' ? 'custom' : 'structured',
+      mode: state.mode,
       ...(state.preset !== undefined && { preset: state.preset }),
       intervalText: state.intervalText,
       unit: state.unit,
@@ -792,7 +817,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       yearly: state.yearly,
       whenDone: state.whenDone,
       onCompletion: state.onCompletion,
-      customDraft: state.advancedRaw,
+      customDraft: state.customDraft,
       ...(controlKey(active) !== undefined && { focusedControl: controlKey(active) }),
       ...(input?.selectionStart !== null &&
         input?.selectionStart !== undefined && {
@@ -807,7 +832,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const restoreDraftState = (draft: RecurrenceEditorDraft): void => {
-    state.mode = draft.mode === 'custom' ? 'advanced' : 'controls';
+    state.mode = draft.mode;
     state.preset = draft.preset;
     state.intervalText = draft.intervalText;
     state.unit = draft.unit;
@@ -816,7 +841,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     state.yearly = draft.yearly;
     state.whenDone = draft.whenDone;
     state.onCompletion = draft.onCompletion;
-    state.advancedRaw = draft.customDraft;
+    state.customDraft = draft.customDraft;
     state.dirty = draft.dirty;
     state.submissionError = undefined;
     render();
@@ -840,7 +865,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     dismiss,
     focus: () => {
       const focusTarget = options.container.querySelector<HTMLElement>(
-        state.mode === 'advanced'
+        state.mode === 'custom'
           ? '[aria-label="Recurrence rule"]'
           : '[aria-pressed="true"], [aria-label="Repeat interval"]',
       );

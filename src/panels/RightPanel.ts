@@ -827,17 +827,22 @@ export class RightPanel {
 
       // Combined time + duration chip (duration only applies to top-level TaskSnapshot, not SubtaskSnapshot)
       const duration = 'source' in task ? task.planning.duration : undefined;
-      let timeChipText = '⏰';
+      let timeChipText = '⏰ Time';
+      let timeChipLabel = 'Set time and duration';
       if (task.planning.time) {
         timeChipText = duration
           ? `⏰ ${task.planning.time} · ${formatDurationFromMinutes(duration)}`
           : `⏰ ${task.planning.time}`;
+        timeChipLabel = duration
+          ? `Change time, currently ${task.planning.time}, duration ${String(duration)} minutes`
+          : `Change time, currently ${task.planning.time}, no duration`;
       }
       const timeChip = chips.createEl('button', {
         cls: `tc-chip tc-chip-time${task.planning.time ? '' : ' tc-chip-empty'}`,
         text: timeChipText,
         attr: {
-          title: 'Set time & duration',
+          title: task.planning.time ? 'Change time and duration' : 'Set time and duration',
+          'aria-label': timeChipLabel,
           'aria-haspopup': 'dialog',
           'aria-expanded': 'false',
         },

@@ -93,6 +93,92 @@ afterEach(() => {
 });
 
 describe('mountRecurrenceEditor', () => {
+  it('presents presets and Custom as one pressed-state mode group', () => {
+    const { container } = mount();
+    const group = container.querySelector<HTMLElement>('.tc-recurrence-presets')!;
+
+    expect(group.getAttribute('role')).toBe('group');
+    expect(group.getAttribute('aria-label')).toBe('Repeat pattern');
+    expect(Array.from(group.querySelectorAll('button')).map((item) => item.textContent)).toEqual([
+      'Daily',
+      'Weekdays',
+      'Weekly',
+      'Monthly',
+      'Yearly',
+      'Custom',
+    ]);
+    expect(button(container, 'Daily').getAttribute('aria-pressed')).toBe('true');
+
+    click(button(container, 'Custom'));
+
+    expect(button(container, 'Custom').getAttribute('aria-pressed')).toBe('true');
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLButtonElement>(
+          '.tc-recurrence-presets button[aria-pressed="true"]',
+        ),
+      ),
+    ).toEqual([button(container, 'Custom')]);
+  });
+
+  it.each([
+    ['days', 'every 2 days'],
+    ['weeks', 'every 2 weeks on Sunday'],
+    ['months', 'every 2 months'],
+  ] as const)(
+    'keeps an arbitrary structured %s cadence distinct from canonical presets',
+    (unitValue, expectedRule) => {
+      const { container } = mount();
+      input(container.querySelector<HTMLInputElement>('[aria-label="Repeat interval"]')!, '2');
+      if (unitValue !== 'days') {
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Repeat unit"]')!,
+          unitValue,
+        );
+      }
+
+      expect(
+        container.querySelectorAll('.tc-recurrence-presets [aria-pressed="true"]'),
+      ).toHaveLength(0);
+      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+        expectedRule,
+      );
+    },
+  );
+
+  it('preserves the exact Custom draft while presets are edited', () => {
+    const { container } = mount();
+    click(button(container, 'Custom'));
+    const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
+    input(raw, 'every 3 weeks on Monday');
+
+    click(button(container, 'Daily'));
+    click(button(container, 'Custom'));
+
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')?.value).toBe(
+      'every 3 weeks on Monday',
+    );
+  });
+
+  it('keeps empty diagnostics addressable without reserving visual rows', () => {
+    const { container } = mount();
+    const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const warning = container.querySelector<HTMLElement>('.tc-recurrence-delete-warning')!;
+
+    expect(status.id).not.toBe('');
+    expect(status.hidden).toBe(true);
+    expect(warning.hidden).toBe(true);
+
+    click(button(container, 'Custom'));
+    input(container.querySelector<HTMLInputElement>('.tc-recurrence-raw')!, 'weekly');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')?.hidden).toBe(false);
+
+    change(container.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!, 'delete');
+    expect(container.querySelector<HTMLElement>('.tc-recurrence-delete-warning')?.hidden).toBe(
+      false,
+    );
+  });
+
   it('serializes every structured draft field for detached display and copy', () => {
     const root = task();
     const draft: RightPanelDraftState = {
@@ -124,7 +210,7 @@ describe('mountRecurrenceEditor', () => {
     (mode) => {
       const first = mount();
       activeDocument.body.append(first.container);
-      if (mode === 'custom') click(button(first.container, 'Advanced'));
+      if (mode === 'custom') click(button(first.container, 'Custom'));
       const firstEdit = first.container.querySelector<HTMLInputElement>(
         mode === 'custom' ? '.tc-recurrence-raw' : '.tc-recurrence-interval',
       )!;
@@ -148,7 +234,7 @@ describe('mountRecurrenceEditor', () => {
   );
 
   it.each([
-    ['advanced', (container: HTMLElement) => button(container, 'Advanced')],
+    ['custom-mode', (container: HTMLElement) => button(container, 'Custom')],
     ['preset:daily', (container: HTMLElement) => button(container, 'Daily')],
     ['preset:weekdays', (container: HTMLElement) => button(container, 'Weekdays')],
     ['preset:weekly', (container: HTMLElement) => button(container, 'Weekly')],
@@ -240,7 +326,7 @@ describe('mountRecurrenceEditor', () => {
     [
       'custom',
       (container: HTMLElement) => {
-        click(button(container, 'Advanced'));
+        click(button(container, 'Custom'));
         return container.querySelector('.tc-recurrence-raw')!;
       },
     ],
@@ -365,9 +451,9 @@ describe('mountRecurrenceEditor', () => {
     expect(container.querySelector('[aria-label="Yearly day"]')).not.toBeNull();
   });
 
-  it('keeps advanced validation inline and reserves a polite live status line', () => {
+  it('keeps Custom validation inline in a collapsible polite live status', () => {
     const { container } = mount();
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'weekly');
 
@@ -497,7 +583,7 @@ describe('mountRecurrenceEditor', () => {
   ] as const)('blocks invalid recurrence from %s without submitting', async (_name, modifiers) => {
     const { container, onSubmit, onClose } = mount();
     activeDocument.body.appendChild(container);
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'not a recurrence rule');
 
@@ -640,7 +726,7 @@ describe('mountRecurrenceEditor', () => {
 
   it('submits an advanced rule with Enter', async () => {
     const { container, onSubmit } = mount();
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'every month on the last Friday');
 
@@ -654,7 +740,7 @@ describe('mountRecurrenceEditor', () => {
 
   it('keeps the completion-date checkbox and advanced raw rule in one state', async () => {
     const { container, onSubmit } = mount();
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'every day');
     const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
@@ -687,7 +773,7 @@ describe('mountRecurrenceEditor', () => {
         controlsWhenDone.checked = true;
         controlsWhenDone.dispatchEvent(new Event('change', { bubbles: true }));
       }
-      click(button(container, 'Advanced'));
+      click(button(container, 'Custom'));
       const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
 
       input(raw, advancedRule);
@@ -704,7 +790,7 @@ describe('mountRecurrenceEditor', () => {
 
   it('keeps completion suffix toggles idempotent for an invalid advanced rule', () => {
     const { container } = mount();
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
     input(raw, 'weekly');
@@ -767,7 +853,7 @@ describe('mountRecurrenceEditor', () => {
     input(interval, '2');
     expect(interval.getAttribute('aria-invalid')).toBe('false');
 
-    click(button(container, 'Advanced'));
+    click(button(container, 'Custom'));
     const advancedStatus = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     expect(advancedStatus.id).toBe(diagnosticId);

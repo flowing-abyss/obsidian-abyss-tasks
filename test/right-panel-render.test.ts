@@ -1827,15 +1827,27 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     expect(el.querySelector('.tc-chip-add-date')).not.toBeNull();
   });
 
-  it('combined time+duration chip shows "time · duration" when both set, just time otherwise', async () => {
+  it('time chip keeps the alarm marker and exposes exact empty, time, and duration states', async () => {
+    const emptyPanel = await makePanel();
+    emptyPanel.state.set('taskStack', [task({ title: 'Empty time' })]);
+    const empty = emptyPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    expect(empty.textContent).toBe('⏰ Time');
+    expect(empty.getAttribute('aria-label')).toBe('Set time and duration');
+
     const withBothPanel = await makePanel();
     withBothPanel.state.set('taskStack', [
       task({ title: 'TD', planning: { time: '15:00', duration: 90 } }),
     ]);
-    expect(el2Text(withBothPanel.el, '.tc-chip-time')).toBe('⏰ 15:00 · 1h30m');
+    const withBoth = withBothPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    expect(withBoth.textContent).toBe('⏰ 15:00 · 1h30m');
+    expect(withBoth.getAttribute('aria-label')).toBe(
+      'Change time, currently 15:00, duration 90 minutes',
+    );
 
     const timeOnlyPanel = await makePanel();
     timeOnlyPanel.state.set('taskStack', [task({ title: 'T', planning: { time: '15:00' } })]);
-    expect(el2Text(timeOnlyPanel.el, '.tc-chip-time')).toBe('⏰ 15:00');
+    const timeOnly = timeOnlyPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    expect(timeOnly.textContent).toBe('⏰ 15:00');
+    expect(timeOnly.getAttribute('aria-label')).toBe('Change time, currently 15:00, no duration');
   });
 });

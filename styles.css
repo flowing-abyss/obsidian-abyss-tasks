@@ -4093,23 +4093,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-weight: var(--font-semibold, 600);
 }
 
-.tc-recurrence-advanced {
-  min-height: 1.75rem;
-  padding: 0 0.5rem;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-muted);
-  box-shadow: none;
-  font-size: inherit;
-}
-
-.tc-recurrence-advanced:hover,
-.tc-recurrence-advanced.is-selected {
-  border-color: var(--background-modifier-border);
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
-}
-
 .tc-recurrence-presets {
   display: flex;
   flex-wrap: wrap;
@@ -4140,7 +4123,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .tc-recurrence-controls {
-  min-block-size: 4.5rem;
+  min-inline-size: 0;
 }
 
 .tc-recurrence-cadence {
@@ -4235,9 +4218,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .tc-recurrence-delete-warning,
 .tc-recurrence-status {
-  min-block-size: 2.4em;
   font-size: var(--font-ui-smaller);
   line-height: 1.2;
+}
+
+.tc-recurrence-delete-warning[hidden],
+.tc-recurrence-status[hidden] {
+  display: none;
 }
 
 .tc-recurrence-delete-warning {
