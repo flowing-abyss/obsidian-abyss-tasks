@@ -1985,13 +1985,9 @@ export class CenterPanel {
       menu.addItem((item) => {
         item
           .setTitle('Edit repeat…')
+          .setIcon('repeat-2')
           .setSection('actions')
           .onClick(() => this.openRecurrenceEditor(card, task));
-        const dom = (item as unknown as { dom?: HTMLElement }).dom;
-        const iconSlot = dom?.querySelector<HTMLElement>('.menu-item-icon');
-        if (task.recurrence && iconSlot) {
-          renderRecurrenceBadge(iconSlot, recurrenceBadgeInput(task.recurrence));
-        }
       });
 
       // ── Open in note ──────────────────────────────────────

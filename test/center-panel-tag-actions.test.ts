@@ -73,6 +73,7 @@ describe('CenterPanel recurrence context action', () => {
 
 interface CapturedMenuItem {
   checked__: boolean | null;
+  icon__: string;
   onClick__: ((event: MouseEvent) => unknown) | null;
   title__: string;
 }
@@ -83,6 +84,7 @@ function captureMenu(): CapturedMenuItem[] {
     const item = {
       checked__: null as boolean | null,
       dom: document.createElement('div'),
+      icon__: '',
       onClick__: null as ((event: MouseEvent) => unknown) | null,
       title__: '',
       onClick(value: (event: MouseEvent) => unknown) {
@@ -96,7 +98,8 @@ function captureMenu(): CapturedMenuItem[] {
       setDisabled() {
         return this;
       },
-      setIcon() {
+      setIcon(value: string) {
+        this.icon__ = value;
         return this;
       },
       setSection() {
@@ -565,6 +568,15 @@ describe('CenterPanel task date context menus', () => {
     openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
+  });
+
+  it('uses the shared repeat-2 icon for Edit repeat in the native task menu', () => {
+    const items = captureMenu();
+    const { el } = makeCenter([first]);
+
+    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+
+    expect(items.find((item) => item.title__ === 'Edit repeat…')?.icon__).toBe('repeat-2');
   });
 
   it('uses the center panel as the explicit boundary for custom-date placement', () => {
