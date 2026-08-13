@@ -87,6 +87,27 @@ function sameTaskRef(left: TaskRef, right: TaskRef): boolean {
   );
 }
 
+function sameNodeRef(left: TaskNodeRef, right: TaskNodeRef): boolean {
+  if (left.type !== right.type) return false;
+  if (left.type === 'task' && right.type === 'task') return sameTaskRef(left.ref, right.ref);
+  if (left.type === 'subtask' && right.type === 'subtask') {
+    return (
+      left.ref.relativeLine === right.ref.relativeLine &&
+      left.ref.originalBlock === right.ref.originalBlock &&
+      sameNodeRef(left.ref.parent, right.ref.parent)
+    );
+  }
+  return false;
+}
+
+function sameCommentRef(left: CommentRef, right: CommentRef): boolean {
+  return (
+    left.relativeLine === right.relativeLine &&
+    left.originalMarkdown === right.originalMarkdown &&
+    sameNodeRef(left.parent, right.parent)
+  );
+}
+
 function planningChildChain(target: PlanningTarget): readonly SubtaskRef[] {
   const chain: SubtaskRef[] = [];
   let node: TaskNodeRef = target;
@@ -211,11 +232,11 @@ export class RightPanel {
         ...textDraft(description, task.description ?? ''),
       });
     }
-    const commentEdit = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input');
-    if (commentEdit) {
-      const row = commentEdit.closest('.tc-comment-row');
-      const rows = [...this.el.querySelectorAll('.tc-comment-row')];
-      const comment = row ? task.comments[rows.indexOf(row)] : undefined;
+    const rows = [...this.el.querySelectorAll<HTMLElement>('.tc-comment-row')];
+    for (const [index, row] of rows.entries()) {
+      const commentEdit = row.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input');
+      if (!commentEdit) continue;
+      const comment = task.comments[index];
       if (comment) {
         candidates.push({
           kind: 'existing-comment',
@@ -287,25 +308,63 @@ export class RightPanel {
   }
 
   private sameDraftPayload(left: RightPanelDraftState, right: RightPanelDraftState): boolean {
-    return JSON.stringify(left) === JSON.stringify(right);
+    if (draftIdentity(left) !== draftIdentity(right) || left.kind !== right.kind) return false;
+    if (left.kind !== 'recurrence-editor' && right.kind !== 'recurrence-editor') {
+      return left.value === right.value;
+    }
+    if (left.kind !== 'recurrence-editor' || right.kind !== 'recurrence-editor') return false;
+    const semanticEditor = (editor: typeof left.editor) => [
+      editor.mode,
+      editor.preset,
+      editor.intervalText,
+      editor.unit,
+      editor.weekdays,
+      editor.monthly,
+      editor.yearly,
+      editor.whenDone,
+      editor.onCompletion,
+      editor.customDraft,
+    ];
+    return (
+      JSON.stringify(semanticEditor(left.editor)) === JSON.stringify(semanticEditor(right.editor))
+    );
   }
 
   private beginDraftSubmission(
     target: PlanningTarget,
-    kind?: RightPanelDraftState['kind'],
-  ): object {
+    matchesDraft?: (draft: RightPanelDraftState) => boolean,
+  ): object | undefined {
     const ref = rootRefForPlanningTarget(target);
+    if ([...this.submittedDrafts.values()].some((submitted) => sameTaskRef(submitted.ref, ref))) {
+      return undefined;
+    }
     const bundle = this.captureDraftState();
-    const candidate = kind ? bundle?.entries.find((draft) => draft.kind === kind) : undefined;
+    const candidate = matchesDraft ? bundle?.entries.find(matchesDraft) : undefined;
     const token = Object.freeze({});
     this.submittedDrafts.set(token, {
       ref: { ...ref },
       ...(candidate && { draft: this.snapshotDraft(candidate) }),
-      ...(bundle?.origin && { origin: bundle.origin }),
+      origin: bundle?.origin,
       consumed: false,
     });
     this.onMutationLifecycle?.({ phase: 'started', ref: { ...ref }, token });
     return token;
+  }
+
+  private matchesBlockCommandDraft(draft: RightPanelDraftState, command: TaskCommand): boolean {
+    if (command.type === 'set-description') {
+      return draft.kind === 'description' && sameNodeRef(draft.target.target, command.target);
+    }
+    if (command.type === 'add-subtask') {
+      return draft.kind === 'new-subtask' && sameNodeRef(draft.parent, command.parent);
+    }
+    if (command.type === 'add-comment') {
+      return draft.kind === 'new-comment' && sameNodeRef(draft.parent, command.parent);
+    }
+    if (command.type === 'update-comment') {
+      return draft.kind === 'existing-comment' && sameCommentRef(draft.target.ref, command.comment);
+    }
+    return false;
   }
 
   private settleDraftSubmission(token: object, result: TaskCommandResult): void {
@@ -335,28 +394,6 @@ export class RightPanel {
       return;
     }
     this.detachDraftState({ entries: [draft], origin: submitted.origin });
-  }
-
-  private blockCommandDraftKind(
-    command: Extract<
-      TaskCommand,
-      {
-        readonly type:
-          | 'set-description'
-          | 'add-subtask'
-          | 'delete-subtask'
-          | 'reorder-subtask'
-          | 'add-comment'
-          | 'update-comment'
-          | 'delete-comment';
-      }
-    >,
-  ): RightPanelDraftState['kind'] | undefined {
-    if (command.type === 'set-description') return 'description';
-    if (command.type === 'add-subtask') return 'new-subtask';
-    if (command.type === 'add-comment') return 'new-comment';
-    if (command.type === 'update-comment') return 'existing-comment';
-    return undefined;
   }
 
   restoreDraftState(bundle: RightPanelDraftBundle | undefined, currentRoot: TaskSnapshot): void {
@@ -1717,7 +1754,11 @@ export class RightPanel {
     if (!target || !this.tasks) return false;
     const patch = { markdownTitle: { type: 'set' as const, value: newText } };
     const command = { type: 'patch', target, patch } as TaskCommand;
-    const submission = this.beginDraftSubmission(target, 'title');
+    const submission = this.beginDraftSubmission(
+      target,
+      (draft) => draft.kind === 'title' && sameNodeRef(draft.target.target, target),
+    );
+    if (!submission) return false;
     let result: TaskCommandResult;
     try {
       result = await this.tasks.execute(command);
@@ -1823,8 +1864,10 @@ export class RightPanel {
   ): Promise<boolean> {
     if (!this.tasks) return false;
     const initiatingStack = this.state.get('taskStack');
-    const draftKind = this.blockCommandDraftKind(command);
-    const submission = this.beginDraftSubmission(target, draftKind);
+    const submission = this.beginDraftSubmission(target, (draft) =>
+      this.matchesBlockCommandDraft(draft, command),
+    );
+    if (!submission) return false;
     let result: TaskCommandResult;
     try {
       result = await this.tasks.execute(command);
@@ -1876,12 +1919,13 @@ export class RightPanel {
     if (!target || !this.tasks) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
     }
-    const submission = this.beginDraftSubmission(
-      target,
-      patch.recurrence !== undefined || patch.onCompletion !== undefined
-        ? 'recurrence-editor'
-        : undefined,
-    );
+    const submission = this.beginDraftSubmission(target, (draft) => {
+      if (patch.recurrence === undefined && patch.onCompletion === undefined) return false;
+      return draft.kind === 'recurrence-editor' && sameNodeRef(draft.target, target);
+    });
+    if (!submission) {
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+    }
     let result: TaskCommandResult;
     try {
       if (target.type === 'task') {

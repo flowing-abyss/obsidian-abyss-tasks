@@ -83,10 +83,11 @@ interface UniqueEntry<T> {
 export interface RightPanelDraftRebaseContext {
   readonly children: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<SubtaskSnapshot>>>;
   readonly comments: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<TaskCommentSnapshot>>>;
+  readonly paths: WeakMap<SubtaskRef, readonly SubtaskRef[]>;
 }
 
 export function createRightPanelDraftRebaseContext(): RightPanelDraftRebaseContext {
-  return { children: new WeakMap(), comments: new WeakMap() };
+  return { children: new WeakMap(), comments: new WeakMap(), paths: new WeakMap() };
 }
 
 function uniqueIndex<T>(
@@ -103,14 +104,21 @@ function uniqueIndex<T>(
   return index;
 }
 
-function childPath(target: TaskNodeRef): readonly SubtaskRef[] {
+function childPath(
+  target: TaskNodeRef,
+  context: RightPanelDraftRebaseContext,
+): readonly SubtaskRef[] {
+  if (target.type === 'task') return [];
+  const cached = context.paths.get(target.ref);
+  if (cached) return cached;
   const path: SubtaskRef[] = [];
-  let current = target;
+  let current: TaskNodeRef = target;
   while (current.type === 'subtask') {
     path.push(current.ref);
     current = current.ref.parent;
   }
   path.reverse();
+  context.paths.set(target.ref, path);
   return path;
 }
 
@@ -122,7 +130,7 @@ function rebaseNode(
   if (stale.type === 'task') return { ref: { type: 'task', ref: root.ref }, node: root };
   let node: TaskNode = root;
   let ref: TaskNodeRef = { type: 'task', ref: root.ref };
-  for (const staleChild of childPath(stale)) {
+  for (const staleChild of childPath(stale, context)) {
     let index = context.children.get(node);
     if (!index) {
       index = uniqueIndex(node.subtasks, (candidate) => candidate.ref.originalBlock);

@@ -351,6 +351,38 @@ describe('PanelView', () => {
       off();
     });
 
+    it('restores one escrow after an observed repository candidate rolls back on process failure', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const root = taskApplication.index.list()[0]!;
+      state.set('taskStack', [root]);
+      const original = await app.vault.read(app.vault.getMarkdownFiles()[0]!);
+      vi.spyOn(app.vault, 'process').mockImplementation(async (file, transform) => {
+        const candidate = transform(original);
+        const cache = app.metadataCache.getFileCache(file);
+        if (!cache) throw new Error('task cache missing');
+        app.metadataCache.trigger('changed', file, candidate, cache);
+        await flushMicrotasks();
+        throw new Error('simulated process rollback');
+      });
+      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      input.value = 'rollback actual comment';
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const file = app.vault.getMarkdownFiles()[0]!;
+      expect(await app.vault.read(file)).toBe(original);
+      expect(taskApplication.index.list()[0]?.comments).toHaveLength(0);
+      const live =
+        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value ?? '';
+      const detached = view.contentEl.querySelector('.tc-detached-draft')?.textContent ?? '';
+      expect(`${live}${detached}`.match(/rollback actual comment/gu)).toHaveLength(1);
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+    });
+
     it('clears owned-write acknowledgement when deletion/switch changes the selected root', () => {
       const state = (view as unknown as { state: AppState }).state;
       const root = taskApplication.index.list()[0]!;

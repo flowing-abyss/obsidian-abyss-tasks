@@ -248,6 +248,185 @@ describe('TaskModal with real RightPanel', () => {
     ).toBe('next local draft');
   });
 
+  it('does not resurrect committed text when only comment focus and caret changed', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      comments: [taskComment({ text: 'submitted' })],
+      source: { ...observed.source, originalBlock: '- [ ] observed\n  - submitted' },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
+      () =>
+        new Promise((resolvePromise) => {
+          finish = resolvePromise;
+        }),
+    );
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const input = activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')!;
+    input.value = 'submitted';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    input.focus();
+    input.setSelectionRange(2, 7);
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'authority-transition',
+      basis: { observed },
+    };
+
+    listener?.({ type: 'changed', files: ['f.md'] });
+    finish({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
+    await flushMicrotasks();
+
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('');
+  });
+
+  it('preserves the other inline comment editor across an early exact-target submission refresh', async () => {
+    const app = await createAppWithFiles({
+      'f.md': '- [ ] observed\n  - first comment\n  - second comment\n',
+    });
+    const observedRef: TaskRef = { filePath: 'f.md', line: 0, revision: 'old' };
+    const observedParent = { type: 'task' as const, ref: observedRef };
+    const observed = task({
+      title: 'observed',
+      ref: observedRef,
+      comments: [
+        taskComment({
+          text: 'first comment',
+          ref: { parent: observedParent, relativeLine: 1, originalMarkdown: '  - first comment' },
+        }),
+        taskComment({
+          text: 'second comment',
+          ref: { parent: observedParent, relativeLine: 2, originalMarkdown: '  - second comment' },
+        }),
+      ],
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed\n  - first comment\n  - second comment',
+      },
+    });
+    const currentRef: TaskRef = { filePath: 'f.md', line: 0, revision: 'new' };
+    const currentParent = { type: 'task' as const, ref: currentRef };
+    const current = task({
+      ...observed,
+      ref: currentRef,
+      comments: [
+        taskComment({
+          text: 'first submitted',
+          ref: { parent: currentParent, relativeLine: 1, originalMarkdown: '  - first submitted' },
+        }),
+        taskComment({
+          text: 'second comment',
+          ref: { parent: currentParent, relativeLine: 2, originalMarkdown: '  - second comment' },
+        }),
+      ],
+      source: {
+        ...observed.source,
+        originalBlock: '- [ ] observed\n  - first submitted\n  - second comment',
+      },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    let release!: () => void;
+    const blocked = new Promise<void>((resolvePromise) => {
+      release = resolvePromise;
+    });
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async (command) => {
+      expect(command).toMatchObject({
+        type: 'update-comment',
+        comment: { originalMarkdown: '  - first comment' },
+        text: 'first submitted',
+      });
+      resolution = {
+        type: 'rebased',
+        previous: observed,
+        current,
+        evidence: 'authority-transition',
+        basis: { observed },
+      };
+      listener?.({ type: 'changed', files: ['f.md'] });
+      await blocked;
+      return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const texts = [...activeDocument.querySelectorAll<HTMLElement>('.tc-modal .tc-comment-text')];
+    click(texts[0]!);
+    const first = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-edit-input',
+    )!;
+    first.value = 'first submitted';
+    click(texts[1]!);
+    const editors = [
+      ...activeDocument.querySelectorAll<HTMLTextAreaElement>('.tc-modal .tc-comment-edit-input'),
+    ];
+    expect(editors).toHaveLength(2);
+    const second = editors[1]!;
+    second.value = 'second local draft';
+    second.focus();
+
+    await new Promise((resolvePromise) => window.setTimeout(resolvePromise, 175));
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    const restoredEditors = [
+      ...activeDocument.querySelectorAll<HTMLTextAreaElement>('.tc-modal .tc-comment-edit-input'),
+    ];
+    expect(restoredEditors).toHaveLength(1);
+    expect(restoredEditors[0]?.value).toBe('second local draft');
+    release();
+    await flushMicrotasks();
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-edit-input')?.value,
+    ).toBe('second local draft');
+  });
+
   it('recovers submitted escrow when an early owned transition later conflicts', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
     const observed = task({
@@ -315,7 +494,7 @@ describe('TaskModal with real RightPanel', () => {
     );
   });
 
-  it('keeps overlapping same-root submissions independent when one succeeds and one conflicts', async () => {
+  it('serializes overlapping same-root submissions and retains the second draft', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
     const observed = task({
       title: 'observed',
@@ -379,9 +558,8 @@ describe('TaskModal with real RightPanel', () => {
       activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
     ).toBe('second submission');
     finishes[0]?.({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
-    finishes[1]?.({ type: 'conflict', current });
     await flushMicrotasks();
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(
       activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
     ).toBe('second submission');

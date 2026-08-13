@@ -1,7 +1,14 @@
 import type { App } from 'obsidian';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
-import type { TaskIndexEvent, TaskQueryApi, TaskResolution, TaskSnapshot } from '../src/tasks';
+import type {
+  SubtaskSnapshot,
+  TaskIndexEvent,
+  TaskNodeRef,
+  TaskQueryApi,
+  TaskResolution,
+  TaskSnapshot,
+} from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
 import {
   createRightPanelDraftRebaseContext,
@@ -364,5 +371,66 @@ describe('revision-aware nested selection rebuild', () => {
       expect(rebaseRightPanelDraft(draft, current, context)).toBeDefined();
 
     expect(sourceReads).toBeLessThan(5000);
+  });
+
+  it('memoizes one deep stale child path across a large draft bundle', () => {
+    const depth = 40;
+    const current = snapshot('fresh', 'Root');
+    let currentNode = current as unknown as { subtasks: SubtaskSnapshot[] };
+    let currentParent: TaskNodeRef = { type: 'task', ref: current.ref };
+    for (let index = 0; index < depth; index += 1) {
+      const originalBlock = `${'  '.repeat(index + 1)}- [ ] child ${index}`;
+      const child: SubtaskSnapshot = {
+        ref: { parent: currentParent, relativeLine: index + 1, originalBlock },
+        title: `child ${index}`,
+        markdownTitle: `child ${index}`,
+        status: 'open',
+        statusSymbol: ' ',
+        priority: 'F',
+        onCompletion: 'keep',
+        onCompletionExplicit: false,
+        planning: {},
+        tags: [],
+        subtasks: [],
+        comments: [],
+      };
+      currentNode.subtasks = [child];
+      currentNode = child as unknown as { subtasks: SubtaskSnapshot[] };
+      currentParent = { type: 'subtask', ref: child.ref };
+    }
+
+    let pathReads = 0;
+    let staleParent: TaskNodeRef = { type: 'task', ref: snapshot('stale', 'Root').ref };
+    for (let index = 0; index < depth; index += 1) {
+      const parent: TaskNodeRef = staleParent;
+      const originalBlock = `${'  '.repeat(index + 1)}- [ ] child ${index}`;
+      staleParent = {
+        type: 'subtask',
+        ref: {
+          get parent(): TaskNodeRef {
+            pathReads += 1;
+            return parent;
+          },
+          relativeLine: index + 1,
+          originalBlock,
+        },
+      };
+    }
+    const draft: RightPanelDraftState = {
+      kind: 'new-comment',
+      parent: staleParent,
+      value: 'shared deep draft',
+      selectionStart: 0,
+      selectionEnd: 0,
+      hadFocus: false,
+      dirty: true,
+    };
+    const context = createRightPanelDraftRebaseContext();
+
+    for (let index = 0; index < 1000; index += 1) {
+      expect(rebaseRightPanelDraft(draft, current, context)).toBeDefined();
+    }
+
+    expect(pathReads).toBeLessThan(depth * 2);
   });
 });
