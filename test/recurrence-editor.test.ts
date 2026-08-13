@@ -122,6 +122,67 @@ describe('mountRecurrenceEditor', () => {
   });
 
   it.each([
+    ['Daily', 'Enter', 'preset:daily'],
+    ['Daily', ' ', 'preset:daily'],
+    ['Custom', 'Enter', 'custom-mode'],
+    ['Custom', ' ', 'custom-mode'],
+  ] as const)(
+    'keeps focus on the replacement %s mode after native %s activation',
+    (label, key, expectedFocusKey) => {
+      const { container } = mount();
+      activeDocument.body.append(container);
+      const mode = button(container, label);
+      mode.focus();
+
+      mode.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+      click(mode);
+
+      expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe(
+        expectedFocusKey,
+      );
+    },
+  );
+
+  it.each([
+    [
+      'unit',
+      (container: HTMLElement) =>
+        container.querySelector<HTMLSelectElement>('[aria-label="Repeat unit"]')!,
+      'weeks',
+    ],
+    [
+      'monthly-pattern',
+      (container: HTMLElement) => {
+        click(button(container, 'Monthly'));
+        return container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!;
+      },
+      'weekday',
+    ],
+    [
+      'yearly-pattern',
+      (container: HTMLElement) => {
+        click(button(container, 'Yearly'));
+        return container.querySelector<HTMLSelectElement>('[aria-label="Yearly pattern"]')!;
+      },
+      'date',
+    ],
+  ] as const)(
+    'keeps focus on the %s select when its choice rerenders dependent controls',
+    (expectedFocusKey, locate, value) => {
+      const { container } = mount();
+      activeDocument.body.append(container);
+      const select = locate(container);
+      select.focus();
+
+      change(select, value);
+
+      expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe(
+        expectedFocusKey,
+      );
+    },
+  );
+
+  it.each([
     ['days', 'every 2 days'],
     ['weeks', 'every 2 weeks on Sunday'],
     ['months', 'every 2 months'],

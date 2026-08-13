@@ -616,6 +616,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const render = (): void => {
+    const focusedControl = controlKey(options.container.ownerDocument.activeElement);
     options.container.empty();
     const editor = options.container.createDiv({
       cls: 'tc-recurrence-editor',
@@ -760,6 +761,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     });
     save.addEventListener('click', () => void submit());
     refresh();
+    controlForKey(focusedControl)?.focus();
   };
 
   const keyHandler = (event: KeyboardEvent): void => {
