@@ -224,17 +224,20 @@ describe('CenterPanel task-card primary row', () => {
     state.set('mode', 'search');
     state.set('searchQuery', 'Ordinary');
     const panel = makeStaticPanel(state, [snapshot]);
-    panel.mount(freshContainer());
+    try {
+      panel.mount(freshContainer());
 
-    const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
-    const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
-    expect(titleRow.querySelector('.tc-recurrence-badge')).toBeNull();
-    expect(titleRow.firstElementChild?.classList.contains('tc-task-title')).toBe(true);
-    expect(mainRow.querySelector('.tc-task-desc')).toBeNull();
-    panel.destroy();
+      const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
+      const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
+      expect(titleRow.querySelector('.tc-recurrence-badge')).toBeNull();
+      expect(titleRow.firstElementChild?.classList.contains('tc-task-title')).toBe(true);
+      expect(mainRow.querySelector('.tc-task-desc')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
   });
 
-  it('keeps a long wrapped title inside the same primary-row body', () => {
+  it('keeps a long-title fixture inside the same shrinkable primary-row body', () => {
     const snapshot = task({
       title:
         'A deliberately long task title that wraps on a narrow center panel without moving its controls',
@@ -245,14 +248,17 @@ describe('CenterPanel task-card primary row', () => {
     state.set('mode', 'search');
     state.set('searchQuery', 'deliberately');
     const panel = makeStaticPanel(state, [snapshot]);
-    panel.mount(freshContainer());
+    try {
+      panel.mount(freshContainer());
 
-    const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
-    const body = mainRow.querySelector<HTMLElement>('.tc-task-body')!;
-    expect(body.querySelector('.tc-task-title')).not.toBeNull();
-    expect(mainRow.querySelector('.tc-task-meta-right')).not.toBeNull();
-    expect(panel['el'].querySelector('.tc-task-card > .tc-task-desc')).toBeNull();
-    panel.destroy();
+      const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
+      const body = mainRow.querySelector<HTMLElement>('.tc-task-body')!;
+      expect(body.querySelector('.tc-task-title')).not.toBeNull();
+      expect(mainRow.querySelector('.tc-task-meta-right')).not.toBeNull();
+      expect(panel['el'].querySelector('.tc-task-card > .tc-task-desc')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
   });
 });
 

@@ -43,14 +43,21 @@ describe('CenterPanel task metadata styles', () => {
   });
 
   it('keeps hover and selection states paint-only so controls do not shift', () => {
-    for (const selector of [
-      '.tc-task-card:hover',
-      '.tc-task-card.is-selected',
-      '.tc-task-card.tc-multi-selected',
-    ]) {
+    const paintBySelector = new Map([
+      ['.tc-task-card:hover', 'background:'],
+      ['.tc-task-card.is-selected', 'background:'],
+      ['.tc-task-card.tc-multi-selected', 'box-shadow:'],
+    ]);
+    for (const [selector, paint] of paintBySelector) {
       const declarations = declarationsFor(selector);
+      expect(declarations).toContain(paint);
       expect(declarations).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
     }
+
+    const keyboardFocus = declarationsFor('.tc-task-card:focus-visible');
+    expect(keyboardFocus).toContain('outline:');
+    expect(keyboardFocus).toContain('outline-offset:');
+    expect(keyboardFocus).not.toMatch(/(?:^|\s)(?:border|padding|margin|height|width)\s*:/u);
   });
 
   it('separates and vertically centers date and time icons from their labels', () => {
