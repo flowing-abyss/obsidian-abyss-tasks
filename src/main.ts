@@ -9,7 +9,7 @@ import { toStatusRules } from './settings/statusCatalogAdapter';
 import type { CalendarSettings, CodeBlockParams } from './settings/types';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
-import { type TaskApplicationApi, type TaskQueryApi } from './tasks';
+import { localDate, type TaskApplicationApi, type TaskQueryApi } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
 import { systemClock } from './tasks/domain/clock';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
@@ -66,6 +66,7 @@ export default class TaskCalendarPlugin extends Plugin {
       systemClock(
         () => Date.now(),
         (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+        (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
       ),
       destinationProvider,
       () => ({

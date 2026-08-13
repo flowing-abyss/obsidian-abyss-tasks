@@ -15,6 +15,7 @@ export interface Clock {
 
 type InstantSource = () => number;
 type OffsetSource = (epochMs: number) => number;
+type LocalDateSource = (epochMs: number) => LocalDate;
 
 function pad(value: number, length = 2): string {
   return Math.abs(value).toString().padStart(length, '0');
@@ -71,11 +72,16 @@ export function clockFrom(epochMs: number, offsetMinutes: number): Clock {
 }
 
 /** Ambient sources are injected by composition code so one read is atomic and testable. */
-export function systemClock(instantSource: InstantSource, offsetSource: OffsetSource): Clock {
+export function systemClock(
+  instantSource: InstantSource,
+  offsetSource: OffsetSource,
+  localDateSource?: LocalDateSource,
+): Clock {
   return {
     read(): ClockReading {
       const epochMs = instantSource();
-      return reading(epochMs, offsetSource(epochMs));
+      const captured = reading(epochMs, offsetSource(epochMs));
+      return localDateSource ? { ...captured, localDate: localDateSource(epochMs) } : captured;
     },
   };
 }
