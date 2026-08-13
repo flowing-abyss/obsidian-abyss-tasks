@@ -176,6 +176,258 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
   });
 
+  it('preserves a newer same-key comment typed after submit across the owned transition', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      comments: [taskComment({ text: 'submitted first' })],
+      source: { ...observed.source, originalBlock: '- [ ] observed\n  - submitted first' },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
+      () =>
+        new Promise((resolvePromise) => {
+          finish = resolvePromise;
+        }),
+    );
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const input = activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')!;
+    input.value = 'submitted first';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    input.value = 'next local draft';
+    input.setSelectionRange(4, 9);
+    input.focus();
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'authority-transition',
+      basis: { observed },
+    };
+
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    const restored = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    )!;
+    expect(restored.value).toBe('next local draft');
+    expect(restored.selectionStart).toBe(4);
+    expect(restored.selectionEnd).toBe(9);
+    finish({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
+    await flushMicrotasks();
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('next local draft');
+  });
+
+  it('recovers submitted escrow when an early owned transition later conflicts', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const candidate = task({
+      ...observed,
+      ref: { filePath: 'f.md', line: 0, revision: 'candidate' },
+      comments: [taskComment({ text: 'rollback me' })],
+      source: { ...observed.source, originalBlock: '- [ ] observed\n  - rollback me' },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    let finish!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
+      () =>
+        new Promise((resolvePromise) => {
+          finish = resolvePromise;
+        }),
+    );
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const input = activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')!;
+    input.value = 'rollback me';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current: candidate,
+      evidence: 'authority-transition',
+      basis: { observed },
+    };
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    finish({ type: 'conflict', current: observed });
+    await flushMicrotasks();
+
+    const recoveredInput = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    );
+    const recoveredTray = activeDocument.querySelector('.tc-modal .tc-detached-draft');
+    expect(`${recoveredInput?.value ?? ''}${recoveredTray?.textContent ?? ''}`).toContain(
+      'rollback me',
+    );
+  });
+
+  it('keeps overlapping same-root submissions independent when one succeeds and one conflicts', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      comments: [taskComment({ text: 'first submission' })],
+      source: { ...observed.source, originalBlock: '- [ ] observed\n  - first submission' },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    const finishes: Array<(result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void> =
+      [];
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(
+      () =>
+        new Promise((resolvePromise) => {
+          finishes.push(resolvePromise);
+        }),
+    );
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const input = activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')!;
+    input.value = 'first submission';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    input.value = 'second submission';
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    resolution = {
+      type: 'rebased',
+      previous: observed,
+      current,
+      evidence: 'authority-transition',
+      basis: { observed },
+    };
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('second submission');
+    finishes[0]?.({ type: 'ok', changed: true, outcome: { type: 'task', task: current } });
+    finishes[1]?.({ type: 'conflict', current });
+    await flushMicrotasks();
+    expect(execute).toHaveBeenCalledTimes(2);
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('second submission');
+  });
+
+  it('keeps the title editor open with its value when save fails without an index event', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const queries = taskQueryApi({
+      resolve: () => ({ type: 'exact', task: observed, basis: { observed } }),
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'conflict',
+        current: observed,
+      }),
+    });
+    modal.open(observed);
+    click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-right-title-view')!);
+    const edit = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-right-title-edit',
+    )!;
+    edit.value = 'failed title';
+
+    edit.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    const retained = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-right-title-edit',
+    );
+    expect(retained?.value).toBe('failed title');
+  });
+
   it.each([
     {
       field: 'title',

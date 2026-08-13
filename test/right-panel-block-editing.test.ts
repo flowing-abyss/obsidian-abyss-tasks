@@ -362,7 +362,15 @@ describe('RightPanel block editing', () => {
     expect(detached.textContent).toContain('local unsaved');
     expect(detached.getAttribute('aria-label')).toContain('root');
     expect(detached.getAttribute('aria-label')).toContain('existing comment');
+    expect(detached.getAttribute('role')).toBe('group');
     expect(copy).not.toBeNull();
+    expect(copy.getAttribute('aria-label')).toContain('root');
+    expect(copy.getAttribute('aria-label')).toContain('existing comment');
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('.tc-detached-draft-discard')
+        ?.getAttribute('aria-label'),
+    ).toContain('root');
     expect(container.querySelector('.tc-detached-draft-discard')).not.toBeNull();
     expect(container.querySelector('[role="status"][aria-live="polite"]')?.textContent).toContain(
       'Draft preserved',

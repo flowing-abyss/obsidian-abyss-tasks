@@ -170,7 +170,9 @@ export class TaskModal {
         this.sameRef(this.ownedWriteRef, resolution.previous.ref)
           ? this.ownedWriteRef
           : undefined;
-      const draft = this.innerPanel?.captureDraftState(consumedOwnedRef);
+      const draft = consumedOwnedRef
+        ? this.innerPanel?.captureDraftStateForOwnedTransition(consumedOwnedRef)
+        : this.innerPanel?.captureDraftState();
       this.ownedWriteRef = undefined;
       this.innerState?.set('taskStack', rebuildTaskSelection(current, stack));
       this.innerPanel?.restoreDraftState(draft, current);

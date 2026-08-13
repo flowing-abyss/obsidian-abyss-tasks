@@ -3,6 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppState } from '../src/app/AppState';
 import type { TaskIndexEvent, TaskQueryApi, TaskResolution, TaskSnapshot } from '../src/tasks';
 import type { TaskRef } from '../src/tasks/domain/types';
+import {
+  createRightPanelDraftRebaseContext,
+  rebaseRightPanelDraft,
+  type RightPanelDraftState,
+} from '../src/ui/taskDraftContinuity';
 import { rebuildTaskSelection, taskNodeLine } from '../src/ui/taskSelection';
 import { taskQueryApi, testStatusRegistry } from './helpers';
 
@@ -314,5 +319,50 @@ describe('revision-aware nested selection rebuild', () => {
     };
 
     expect(rebuildTaskSelection(candidateRoot, [staleRoot, child])).toHaveLength(1);
+  });
+
+  it('indexes 1000 direct siblings once while rebasing a draft bundle', () => {
+    const root = snapshot('fresh', 'Root');
+    let sourceReads = 0;
+    const subtasks = Array.from({ length: 1000 }, (_, index) => {
+      const originalBlock = `  - [ ] sibling ${index}`;
+      return {
+        ref: {
+          parent: { type: 'task' as const, ref: root.ref },
+          relativeLine: index + 1,
+          get originalBlock() {
+            sourceReads += 1;
+            return originalBlock;
+          },
+        },
+        title: `sibling ${index}`,
+        markdownTitle: `sibling ${index}`,
+        status: 'open' as const,
+        statusSymbol: ' ',
+        priority: 'F' as const,
+        onCompletion: 'keep' as const,
+        onCompletionExplicit: false,
+        planning: {},
+        tags: [],
+        subtasks: [],
+        comments: [],
+      };
+    });
+    const current = { ...root, subtasks };
+    const context = createRightPanelDraftRebaseContext();
+    const drafts: RightPanelDraftState[] = subtasks.map((subtask) => ({
+      kind: 'new-comment',
+      parent: { type: 'subtask', ref: subtask.ref },
+      value: `draft ${subtask.title}`,
+      selectionStart: 0,
+      selectionEnd: 0,
+      hadFocus: false,
+      dirty: true,
+    }));
+
+    for (const draft of drafts)
+      expect(rebaseRightPanelDraft(draft, current, context)).toBeDefined();
+
+    expect(sourceReads).toBeLessThan(5000);
   });
 });

@@ -75,11 +75,32 @@ export interface RightPanelDraftBundle {
 
 type TaskNode = TaskSnapshot | SubtaskSnapshot;
 
-function uniqueExactOrSource<T>(exact: readonly T[], sourceMatches: readonly T[]): T | undefined {
-  if (sourceMatches.length > 1) return undefined;
-  if (exact.length === 1) return exact[0];
-  if (sourceMatches.length === 1) return sourceMatches[0];
-  return undefined;
+interface UniqueEntry<T> {
+  candidate: T;
+  count: number;
+}
+
+export interface RightPanelDraftRebaseContext {
+  readonly children: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<SubtaskSnapshot>>>;
+  readonly comments: WeakMap<TaskNode, ReadonlyMap<string, UniqueEntry<TaskCommentSnapshot>>>;
+}
+
+export function createRightPanelDraftRebaseContext(): RightPanelDraftRebaseContext {
+  return { children: new WeakMap(), comments: new WeakMap() };
+}
+
+function uniqueIndex<T>(
+  values: readonly T[],
+  source: (value: T) => string,
+): ReadonlyMap<string, UniqueEntry<T>> {
+  const index = new Map<string, UniqueEntry<T>>();
+  for (const value of values) {
+    const key = source(value);
+    const entry = index.get(key);
+    if (entry) entry.count += 1;
+    else index.set(key, { candidate: value, count: 1 });
+  }
+  return index;
 }
 
 function childPath(target: TaskNodeRef): readonly SubtaskRef[] {
@@ -96,20 +117,19 @@ function childPath(target: TaskNodeRef): readonly SubtaskRef[] {
 function rebaseNode(
   root: TaskSnapshot,
   stale: TaskNodeRef,
+  context: RightPanelDraftRebaseContext,
 ): { readonly ref: TaskNodeRef; readonly node: TaskNode } | undefined {
   if (stale.type === 'task') return { ref: { type: 'task', ref: root.ref }, node: root };
   let node: TaskNode = root;
   let ref: TaskNodeRef = { type: 'task', ref: root.ref };
   for (const staleChild of childPath(stale)) {
-    const exact: readonly SubtaskSnapshot[] = node.subtasks.filter(
-      (candidate) =>
-        candidate.ref.relativeLine === staleChild.relativeLine &&
-        candidate.ref.originalBlock === staleChild.originalBlock,
-    );
-    const sourceMatches: readonly SubtaskSnapshot[] = node.subtasks.filter(
-      (candidate) => candidate.ref.originalBlock === staleChild.originalBlock,
-    );
-    const child = uniqueExactOrSource(exact, sourceMatches);
+    let index = context.children.get(node);
+    if (!index) {
+      index = uniqueIndex(node.subtasks, (candidate) => candidate.ref.originalBlock);
+      context.children.set(node, index);
+    }
+    const match: UniqueEntry<SubtaskSnapshot> | undefined = index.get(staleChild.originalBlock);
+    const child: SubtaskSnapshot | undefined = match?.count === 1 ? match.candidate : undefined;
     if (!child) return undefined;
     node = child;
     ref = { type: 'subtask', ref: child.ref };
@@ -120,43 +140,43 @@ function rebaseNode(
 function rebaseComment(
   root: TaskSnapshot,
   draft: Extract<RightPanelDraftState, { readonly kind: 'existing-comment' }>,
+  context: RightPanelDraftRebaseContext,
 ): Extract<TaskTextTarget, { readonly type: 'comment' }> | undefined {
-  const parent = rebaseNode(root, draft.target.ref.parent);
+  const parent = rebaseNode(root, draft.target.ref.parent, context);
   if (!parent) return undefined;
-  const exact = parent.node.comments.filter(
-    (candidate) =>
-      candidate.ref.relativeLine === draft.target.ref.relativeLine &&
-      candidate.ref.originalMarkdown === draft.target.ref.originalMarkdown,
-  );
-  const sourceMatches = parent.node.comments.filter(
-    (candidate) => candidate.ref.originalMarkdown === draft.target.ref.originalMarkdown,
-  );
-  const comment: TaskCommentSnapshot | undefined = uniqueExactOrSource(exact, sourceMatches);
+  let index = context.comments.get(parent.node);
+  if (!index) {
+    index = uniqueIndex(parent.node.comments, (candidate) => candidate.ref.originalMarkdown);
+    context.comments.set(parent.node, index);
+  }
+  const match = index.get(draft.target.ref.originalMarkdown);
+  const comment: TaskCommentSnapshot | undefined = match?.count === 1 ? match.candidate : undefined;
   return comment ? { type: 'comment', ref: comment.ref } : undefined;
 }
 
 export function rebaseRightPanelDraft(
   draft: RightPanelDraftState,
   currentRoot: TaskSnapshot,
+  context: RightPanelDraftRebaseContext = createRightPanelDraftRebaseContext(),
 ): RightPanelDraftState | undefined {
   if (draft.kind === 'existing-comment') {
-    const target = rebaseComment(currentRoot, draft);
+    const target = rebaseComment(currentRoot, draft, context);
     return target ? { ...draft, target } : undefined;
   }
   if (draft.kind === 'title') {
-    const target = rebaseNode(currentRoot, draft.target.target)?.ref;
+    const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
     return target ? { ...draft, target: { type: 'title', target } } : undefined;
   }
   if (draft.kind === 'description') {
-    const target = rebaseNode(currentRoot, draft.target.target)?.ref;
+    const target = rebaseNode(currentRoot, draft.target.target, context)?.ref;
     return target ? { ...draft, target: { type: 'description', target } } : undefined;
   }
   if (draft.kind === 'new-comment' || draft.kind === 'new-subtask') {
-    const parent = rebaseNode(currentRoot, draft.parent)?.ref;
+    const parent = rebaseNode(currentRoot, draft.parent, context)?.ref;
     return parent ? { ...draft, parent } : undefined;
   }
   if (draft.kind === 'recurrence-editor') {
-    const target = rebaseNode(currentRoot, draft.target)?.ref;
+    const target = rebaseNode(currentRoot, draft.target, context)?.ref;
     return target ? { ...draft, target } : undefined;
   }
   return undefined;

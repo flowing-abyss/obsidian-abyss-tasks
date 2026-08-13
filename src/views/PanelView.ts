@@ -288,7 +288,9 @@ export class PanelView extends ItemView {
         this.sameRef(this.ownedWriteRef, resolution.previous.ref)
           ? this.ownedWriteRef
           : undefined;
-      const draft = this.right.captureDraftState(consumedOwnedRef);
+      const draft = consumedOwnedRef
+        ? this.right.captureDraftStateForOwnedTransition(consumedOwnedRef)
+        : this.right.captureDraftState();
       this.ownedWriteRef = undefined;
       this.state.set('taskStack', rebuildTaskSelection(current, stack));
       this.right.restoreDraftState(draft, current);

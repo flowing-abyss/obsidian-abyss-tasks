@@ -49,6 +49,7 @@ import { showStatusMenuAt } from '../ui/statusMenu';
 import { showTagDropdown } from '../ui/tagDropdown';
 import { presentTaskCommandResult, requestTaskCompletion } from '../ui/taskCommandResult';
 import {
+  createRightPanelDraftRebaseContext,
   draftIdentity,
   draftPlainText,
   isDirtyDraft,
@@ -64,6 +65,14 @@ type TaskLike = TaskSnapshot | SubtaskSnapshot;
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
   readonly ref: TaskRef;
+  readonly token: object;
+}
+
+interface SubmittedDraft {
+  readonly ref: TaskRef;
+  readonly draft?: RightPanelDraftState;
+  readonly origin: RightPanelDraftBundle['origin'];
+  consumed: boolean;
 }
 
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {
@@ -113,10 +122,7 @@ export class RightPanel {
   private draggingSub: SubtaskSnapshot | null = null;
   private md = new Component();
   private onSuccessfulMutation?: (ref?: TaskRef) => void;
-  private submittedDrafts = new Map<
-    object,
-    { readonly ref: TaskRef; readonly draftKey?: string }
-  >();
+  private submittedDrafts = new Map<object, SubmittedDraft>();
   private anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
   private recurrenceDraftEditor?: {
     readonly target: TaskNodeRef;
@@ -160,7 +166,7 @@ export class RightPanel {
     this.md.unload();
   }
 
-  captureDraftState(consumedOwnedRef?: TaskRef): RightPanelDraftBundle | undefined {
+  captureDraftState(): RightPanelDraftBundle | undefined {
     if (!this.el) return undefined;
     const stack = this.state.get('taskStack');
     const task = stack[stack.length - 1];
@@ -226,19 +232,7 @@ export class RightPanel {
     if (newComment) {
       candidates.push({ kind: 'new-comment', parent: target, ...textDraft(newComment, '') });
     }
-    const consumedKeys = new Set<string>();
-    if (consumedOwnedRef) {
-      for (const submitted of this.submittedDrafts.values()) {
-        if (sameTaskRef(submitted.ref, consumedOwnedRef) && submitted.draftKey) {
-          consumedKeys.add(submitted.draftKey);
-        }
-      }
-    }
-    const entries = candidates.filter(
-      (candidate) =>
-        (candidate.hadFocus || isDirtyDraft(candidate)) &&
-        !consumedKeys.has(draftIdentity(candidate)),
-    );
+    const entries = candidates.filter((candidate) => candidate.hadFocus || isDirtyDraft(candidate));
     const root = stack[0];
     return entries.length > 0
       ? {
@@ -256,28 +250,91 @@ export class RightPanel {
       : undefined;
   }
 
+  captureDraftStateForOwnedTransition(
+    consumedOwnedRef: TaskRef,
+    token?: object,
+  ): RightPanelDraftBundle | undefined {
+    const bundle = this.captureDraftState();
+    const submitted = token
+      ? this.submittedDrafts.get(token)
+      : [...this.submittedDrafts.values()].find(
+          (candidate) => !candidate.consumed && sameTaskRef(candidate.ref, consumedOwnedRef),
+        );
+    if (!submitted || submitted.consumed || !sameTaskRef(submitted.ref, consumedOwnedRef)) {
+      return bundle;
+    }
+    submitted.consumed = true;
+    if (!submitted.draft || !bundle) return bundle;
+    const entries = bundle.entries.filter(
+      (candidate) =>
+        draftIdentity(candidate) !== draftIdentity(submitted.draft!) ||
+        !this.sameDraftPayload(candidate, submitted.draft!),
+    );
+    return entries.length > 0 ? { ...bundle, entries } : undefined;
+  }
+
+  private snapshotDraft(draft: RightPanelDraftState): RightPanelDraftState {
+    if (draft.kind !== 'recurrence-editor') return { ...draft };
+    return {
+      ...draft,
+      editor: {
+        ...draft.editor,
+        weekdays: [...draft.editor.weekdays],
+        monthly: { ...draft.editor.monthly },
+        yearly: { ...draft.editor.yearly },
+      },
+    };
+  }
+
+  private sameDraftPayload(left: RightPanelDraftState, right: RightPanelDraftState): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+  }
+
   private beginDraftSubmission(
     target: PlanningTarget,
     kind?: RightPanelDraftState['kind'],
   ): object {
     const ref = rootRefForPlanningTarget(target);
-    const candidate = kind
-      ? this.captureDraftState()?.entries.find((draft) => draft.kind === kind)
-      : undefined;
+    const bundle = this.captureDraftState();
+    const candidate = kind ? bundle?.entries.find((draft) => draft.kind === kind) : undefined;
     const token = Object.freeze({});
     this.submittedDrafts.set(token, {
       ref: { ...ref },
-      ...(candidate && { draftKey: draftIdentity(candidate) }),
+      ...(candidate && { draft: this.snapshotDraft(candidate) }),
+      ...(bundle?.origin && { origin: bundle.origin }),
+      consumed: false,
     });
-    this.onMutationLifecycle?.({ phase: 'started', ref: { ...ref } });
+    this.onMutationLifecycle?.({ phase: 'started', ref: { ...ref }, token });
     return token;
   }
 
-  private settleDraftSubmission(token: object): void {
+  private settleDraftSubmission(token: object, result: TaskCommandResult): void {
     const submitted = this.submittedDrafts.get(token);
     if (!submitted) return;
     this.submittedDrafts.delete(token);
-    this.onMutationLifecycle?.({ phase: 'settled', ref: { ...submitted.ref } });
+    if (result.type !== 'ok' && submitted.consumed && submitted.draft) {
+      this.recoverSubmittedDraft(submitted);
+    }
+    this.onMutationLifecycle?.({ phase: 'settled', ref: { ...submitted.ref }, token });
+  }
+
+  private recoverSubmittedDraft(submitted: SubmittedDraft): void {
+    const draft = submitted.draft;
+    if (!draft) return;
+    const currentSameKey = this.captureDraftState()?.entries.find(
+      (candidate) => draftIdentity(candidate) === draftIdentity(draft),
+    );
+    if (currentSameKey && !this.sameDraftPayload(currentSameKey, draft)) {
+      this.appendDetachedDraft(draft, submitted.origin);
+      return;
+    }
+    if (currentSameKey) return;
+    const root = this.state.get('taskStack')[0];
+    if (root && 'source' in root) {
+      this.restoreDraftState({ entries: [draft], origin: submitted.origin }, root);
+      return;
+    }
+    this.detachDraftState({ entries: [draft], origin: submitted.origin });
   }
 
   private blockCommandDraftKind(
@@ -305,8 +362,9 @@ export class RightPanel {
   restoreDraftState(bundle: RightPanelDraftBundle | undefined, currentRoot: TaskSnapshot): void {
     if (!bundle) return;
     let focusTarget: HTMLElement | undefined;
+    const context = createRightPanelDraftRebaseContext();
     for (const draft of bundle.entries) {
-      const restoredFocus = this.restoreDraftEntry(draft, currentRoot, bundle.origin);
+      const restoredFocus = this.restoreDraftEntry(draft, currentRoot, bundle.origin, context);
       if (restoredFocus) focusTarget = restoredFocus;
     }
     if (focusTarget) {
@@ -321,8 +379,9 @@ export class RightPanel {
     draft: RightPanelDraftState,
     currentRoot: TaskSnapshot,
     origin?: RightPanelDraftBundle['origin'],
+    context = createRightPanelDraftRebaseContext(),
   ): HTMLElement | undefined {
-    const rebased = rebaseRightPanelDraft(draft, currentRoot);
+    const rebased = rebaseRightPanelDraft(draft, currentRoot, context);
     if (!rebased) {
       if (isDirtyDraft(draft)) this.appendDetachedDraft(draft, origin);
       return undefined;
@@ -436,6 +495,7 @@ export class RightPanel {
       const detached = tray.createDiv({
         cls: 'tc-detached-draft',
         attr: {
+          role: 'group',
           'aria-label': `Unsaved draft for ${label}`,
           'data-tc-detached-draft': String(entry.id),
         },
@@ -446,7 +506,11 @@ export class RightPanel {
       });
       detached.createEl('pre', { text: draftPlainText(entry.draft) });
       const status = detached.createDiv({ attr: { 'aria-live': 'polite' } });
-      const copy = detached.createEl('button', { cls: 'tc-detached-draft-copy', text: 'Copy' });
+      const copy = detached.createEl('button', {
+        cls: 'tc-detached-draft-copy',
+        text: 'Copy',
+        attr: { 'aria-label': `Copy unsaved draft for ${label}` },
+      });
       copy.addEventListener('click', () => {
         if (this.detachedFocusTimer !== undefined) {
           window.clearTimeout(this.detachedFocusTimer);
@@ -467,6 +531,7 @@ export class RightPanel {
       const discard = detached.createEl('button', {
         cls: 'tc-detached-draft-discard',
         text: 'Discard',
+        attr: { 'aria-label': `Discard unsaved draft for ${label}` },
       });
       discard.addEventListener('click', () => {
         this.detachedDrafts = this.detachedDrafts.filter((candidate) => candidate.id !== entry.id);
@@ -928,17 +993,24 @@ export class RightPanel {
     }, 0);
 
     let done = false;
+    let saving = false;
     const finish = async (save: boolean): Promise<void> => {
-      if (done) return;
+      if (done || saving) return;
       // Let any in-flight paste insert its link into the value before we save/remove.
       await whenPasteSettled(ta);
-      if (done) return;
-      done = true;
+      if (done || saving) return;
       // Carry the current height back to the read-mode block so the stretch persists.
       view.setCssStyles({ height: `${ta.offsetHeight}px` });
       if (save && ta.value !== task.markdownTitle) {
-        void this.updateTaskTitle(task, ta.value.trim());
+        saving = true;
+        const saved = await this.saveTaskTitle(task, ta.value.trim());
+        saving = false;
+        if (!saved) {
+          ta.focus();
+          return;
+        }
       }
+      done = true;
       ta.remove();
       view.show();
       renderView();
@@ -1637,17 +1709,24 @@ export class RightPanel {
   // ---- Write-back helpers ----
 
   private async updateTaskTitle(task: TaskLike, newText: string): Promise<void> {
+    await this.saveTaskTitle(task, newText);
+  }
+
+  private async saveTaskTitle(task: TaskLike, newText: string): Promise<boolean> {
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (!target || !this.tasks) return false;
     const patch = { markdownTitle: { type: 'set' as const, value: newText } };
     const command = { type: 'patch', target, patch } as TaskCommand;
     const submission = this.beginDraftSubmission(target, 'title');
+    let result: TaskCommandResult;
     try {
-      const result = await this.tasks.execute(command);
-      this.applyPlanningResult(result, target);
-    } finally {
-      this.settleDraftSubmission(submission);
+      result = await this.tasks.execute(command);
+    } catch {
+      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
+    this.applyPlanningResult(result, target);
+    this.settleDraftSubmission(submission, result);
+    return result.type === 'ok';
   }
 
   private async appendToTitle(task: TaskLike, text: string): Promise<void> {
@@ -1751,10 +1830,9 @@ export class RightPanel {
       result = await this.tasks.execute(command);
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    } finally {
-      this.settleDraftSubmission(submission);
     }
     this.applyPlanningResult(result, target, initiatingStack);
+    this.settleDraftSubmission(submission, result);
     return result.type === 'ok';
   }
 
@@ -1810,17 +1888,17 @@ export class RightPanel {
         result = await this.tasks.execute({ type: 'patch', target, patch });
       } else {
         if (patch.duration !== undefined) {
-          return { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
+          result = { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
+        } else {
+          const subtaskPatch: SubtaskPatch = patch;
+          result = await this.tasks.execute({ type: 'patch', target, patch: subtaskPatch });
         }
-        const subtaskPatch: SubtaskPatch = patch;
-        result = await this.tasks.execute({ type: 'patch', target, patch: subtaskPatch });
       }
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    } finally {
-      this.settleDraftSubmission(submission);
     }
     this.applyPlanningResult(result, target);
+    this.settleDraftSubmission(submission, result);
     return result;
   }
 
