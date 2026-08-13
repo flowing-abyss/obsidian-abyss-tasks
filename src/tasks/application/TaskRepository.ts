@@ -6,6 +6,7 @@ import type {
   TaskStatusTarget,
 } from '../domain/commands';
 import type { RecurrencePolicy } from '../domain/recurrence';
+import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
   LocalDate,
   TaskDestination,
@@ -65,9 +66,39 @@ export interface RecurrenceCompletionRequest {
   readonly policy: RecurrencePolicy;
 }
 
+export interface RevisionPrecondition {
+  readonly baseRoot: TaskSnapshot;
+  readonly baseTarget: TaskMutationTarget;
+  readonly reconciliation: RootReconciliationBasis;
+}
+
+export interface TaskEditRequest extends RevisionPrecondition {
+  readonly command: TaskEditCommand;
+}
+
+export interface TaskMoveRequest extends RevisionPrecondition {
+  readonly destination: TaskDestination;
+}
+
+export interface RecurrenceCompletionRevisionRequest extends RevisionPrecondition {
+  readonly command: RecurrenceCompletionRequest;
+  readonly baseOwnedDescendants: string;
+}
+
+export type RepositoryRevisionResult =
+  | {
+      readonly type: 'rebased';
+      readonly previous: TaskSnapshot;
+      readonly current: TaskSnapshot;
+      readonly evidence: RebaseEvidence;
+    }
+  | { readonly type: 'uncertain'; readonly target: TaskMutationTarget }
+  | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] };
+
 export type TaskRepositoryResult =
   | { readonly type: 'committed'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
+  | RepositoryRevisionResult
   | { readonly type: 'not-found'; readonly target: TaskMutationTarget }
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
@@ -80,8 +111,15 @@ export type TaskRepositoryResult =
     };
 
 export interface TaskRepository {
-  edit(command: TaskEditCommand): Promise<TaskRepositoryResult>;
-  completeRecurrence(request: RecurrenceCompletionRequest): Promise<TaskRepositoryResult>;
+  /** Production adapters opt in to immutable revision preconditions. */
+  readonly supportsRevisionPreconditions?: true;
+  edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
+  completeRecurrence(
+    request: RecurrenceCompletionRevisionRequest | RecurrenceCompletionRequest,
+  ): Promise<TaskRepositoryResult>;
   create(destination: TaskDestination, draft: TaskDraft): Promise<TaskRepositoryResult>;
-  move(ref: TaskRef, destination: TaskDestination): Promise<TaskRepositoryResult>;
+  move(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult>;
 }

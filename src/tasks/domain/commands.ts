@@ -53,10 +53,6 @@ export type PlanningTarget =
 
 export type TaskStatusTarget = TaskNodeRef;
 
-export interface Clock {
-  today(): LocalDate;
-}
-
 export type TaskCommand =
   | {
       readonly type: 'create';

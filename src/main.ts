@@ -9,8 +9,9 @@ import { toStatusRules } from './settings/statusCatalogAdapter';
 import type { CalendarSettings, CodeBlockParams } from './settings/types';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
-import { localDate, type TaskApplicationApi, type TaskQueryApi } from './tasks';
+import { type TaskApplicationApi, type TaskQueryApi } from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
+import { systemClock } from './tasks/domain/clock';
 import { StatusCatalog } from './tasks/domain/StatusCatalog';
 import { TaskBlockEditor } from './tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from './tasks/infrastructure/markdown/TaskLocator';
@@ -62,7 +63,10 @@ export default class TaskCalendarPlugin extends Plugin {
       this.taskIndex,
       repository,
       this.statusCatalog,
-      { today: () => localDate(window.moment().format('YYYY-MM-DD')) },
+      systemClock(
+        () => Date.now(),
+        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+      ),
       destinationProvider,
       () => ({
         taskLifecycle: this.settings.taskLifecycle,

@@ -49,11 +49,24 @@ async function makeHarness(adapter: Adapter, source: string): Promise<Harness> {
   const queries: TaskApplicationApi['queries'] = taskQueryApi({
     list: () => snapshots(source),
     resolve: (ref) => {
-      const current = snapshots(source).find(
-        (task) => task.ref.filePath === ref.filePath && task.ref.line === ref.line,
+      const current = snapshots(source);
+      const exact = current.find(
+        (task) =>
+          task.ref.filePath === ref.filePath &&
+          task.ref.line === ref.line &&
+          task.ref.revision === ref.revision,
       );
-      return current
-        ? { type: 'exact', task: current, basis: { observed: current } }
+      if (exact) return { type: 'exact', task: exact, basis: { observed: exact } };
+      const candidates = current.filter((task) => task.ref.revision === ref.revision);
+      return candidates.length > 1
+        ? {
+            type: 'ambiguous',
+            ref,
+            candidates: candidates.map((root) => ({
+              root,
+              target: { type: 'task' as const, ref: root.ref },
+            })),
+          }
         : { type: 'not-found', ref };
     },
   });
@@ -234,7 +247,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       );
     });
 
-    it('never adopts a stale reference after the first revision commits', async () => {
+    it('does not duplicate a stale tag intent without repository rebase proof', async () => {
       const source = '- [ ] task\n';
       const h = await makeHarness(adapter, source);
       const target = rootTarget(h, source);
@@ -247,7 +260,8 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
       const results = [await h.tasks.execute(command), await h.tasks.execute(command)];
 
       expect(results.filter((result) => result.type === 'ok')).toHaveLength(1);
-      expect(results.filter((result) => result.type === 'conflict')).toHaveLength(1);
+      expect(results.filter((result) => result.type === 'conflict')).toHaveLength(0);
+      expect(results.filter((result) => result.type === 'not-found')).toHaveLength(1);
       expect((await h.read()).match(/#raced/gu)).toHaveLength(1);
     });
 

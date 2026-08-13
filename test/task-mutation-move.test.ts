@@ -40,7 +40,24 @@ function snapshot(filePath: string): TaskSnapshot {
 }
 
 function service(move: TaskRepository['move']): TaskApplicationService {
-  const queries: TaskQueryApi = taskQueryApi();
+  const current: TaskSnapshot = {
+    ...snapshot(ref.filePath),
+    ref,
+    source: {
+      filePath: ref.filePath,
+      line: ref.line,
+      originalMarkdown: '- [ ] task',
+      originalBlock: '- [ ] task',
+    },
+  };
+  const queries: TaskQueryApi = {
+    ...taskQueryApi(),
+    resolve: () => ({
+      type: 'exact',
+      task: current,
+      basis: { observed: current },
+    }),
+  };
   return new TaskApplicationService(
     queries,
     {

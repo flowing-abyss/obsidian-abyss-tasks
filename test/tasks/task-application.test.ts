@@ -44,7 +44,7 @@ function snapshot(): TaskSnapshot {
 }
 
 function queries(): TaskQueryApi {
-  return taskQueryApi();
+  return { ...taskQueryApi(), resolve: () => exactResolution(snapshot()) };
 }
 
 function exactQueries(task: TaskSnapshot): TaskQueryApi {
@@ -70,14 +70,30 @@ const statuses = new StatusCatalog([
 
 const clock = { today: vi.fn(() => localDate('2026-07-14')) };
 
+function unwrapEdit(request: Parameters<TaskRepository['edit']>[0]): TaskEditCommand {
+  return 'command' in request ? request.command : request;
+}
+
 function service(
   repository: Pick<TaskRepository, 'edit'> &
     Partial<Pick<TaskRepository, 'create' | 'completeRecurrence'>>,
   taskQueries: TaskQueryApi = queries(),
 ) {
+  const originalEdit = repository.edit;
+  const edit = vi.fn<TaskRepository['edit']>(async (request) => originalEdit(unwrapEdit(request)));
+  const completeRecurrence = repository.completeRecurrence
+    ? vi.fn<TaskRepository['completeRecurrence']>(
+        async (request) =>
+          repository.completeRecurrence?.('command' in request ? request.command : request) ?? {
+            type: 'io-error',
+            cause: 'missing-repository',
+            contentState: 'unchanged',
+          },
+      )
+    : vi.fn<TaskRepository['completeRecurrence']>();
   return new TaskApplicationService(
     taskQueries,
-    { completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn(), ...repository },
+    { completeRecurrence, create: vi.fn(), move: vi.fn(), ...repository, edit },
     statuses,
     clock,
   );
@@ -189,7 +205,7 @@ describe('TaskApplicationService planning commands', () => {
       { type: 'not-found', target: { type: 'task', ref } },
       { type: 'ambiguous', candidates: [{ root: snapshot(), target: { type: 'task', ref } }] },
     ],
-  )('leaves a non-exact move reference to repository $type resolution', async (result) => {
+  )('rejects a non-exact move reference without a repository write: $type', async (result) => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(result);
     const nonExactQueries: TaskQueryApi = {
       ...queries(),
@@ -206,8 +222,10 @@ describe('TaskApplicationService planning commands', () => {
         ref,
         days: 1,
       }),
-    ).resolves.toEqual(result);
-    expect(edit).toHaveBeenCalledOnce();
+    ).resolves.toEqual(
+      result.type === 'ambiguous' ? result : { type: 'not-found', target: { type: 'task', ref } },
+    );
+    expect(edit).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -1053,7 +1071,10 @@ describe('TaskApplicationService planning commands', () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'current-index-revision' } };
     const laggingQueries: TaskQueryApi = {
       ...queries(),
-      resolve: () => uncertainResolution(current),
+      resolve: (target) =>
+        target.revision.startsWith('input-')
+          ? exactResolution({ ...snapshot(), ref: target })
+          : uncertainResolution(current),
     };
     const application = service({ edit }, laggingQueries);
     let firstReturned: TaskSnapshot | undefined;
@@ -1544,10 +1565,17 @@ describe('TaskApplicationService recurrence completion routing', () => {
       outcome,
       changed: true,
     });
+    let initialResolution = true;
     const laggingQueries: TaskQueryApi = {
       ...queries(),
-      resolve: (target) =>
-        target.revision === ref.revision ? uncertainResolution(current) : exactResolution(active),
+      resolve: (target) => {
+        if (target.revision !== ref.revision) return exactResolution(active);
+        if (initialResolution) {
+          initialResolution = false;
+          return exactResolution(current);
+        }
+        return uncertainResolution(current);
+      },
     };
     const application = new TaskApplicationService(
       laggingQueries,

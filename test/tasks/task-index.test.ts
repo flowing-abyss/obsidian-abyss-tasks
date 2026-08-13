@@ -134,7 +134,7 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
-  it('distinguishes a plugin-owned authority successor and rejects a stale retry', async () => {
+  it('distinguishes a plugin-owned authority successor and safely applies the intent', async () => {
     const source = '- [ ] alpha\n';
     const candidate = '- [ ] beta\n';
     const authority = new TaskRefAuthority('identity-session');
@@ -167,7 +167,11 @@ describe('TaskIndex lifecycle and events', () => {
       current: { ref: installed.ref },
     });
 
-    const edit = vi.fn();
+    const edit = vi.fn().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: installed },
+      changed: true,
+    });
     const application = new TaskApplicationService(
       index,
       { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
@@ -179,8 +183,8 @@ describe('TaskIndex lifecycle and events', () => {
         type: 'toggle-completion',
         target: { type: 'task', ref: observed.ref },
       }),
-    ).resolves.toMatchObject({ type: 'conflict', current: { ref: installed.ref } });
-    expect(edit).not.toHaveBeenCalled();
+    ).resolves.toMatchObject({ type: 'ok', changed: true });
+    expect(edit).toHaveBeenCalledOnce();
     index.destroy();
   });
 

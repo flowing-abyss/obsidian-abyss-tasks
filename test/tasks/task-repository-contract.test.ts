@@ -2,7 +2,7 @@ import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskEditCommand } from '../../src/tasks/application/TaskRepository';
+import type { TaskEditCommand, TaskEditRequest } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
@@ -79,6 +79,61 @@ function patch(
 }
 
 describe('ObsidianTaskRepository planning contract', () => {
+  it('returns repository-authoritative relocation evidence before a prepared write', async () => {
+    const source = '- [ ] task\n- [ ] other\n';
+    const relocated = 'intro\n- [ ] task\n- [ ] other\n';
+    const h = await harness({ 'tasks.md': source });
+    const baseRoot = h.snapshotsFromContent('tasks.md', source)[0]!;
+    const file = h.app.vault.getAbstractFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('missing file');
+    await h.app.vault.modify(file, relocated);
+    const request: TaskEditRequest = {
+      command: {
+        type: 'patch',
+        target: { type: 'task', ref: baseRoot.ref },
+        patch: { tags: { add: ['#work'] } },
+      },
+      baseRoot,
+      baseTarget: { type: 'task', ref: baseRoot.ref },
+      reconciliation: { observed: baseRoot },
+    };
+
+    await expect(h.repository.edit(request)).resolves.toMatchObject({
+      type: 'rebased',
+      previous: baseRoot,
+      current: { source: { line: 1, originalBlock: '- [ ] task' } },
+      evidence: 'byte-identical-relocation',
+    });
+    expect(await read(h.app, 'tasks.md')).toBe(relocated);
+  });
+
+  it('returns uncertain instead of treating a changed same-line occupant as writable', async () => {
+    const source = '- [ ] task\n';
+    const externallyEdited = '- [ ] task #external\n';
+    const h = await harness({ 'tasks.md': source });
+    const baseRoot = h.snapshotsFromContent('tasks.md', source)[0]!;
+    const file = h.app.vault.getAbstractFileByPath('tasks.md');
+    if (!(file instanceof TFile)) throw new Error('missing file');
+    await h.app.vault.modify(file, externallyEdited);
+
+    await expect(
+      h.repository.edit({
+        command: {
+          type: 'patch',
+          target: { type: 'task', ref: baseRoot.ref },
+          patch: { priority: { type: 'set', value: 'A' } },
+        },
+        baseRoot,
+        baseTarget: { type: 'task', ref: baseRoot.ref },
+        reconciliation: { observed: baseRoot },
+      }),
+    ).resolves.toEqual({
+      type: 'uncertain',
+      target: { type: 'task', ref: baseRoot.ref },
+    });
+    expect(await read(h.app, 'tasks.md')).toBe(externallyEdited);
+  });
+
   it('commits a validated structural candidate through one synchronous process callback', async () => {
     const source = '- [ ] task\r\n  - > old\r\n- [ ] other\r\n';
     const h = await harness({ 'tasks.md': source });

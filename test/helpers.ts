@@ -23,15 +23,15 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { systemClock } from '../src/tasks/domain/clock';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
-import { localDate } from '../src/tasks/domain/validation';
-import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
-import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskDestinationProvider } from '../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 
 export function queryApiForTasks(
   getTasks: () => readonly TaskSnapshot[],
@@ -571,7 +571,10 @@ export function configuredTaskApplication(
     index,
     repository,
     statusCatalog,
-    { today: () => localDate(moment().format('YYYY-MM-DD')) },
+    systemClock(
+      () => Date.now(),
+      (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+    ),
     new ObsidianTaskDestinationProvider(app, settings, new DailyNoteResolver(app, settings)),
   );
   return {

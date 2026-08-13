@@ -1,5 +1,7 @@
+import type { Clock, ClockReading } from '../domain/clock';
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
-import type { Clock, TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
+import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
+import { atomDateTime } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { StatusCatalog } from '../domain/StatusCatalog';
@@ -8,6 +10,7 @@ import type {
   SubtaskRef,
   SubtaskSnapshot,
   TaskDestination,
+  TaskMutationTarget,
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
@@ -21,9 +24,19 @@ import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskB
 import type { TaskDestinationProvider } from './TaskDestinationProvider';
 import type {
   RecurrenceCompletionRequest,
+  RecurrenceCompletionRevisionRequest,
   TaskEditCommand,
+  TaskEditRequest,
+  TaskMoveRequest,
   TaskRepository,
+  TaskRepositoryResult,
 } from './TaskRepository';
+import {
+  prepareRetry,
+  recurrenceCompletionPreconditionHolds,
+  type PreparedMutation,
+  type RetryPolicy,
+} from './taskRetryPolicy';
 
 const TAG_RE = /^#[\w/-]+$/u;
 
@@ -105,10 +118,7 @@ function resolvedStatusSelection(
     return {
       root: resolution.current,
       target: rebasedTarget,
-      current:
-        resolution.evidence === 'byte-identical-relocation'
-          ? snapshotForTarget(resolution.current, rebasedTarget)
-          : undefined,
+      current: snapshotForTarget(resolution.current, rebasedTarget),
     };
   }
   return {
@@ -140,6 +150,9 @@ interface RecentOutcome {
   readonly task: TaskSnapshot;
   readonly permittedTarget?: TaskNodeRef;
 }
+
+type ProvenResolution = Extract<TaskResolution, { readonly type: 'exact' | 'rebased' }>;
+type LegacyClock = { today(): import('../domain/types').LocalDate };
 type MoveScheduleCommand = Extract<
   TaskCommand,
   { readonly type: 'move-time-slot' | 'move-to-all-day' }
@@ -202,14 +215,154 @@ function isBlockCommand(command: TaskCommand): command is BlockCommand {
 
 function prepareBlockCommand(
   command: BlockCommand,
-  clock: Clock,
+  reading: ClockReading,
 ): { readonly command: TaskEditCommand } {
   if (command.type === 'add-comment') {
-    return { command: { ...command, stamp: clock.today() } };
+    return { command: { ...command, stamp: reading.localDate } };
   }
   if (command.text === null) return { command };
   const text = command.text.replace(/\r\n/gu, '\n');
   return { command: { ...command, text: text.trim().length > 0 ? text : null } };
+}
+
+function rootRefForCommand(command: Exclude<TaskCommand, { readonly type: 'create' }>): TaskRef {
+  switch (command.type) {
+    case 'patch':
+    case 'append-title':
+    case 'set-status':
+    case 'toggle-completion':
+    case 'set-description':
+      return rootRefOf(command.target);
+    case 'add-subtask':
+    case 'add-comment':
+      return rootRefOf(command.parent);
+    case 'delete-subtask':
+    case 'reorder-subtask':
+      return rootRefOf(command.subtask.parent);
+    case 'update-comment':
+    case 'delete-comment':
+      return rootRefOf(command.comment.parent);
+    case 'edit-link':
+      return rootRefOf(
+        command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
+      );
+    default:
+      return command.ref;
+  }
+}
+
+function mutationTargetForCommand(
+  command: Exclude<TaskCommand, { readonly type: 'create' | 'move' }>,
+): import('../domain/types').TaskMutationTarget {
+  switch (command.type) {
+    case 'patch':
+    case 'append-title':
+    case 'set-status':
+    case 'toggle-completion':
+    case 'set-description':
+      return command.target;
+    case 'add-subtask':
+    case 'add-comment':
+      return command.parent;
+    case 'delete-subtask':
+    case 'reorder-subtask':
+      return { type: 'subtask', ref: command.subtask };
+    case 'update-comment':
+    case 'delete-comment':
+      return { type: 'comment', ref: command.comment };
+    case 'edit-link':
+      return command.target.type === 'comment' ? command.target : command.target.target;
+    default:
+      return { type: 'task', ref: command.ref };
+  }
+}
+
+function rebaseCommandRoot<T extends Exclude<TaskCommand, { readonly type: 'create' | 'move' }>>(
+  command: T,
+  root: TaskRef,
+): T {
+  const rebased = (() => {
+    switch (command.type) {
+      case 'patch':
+      case 'append-title':
+      case 'set-status':
+      case 'toggle-completion':
+      case 'set-description':
+        return { ...command, target: rebaseStatusTarget(command.target, root) };
+      case 'add-subtask':
+      case 'add-comment':
+        return { ...command, parent: rebaseStatusTarget(command.parent, root) };
+      case 'delete-subtask':
+        return {
+          ...command,
+          subtask: { ...command.subtask, parent: rebaseStatusTarget(command.subtask.parent, root) },
+        };
+      case 'reorder-subtask':
+        return {
+          ...command,
+          subtask: { ...command.subtask, parent: rebaseStatusTarget(command.subtask.parent, root) },
+          target: { ...command.target, parent: rebaseStatusTarget(command.target.parent, root) },
+        };
+      case 'update-comment':
+      case 'delete-comment':
+        return {
+          ...command,
+          comment: { ...command.comment, parent: rebaseStatusTarget(command.comment.parent, root) },
+        };
+      case 'edit-link':
+        return {
+          ...command,
+          target:
+            command.target.type === 'comment'
+              ? {
+                  type: 'comment' as const,
+                  ref: {
+                    ...command.target.ref,
+                    parent: rebaseStatusTarget(command.target.ref.parent, root),
+                  },
+                }
+              : { ...command.target, target: rebaseStatusTarget(command.target.target, root) },
+        };
+      default:
+        return { ...command, ref: root };
+    }
+  })();
+  return rebased as unknown as T;
+}
+
+function retryPolicy(command: TaskEditCommand): RetryPolicy {
+  if (command.type === 'delete') return 'relocation-only';
+  if (command.type === 'reorder-subtask') return 'never';
+  if (
+    command.type === 'add-comment' ||
+    command.type === 'add-subtask' ||
+    (command.type === 'patch' &&
+      command.patch.tags !== undefined &&
+      Object.keys(command.patch).every((field) => field === 'tags'))
+  ) {
+    return 'commutative';
+  }
+  if (
+    command.type === 'patch' ||
+    command.type === 'set-status' ||
+    command.type === 'reschedule' ||
+    command.type === 'shift-schedule' ||
+    command.type === 'move-time-slot' ||
+    command.type === 'move-to-all-day' ||
+    command.type === 'set-time-slot' ||
+    command.type === 'convert-to-all-day' ||
+    command.type === 'set-span-boundary' ||
+    command.type === 'extend-span'
+  ) {
+    return 'field-compare';
+  }
+  return 'exact-target';
+}
+
+function ownedDescendants(task: TaskSnapshot | SubtaskSnapshot): string {
+  const block = 'source' in task ? task.source.originalBlock : task.ref.originalBlock;
+  const newline = block.search(/\r?\n/u);
+  return newline < 0 ? '' : block.slice(newline);
 }
 
 function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskBehaviorSettings {
@@ -217,6 +370,20 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
   return {
     taskLifecycle: { ...settings.taskLifecycle },
     recurrence: { ...settings.recurrence },
+  };
+}
+
+function captureClock(clock: Clock | LegacyClock): ClockReading {
+  if ('read' in clock) return clock.read();
+  let captured: import('../domain/types').LocalDate | undefined;
+  return {
+    get localDate() {
+      captured ??= clock.today();
+      return captured;
+    },
+    epochMs: 0,
+    offsetMinutes: 0,
+    atom: atomDateTime('1970-01-01T00:00:00+00:00'),
   };
 }
 
@@ -229,7 +396,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     readonly queries: TaskQueryApi,
     private readonly repository: TaskRepository,
     private readonly statusCatalog: StatusCatalog,
-    private readonly clock: Clock,
+    private readonly clock: Clock | LegacyClock,
     private readonly destinationProvider?: TaskDestinationProvider,
     private readonly behaviorSettings: TaskBehaviorSettingsProvider = () =>
       DEFAULT_BEHAVIOR_SETTINGS,
@@ -237,24 +404,54 @@ export class TaskApplicationService implements TaskApplicationApi {
 
   async execute(command: TaskCommand): Promise<TaskCommandResult> {
     try {
+      const inputIssue = multilineInputIssue(command);
+      if (inputIssue) return inputIssue;
       const settings = snapshotBehaviorSettings(this.behaviorSettings);
-      if (command.type === 'create') return await this.create(command, settings);
-      if (command.type === 'move') return await this.move(command);
-      const prepared = this.prepare(command, settings);
-      if ('result' in prepared) return prepared.result;
-      const result =
-        'recurrence' in prepared
-          ? await this.repository.completeRecurrence(prepared.recurrence)
-          : await this.repository.edit(prepared.command);
-      if (result.type === 'committed') {
-        if (result.outcome.type === 'task') this.remember(result.outcome.task);
-        if (result.outcome.type === 'recurrence') {
-          if ('recurrence' in prepared) this.forget(rootRefOf(prepared.recurrence.target));
-          this.remember(result.outcome.active.root, result.outcome.active.target);
-        }
-        return { type: 'ok', outcome: result.outcome, changed: result.changed };
-      }
-      return result;
+      const reading = captureClock(this.clock);
+      if (command.type === 'create') return await this.create(command, settings, reading);
+
+      const rootRef = rootRefForCommand(command);
+      const recent = this.recentForCommand(command, rootRef);
+      const resolution: TaskResolution = recent
+        ? { type: 'exact', task: recent, basis: { observed: recent } }
+        : this.queries.resolve(rootRef);
+      const unavailable = this.unavailableResult(command, resolution);
+      if (unavailable) return unavailable;
+      const proven = resolution as ProvenResolution;
+      if (command.type === 'move') return await this.move(command, proven, settings, reading);
+
+      const currentRoot = proven.type === 'exact' ? proven.task : proven.current;
+      const baseRoot = proven.type === 'exact' ? proven.task : proven.previous;
+      const currentCommand = rebaseCommandRoot(command, currentRoot.ref);
+      const preparedCommand = this.prepare(currentCommand, settings, reading, proven);
+      if ('result' in preparedCommand) return preparedCommand.result;
+      const targetBase = mutationTargetForCommand(command);
+      const precondition = {
+        baseRoot: currentRoot,
+        baseTarget: targetBase,
+        reconciliation: proven.basis,
+      };
+      const repositoryRequest: TaskEditRequest | RecurrenceCompletionRevisionRequest =
+        'recurrence' in preparedCommand
+          ? {
+              command: preparedCommand.recurrence,
+              ...precondition,
+              baseOwnedDescendants: ownedDescendants(
+                snapshotForTarget(currentRoot, preparedCommand.recurrence.target) ?? currentRoot,
+              ),
+            }
+          : { command: preparedCommand.command, ...precondition };
+      const prepared: PreparedMutation = {
+        publicCommand: command,
+        repositoryRequest,
+        base: baseRoot,
+        targetBase,
+        clock: reading,
+        settings,
+        retry:
+          'recurrence' in preparedCommand ? 'exact-target' : retryPolicy(preparedCommand.command),
+      };
+      return await this.finishPrepared(prepared, await this.dispatch(repositoryRequest));
     } catch {
       return {
         type: 'io-error',
@@ -267,16 +464,34 @@ export class TaskApplicationService implements TaskApplicationApi {
 
   private async move(
     command: Extract<TaskCommand, { readonly type: 'move' }>,
+    resolution: ProvenResolution,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading,
   ): Promise<TaskCommandResult> {
-    const result = await this.repository.move(command.ref, command.destination);
-    if (result.type !== 'committed') return result;
-    if (result.outcome.type === 'task') this.remember(result.outcome.task);
-    return { type: 'ok', outcome: result.outcome, changed: result.changed };
+    const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+    const base = resolution.type === 'exact' ? resolution.task : resolution.previous;
+    const request: TaskMoveRequest = {
+      destination: command.destination,
+      baseRoot: current,
+      baseTarget: { type: 'task', ref: command.ref },
+      reconciliation: resolution.basis,
+    };
+    const prepared: PreparedMutation = {
+      publicCommand: command,
+      repositoryRequest: request,
+      base,
+      targetBase: { type: 'task', ref: command.ref },
+      clock: reading,
+      settings,
+      retry: 'never',
+    };
+    return await this.finishPrepared(prepared, await this.dispatch(request));
   }
 
   private async create(
     command: Extract<TaskCommand, { readonly type: 'create' }>,
     settings: TaskBehaviorSettings,
+    reading: ClockReading,
   ): Promise<TaskCommandResult> {
     if (
       command.markdownBody.replace(/\r\n/gu, '').includes('\r') ||
@@ -284,8 +499,6 @@ export class TaskApplicationService implements TaskApplicationApi {
     ) {
       return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
     }
-    const inputIssue = multilineInputIssue(command);
-    if (inputIssue) return inputIssue;
     let destination: TaskDestination;
     if (command.destination.type === 'explicit') {
       if (command.destination.provision === undefined) {
@@ -321,10 +534,10 @@ export class TaskApplicationService implements TaskApplicationApi {
     const result = await this.repository.create(destination, {
       markdownBody: command.markdownBody,
       ...(initial !== undefined && { initial }),
-      today: this.clock.today(),
+      today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
-    if (result.type !== 'committed') return result;
+    if (result.type !== 'committed') return this.terminalRepositoryResult(result);
     if (result.outcome.type === 'task') this.remember(result.outcome.task);
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
   }
@@ -332,15 +545,15 @@ export class TaskApplicationService implements TaskApplicationApi {
   private prepare(
     command: EditableTaskCommand,
     settings: TaskBehaviorSettings,
+    reading: ClockReading,
+    resolution: ProvenResolution,
   ): PreparedTaskCommand {
-    const inputIssue = multilineInputIssue(command);
-    if (inputIssue !== undefined) return { result: inputIssue };
-    if (isBlockCommand(command)) return prepareBlockCommand(command, this.clock);
+    if (isBlockCommand(command)) return prepareBlockCommand(command, reading);
     if (command.type === 'add-subtask') {
       return {
         command: {
           ...command,
-          today: this.clock.today(),
+          today: reading.localDate,
           addCreatedDate: settings.taskLifecycle.addCreatedDate,
         },
       };
@@ -368,7 +581,10 @@ export class TaskApplicationService implements TaskApplicationApi {
     }
 
     if (command.type === 'move-time-slot' || command.type === 'move-to-all-day') {
-      return this.prepareMoveSchedule(command);
+      return this.prepareMoveSchedule(
+        command,
+        resolution.type === 'exact' ? resolution.task : resolution.current,
+      );
     }
 
     if (command.type !== 'set-status' && command.type !== 'toggle-completion') {
@@ -386,29 +602,6 @@ export class TaskApplicationService implements TaskApplicationApi {
       };
     }
 
-    const rootRef = rootRefOf(command.target);
-    const recent = this.recentFor(command.target);
-    const resolution = recent
-      ? { type: 'exact' as const, task: recent, basis: { observed: recent } }
-      : this.queries.resolve(rootRef);
-    if (
-      resolution.type === 'not-found' ||
-      resolution.type === 'uncertain' ||
-      resolution.type === 'visual'
-    ) {
-      return { result: { type: 'not-found', target: command.target } };
-    }
-    if (resolution.type === 'ambiguous') {
-      return {
-        result: {
-          type: 'ambiguous',
-          candidates: resolution.candidates.map((candidate) => ({
-            root: candidate.root,
-            target: rebaseStatusTarget(command.target, candidate.root.ref),
-          })),
-        },
-      };
-    }
     const resolved = resolvedStatusSelection(resolution, command.target);
     if (!resolved.current) return { result: { type: 'conflict', current: resolved.root } };
     const current = resolved.current;
@@ -444,14 +637,28 @@ export class TaskApplicationService implements TaskApplicationApi {
       currentSemanticStatus,
       rule,
       settings,
+      reading,
     );
-    if (recurrence !== undefined) return recurrence;
+    if (recurrence !== undefined) {
+      if (
+        'recurrence' in recurrence &&
+        resolution.type === 'rebased' &&
+        !recurrenceCompletionPreconditionHolds(
+          resolution.previous,
+          resolution.current,
+          recurrence.recurrence.target,
+        )
+      ) {
+        return { result: { type: 'conflict', current: resolution.current } };
+      }
+      return recurrence;
+    }
     return {
       command: {
         type: 'set-status',
         target: resolved.target,
         symbol: sameConfiguredStatus ? current.statusSymbol : rule.symbol,
-        ...(entersStampedState && { stamp: this.clock.today() }),
+        ...(entersStampedState && { stamp: reading.localDate }),
         ...(rule.type === 'done' && {
           addCompletionDate: settings.taskLifecycle.addCompletionDate,
         }),
@@ -465,6 +672,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     currentSemanticStatus: TaskStatus,
     requestedRule: TaskStatusRule,
     settings: TaskBehaviorSettings,
+    reading: ClockReading,
   ): Exclude<PreparedTaskCommand, { readonly command: TaskEditCommand }> | undefined {
     if (
       currentSemanticStatus === 'done' ||
@@ -487,7 +695,7 @@ export class TaskApplicationService implements TaskApplicationApi {
       recurrence: {
         target,
         doneSymbol: requestedRule.symbol,
-        today: this.clock.today(),
+        today: reading.localDate,
         todoSymbol: todoRule.symbol,
         addCreatedDate: settings.taskLifecycle.addCreatedDate,
         addCompletionDate: settings.taskLifecycle.addCompletionDate,
@@ -499,15 +707,9 @@ export class TaskApplicationService implements TaskApplicationApi {
 
   private prepareMoveSchedule(
     command: MoveScheduleCommand,
+    resolved: TaskSnapshot,
   ): { readonly command: TaskEditCommand } | { readonly result: TaskCommandResult } {
-    const recent = this.recentFor({ type: 'task', ref: command.ref });
-    const resolution = recent
-      ? { type: 'exact' as const, task: recent, basis: { observed: recent } }
-      : this.queries.resolve(command.ref);
-    let resolved: TaskSnapshot | undefined;
-    if (resolution.type === 'exact') resolved = resolution.task;
-    if (resolution.type === 'rebased') resolved = resolution.current;
-    if (resolved && moveExceedsDateBounds(resolved, command)) {
+    if (moveExceedsDateBounds(resolved, command)) {
       return {
         result: {
           type: 'invalid',
@@ -516,6 +718,102 @@ export class TaskApplicationService implements TaskApplicationApi {
       };
     }
     return { command };
+  }
+
+  private unavailableResult(
+    command: Exclude<TaskCommand, { readonly type: 'create' }>,
+    resolution: TaskResolution,
+  ): TaskCommandResult | undefined {
+    if (resolution.type === 'exact' || resolution.type === 'rebased') return undefined;
+    const target =
+      command.type === 'move'
+        ? ({ type: 'task', ref: command.ref } as const)
+        : mutationTargetForCommand(command);
+    if (resolution.type === 'ambiguous') {
+      return {
+        type: 'ambiguous',
+        candidates: resolution.candidates.map((candidate) => {
+          let rebasedTarget: TaskMutationTarget;
+          if (target.type === 'task') {
+            rebasedTarget = { type: 'task', ref: candidate.root.ref };
+          } else if (target.type === 'subtask') {
+            rebasedTarget = {
+              type: 'subtask',
+              ref: {
+                ...target.ref,
+                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
+              },
+            };
+          } else {
+            rebasedTarget = {
+              type: 'comment',
+              ref: {
+                ...target.ref,
+                parent: rebaseStatusTarget(target.ref.parent, candidate.root.ref),
+              },
+            };
+          }
+          return { root: candidate.root, target: rebasedTarget };
+        }),
+      };
+    }
+    return { type: 'not-found', target };
+  }
+
+  private dispatch(
+    request: TaskEditRequest | RecurrenceCompletionRevisionRequest | TaskMoveRequest,
+  ): Promise<TaskRepositoryResult> {
+    const prepared = this.repository.supportsRevisionPreconditions === true;
+    if ('destination' in request) {
+      return prepared
+        ? this.repository.move(request)
+        : this.repository.move(request.baseRoot.ref, request.destination);
+    }
+    if ('baseOwnedDescendants' in request) {
+      return this.repository.completeRecurrence(prepared ? request : request.command);
+    }
+    return this.repository.edit(prepared ? request : request.command);
+  }
+
+  private committedResult(
+    prepared: PreparedMutation,
+    result: Extract<TaskRepositoryResult, { readonly type: 'committed' }>,
+  ): TaskCommandResult {
+    if (result.outcome.type === 'task') this.remember(result.outcome.task);
+    if (result.outcome.type === 'recurrence') {
+      if ('baseOwnedDescendants' in prepared.repositoryRequest) {
+        this.forget(rootRefOf(prepared.repositoryRequest.command.target));
+      }
+      this.remember(result.outcome.active.root, result.outcome.active.target);
+    }
+    return { type: 'ok', outcome: result.outcome, changed: result.changed };
+  }
+
+  private terminalRepositoryResult(result: TaskRepositoryResult): TaskCommandResult {
+    switch (result.type) {
+      case 'committed':
+        return { type: 'ok', outcome: result.outcome, changed: result.changed };
+      case 'rebased':
+        return { type: 'conflict', current: result.current };
+      case 'uncertain':
+        return { type: 'not-found', target: result.target };
+      default:
+        return result;
+    }
+  }
+
+  private async finishPrepared(
+    prepared: PreparedMutation,
+    first: TaskRepositoryResult,
+  ): Promise<TaskCommandResult> {
+    if (first.type === 'committed') return this.committedResult(prepared, first);
+    if (first.type !== 'rebased') return this.terminalRepositoryResult(first);
+    const retry = prepareRetry(prepared, first);
+    if (retry.type === 'unsafe') return { type: 'conflict', current: first.current };
+    const second = await this.dispatch(retry.request);
+    return second.type === 'committed'
+      ? this.committedResult(prepared, second)
+      : this.terminalRepositoryResult(second);
   }
 
   private remember(task: TaskSnapshot, permittedTarget?: TaskNodeRef): void {
@@ -547,5 +845,21 @@ export class TaskApplicationService implements TaskApplicationApi {
     return !outcome.permittedTarget || sameTaskNodeRef(outcome.permittedTarget, target)
       ? outcome.task
       : undefined;
+  }
+
+  private recentForCommand(
+    command: Exclude<TaskCommand, { readonly type: 'create' }>,
+    ref: TaskRef,
+  ): TaskSnapshot | undefined {
+    const outcome = this.recentOutcomes.get(refKey(ref));
+    if (!outcome) return undefined;
+    if (!outcome.permittedTarget) return outcome.task;
+    if (command.type === 'move') return undefined;
+    const target = mutationTargetForCommand(command);
+    let node: TaskNodeRef;
+    if (target.type === 'comment') node = target.ref.parent;
+    else if (target.type === 'subtask') node = { type: 'subtask', ref: target.ref };
+    else node = target;
+    return sameTaskNodeRef(outcome.permittedTarget, node) ? outcome.task : undefined;
   }
 }

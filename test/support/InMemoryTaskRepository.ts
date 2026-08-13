@@ -1,8 +1,11 @@
 import { parseLinks } from '../../src/parser/links';
 import type {
   RecurrenceCompletionRequest,
+  RecurrenceCompletionRevisionRequest,
   TaskDraft,
   TaskEditCommand,
+  TaskEditRequest,
+  TaskMoveRequest,
   TaskRepository,
   TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
@@ -359,6 +362,8 @@ function ordinaryDeleteRecurrenceDisposition(
 }
 
 export class InMemoryTaskRepository implements TaskRepository {
+  readonly supportsRevisionPreconditions = true as const;
+
   private readonly files: Map<string, string>;
   private readonly editor: TaskBlockEditor;
   private readonly locator: TaskLocator;
@@ -406,7 +411,16 @@ export class InMemoryTaskRepository implements TaskRepository {
     };
   }
 
-  async move(ref: TaskRef, destination: TaskDestination): Promise<TaskRepositoryResult> {
+  async move(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult> {
+    const prepared = 'baseRoot' in request ? request : undefined;
+    const ref = 'baseRoot' in request ? request.baseRoot.ref : request;
+    const destination = 'destination' in request ? request.destination : legacyDestination;
+    if (!destination) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'destination' }] };
+    }
     const sourceContent = this.files.get(ref.filePath);
     if (sourceContent === undefined) {
       return { type: 'not-found', target: { type: 'task', ref } };
@@ -415,6 +429,20 @@ export class InMemoryTaskRepository implements TaskRepository {
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
     const located = this.locator.locate(this.editor.rootBlocks(sourceContent), ref);
+    if (prepared && located.type === 'exact' && located.block.line !== ref.line) {
+      const current = this.snapshot(ref.filePath, sourceContent, located.block.line);
+      return current
+        ? {
+            type: 'rebased',
+            previous: prepared.baseRoot,
+            current,
+            evidence: 'byte-identical-relocation',
+          }
+        : { type: 'not-found', target: prepared.baseTarget };
+    }
+    if (prepared && located.type === 'conflict') {
+      return { type: 'uncertain', target: prepared.baseTarget };
+    }
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&
@@ -519,7 +547,11 @@ export class InMemoryTaskRepository implements TaskRepository {
     };
   }
 
-  async completeRecurrence(request: RecurrenceCompletionRequest): Promise<TaskRepositoryResult> {
+  async completeRecurrence(
+    requestOrCommand: RecurrenceCompletionRevisionRequest | RecurrenceCompletionRequest,
+  ): Promise<TaskRepositoryResult> {
+    const revisionRequest = 'command' in requestOrCommand ? requestOrCommand : undefined;
+    const request = 'command' in requestOrCommand ? requestOrCommand.command : requestOrCommand;
     const ref = rootRef(request.target);
     const content = this.files.get(ref.filePath);
     if (content === undefined) return { type: 'not-found', target: request.target };
@@ -527,6 +559,20 @@ export class InMemoryTaskRepository implements TaskRepository {
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
     const located = this.locator.locate(this.editor.rootBlocks(content), ref);
+    if (revisionRequest && located.type === 'exact' && located.block.line !== ref.line) {
+      const current = this.snapshot(ref.filePath, content, located.block.line);
+      return current
+        ? {
+            type: 'rebased',
+            previous: revisionRequest.baseRoot,
+            current,
+            evidence: 'byte-identical-relocation',
+          }
+        : { type: 'not-found', target: revisionRequest.baseTarget };
+    }
+    if (revisionRequest && located.type === 'conflict') {
+      return { type: 'uncertain', target: revisionRequest.baseTarget };
+    }
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&
@@ -678,7 +724,9 @@ export class InMemoryTaskRepository implements TaskRepository {
     }
   }
 
-  async edit(command: TaskEditCommand): Promise<TaskRepositoryResult> {
+  async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
+    const prepared = 'command' in request ? request : undefined;
+    const command: TaskEditCommand = 'command' in request ? request.command : request;
     if (
       command.type === 'reorder-subtask' &&
       !sameTaskNodeRef(command.subtask.parent, command.target.parent)
@@ -696,6 +744,20 @@ export class InMemoryTaskRepository implements TaskRepository {
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
     const located = this.locator.locate(this.editor.rootBlocks(content), ref);
+    if (prepared && located.type === 'exact' && located.block.line !== ref.line) {
+      const current = this.snapshot(ref.filePath, content, located.block.line);
+      return current
+        ? {
+            type: 'rebased',
+            previous: prepared.baseRoot,
+            current,
+            evidence: 'byte-identical-relocation',
+          }
+        : { type: 'not-found', target: prepared.baseTarget };
+    }
+    if (prepared && located.type === 'conflict') {
+      return { type: 'uncertain', target: prepared.baseTarget };
+    }
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&

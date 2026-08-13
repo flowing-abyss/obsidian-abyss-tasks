@@ -2,8 +2,12 @@ import { TFile, type App } from 'obsidian';
 import { parseLinks } from '../../../parser/links';
 import type {
   RecurrenceCompletionRequest,
+  RecurrenceCompletionRevisionRequest,
+  RevisionPrecondition,
   TaskDraft,
   TaskEditCommand,
+  TaskEditRequest,
+  TaskMoveRequest,
   TaskRepository,
   TaskRepositoryResult,
 } from '../../application/TaskRepository';
@@ -48,6 +52,37 @@ import {
   type TaskRefStageResult,
   type TaskSnapshotState,
 } from '../TaskRefAuthority';
+
+type LocateResult = ReturnType<TaskLocator['locate']>;
+
+function preparedRevisionResult(
+  prepared: RevisionPrecondition | undefined,
+  located: LocateResult,
+  snapshot: (block: TaskRootBlock) => TaskSnapshot | undefined,
+): TaskRepositoryResult | undefined {
+  if (!prepared) return undefined;
+  if (located.type === 'conflict') return { type: 'uncertain', target: prepared.baseTarget };
+  if (located.type !== 'exact' || located.block.line === prepared.baseRoot.ref.line)
+    return undefined;
+  const current = snapshot(located.block);
+  return current
+    ? {
+        type: 'rebased',
+        previous: prepared.baseRoot,
+        current,
+        evidence: 'byte-identical-relocation',
+      }
+    : { type: 'not-found', target: prepared.baseTarget };
+}
+
+function authorityRevisionChanged(
+  hasAuthority: boolean,
+  hasSnapshotState: boolean,
+  indexedRef: TaskRef | undefined,
+  revision: string,
+): boolean {
+  return hasAuthority && hasSnapshotState && indexedRef?.revision !== revision;
+}
 
 interface RepositoryOptions {
   readonly codec: TaskMarkdownCodec;
@@ -500,6 +535,8 @@ function commentRelativeLine(
 }
 
 export class ObsidianTaskRepository implements TaskRepository {
+  readonly supportsRevisionPreconditions = true as const;
+
   constructor(
     private readonly app: App,
     private readonly options: RepositoryOptions,
@@ -578,7 +615,16 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
   }
 
-  async move(ref: TaskRef, destination: TaskDestination): Promise<TaskRepositoryResult> {
+  async move(
+    request: TaskMoveRequest | TaskRef,
+    legacyDestination?: TaskDestination,
+  ): Promise<TaskRepositoryResult> {
+    const prepared = 'baseRoot' in request ? request : undefined;
+    const ref = 'baseRoot' in request ? request.baseRoot.ref : request;
+    const destination = 'destination' in request ? request.destination : legacyDestination;
+    if (!destination) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'destination' }] };
+    }
     const sourceFile = this.app.vault.getAbstractFileByPath(ref.filePath);
     if (!(sourceFile instanceof TFile)) {
       return { type: 'not-found', target: { type: 'task', ref } };
@@ -602,6 +648,10 @@ export class ObsidianTaskRepository implements TaskRepository {
       this.options.editor.rootBlocks(sourceContent),
       ref,
     );
+    const preparedResult = preparedRevisionResult(prepared, sourceLocated, (block) =>
+      this.snapshotFor(ref.filePath, sourceContent, block),
+    );
+    if (preparedResult) return preparedResult;
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&
@@ -802,7 +852,11 @@ export class ObsidianTaskRepository implements TaskRepository {
     return undefined;
   }
 
-  async completeRecurrence(request: RecurrenceCompletionRequest): Promise<TaskRepositoryResult> {
+  async completeRecurrence(
+    requestOrCommand: RecurrenceCompletionRevisionRequest | RecurrenceCompletionRequest,
+  ): Promise<TaskRepositoryResult> {
+    const revisionRequest = 'command' in requestOrCommand ? requestOrCommand : undefined;
+    const request = 'command' in requestOrCommand ? requestOrCommand.command : requestOrCommand;
     const rootRef = rootRefOf(request.target);
     const file = this.app.vault.getAbstractFileByPath(rootRef.filePath);
     if (!(file instanceof TFile)) return { type: 'not-found', target: request.target };
@@ -820,10 +874,20 @@ export class ObsidianTaskRepository implements TaskRepository {
           this.options.editor.rootBlocks(content),
           rootRef,
         );
+        const revisionResult = preparedRevisionResult(revisionRequest, located, (block) =>
+          this.snapshotFor(rootRef.filePath, content, block),
+        );
+        if (revisionResult) {
+          result = revisionResult;
+          return content;
+        }
         if (
-          this.options.refAuthority &&
-          this.options.snapshotState &&
-          (!indexedRef || indexedRef.revision !== rootRef.revision)
+          authorityRevisionChanged(
+            this.options.refAuthority !== undefined,
+            this.options.snapshotState !== undefined,
+            indexedRef,
+            rootRef.revision,
+          )
         ) {
           if (located.type !== 'exact') {
             result = this.resolutionResultForTarget(
@@ -980,7 +1044,9 @@ export class ObsidianTaskRepository implements TaskRepository {
     );
   }
 
-  async edit(command: TaskEditCommand): Promise<TaskRepositoryResult> {
+  async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {
+    const prepared = 'command' in request ? request : undefined;
+    const command: TaskEditCommand = 'command' in request ? request.command : request;
     if (
       command.type === 'reorder-subtask' &&
       !sameTaskNodeRef(command.subtask.parent, command.target.parent)
@@ -1008,6 +1074,13 @@ export class ObsidianTaskRepository implements TaskRepository {
         const candidate = (() => {
           const blocks = this.options.editor.rootBlocks(content);
           const located = this.options.locator.locate(blocks, rootRef);
+          const revisionResult = preparedRevisionResult(prepared, located, (block) =>
+            this.snapshotFor(rootRef.filePath, content, block),
+          );
+          if (revisionResult) {
+            result = revisionResult;
+            return content;
+          }
           if (
             this.options.refAuthority &&
             this.options.snapshotState &&
