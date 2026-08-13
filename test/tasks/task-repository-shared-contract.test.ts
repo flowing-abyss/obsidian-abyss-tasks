@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import type { TaskEditCommand, TaskRepository } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import type { TaskRef, TaskSnapshot } from '../../src/tasks/domain/types';
 import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
@@ -123,7 +124,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           type: 'add-comment',
           parent: { type: 'task', ref: root.ref },
           text: 'new comment',
-          stamp: localDate('2026-07-14'),
+          stamp: atomDateTime('2026-07-14T09:30:45+00:00'),
         }),
       ).resolves.toMatchObject({ type: 'committed', changed: true });
 
@@ -135,7 +136,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
           '>\t  - 2026-07-13: updated second\r\n' +
           '>\t  - [ ] child\r\n' +
           '>\t    - > child description\r\n' +
-          '>\t  - 2026-07-14: new comment\r\n' +
+          '>\t  - 2026-07-14T09:30:45+00:00: new comment\r\n' +
           '> - [ ] unrelated\r\n',
       );
     });

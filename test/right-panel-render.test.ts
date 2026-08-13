@@ -8,7 +8,10 @@ import type { StatusRegistry } from '../src/status/StatusRegistry';
 import type { SubtaskSnapshot, TaskApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import type { CommentTimeContextProvider } from '../src/tasks/domain/commentTimeLabel';
+import { atomDateTime } from '../src/tasks/domain/commentTimestamp';
 import type { TaskRef } from '../src/tasks/domain/types';
+import { localDate } from '../src/tasks/domain/validation';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
@@ -317,6 +320,7 @@ async function makePanel(
   tasks?: TaskApplicationApi,
   statusRegistry: StatusRegistry = testStatusRegistry(),
   onSuccessfulMutation?: (ref?: TaskRef) => void,
+  commentTimeContext?: CommentTimeContextProvider,
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement }> {
   const app = await createAppWithFiles(files);
   const state = new AppState();
@@ -344,6 +348,9 @@ async function makePanel(
     DEFAULT_SETTINGS,
     onSuccessfulMutation,
     tasks ?? defaultTasks,
+    undefined,
+    undefined,
+    commentTimeContext,
   );
   const el = freshContainer();
   panel.mount(el);
@@ -807,16 +814,48 @@ describe('RightPanel.renderSubTask', () => {
 });
 
 describe('RightPanel.renderComment', () => {
-  it('comment row renders date span + text', async () => {
-    const { state, el } = await makePanel();
+  it('renders a legacy day-only comment as Today without inventing hour precision', async () => {
+    const context = vi.fn(() => ({
+      nowEpochMs: Date.parse('2026-06-20T20:00:00Z'),
+      today: localDate('2026-06-20'),
+      locale: 'en-US',
+      timeZone: 'UTC',
+    }));
+    const { state, el } = await makePanel({}, undefined, testStatusRegistry(), undefined, context);
     const comment = taskComment({ text: 'hello world', date: '2026-06-20' });
     state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
     const row = el.querySelector('.tc-comment-row');
     expect(row).not.toBeNull();
-    expect(row?.querySelector('.tc-comment-date')).not.toBeNull();
+    expect(row?.querySelector('.tc-comment-date')?.textContent).toBe('Today');
+    expect(context).toHaveBeenCalledOnce();
     // Comment text renders through MarkdownRenderer (a no-op mock in tests), so assert the
     // element exists rather than its async-populated textContent.
     expect(row?.querySelector('.tc-comment-text')).not.toBeNull();
+  });
+
+  it('renders an Atom comment using elapsed hour-and-minute precision', async () => {
+    const nowEpochMs = Date.parse('2026-06-20T20:00:00Z');
+    const context = () => ({
+      nowEpochMs,
+      today: localDate('2026-06-21'),
+      locale: 'en-US',
+      timeZone: 'Asia/Novosibirsk',
+    });
+    const { state, el } = await makePanel({}, undefined, testStatusRegistry(), undefined, context);
+    const raw = '2026-06-21T01:40:00+07:00';
+    const comment = taskComment({
+      text: 'precise',
+      timestamp: {
+        precision: 'instant',
+        atom: atomDateTime(raw),
+        raw,
+        epochMs: nowEpochMs - 80 * 60_000,
+      },
+    });
+
+    state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
+
+    expect(el.querySelector('.tc-comment-date')?.textContent).toBe('1 hour 20 minutes ago');
   });
 
   it('click on comment text → edit-mode textarea appears', async () => {

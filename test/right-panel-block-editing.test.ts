@@ -37,7 +37,11 @@ function snapshot(revision: string, description = 'old description'): TaskSnapsh
           relativeLine: 2,
           originalMarkdown: '  - 2026-07-13: old comment',
         },
-        date: '2026-07-13' as never,
+        timestamp: {
+          precision: 'day',
+          value: '2026-07-13' as never,
+          raw: '2026-07-13',
+        },
         text: 'old comment',
       },
     ],

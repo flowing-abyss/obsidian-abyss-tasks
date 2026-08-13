@@ -4,6 +4,7 @@ import { RightPanel } from '../panels/RightPanel';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type {
+  CommentTimeContextProvider,
   TaskApplicationApi,
   TaskIndexEvent,
   TaskQueryApi,
@@ -36,6 +37,7 @@ export class TaskModal {
     private settings?: CalendarSettings,
     private queries?: TaskQueryApi,
     private tasks?: TaskApplicationApi,
+    private commentTimeContext?: CommentTimeContextProvider,
   ) {}
 
   open(task: TaskSnapshot, context?: string): void {
@@ -80,6 +82,7 @@ export class TaskModal {
       this.tasks,
       (actions) => this.renderCloseButton(actions),
       (event) => this.trackOwnWrite(event),
+      this.commentTimeContext,
     );
     this.innerPanel.mount(panelEl);
 

@@ -9,9 +9,12 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
 import {
   durationMinutes,
+  formatCommentTimeLabel,
   localDate,
   localTime,
   type CommentRef,
+  type CommentTimeContext,
+  type CommentTimeContextProvider,
   type PlanningTarget,
   type SubtaskPatch,
   type SubtaskRef,
@@ -61,6 +64,29 @@ import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
+
+function systemCommentTimeContext(): CommentTimeContext {
+  const nowEpochMs = Date.now();
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone,
+  }).formatToParts(nowEpochMs);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((candidate) => candidate.type === type)?.value;
+  const year = part('year');
+  const month = part('month');
+  const day = part('day');
+  if (!year || !month || !day) throw new Error('comment-time-context-unavailable');
+  return {
+    nowEpochMs,
+    today: localDate(`${year}-${month}-${day}`),
+    locale: window.navigator.language || 'en-US',
+    timeZone,
+  };
+}
 
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
@@ -170,6 +196,7 @@ export class RightPanel {
     private tasks?: TaskApplicationApi,
     private onRenderHeaderActions?: (actions: HTMLElement) => void,
     private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
+    private commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -607,7 +634,7 @@ export class RightPanel {
       return;
     }
     const task = stack[stack.length - 1]!;
-    this.renderTask(task, stack);
+    this.renderTask(task, stack, this.commentTimeContext());
     this.renderDetachedDraftTray();
   }
 
@@ -755,7 +782,11 @@ export class RightPanel {
     });
   }
 
-  private renderTask(task: TaskLike, stack: TaskLike[]): void {
+  private renderTask(
+    task: TaskLike,
+    stack: TaskLike[],
+    commentTimeContext: CommentTimeContext,
+  ): void {
     // Breadcrumb — shows only the parent path (current task is in the title input)
     if (stack.length > 1) {
       const breadcrumb = this.el.createDiv({ cls: 'tc-breadcrumb' });
@@ -973,7 +1004,7 @@ export class RightPanel {
 
     const commentList = commentSection.createDiv({ cls: 'tc-comment-list' });
     for (const comment of task.comments ?? []) {
-      this.renderComment(commentList, comment, task);
+      this.renderComment(commentList, comment, task, commentTimeContext);
     }
 
     // Always-visible textarea — Enter submits, Shift+Enter inserts newline
@@ -1190,6 +1221,7 @@ export class RightPanel {
     container: HTMLElement,
     comment: TaskCommentSnapshot,
     task: TaskLike,
+    commentTimeContext: CommentTimeContext,
   ): void {
     const row = container.createDiv({ cls: 'tc-comment-row' });
     enableAttachmentDrop(row, {
@@ -1197,11 +1229,11 @@ export class RightPanel {
       sourcePath: rootTaskRef(task).filePath,
       onLinks: (links) => void this.updateComment(task, comment, `${comment.text} ${links}`.trim()),
     });
-    if (comment.date) {
-      const m = window.moment(comment.date, 'YYYY-MM-DD');
-      const diff = m.diff(window.moment(), 'days');
-      const label = Math.abs(diff) < 7 ? m.fromNow() : m.format('D MMM YYYY');
-      row.createEl('span', { cls: 'tc-comment-date', text: label });
+    if (comment.timestamp) {
+      row.createEl('span', {
+        cls: 'tc-comment-date',
+        text: formatCommentTimeLabel({ timestamp: comment.timestamp, ...commentTimeContext }),
+      });
     }
     let showText: () => void = () => {};
 

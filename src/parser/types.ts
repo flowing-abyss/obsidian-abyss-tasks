@@ -1,3 +1,4 @@
+import type { CommentTimestamp } from '../tasks/domain/commentTimestamp';
 import type { OnCompletion, TaskPriority, TaskStatus } from '../tasks/domain/types';
 
 export interface Task {
@@ -60,7 +61,7 @@ export interface SubTask {
 
 export interface TaskComment {
   line: number;
-  date?: string; // YYYY-MM-DD
+  timestamp?: CommentTimestamp;
   text: string;
 }
 

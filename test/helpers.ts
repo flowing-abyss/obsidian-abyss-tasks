@@ -24,7 +24,9 @@ import type {
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { systemClock } from '../src/tasks/domain/clock';
+import type { CommentTimestamp } from '../src/tasks/domain/commentTimestamp';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import { localDate } from '../src/tasks/domain/validation';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -346,7 +348,9 @@ export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
   };
 }
 
-export type TaskCommentFixtureInput = Omit<Partial<TaskCommentSnapshot>, 'date' | 'ref'> & {
+export type TaskCommentFixtureInput = Omit<Partial<TaskCommentSnapshot>, 'timestamp' | 'ref'> & {
+  readonly timestamp?: CommentTimestamp;
+  /** Concise fixture shorthand for a legacy day-precision comment. */
   readonly date?: string;
   readonly ref?: Partial<Omit<TaskCommentSnapshot['ref'], 'parent'>> & {
     readonly parent?: TaskNodeRef;
@@ -369,7 +373,17 @@ export function taskComment(overrides: TaskCommentFixtureInput = {}): TaskCommen
       relativeLine: overrides.ref?.relativeLine ?? 1,
       originalMarkdown,
     },
-    date: overrides.date as TaskCommentSnapshot['date'],
+    ...(overrides.timestamp
+      ? { timestamp: overrides.timestamp }
+      : overrides.date
+        ? {
+            timestamp: {
+              precision: 'day' as const,
+              value: localDate(overrides.date),
+              raw: overrides.date,
+            },
+          }
+        : {}),
     text,
   };
 }

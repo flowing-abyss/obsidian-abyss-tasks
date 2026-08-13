@@ -15,13 +15,14 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../src/tasks/domain/types';
-import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
 import { openInFile } from '../src/ui/taskNavigation';
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
@@ -147,7 +148,7 @@ async function makePanel(
       snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
     }),
     statusCatalog,
-    { today: () => '2026-07-14' as never },
+    clockFrom(Date.parse('2026-07-14T05:04:03Z'), 420),
   );
   await index.initialize();
   const panel = new RightPanel(
@@ -1156,15 +1157,12 @@ describe('RightPanel.toggleSubTask', () => {
 });
 
 describe('RightPanel.addComment', () => {
-  // addComment uses window.moment().format('YYYY-MM-DD') for the date stamp.
-  // We freeze time AFTER createAppWithFiles (which uses setTimeout internally)
-  // so the vault setup completes with real timers, then moment reports 2026-06-25.
-  // Restore real timers in afterEach so subsequent describes aren't affected.
+  // Other panel date helpers still use moment; comment writes use the injected atomic Clock.
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  /** Install fake timers frozen at 2026-06-25 for the addComment date stamp. */
+  /** Install fake UI time without influencing the comment writer's injected Clock. */
   function freezeToday(): void {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-25T12:00:00Z'));
@@ -1193,7 +1191,7 @@ describe('RightPanel.addComment', () => {
     expect(commentList.querySelectorAll('.tc-comment-row')).toHaveLength(0);
     expect(inputEl.value).toBe('');
     // Line 1 should be the comment (inserted at task.line + 1)
-    expect(lines[1]).toContain('2026-07-14: hello');
+    expect(lines[1]).toContain('2026-07-14T12:04:03+07:00: hello');
     expect(lines[0]).toBe('- [ ] task');
     expect(lines[2]).toBe('- [ ] other');
   });
@@ -1216,7 +1214,7 @@ describe('RightPanel.addComment', () => {
     await call<Promise<void>>(panel, 'addComment', t, 'c', commentList, inputEl);
     const after = await readMd(app, 't.md');
     const lines = after.split('\n');
-    expect(lines[2]).toContain('2026-07-14: c');
+    expect(lines[2]).toContain('2026-07-14T12:04:03+07:00: c');
     expect(lines[3]).toBe('- [ ] other');
   });
 
@@ -1964,7 +1962,7 @@ describe('RightPanel — blockquote write-path preserves "> " formatting', () =>
     const inputEl = freshContainer().createEl('textarea');
     await call<Promise<void>>(panel, 'addComment', t, 'note', commentList, inputEl);
     const lines = (await readMd(app, 't.md')).split('\n');
-    expect(lines[1]).toBe('>   - 2026-07-14: note');
+    expect(lines[1]).toBe('>   - 2026-07-14T12:04:03+07:00: note');
   });
 
   it('updateComment preserves the blockquote prefix on a quoted comment', async () => {

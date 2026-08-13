@@ -7,6 +7,7 @@ import type {
   TaskRepositoryResult,
 } from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
+import { clockFrom } from '../../src/tasks/domain/clock';
 import type { TaskResolution } from '../../src/tasks/domain/taskReconciliation';
 import type {
   SubtaskSnapshot,
@@ -285,29 +286,37 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).not.toHaveBeenCalled();
   });
 
-  it('stamps add-comment with the injected local day before repository delegation', async () => {
+  it('stamps add-comment with the injected atomic instant before repository delegation', async () => {
     const committed: TaskRepositoryResult = {
       type: 'committed',
       outcome: { type: 'task', task: snapshot() },
       changed: true,
     };
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
-    clock.today.mockClear();
+    const preciseClock = {
+      read: vi.fn(() => clockFrom(Date.parse('2026-07-14T05:04:03Z'), 420).read()),
+    };
+    const application = new TaskApplicationService(
+      queries(),
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      statuses,
+      preciseClock,
+    );
 
     await expect(
-      service({ edit }).execute({
+      application.execute({
         type: 'add-comment',
         parent: { type: 'task', ref },
         text: 'from the injected clock',
       }),
     ).resolves.toEqual({ type: 'ok', outcome: committed.outcome, changed: true });
 
-    expect(clock.today).toHaveBeenCalledOnce();
+    expect(preciseClock.read).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'add-comment',
       parent: { type: 'task', ref },
       text: 'from the injected clock',
-      stamp: localDate('2026-07-14'),
+      stamp: '2026-07-14T12:04:03+07:00',
     });
   });
 

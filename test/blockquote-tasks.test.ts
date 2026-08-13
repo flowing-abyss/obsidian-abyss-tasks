@@ -146,7 +146,10 @@ describe('blockquote tasks — parseSubItems', () => {
     );
     expect(r.description).toBe('A description');
     expect(r.comments).toHaveLength(1);
-    expect(r.comments[0]).toMatchObject({ date: '2026-06-24', text: 'a dated note' });
+    expect(r.comments[0]).toMatchObject({
+      timestamp: { precision: 'day', value: '2026-06-24', raw: '2026-06-24' },
+      text: 'a dated note',
+    });
   });
 
   // Regression: a "> " task following a plain-list task is a separate block, NOT a

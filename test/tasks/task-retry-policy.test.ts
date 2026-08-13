@@ -343,11 +343,11 @@ describe('TaskApplicationService one-shot retry', () => {
     ).resolves.toMatchObject({ type: 'ok' });
     expect(edit).toHaveBeenCalledTimes(2);
     expect(edit.mock.calls[0]?.[0]).toMatchObject({
-      command: { type: 'add-comment', stamp: localDate('2026-08-11') },
+      command: { type: 'add-comment', stamp: '2026-08-11T09:32:10+00:00' },
       baseRoot: base,
     });
     expect(edit.mock.calls[1]?.[0]).toMatchObject({
-      command: { type: 'add-comment', stamp: localDate('2026-08-11') },
+      command: { type: 'add-comment', stamp: '2026-08-11T09:32:10+00:00' },
       baseRoot: current,
     });
     expect(clock.read).toHaveBeenCalledOnce();

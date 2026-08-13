@@ -5,6 +5,7 @@ import type {
   TaskResolutionCandidate,
   TaskStatusTarget,
 } from '../domain/commands';
+import type { AtomDateTime } from '../domain/commentTimestamp';
 import type { RecurrencePolicy } from '../domain/recurrence';
 import type { RebaseEvidence, RootReconciliationBasis } from '../domain/taskReconciliation';
 import type {
@@ -40,7 +41,7 @@ export type TaskEditCommand =
       readonly type: 'add-comment';
       readonly parent: TaskStatusTarget;
       readonly text: string;
-      readonly stamp: LocalDate;
+      readonly stamp: AtomDateTime;
     }
   | ({
       readonly type: 'add-subtask';

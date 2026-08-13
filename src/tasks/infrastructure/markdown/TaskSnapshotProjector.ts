@@ -1,4 +1,5 @@
 import { countLinksIn } from '../../../parser/links';
+import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';
 import type {
   CommentRef,
@@ -19,8 +20,6 @@ import type { TaskMarkdownCodec } from './TaskMarkdownCodec';
 const PREFIX_RE = /^([\s>]*)/u;
 const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/u;
 const DESCRIPTION_RE = /^([\s>]*)- > (.*)/u;
-const COMMENT_DATE_RE = /^([\s>]*)- (\d{4}-\d{2}-\d{2}):\s*(.*)/u;
-const COMMENT_RE = /^([\s>]*)- (.+)/u;
 
 interface ProjectionContext {
   readonly codec: TaskMarkdownCodec;
@@ -149,15 +148,14 @@ function commentSnapshot(
   line: number,
   originalMarkdown: string,
   text: string,
-  dateValue?: string,
+  timestamp?: import('../../domain/commentTimestamp').CommentTimestamp,
 ): TaskCommentSnapshot {
-  const date = asLocalDate(dateValue);
   const ref: CommentRef = {
     parent,
     relativeLine: line - parentLine,
     originalMarkdown,
   };
-  return { ref, ...(date && { date }), text };
+  return { ref, ...(timestamp && { timestamp }), text };
 }
 
 function projectChildren(
@@ -203,25 +201,13 @@ function projectChildren(
       continue;
     }
 
-    const datedComment = COMMENT_DATE_RE.exec(source);
-    if (datedComment) {
+    const comment = parseCommentTimestampPrefix(source);
+    if (comment) {
       comments.push(
-        commentSnapshot(
-          parent,
-          parentLine,
-          line,
-          source,
-          (datedComment[3] ?? '').trim(),
-          datedComment[2],
-        ),
+        commentSnapshot(parent, parentLine, line, source, comment.text.trim(), comment.timestamp),
       );
       line++;
       continue;
-    }
-
-    const comment = COMMENT_RE.exec(source);
-    if (comment) {
-      comments.push(commentSnapshot(parent, parentLine, line, source, (comment[2] ?? '').trim()));
     }
     line++;
   }

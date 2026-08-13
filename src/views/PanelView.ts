@@ -11,6 +11,7 @@ import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
 import type {
+  CommentTimeContextProvider,
   TaskApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
@@ -86,6 +87,7 @@ export class PanelView extends ItemView {
     private tasks: TaskApplicationApi,
     private statusRegistry: StatusRegistry,
     private onSaveSettings: () => Promise<void> = async () => {},
+    private commentTimeContext?: CommentTimeContextProvider,
   ) {
     super(leaf);
   }
@@ -164,6 +166,7 @@ export class PanelView extends ItemView {
       this.tasks,
       undefined,
       (event) => this.trackOwnWrite(event),
+      this.commentTimeContext,
     );
 
     // Keep panels fresh when the project set / stats change. Only the left

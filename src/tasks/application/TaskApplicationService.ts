@@ -1,7 +1,7 @@
 import type { Clock, ClockReading } from '../domain/clock';
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
-import { atomDateTime } from '../domain/commentTimestamp';
+import { atomDateTime, formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { StatusCatalog } from '../domain/StatusCatalog';
@@ -218,7 +218,7 @@ function prepareBlockCommand(
   reading: ClockReading,
 ): { readonly command: TaskEditCommand } {
   if (command.type === 'add-comment') {
-    return { command: { ...command, stamp: reading.localDate } };
+    return { command: { ...command, stamp: formatNewCommentTimestamp(reading) } };
   }
   if (command.text === null) return { command };
   const text = command.text.replace(/\r\n/gu, '\n');

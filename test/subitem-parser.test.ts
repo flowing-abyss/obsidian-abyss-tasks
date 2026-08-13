@@ -73,13 +73,37 @@ describe('parseSubItems', () => {
     const lines = ['- [ ] Parent', '  - 2026-06-22: Some comment'];
     const r = parseSubItems(lines, 0, FILE);
     expect(r.comments).toHaveLength(1);
-    expect(r.comments[0]).toMatchObject({ date: '2026-06-22', text: 'Some comment', line: 1 });
+    expect(r.comments[0]).toMatchObject({
+      timestamp: { precision: 'day', value: '2026-06-22', raw: '2026-06-22' },
+      text: 'Some comment',
+      line: 1,
+    });
+  });
+
+  it('parses an Atom comment with its exact source precision', () => {
+    const r = parseSubItems(
+      ['- [ ] Parent', '  - 2026-06-22T17:04:03.125+07:00: Precise comment'],
+      0,
+      FILE,
+    );
+
+    expect(r.comments[0]).toMatchObject({
+      timestamp: {
+        precision: 'instant',
+        raw: '2026-06-22T17:04:03.125+07:00',
+        atom: '2026-06-22T17:04:03.125+07:00',
+        epochMs: Date.parse('2026-06-22T10:04:03.125Z'),
+      },
+      text: 'Precise comment',
+      line: 1,
+    });
   });
 
   it('parses undated comment', () => {
     const lines = ['- [ ] Parent', '  - Just a comment'];
     const r = parseSubItems(lines, 0, FILE);
-    expect(r.comments[0]).toMatchObject({ text: 'Just a comment', date: undefined });
+    expect(r.comments[0]).toMatchObject({ text: 'Just a comment' });
+    expect(r.comments[0]?.timestamp).toBeUndefined();
   });
 
   it('stops at non-indented line', () => {
@@ -166,7 +190,11 @@ describe('parseSubItems', () => {
     const lines = ['- [ ] Parent', '  - [ ] Child', '    - 2026-01-15: Child note'];
     const r = parseSubItems(lines, 0, FILE);
     expect(r.subtasks[0]?.comments).toHaveLength(1);
-    expect(r.subtasks[0]?.comments?.[0]?.date).toBe('2026-01-15');
+    expect(r.subtasks[0]?.comments?.[0]?.timestamp).toMatchObject({
+      precision: 'day',
+      value: '2026-01-15',
+      raw: '2026-01-15',
+    });
     expect(r.subtasks[0]?.comments?.[0]?.text).toBe('Child note');
   });
 
@@ -285,19 +313,18 @@ describe('parseSubItems', () => {
     expect(r.subtasks[0]?.text).toBe('Child');
   });
 
-  it('a structurally-shaped-but-invalid date still matches COMMENT_DATE_RE (CURRENT BEHAVIOR)', () => {
-    // 2026-13-99 has \d{4}-\d{2}-\d{2} shape, so COMMENT_DATE_RE matches it as a dated comment
+  it('keeps a structurally-shaped but impossible date as complete undated text', () => {
     const r = parseSubItems(['- [ ] Parent', '  - 2026-13-99: bad'], 0, FILE);
     expect(r.comments).toHaveLength(1);
-    expect(r.comments[0]?.date).toBe('2026-13-99');
-    expect(r.comments[0]?.text).toBe('bad');
+    expect(r.comments[0]?.timestamp).toBeUndefined();
+    expect(r.comments[0]?.text).toBe('2026-13-99: bad');
   });
 
   it('a single-digit-day date does not match COMMENT_DATE_RE and falls back to a plain comment', () => {
     // 2026-13-9 lacks the \d{2} day shape, so it is not a dated comment
     const r = parseSubItems(['- [ ] Parent', '  - 2026-13-9: bad'], 0, FILE);
     expect(r.comments).toHaveLength(1);
-    expect(r.comments[0]?.date).toBeUndefined();
+    expect(r.comments[0]?.timestamp).toBeUndefined();
     expect(r.comments[0]?.text).toBe('2026-13-9: bad');
   });
 

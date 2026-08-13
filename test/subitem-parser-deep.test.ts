@@ -83,7 +83,11 @@ describe('parseSubItems deep edges', () => {
       const r = parseSubItems(['- [ ] Parent', '  - 2026-06-25: '], 0, FILE);
       expect(r.comments).toHaveLength(1);
       expect(r.comments[0]?.text).toBe('');
-      expect(r.comments[0]?.date).toBe('2026-06-25');
+      expect(r.comments[0]?.timestamp).toMatchObject({
+        precision: 'day',
+        value: '2026-06-25',
+        raw: '2026-06-25',
+      });
     });
 
     it('undated comment with no text (L118)', () => {

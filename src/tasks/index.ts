@@ -14,6 +14,11 @@ export type {
   TaskOccurrenceResult,
   TaskPatch,
 } from './domain/commands';
+export {
+  formatCommentTimeLabel,
+  type CommentTimeContext,
+  type CommentTimeContextProvider,
+} from './domain/commentTimeLabel';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
 export {
   expandRecurrenceReferences,

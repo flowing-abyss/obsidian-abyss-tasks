@@ -3,6 +3,8 @@ export type TaskStatusType = 'todo' | 'in-progress' | 'done' | 'cancelled';
 export type TaskPriority = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 export type OnCompletion = 'keep' | 'delete';
 
+import type { CommentTimestamp } from './commentTimestamp';
+
 declare const localDateBrand: unique symbol;
 declare const localTimeBrand: unique symbol;
 declare const durationBrand: unique symbol;
@@ -120,7 +122,7 @@ interface TaskPresentationMetadata {
 
 export interface TaskCommentSnapshot {
   readonly ref: CommentRef;
-  readonly date?: LocalDate;
+  readonly timestamp?: CommentTimestamp;
   readonly text: string;
 }
 

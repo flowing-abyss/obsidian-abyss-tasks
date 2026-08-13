@@ -1,15 +1,14 @@
+import { parseCommentTimestampPrefix, type AtomDateTime } from '../../domain/commentTimestamp';
 import {
   recurrenceOwnedSubtree,
   stripRecurrenceTerminalBlockId,
   type RecurrenceOwnedSubtree,
 } from '../../domain/recurrenceIteration';
-import type { LocalDate, TaskInsertionPolicy } from '../../domain/types';
+import type { TaskInsertionPolicy } from '../../domain/types';
 
 const TASK_RE = /^[\s>]*- \[(.)\]/u;
 const PREFIX_RE = /^([\s>]*)/u;
 const DESCRIPTION_RE = /^[\s>]*- > /u;
-const COMMENT_LIST_PREFIX_RE = /^([\s>]*- )/u;
-const COMMENT_DATE_PREFIX_RE = /^\d{4}-\d{2}-\d{2}:/u;
 
 export function stripTerminalBlockId(line: string): string {
   return stripRecurrenceTerminalBlockId(line);
@@ -49,7 +48,7 @@ export type TaskBlockEdit =
       readonly target: { readonly relativeLine: number; readonly originalBlock: string };
       readonly placement: 'before' | 'after';
     }
-  | { readonly type: 'add-comment'; readonly text: string; readonly stamp: LocalDate }
+  | { readonly type: 'add-comment'; readonly text: string; readonly stamp: AtomDateTime }
   | {
       readonly type: 'update-comment';
       readonly relativeLine: number;
@@ -183,14 +182,8 @@ function isConfirmedTarget(
 function commentParts(
   line: string,
 ): { readonly prefix: string; readonly text: string } | undefined {
-  const listPrefix = COMMENT_LIST_PREFIX_RE.exec(line)?.[1];
-  if (listPrefix === undefined) return undefined;
-  let textFrom = listPrefix.length;
-  if (COMMENT_DATE_PREFIX_RE.test(line.slice(textFrom))) {
-    textFrom += 11;
-    while (line[textFrom] === ' ' || line[textFrom] === '\t') textFrom++;
-  }
-  return { prefix: line.slice(0, textFrom), text: line.slice(textFrom) };
+  const parsed = parseCommentTimestampPrefix(line);
+  return parsed ? { prefix: parsed.prefix, text: parsed.text } : undefined;
 }
 
 export class TaskBlockEditor {

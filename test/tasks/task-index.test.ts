@@ -664,7 +664,12 @@ describe('TaskIndex lifecycle and events', () => {
     });
     expect(root.source.originalBlock).toBe(content);
     expect(root.presentation.linkCount).toBe(2);
-    expect(root.comments).toMatchObject([{ date: '2026-07-11', text: 'root comment [[Comment]]' }]);
+    expect(root.comments).toMatchObject([
+      {
+        timestamp: { precision: 'day', value: '2026-07-11', raw: '2026-07-11' },
+        text: 'root comment [[Comment]]',
+      },
+    ]);
     expect(root.subtasks[0]).toMatchObject({
       title: 'Child 🌐 docs',
       markdownTitle: 'Child [docs](https://example.com)',

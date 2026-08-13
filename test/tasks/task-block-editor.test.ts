@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localDate } from '../../src/tasks/domain/validation';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 
@@ -158,12 +158,59 @@ describe('TaskBlockEditor', () => {
       changed!.content,
       changed!.block,
       { relativeLine: 0, lineCount: 1, childRanges: [] },
-      { type: 'add-comment', text: 'note', stamp: localDate('2026-07-14') },
+      {
+        type: 'add-comment',
+        text: 'note',
+        stamp: atomDateTime('2026-07-14T12:34:56+07:00'),
+      },
     );
     expect(added).toMatchObject({
       type: 'changed',
-      content: '- [ ] root\n  - 2026-07-14: note',
+      content: '- [ ] root\n  - 2026-07-14T12:34:56+07:00: note',
     });
+  });
+
+  it.each([
+    '2026-07-13',
+    '2026-07-13T10:20:30Z',
+    '2026-07-13T10:20:30.123Z',
+    '2026-07-13T17:20:30+07:00',
+  ])('preserves the exact %s prefix while updating comment text', (stamp) => {
+    const editor = new TaskBlockEditor();
+    const source = `- [ ] root\n  - ${stamp}: old`;
+    const block = editor.rootBlocks(source)[0]!;
+    const result = editor.edit(
+      source,
+      block,
+      { relativeLine: 0, lineCount: 2, childRanges: [] },
+      {
+        type: 'update-comment',
+        relativeLine: 1,
+        originalMarkdown: `  - ${stamp}: old`,
+        text: 'new',
+      },
+    );
+
+    expect(result).toMatchObject({ type: 'changed', content: `- [ ] root\n  - ${stamp}: new` });
+  });
+
+  it('does not consume an invalid Atom-looking prefix when editing an undated comment', () => {
+    const editor = new TaskBlockEditor();
+    const source = '- [ ] root\n  - 2026-07-13T25:20:30Z: old';
+    const block = editor.rootBlocks(source)[0]!;
+    const result = editor.edit(
+      source,
+      block,
+      { relativeLine: 0, lineCount: 2, childRanges: [] },
+      {
+        type: 'update-comment',
+        relativeLine: 1,
+        originalMarkdown: '  - 2026-07-13T25:20:30Z: old',
+        text: 'new',
+      },
+    );
+
+    expect(result).toMatchObject({ type: 'changed', content: '- [ ] root\n  - new' });
   });
 
   it('refuses a comment edit when relative-line and original-Markdown evidence disagree', () => {

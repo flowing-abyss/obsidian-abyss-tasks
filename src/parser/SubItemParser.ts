@@ -1,4 +1,5 @@
 import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
+import { parseCommentTimestampPrefix } from '../tasks/domain/commentTimestamp';
 import { extractMetadata } from './extractMetadata';
 import { collapseLinks } from './links';
 import type { SubTask, TaskComment } from './types';
@@ -14,8 +15,6 @@ export interface SubItemResult {
 // sub-items inside a blockquote (`> \t- [ ]`) nest correctly under their parent.
 const SUBTASK_RE = /^([\s>]*)- \[(.)\]\s+(.*)/;
 const DESCRIPTION_RE = /^([\s>]*)- > (.*)/;
-const COMMENT_DATE_RE = /^([\s>]*)- (\d{4}-\d{2}-\d{2}):\s*(.*)/;
-const COMMENT_RE = /^([\s>]*)- (.+)/;
 const INDENT_RE = /^[\s>]*/;
 
 function leadingPrefix(line: string): string {
@@ -135,20 +134,13 @@ export function parseSubItems(
       continue;
     }
 
-    const commentDateMatch = COMMENT_DATE_RE.exec(line);
-    if (commentDateMatch) {
+    const comment = parseCommentTimestampPrefix(line);
+    if (comment) {
       comments.push({
         line: i,
-        date: commentDateMatch[2],
-        text: (commentDateMatch[3] ?? '').trim(),
+        ...(comment.timestamp && { timestamp: comment.timestamp }),
+        text: comment.text.trim(),
       });
-      i++;
-      continue;
-    }
-
-    const commentMatch = COMMENT_RE.exec(line);
-    if (commentMatch) {
-      comments.push({ line: i, date: undefined, text: (commentMatch[2] ?? '').trim() });
       i++;
       continue;
     }
