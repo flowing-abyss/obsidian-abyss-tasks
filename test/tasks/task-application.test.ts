@@ -320,6 +320,22 @@ describe('TaskApplicationService planning commands', () => {
     });
   });
 
+  it('rejects add-comment when a legacy date-only clock cannot supply a real instant', async () => {
+    const edit = vi.fn<TaskRepository['edit']>();
+
+    await expect(
+      service({ edit }).execute({
+        type: 'add-comment',
+        parent: { type: 'task', ref },
+        text: 'must not receive an invented timestamp',
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'comment' }],
+    });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
   it('normalizes an empty description to the explicit clear command', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

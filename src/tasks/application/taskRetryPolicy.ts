@@ -35,7 +35,7 @@ export interface PreparedMutation {
     | TaskMoveRequest;
   readonly base: TaskSnapshot;
   readonly targetBase: TaskMutationTarget;
-  readonly clock: ClockReading;
+  readonly clock: ClockReading | { readonly localDate: ClockReading['localDate'] };
   readonly settings: TaskBehaviorSettings;
   readonly retry: RetryPolicy;
 }

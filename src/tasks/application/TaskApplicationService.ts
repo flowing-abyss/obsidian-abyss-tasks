@@ -1,7 +1,7 @@
 import type { Clock, ClockReading } from '../domain/clock';
 import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { TaskCommand, TaskCommandResult, TaskStatusTarget } from '../domain/commands';
-import { atomDateTime, formatNewCommentTimestamp } from '../domain/commentTimestamp';
+import { formatNewCommentTimestamp } from '../domain/commentTimestamp';
 import { shiftLocalDate } from '../domain/localDateMath';
 import { parseRecurrenceRule } from '../domain/recurrence';
 import { StatusCatalog } from '../domain/StatusCatalog';
@@ -373,15 +373,10 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
   };
 }
 
-function captureClock(clock: Clock | LegacyClock): ClockReading {
-  if ('read' in clock) return clock.read();
-  const localDate = clock.today();
-  return {
-    localDate,
-    epochMs: 0,
-    offsetMinutes: 0,
-    atom: atomDateTime('1970-01-01T00:00:00+00:00'),
-  };
+function captureClock(
+  clock: Clock | LegacyClock,
+): ClockReading | { readonly localDate: ClockReading['localDate'] } {
+  return 'read' in clock ? clock.read() : { localDate: clock.today() };
 }
 
 export class TaskApplicationService implements TaskApplicationApi {
@@ -405,6 +400,9 @@ export class TaskApplicationService implements TaskApplicationApi {
       if (inputIssue) return inputIssue;
       const settings = snapshotBehaviorSettings(this.behaviorSettings);
       const reading = captureClock(this.clock);
+      if (command.type === 'add-comment' && !('atom' in reading)) {
+        return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'comment' }] };
+      }
       if (command.type === 'create') return await this.create(command, settings, reading);
 
       const rootRef = rootRefForCommand(command);
@@ -463,7 +461,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     command: Extract<TaskCommand, { readonly type: 'move' }>,
     resolution: ProvenResolution,
     settings: TaskBehaviorSettings,
-    reading: ClockReading,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
   ): Promise<TaskCommandResult> {
     const current = resolution.type === 'exact' ? resolution.task : resolution.current;
     const base = resolution.type === 'exact' ? resolution.task : resolution.previous;
@@ -488,7 +486,7 @@ export class TaskApplicationService implements TaskApplicationApi {
   private async create(
     command: Extract<TaskCommand, { readonly type: 'create' }>,
     settings: TaskBehaviorSettings,
-    reading: ClockReading,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
   ): Promise<TaskCommandResult> {
     if (
       command.markdownBody.replace(/\r\n/gu, '').includes('\r') ||
@@ -542,10 +540,10 @@ export class TaskApplicationService implements TaskApplicationApi {
   private prepare(
     command: EditableTaskCommand,
     settings: TaskBehaviorSettings,
-    reading: ClockReading,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
     resolution: ProvenResolution,
   ): PreparedTaskCommand {
-    if (isBlockCommand(command)) return prepareBlockCommand(command, reading);
+    if (isBlockCommand(command)) return prepareBlockCommand(command, reading as ClockReading);
     if (command.type === 'add-subtask') {
       return {
         command: {
@@ -669,7 +667,7 @@ export class TaskApplicationService implements TaskApplicationApi {
     currentSemanticStatus: TaskStatus,
     requestedRule: TaskStatusRule,
     settings: TaskBehaviorSettings,
-    reading: ClockReading,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
   ): Exclude<PreparedTaskCommand, { readonly command: TaskEditCommand }> | undefined {
     if (
       currentSemanticStatus === 'done' ||

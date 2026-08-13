@@ -26,4 +26,10 @@ describe('Clock', () => {
     expect(offsetSource).toHaveBeenCalledOnce();
     expect(offsetSource).toHaveBeenCalledWith(Date.parse('2026-08-11T09:32:10Z'));
   });
+
+  it.each([841, -841])('rejects offset %s that the Atom codec cannot parse', (offset) => {
+    expect(() => clockFrom(Date.parse('2026-08-11T09:32:10Z'), offset).read()).toThrow(
+      'invalid-offset',
+    );
+  });
 });
