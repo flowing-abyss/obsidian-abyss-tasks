@@ -210,7 +210,7 @@ describe('live status catalog transitions', () => {
           : { type: operation, target: { type: 'task', ref: h.indexed.ref }, symbol: 'z' },
       );
 
-      expect(h.clock.today).not.toHaveBeenCalled();
+      expect(h.clock.today).toHaveBeenCalledOnce();
       expect(h.edit).toHaveBeenCalledWith({
         type: 'set-status',
         target: { type: 'task', ref: h.indexed.ref },
@@ -242,7 +242,7 @@ describe('live status catalog transitions', () => {
       target: { type: 'task', ref: first.outcome.task.ref },
     });
 
-    expect(h.clock.today).not.toHaveBeenCalled();
+    expect(h.clock.today).toHaveBeenCalledOnce();
     expect(h.edit).toHaveBeenLastCalledWith({
       type: 'set-status',
       target: { type: 'task', ref: fresh.ref },

@@ -6,11 +6,15 @@ import type { TaskEditCommand, TaskEditRequest } from '../../src/tasks/applicati
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
-import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
+import {
+  TaskRefAuthority,
+  taskRefContentFingerprint,
+} from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, seedTaskCache } from '../helpers';
 
 interface Harness {
@@ -79,6 +83,72 @@ function patch(
 }
 
 describe('ObsidianTaskRepository planning contract', () => {
+  it('returns repository-authoritative same-line authority-transition evidence', async () => {
+    const path = 'tasks.md';
+    const source = '- [ ] task\n';
+    const candidate = '- [ ] task #external\n';
+    const app = await createAppWithFiles({ [path]: source });
+    const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+    const authority = new TaskRefAuthority('repository-race');
+    const editor = new TaskBlockEditor();
+    const locator = new TaskLocator(authority);
+    const codec = new TaskMarkdownCodec(statusCatalog);
+    const index = new TaskIndex(app, {
+      statusCatalog,
+      dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+      refAuthority: authority,
+    });
+    await index.initialize();
+    const baseRoot = index.list()[0]!;
+    const successor = authority.successor(baseRoot.ref.revision, candidate.trimEnd());
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: path,
+        candidateFingerprint: taskRefContentFingerprint(candidate),
+        candidateLength: candidate.length,
+        expectedRevision: baseRoot.ref.revision,
+        roots: [{ line: 0, source: candidate.trimEnd(), revision: successor }],
+      },
+      baseRoot.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing transition');
+    authority.commit(staged.token);
+    const current = index.installCommittedContent(path, candidate)[0]!;
+    authority.acknowledge(path, candidate);
+    const file = app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) throw new Error('missing file');
+    await app.vault.modify(file, candidate);
+    const repository = new ObsidianTaskRepository(app, {
+      codec,
+      editor,
+      locator,
+      snapshotsFromContent: (filePath, content) => index.snapshotsFromContent(filePath, content),
+      refAuthority: authority,
+      snapshotState: index,
+    });
+
+    await expect(
+      repository.edit({
+        command: {
+          type: 'patch',
+          target: { type: 'task', ref: baseRoot.ref },
+          patch: { tags: { add: ['#work'] } },
+        },
+        baseRoot,
+        baseTarget: { type: 'task', ref: baseRoot.ref },
+        reconciliation: { observed: baseRoot },
+      }),
+    ).resolves.toMatchObject({
+      type: 'rebased',
+      previous: { ref: baseRoot.ref },
+      current: { ref: current.ref },
+      evidence: 'authority-transition',
+    });
+    expect(await read(app, path)).toBe(candidate);
+    index.destroy();
+  });
+
   it('returns repository-authoritative relocation evidence before a prepared write', async () => {
     const source = '- [ ] task\n- [ ] other\n';
     const relocated = 'intro\n- [ ] task\n- [ ] other\n';

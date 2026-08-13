@@ -741,7 +741,7 @@ describe('TaskApplicationService planning commands', () => {
     });
   });
 
-  it('rejects unknown status symbols before touching the repository or Clock', async () => {
+  it('rejects unknown status symbols after one immutable Clock capture', async () => {
     const edit = vi.fn<TaskRepository['edit']>();
     clock.today.mockClear();
 
@@ -756,10 +756,10 @@ describe('TaskApplicationService planning commands', () => {
       issues: [{ code: 'invalid-status', field: 'status' }],
     });
     expect(edit).not.toHaveBeenCalled();
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
   });
 
-  it('toggles done to the configured todo without reading Clock', async () => {
+  it('toggles done to the configured todo with one immutable Clock capture', async () => {
     const done = { ...snapshot(), status: 'done' as const, statusSymbol: 'x' };
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',
@@ -777,7 +777,7 @@ describe('TaskApplicationService planning commands', () => {
       target: { type: 'task', ref },
     });
 
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref },
@@ -804,7 +804,7 @@ describe('TaskApplicationService planning commands', () => {
       symbol: 'X',
     });
 
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref },
@@ -837,7 +837,7 @@ describe('TaskApplicationService planning commands', () => {
       symbol: 'd',
     });
 
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref },
@@ -870,7 +870,7 @@ describe('TaskApplicationService planning commands', () => {
       symbol: 'k',
     });
 
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref },
@@ -1099,7 +1099,7 @@ describe('TaskApplicationService planning commands', () => {
     expect(edit).toHaveBeenCalledTimes(65);
   });
 
-  it('returns not-found for an uncertain stale selection before toggling and does not read Clock', async () => {
+  it('returns not-found after one Clock capture and before any repository write', async () => {
     const current = { ...snapshot(), ref: { ...ref, revision: 'new' } };
     const edit = vi.fn<TaskRepository['edit']>();
     const staleQueries: TaskQueryApi = {
@@ -1115,7 +1115,7 @@ describe('TaskApplicationService planning commands', () => {
       }),
     ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref } });
     expect(edit).not.toHaveBeenCalled();
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
   });
 
   it('rejects a visual-only stale selection before toggling and never writes its fresh candidate', async () => {
@@ -1339,7 +1339,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     });
 
     expect(completeRecurrence).not.toHaveBeenCalled();
-    expect(clock.today).not.toHaveBeenCalled();
+    expect(clock.today).toHaveBeenCalledOnce();
     expect(edit).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref },
@@ -1374,7 +1374,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     });
     expect(edit).not.toHaveBeenCalled();
     expect(completeRecurrence).not.toHaveBeenCalled();
-    expect(today).not.toHaveBeenCalled();
+    expect(today).toHaveBeenCalledOnce();
   });
 
   it('bridges index lag only through the active occurrence and never caches completed history', async () => {

@@ -58,10 +58,28 @@ type LocateResult = ReturnType<TaskLocator['locate']>;
 function preparedRevisionResult(
   prepared: RevisionPrecondition | undefined,
   located: LocateResult,
+  authorityCurrent: TaskRef | undefined,
+  locateAuthorityCurrent: (ref: TaskRef) => LocateResult,
   snapshot: (block: TaskRootBlock) => TaskSnapshot | undefined,
 ): TaskRepositoryResult | undefined {
   if (!prepared) return undefined;
-  if (located.type === 'conflict') return { type: 'uncertain', target: prepared.baseTarget };
+  if (located.type === 'conflict') {
+    if (authorityCurrent && authorityCurrent.revision !== prepared.baseRoot.ref.revision) {
+      const authoritative = locateAuthorityCurrent(authorityCurrent);
+      if (authoritative.type === 'exact') {
+        const current = snapshot(authoritative.block);
+        if (current) {
+          return {
+            type: 'rebased',
+            previous: prepared.baseRoot,
+            current,
+            evidence: 'authority-transition',
+          };
+        }
+      }
+    }
+    return { type: 'uncertain', target: prepared.baseTarget };
+  }
   if (located.type !== 'exact' || located.block.line === prepared.baseRoot.ref.line)
     return undefined;
   const current = snapshot(located.block);
@@ -648,8 +666,13 @@ export class ObsidianTaskRepository implements TaskRepository {
       this.options.editor.rootBlocks(sourceContent),
       ref,
     );
-    const preparedResult = preparedRevisionResult(prepared, sourceLocated, (block) =>
-      this.snapshotFor(ref.filePath, sourceContent, block),
+    const sourceBlocks = this.options.editor.rootBlocks(sourceContent);
+    const preparedResult = preparedRevisionResult(
+      prepared,
+      sourceLocated,
+      indexedRef,
+      (currentRef) => this.options.locator.locate(sourceBlocks, currentRef),
+      (block) => this.snapshotFor(ref.filePath, sourceContent, block),
     );
     if (preparedResult) return preparedResult;
     if (
@@ -870,12 +893,14 @@ export class ObsidianTaskRepository implements TaskRepository {
         const indexedRef =
           evidence &&
           this.options.snapshotState?.currentRoot(rootRef.filePath, rootRef.line, evidence.source);
-        const located = this.options.locator.locate(
-          this.options.editor.rootBlocks(content),
-          rootRef,
-        );
-        const revisionResult = preparedRevisionResult(revisionRequest, located, (block) =>
-          this.snapshotFor(rootRef.filePath, content, block),
+        const blocks = this.options.editor.rootBlocks(content);
+        const located = this.options.locator.locate(blocks, rootRef);
+        const revisionResult = preparedRevisionResult(
+          revisionRequest,
+          located,
+          indexedRef,
+          (currentRef) => this.options.locator.locate(blocks, currentRef),
+          (block) => this.snapshotFor(rootRef.filePath, content, block),
         );
         if (revisionResult) {
           result = revisionResult;
@@ -1074,8 +1099,12 @@ export class ObsidianTaskRepository implements TaskRepository {
         const candidate = (() => {
           const blocks = this.options.editor.rootBlocks(content);
           const located = this.options.locator.locate(blocks, rootRef);
-          const revisionResult = preparedRevisionResult(prepared, located, (block) =>
-            this.snapshotFor(rootRef.filePath, content, block),
+          const revisionResult = preparedRevisionResult(
+            prepared,
+            located,
+            indexedRef,
+            (currentRef) => this.options.locator.locate(blocks, currentRef),
+            (block) => this.snapshotFor(rootRef.filePath, content, block),
           );
           if (revisionResult) {
             result = revisionResult;

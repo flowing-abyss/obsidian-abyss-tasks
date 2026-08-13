@@ -375,12 +375,9 @@ function snapshotBehaviorSettings(provider: TaskBehaviorSettingsProvider): TaskB
 
 function captureClock(clock: Clock | LegacyClock): ClockReading {
   if ('read' in clock) return clock.read();
-  let captured: import('../domain/types').LocalDate | undefined;
+  const localDate = clock.today();
   return {
-    get localDate() {
-      captured ??= clock.today();
-      return captured;
-    },
+    localDate,
     epochMs: 0,
     offsetMinutes: 0,
     atom: atomDateTime('1970-01-01T00:00:00+00:00'),

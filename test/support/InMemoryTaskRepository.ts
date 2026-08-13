@@ -2,6 +2,7 @@ import { parseLinks } from '../../src/parser/links';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
+  RevisionPrecondition,
   TaskDraft,
   TaskEditCommand,
   TaskEditRequest,
@@ -50,6 +51,46 @@ import {
   type RootRevisionOverride,
   type TaskSnapshotState,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
+
+type LocateResult = ReturnType<TaskLocator['locate']>;
+
+function preparedRevisionResult(
+  prepared: RevisionPrecondition | undefined,
+  located: LocateResult,
+  authorityCurrent: TaskRef | undefined,
+  locateAuthorityCurrent: (ref: TaskRef) => LocateResult,
+  snapshot: (line: number) => TaskSnapshot | undefined,
+): TaskRepositoryResult | undefined {
+  if (!prepared) return undefined;
+  if (located.type === 'conflict') {
+    if (authorityCurrent && authorityCurrent.revision !== prepared.baseRoot.ref.revision) {
+      const authoritative = locateAuthorityCurrent(authorityCurrent);
+      if (authoritative.type === 'exact') {
+        const current = snapshot(authoritative.block.line);
+        if (current) {
+          return {
+            type: 'rebased',
+            previous: prepared.baseRoot,
+            current,
+            evidence: 'authority-transition',
+          };
+        }
+      }
+    }
+    return { type: 'uncertain', target: prepared.baseTarget };
+  }
+  if (located.type !== 'exact' || located.block.line === prepared.baseRoot.ref.line)
+    return undefined;
+  const current = snapshot(located.block.line);
+  return current
+    ? {
+        type: 'rebased',
+        previous: prepared.baseRoot,
+        current,
+        evidence: 'byte-identical-relocation',
+      }
+    : { type: 'not-found', target: prepared.baseTarget };
+}
 
 interface Options {
   readonly files: Record<string, string>;
@@ -428,21 +469,16 @@ export class InMemoryTaskRepository implements TaskRepository {
     const evidence = this.options.refAuthority?.evidence(ref.revision);
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
-    const located = this.locator.locate(this.editor.rootBlocks(sourceContent), ref);
-    if (prepared && located.type === 'exact' && located.block.line !== ref.line) {
-      const current = this.snapshot(ref.filePath, sourceContent, located.block.line);
-      return current
-        ? {
-            type: 'rebased',
-            previous: prepared.baseRoot,
-            current,
-            evidence: 'byte-identical-relocation',
-          }
-        : { type: 'not-found', target: prepared.baseTarget };
-    }
-    if (prepared && located.type === 'conflict') {
-      return { type: 'uncertain', target: prepared.baseTarget };
-    }
+    const blocks = this.editor.rootBlocks(sourceContent);
+    const located = this.locator.locate(blocks, ref);
+    const preparedResult = preparedRevisionResult(
+      prepared,
+      located,
+      indexedRef,
+      (currentRef) => this.locator.locate(blocks, currentRef),
+      (line) => this.snapshot(ref.filePath, sourceContent, line),
+    );
+    if (preparedResult) return preparedResult;
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&
@@ -558,21 +594,16 @@ export class InMemoryTaskRepository implements TaskRepository {
     const evidence = this.options.refAuthority?.evidence(ref.revision);
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
-    const located = this.locator.locate(this.editor.rootBlocks(content), ref);
-    if (revisionRequest && located.type === 'exact' && located.block.line !== ref.line) {
-      const current = this.snapshot(ref.filePath, content, located.block.line);
-      return current
-        ? {
-            type: 'rebased',
-            previous: revisionRequest.baseRoot,
-            current,
-            evidence: 'byte-identical-relocation',
-          }
-        : { type: 'not-found', target: revisionRequest.baseTarget };
-    }
-    if (revisionRequest && located.type === 'conflict') {
-      return { type: 'uncertain', target: revisionRequest.baseTarget };
-    }
+    const blocks = this.editor.rootBlocks(content);
+    const located = this.locator.locate(blocks, ref);
+    const revisionResult = preparedRevisionResult(
+      revisionRequest,
+      located,
+      indexedRef,
+      (currentRef) => this.locator.locate(blocks, currentRef),
+      (line) => this.snapshot(ref.filePath, content, line),
+    );
+    if (revisionResult) return revisionResult;
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&
@@ -743,21 +774,16 @@ export class InMemoryTaskRepository implements TaskRepository {
     const evidence = this.options.refAuthority?.evidence(ref.revision);
     const indexedRef =
       evidence && this.options.snapshotState?.currentRoot(ref.filePath, ref.line, evidence.source);
-    const located = this.locator.locate(this.editor.rootBlocks(content), ref);
-    if (prepared && located.type === 'exact' && located.block.line !== ref.line) {
-      const current = this.snapshot(ref.filePath, content, located.block.line);
-      return current
-        ? {
-            type: 'rebased',
-            previous: prepared.baseRoot,
-            current,
-            evidence: 'byte-identical-relocation',
-          }
-        : { type: 'not-found', target: prepared.baseTarget };
-    }
-    if (prepared && located.type === 'conflict') {
-      return { type: 'uncertain', target: prepared.baseTarget };
-    }
+    const blocks = this.editor.rootBlocks(content);
+    const located = this.locator.locate(blocks, ref);
+    const preparedResult = preparedRevisionResult(
+      prepared,
+      located,
+      indexedRef,
+      (currentRef) => this.locator.locate(blocks, currentRef),
+      (line) => this.snapshot(ref.filePath, content, line),
+    );
+    if (preparedResult) return preparedResult;
     if (
       this.options.refAuthority &&
       this.options.snapshotState &&

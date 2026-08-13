@@ -61,6 +61,84 @@ function prepared(
 }
 
 describe('prepareRetry', () => {
+  it('accepts a field race that already applied the requested value', () => {
+    const base = snapshot();
+    const command = {
+      type: 'patch' as const,
+      target: { type: 'task' as const, ref: base.ref },
+      patch: { priority: { type: 'set' as const, value: 'A' as const } },
+    };
+    const current = { ...snapshot('Task', 'new'), priority: 'A' as const };
+
+    expect(
+      prepareRetry(prepared(command, 'field-compare'), {
+        type: 'rebased',
+        previous: base,
+        current,
+        evidence: 'authority-transition',
+      }),
+    ).toMatchObject({ type: 'edit', request: { baseRoot: current } });
+  });
+
+  it('compares a nested field on the exact child rather than the root', () => {
+    const base = snapshot();
+    const childRef = {
+      parent: { type: 'task' as const, ref: base.ref },
+      relativeLine: 1,
+      originalBlock: '  - [ ] child',
+    };
+    const child = {
+      ref: childRef,
+      title: 'child',
+      markdownTitle: 'child',
+      status: 'open' as const,
+      statusSymbol: ' ',
+      priority: 'D' as const,
+      planning: {},
+      tags: [],
+      onCompletion: 'keep' as const,
+      onCompletionExplicit: false,
+      subtasks: [],
+      comments: [],
+    };
+    const previous = { ...base, subtasks: [child] };
+    const current = {
+      ...snapshot('Root changed', 'new'),
+      subtasks: [
+        {
+          ...child,
+          ref: { ...childRef, parent: { type: 'task' as const, ref: snapshot('x', 'new').ref } },
+          priority: 'A' as const,
+        },
+      ],
+    };
+    const command = {
+      type: 'patch' as const,
+      target: { type: 'subtask' as const, ref: childRef },
+      patch: { priority: { type: 'set' as const, value: 'B' as const } },
+    };
+    const mutation = {
+      ...prepared(command, 'field-compare'),
+      base: previous,
+      targetBase: command.target,
+      repositoryRequest: {
+        command,
+        baseRoot: previous,
+        baseTarget: command.target,
+        reconciliation: { observed: previous },
+      },
+    } satisfies PreparedMutation;
+
+    expect(
+      prepareRetry(mutation, {
+        type: 'rebased',
+        previous,
+        current,
+        evidence: 'authority-transition',
+      }),
+    ).toEqual({ type: 'unsafe' });
+  });
+
   it('recomputes an add-tag intent against an authority-proven current root', () => {
     const base = snapshot();
     const command = {

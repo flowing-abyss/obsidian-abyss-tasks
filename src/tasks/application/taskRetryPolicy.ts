@@ -172,27 +172,93 @@ function samePlanning(left: TaskSnapshot, right: TaskSnapshot): boolean {
   return JSON.stringify(left.planning) === JSON.stringify(right.planning);
 }
 
+function nodeForCommand(
+  root: TaskSnapshot,
+  command: TaskEditCommand,
+): TaskSnapshot | SubtaskSnapshot | undefined {
+  switch (command.type) {
+    case 'patch':
+    case 'append-title':
+    case 'set-status':
+    case 'set-description':
+      return snapshotForTarget(root, command.target);
+    case 'add-comment':
+    case 'add-subtask':
+      return snapshotForTarget(root, command.parent);
+    case 'delete-subtask':
+    case 'reorder-subtask':
+      return snapshotForTarget(root, { type: 'subtask', ref: command.subtask });
+    case 'update-comment':
+    case 'delete-comment':
+      return snapshotForTarget(root, command.comment.parent);
+    case 'edit-link':
+      return snapshotForTarget(
+        root,
+        command.target.type === 'comment' ? command.target.ref.parent : command.target.target,
+      );
+    default:
+      return root;
+  }
+}
+
+function requestedFieldValue(update: { readonly type: string; readonly value?: unknown }): unknown {
+  return update.type === 'clear' ? undefined : update.value;
+}
+
+function fieldUnchangedOrRequested(
+  previous: unknown,
+  current: unknown,
+  update: { readonly type: string; readonly value?: unknown },
+): boolean {
+  return previous === current || current === requestedFieldValue(update);
+}
+
 function fieldPreconditionHolds(
   command: TaskEditCommand,
   previous: TaskSnapshot,
   current: TaskSnapshot,
 ): boolean {
+  const previousTarget = nodeForCommand(previous, command);
+  const currentTarget = nodeForCommand(current, rebaseEditCommand(command, current.ref));
+  if (!previousTarget || !currentTarget) return false;
   switch (command.type) {
     case 'patch': {
       const fields = Object.keys(command.patch).filter((field) => field !== 'tags');
       return fields.every((field) => {
-        if (field === 'markdownTitle') return previous.markdownTitle === current.markdownTitle;
-        if (field === 'priority') return previous.priority === current.priority;
-        if (field === 'recurrence') return previous.recurrence === current.recurrence;
-        if (field === 'onCompletion') return previous.onCompletion === current.onCompletion;
-        return (
-          previous.planning[field as keyof TaskSnapshot['planning']] ===
-          current.planning[field as keyof TaskSnapshot['planning']]
+        const update = command.patch[field as keyof typeof command.patch];
+        if (!update || !('type' in update)) return false;
+        if (field === 'markdownTitle')
+          return fieldUnchangedOrRequested(
+            previousTarget.markdownTitle,
+            currentTarget.markdownTitle,
+            update,
+          );
+        if (field === 'priority')
+          return fieldUnchangedOrRequested(previousTarget.priority, currentTarget.priority, update);
+        if (field === 'recurrence')
+          return fieldUnchangedOrRequested(
+            previousTarget.recurrence,
+            currentTarget.recurrence,
+            update,
+          );
+        if (field === 'onCompletion')
+          return fieldUnchangedOrRequested(
+            previousTarget.onCompletion,
+            currentTarget.onCompletion,
+            update,
+          );
+        return fieldUnchangedOrRequested(
+          (previousTarget.planning as Record<string, unknown>)[field],
+          (currentTarget.planning as Record<string, unknown>)[field],
+          update,
         );
       });
     }
     case 'set-status':
-      return previous.statusSymbol === current.statusSymbol;
+      return (
+        previousTarget.statusSymbol === currentTarget.statusSymbol ||
+        currentTarget.statusSymbol === command.symbol
+      );
     case 'reschedule':
     case 'shift-schedule':
     case 'move-time-slot':
@@ -201,7 +267,7 @@ function fieldPreconditionHolds(
     case 'convert-to-all-day':
     case 'set-span-boundary':
     case 'extend-span':
-      return samePlanning(previous, current);
+      return samePlanning(previousTarget as TaskSnapshot, currentTarget as TaskSnapshot);
     default:
       return false;
   }
@@ -212,16 +278,42 @@ function exactTargetPreconditionHolds(
   previous: TaskSnapshot,
   current: TaskSnapshot,
 ): boolean {
+  const rebased = rebaseEditCommand(command, current.ref);
+  const previousTarget = nodeForCommand(previous, command);
+  const currentTarget = nodeForCommand(current, rebased);
+  if (!previousTarget || !currentTarget) return false;
   switch (command.type) {
     case 'append-title':
-      return previous.markdownTitle === current.markdownTitle;
+      return previousTarget.markdownTitle === currentTarget.markdownTitle;
     case 'set-description':
-      return previous.description === current.description;
-    case 'edit-link':
+      return previousTarget.description === currentTarget.description;
     case 'delete-subtask':
+      return (
+        !('source' in previousTarget) &&
+        !('source' in currentTarget) &&
+        previousTarget.ref.originalBlock === currentTarget.ref.originalBlock
+      );
     case 'update-comment':
-    case 'delete-comment':
-      return previous.source.originalBlock === current.source.originalBlock;
+    case 'delete-comment': {
+      const ref = command.comment;
+      return currentTarget.comments.some(
+        (comment) =>
+          comment.ref.relativeLine === ref.relativeLine &&
+          comment.ref.originalMarkdown === ref.originalMarkdown,
+      );
+    }
+    case 'edit-link':
+      if (command.target.type === 'comment') {
+        const ref = command.target.ref;
+        return currentTarget.comments.some(
+          (comment) =>
+            comment.ref.relativeLine === ref.relativeLine &&
+            comment.ref.originalMarkdown === ref.originalMarkdown,
+        );
+      }
+      return command.target.type === 'description'
+        ? previousTarget.description === currentTarget.description
+        : previousTarget.markdownTitle === currentTarget.markdownTitle;
     case 'reorder-subtask':
       return false;
     default:
@@ -241,7 +333,10 @@ function retryEdit(
   const allowed = (() => {
     switch (prepared.retry) {
       case 'commutative':
-        return true;
+        return Boolean(
+          nodeForCommand(previous, command) &&
+          nodeForCommand(current, rebaseEditCommand(command, current.ref)),
+        );
       case 'field-compare':
         return fieldPreconditionHolds(command, previous, current);
       case 'exact-target':
