@@ -5,9 +5,27 @@ import { describe, expect, it } from 'vitest';
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
 function declarationsFor(selector: string): string {
+  return declarationsForSource(css, selector);
+}
+
+function declarationsForSource(source: string, selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
+  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(source);
   return match?.groups?.['body'] ?? '';
+}
+
+function atRuleBlock(header: string): string {
+  const start = css.indexOf(header);
+  if (start < 0) return '';
+  const opening = css.indexOf('{', start + header.length);
+  if (opening < 0) return '';
+  let depth = 0;
+  for (let index = opening; index < css.length; index++) {
+    if (css[index] === '{') depth += 1;
+    if (css[index] === '}') depth -= 1;
+    if (depth === 0) return css.slice(opening + 1, index);
+  }
+  return '';
 }
 
 describe('CenterPanel task metadata styles', () => {
@@ -40,6 +58,31 @@ describe('CenterPanel task metadata styles', () => {
     expect(body).toContain('min-width: 0');
     expect(metadata).toContain('min-width: 0');
     expect(metadata).toContain('overflow: hidden');
+  });
+
+  it('keeps a usable title track under the observed 292px center metadata pressure', () => {
+    const center = declarationsFor('.tc-center');
+    const compact = atRuleBlock('@container tc-task-list (max-width: 28rem)');
+    const mainRow = declarationsForSource(compact, '.tc-task-card-main-row');
+    const metadata = declarationsForSource(compact, '.tc-task-meta-right');
+    const sourceNote = declarationsForSource(compact, '.tc-task-source-note');
+
+    expect(center).toContain('container-type: inline-size');
+    expect(center).toContain('container-name: tc-task-list');
+    expect(mainRow).toContain('display: grid');
+    expect(mainRow).toContain(
+      'grid-template-columns: var(--tc-task-card-marker-size) minmax(0, 1fr) 24px',
+    );
+    expect(metadata).toContain('grid-column: 2 / -1');
+    expect(metadata).toContain('grid-row: 2');
+    expect(sourceNote).toContain('white-space: nowrap');
+
+    // R1 live evidence: a 292px center leaves a 253px card main row after scrollbar/padding.
+    // Moving metadata to row 2 leaves the first row's title track at 194px instead of 0px:
+    // 253 - 19px marker - 24px delete button - two 8px gaps.
+    const titleTrack = 253 - 19 - 24 - 2 * 8;
+    expect(titleTrack).toBe(194);
+    expect(titleTrack).toBeGreaterThanOrEqual(160);
   });
 
   it('keeps hover and selection states paint-only so controls do not shift', () => {

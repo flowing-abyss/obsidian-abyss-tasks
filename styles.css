@@ -168,6 +168,8 @@
 .tc-center {
   flex: 1;
   min-width: 0;
+  container-type: inline-size;
+  container-name: tc-task-list;
   display: flex;
   flex-direction: column;
   background: var(--background-primary);
@@ -3299,6 +3301,43 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .tc-task-delete-btn:hover {
   color: var(--text-error);
   background: hsla(0, 70%, 50%, 0.1);
+}
+
+/* Keep the title readable when the center pane is squeezed between both side panels. Metadata
+   moves below the title instead of competing with it for the same flex track. Container sizing is
+   intentional here: the center pane can become narrow inside a wide Obsidian window. */
+@container tc-task-list (max-width: 28rem) {
+  .tc-task-card-main-row {
+    display: grid;
+    grid-template-columns: var(--tc-task-card-marker-size) minmax(0, 1fr) 24px;
+    column-gap: var(--tc-task-card-primary-gap);
+    row-gap: 2px;
+  }
+
+  .tc-task-card-main-row > .tc-status-marker {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .tc-task-body {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .tc-task-delete-btn {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .tc-task-meta-right {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+
+  .tc-task-source-note {
+    white-space: nowrap;
+  }
 }
 
 /* Add task bar */
