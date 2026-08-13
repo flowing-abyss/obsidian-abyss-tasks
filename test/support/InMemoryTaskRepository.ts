@@ -474,7 +474,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     const preparedResult = preparedRevisionResult(
       prepared,
       located,
-      indexedRef,
+      this.options.snapshotState?.authoritySuccessor?.(ref),
       (currentRef) => this.locator.locate(blocks, currentRef),
       (line) => this.snapshot(ref.filePath, sourceContent, line),
     );
@@ -599,7 +599,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     const revisionResult = preparedRevisionResult(
       revisionRequest,
       located,
-      indexedRef,
+      this.options.snapshotState?.authoritySuccessor?.(ref),
       (currentRef) => this.locator.locate(blocks, currentRef),
       (line) => this.snapshot(ref.filePath, content, line),
     );
@@ -779,7 +779,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     const preparedResult = preparedRevisionResult(
       prepared,
       located,
-      indexedRef,
+      this.options.snapshotState?.authoritySuccessor?.(ref),
       (currentRef) => this.locator.locate(blocks, currentRef),
       (line) => this.snapshot(ref.filePath, content, line),
     );

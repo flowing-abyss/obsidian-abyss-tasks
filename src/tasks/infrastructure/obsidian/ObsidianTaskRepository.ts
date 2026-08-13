@@ -670,7 +670,7 @@ export class ObsidianTaskRepository implements TaskRepository {
     const preparedResult = preparedRevisionResult(
       prepared,
       sourceLocated,
-      indexedRef,
+      this.options.snapshotState?.authoritySuccessor?.(ref),
       (currentRef) => this.options.locator.locate(sourceBlocks, currentRef),
       (block) => this.snapshotFor(ref.filePath, sourceContent, block),
     );
@@ -898,7 +898,7 @@ export class ObsidianTaskRepository implements TaskRepository {
         const revisionResult = preparedRevisionResult(
           revisionRequest,
           located,
-          indexedRef,
+          this.options.snapshotState?.authoritySuccessor?.(rootRef),
           (currentRef) => this.options.locator.locate(blocks, currentRef),
           (block) => this.snapshotFor(rootRef.filePath, content, block),
         );
@@ -1102,7 +1102,7 @@ export class ObsidianTaskRepository implements TaskRepository {
           const revisionResult = preparedRevisionResult(
             prepared,
             located,
-            indexedRef,
+            this.options.snapshotState?.authoritySuccessor?.(rootRef),
             (currentRef) => this.options.locator.locate(blocks, currentRef),
             (block) => this.snapshotFor(rootRef.filePath, content, block),
           );

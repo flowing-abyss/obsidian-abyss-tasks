@@ -52,7 +52,7 @@ export interface ProvenRootTransition {
   readonly basis: RootReconciliationBasis;
 }
 
-export interface VisualRootTransition {
+interface VisualRootTransition {
   readonly stale: TaskRef;
   readonly current: TaskSnapshot;
   readonly evidence: VisualEvidence;

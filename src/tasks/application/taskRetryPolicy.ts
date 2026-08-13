@@ -1,5 +1,6 @@
 import type { ClockReading } from '../domain/clock';
 import type { TaskCommand, TaskStatusTarget } from '../domain/commands';
+import { shiftLocalDate } from '../domain/localDateMath';
 import type { RebaseEvidence } from '../domain/taskReconciliation';
 import type {
   CommentRef,
@@ -168,10 +169,6 @@ function rebaseEditCommand(command: TaskEditCommand, root: TaskRef): TaskEditCom
   }
 }
 
-function samePlanning(left: TaskSnapshot, right: TaskSnapshot): boolean {
-  return JSON.stringify(left.planning) === JSON.stringify(right.planning);
-}
-
 function nodeForCommand(
   root: TaskSnapshot,
   command: TaskEditCommand,
@@ -211,6 +208,68 @@ function fieldUnchangedOrRequested(
   update: { readonly type: string; readonly value?: unknown },
 ): boolean {
   return previous === current || current === requestedFieldValue(update);
+}
+
+function schedulingPreconditionHolds(
+  command: TaskEditCommand,
+  previous: TaskSnapshot | SubtaskSnapshot,
+  current: TaskSnapshot | SubtaskSnapshot,
+): boolean {
+  const anchor = previous.planning.scheduled !== undefined ? 'scheduled' : 'due';
+  const field = (name: keyof TaskSnapshot['planning'], requested: unknown) => {
+    const previousValue = (previous.planning as Record<string, unknown>)[name];
+    const currentValue = (current.planning as Record<string, unknown>)[name];
+    return previousValue === currentValue || currentValue === requested;
+  };
+  const shifted = (name: 'start' | 'due' | 'scheduled') => {
+    const value = previous.planning[name];
+    return value && shiftLocalDate(value, 'days' in command ? command.days : 0);
+  };
+  switch (command.type) {
+    case 'reschedule':
+      return field(anchor, command.date);
+    case 'shift-schedule':
+      return previous.planning.start && previous.planning.due
+        ? field('start', shifted('start')) && field('due', shifted('due'))
+        : field(anchor, shifted(anchor));
+    case 'move-time-slot':
+      return (
+        (previous.planning.start && previous.planning.due
+          ? field('start', shifted('start')) && field('due', shifted('due'))
+          : field(anchor, shifted(anchor))) && field('time', command.time)
+      );
+    case 'move-to-all-day':
+      return (
+        (previous.planning.start && previous.planning.due
+          ? field('start', shifted('start')) && field('due', shifted('due'))
+          : field(anchor, shifted(anchor))) &&
+        field('time', undefined) &&
+        field('duration', undefined)
+      );
+    case 'set-time-slot':
+      return (
+        field(anchor, command.date) &&
+        field('time', command.time) &&
+        (command.duration === undefined || field('duration', command.duration))
+      );
+    case 'convert-to-all-day':
+      return (
+        field(anchor, command.date) && field('time', undefined) && field('duration', undefined)
+      );
+    case 'set-span-boundary':
+      return field(command.boundary, command.date);
+    case 'extend-span': {
+      const anchorValue =
+        previous.planning.start ?? previous.planning.scheduled ?? previous.planning.due;
+      return (
+        anchorValue !== undefined &&
+        field('start', previous.planning.start ?? anchorValue) &&
+        field('due', command.due)
+      );
+    }
+    default:
+      return false;
+  }
 }
 
 function fieldPreconditionHolds(
@@ -267,7 +326,7 @@ function fieldPreconditionHolds(
     case 'convert-to-all-day':
     case 'set-span-boundary':
     case 'extend-span':
-      return samePlanning(previousTarget as TaskSnapshot, currentTarget as TaskSnapshot);
+      return schedulingPreconditionHolds(command, previousTarget, currentTarget);
     default:
       return false;
   }

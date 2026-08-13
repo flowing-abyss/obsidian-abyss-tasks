@@ -858,6 +858,15 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     return current ? { ...current.ref } : undefined;
   }
 
+  authoritySuccessor(consumed: TaskRef): TaskRef | undefined {
+    const transition = this.reconciliationTransitions
+      .get(consumed.filePath)
+      ?.writable.get(taskReconciliationKey(consumed));
+    return transition?.evidence === 'authority-transition'
+      ? { ...transition.current.ref }
+      : undefined;
+  }
+
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {
     const cache = cacheWithContentFallback(content, null);
     const frontmatter = frontmatterFromContent(content);

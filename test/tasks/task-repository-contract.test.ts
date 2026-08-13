@@ -114,18 +114,26 @@ describe('ObsidianTaskRepository planning contract', () => {
     );
     if (staged.type !== 'staged') throw new Error('missing transition');
     authority.commit(staged.token);
-    const current = index.installCommittedContent(path, candidate)[0]!;
-    authority.acknowledge(path, candidate);
     const file = app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile)) throw new Error('missing file');
     await app.vault.modify(file, candidate);
+    const current = index.installCommittedContent(path, candidate)[0]!;
+    authority.acknowledge(path, candidate);
     const repository = new ObsidianTaskRepository(app, {
       codec,
       editor,
       locator,
       snapshotsFromContent: (filePath, content) => index.snapshotsFromContent(filePath, content),
       refAuthority: authority,
-      snapshotState: index,
+      snapshotState: {
+        currentRoot: (filePath, line, blockSource) =>
+          index.currentRoot(filePath, line, blockSource),
+        authoritySuccessor: (consumed) =>
+          consumed.revision === baseRoot.ref.revision ? current.ref : undefined,
+        previewContent: (filePath, content) => index.previewContent(filePath, content),
+        installCommittedContent: (filePath, content) =>
+          index.installCommittedContent(filePath, content),
+      },
     });
 
     await expect(

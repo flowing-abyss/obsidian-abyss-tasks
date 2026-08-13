@@ -28,6 +28,7 @@ export type TaskRefStageResult =
 
 export interface TaskSnapshotState {
   currentRoot(filePath: string, line: number, source: string): TaskRef | undefined;
+  authoritySuccessor?(consumed: TaskRef): TaskRef | undefined;
   previewContent(filePath: string, content: string): readonly TaskSnapshot[];
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[];
 }

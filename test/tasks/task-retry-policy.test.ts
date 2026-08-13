@@ -80,6 +80,61 @@ describe('prepareRetry', () => {
     ).toMatchObject({ type: 'edit', request: { baseRoot: current } });
   });
 
+  it.each([
+    {
+      command: { type: 'reschedule' as const, ref: snapshot().ref, date: localDate('2026-08-12') },
+      planning: { due: localDate('2026-08-12') },
+    },
+    {
+      command: {
+        type: 'set-time-slot' as const,
+        ref: snapshot().ref,
+        date: localDate('2026-08-12'),
+        time: '10:00' as import('../../src/tasks/domain/types').LocalTime,
+      },
+      planning: {
+        due: localDate('2026-08-12'),
+        time: '10:00' as import('../../src/tasks/domain/types').LocalTime,
+      },
+    },
+    {
+      command: {
+        type: 'convert-to-all-day' as const,
+        ref: snapshot().ref,
+        date: localDate('2026-08-12'),
+      },
+      planning: { due: localDate('2026-08-12') },
+    },
+    {
+      command: {
+        type: 'set-span-boundary' as const,
+        ref: snapshot().ref,
+        boundary: 'due' as const,
+        date: localDate('2026-08-14'),
+      },
+      planning: { due: localDate('2026-08-14') },
+    },
+    {
+      command: {
+        type: 'extend-span' as const,
+        ref: snapshot().ref,
+        due: localDate('2026-08-14'),
+      },
+      planning: { start: localDate('2026-08-11'), due: localDate('2026-08-14') },
+    },
+  ])('accepts already-requested scheduling intent: $command.type', ({ command, planning }) => {
+    const base = snapshot();
+    const current = { ...snapshot('Task', 'new'), planning };
+    expect(
+      prepareRetry(prepared(command, 'field-compare'), {
+        type: 'rebased',
+        previous: base,
+        current,
+        evidence: 'authority-transition',
+      }),
+    ).toMatchObject({ type: 'edit', request: { baseRoot: current } });
+  });
+
   it('compares a nested field on the exact child rather than the root', () => {
     const base = snapshot();
     const childRef = {
