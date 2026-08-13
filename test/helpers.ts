@@ -26,6 +26,7 @@ import { TaskApplicationService } from '../src/tasks/application/TaskApplication
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import { localDate } from '../src/tasks/domain/validation';
 import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
@@ -540,6 +541,7 @@ export function makeStubStore(tasks: TaskSnapshot[], _app?: ObsidianApp): TestTa
 export function configuredTaskApplication(
   app: ObsidianApp,
   settings: CalendarSettings,
+  options: { readonly authority?: boolean } = {},
 ): {
   readonly index: TaskIndex;
   readonly tasks: TaskApplicationApi;
@@ -547,18 +549,23 @@ export function configuredTaskApplication(
   readonly statusRegistry: StatusRegistry;
 } {
   const statusCatalog = new StatusCatalog(toStatusRules(settings.taskStatuses));
+  const refAuthority = options.authority
+    ? new TaskRefAuthority('configured-test-session')
+    : undefined;
   const index = new TaskIndex(app, {
     statusCatalog,
     dailyNoteFormat: settings.desktop.dailyNoteFormat,
     ...(settings.desktop.globalTaskFilter && {
       globalTaskFilter: settings.desktop.globalTaskFilter,
     }),
+    ...(refAuthority && { refAuthority }),
   });
   const repository = new ObsidianTaskRepository(app, {
     codec: new TaskMarkdownCodec(statusCatalog),
     editor: new TaskBlockEditor(),
-    locator: new TaskLocator(),
+    locator: new TaskLocator(refAuthority),
     snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
+    ...(refAuthority && { refAuthority, snapshotState: index }),
   });
   const tasks = new TaskApplicationService(
     index,

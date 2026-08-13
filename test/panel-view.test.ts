@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, type App } from 'obsidian';
+import { TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -235,7 +235,7 @@ describe('PanelView', () => {
         'today.md': `- [ ] task one 📅 ${window.moment().format('YYYY-MM-DD')}`,
       });
       seedTaskCache(app, 'today.md', [{ task: ' ', parent: -1, line: 0 }]);
-      taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS, { authority: true });
       await taskApplication.index.initialize();
       await flushMicrotasks();
       leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
@@ -289,6 +289,66 @@ describe('PanelView', () => {
       await app.vault.delete(file);
       await flushMicrotasks();
       expect(state.get('taskStack')).toHaveLength(0);
+    });
+
+    it('keeps the selected task and dirty draft on the fresh ref across a vault rename', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const root = taskApplication.index.list()[0]!;
+      state.set('taskStack', [root]);
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      comment.value = 'rename-safe panel draft';
+      comment.focus();
+      const file = app.vault.getAbstractFileByPath(root.source.filePath);
+      if (!file) throw new Error('root task file missing');
+
+      await app.vault.rename(file, 'renamed.md');
+      await flushMicrotasks();
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+      expect(state.get('taskStack')[0]).toMatchObject({
+        ref: { filePath: 'renamed.md' },
+        source: { filePath: 'renamed.md' },
+      });
+      const restored = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      expect(restored.value).toBe('rename-safe panel draft');
+      expect(view.contentEl.querySelector('.tc-detached-draft')).toBeNull();
+    });
+
+    it('consumes an actual submitted comment across the service/index early event', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const root = taskApplication.index.list()[0]!;
+      state.set('taskStack', [root]);
+      const observedResolutions: unknown[] = [];
+      const off = taskApplication.index.subscribe((event) => {
+        if (event.type === 'changed') {
+          observedResolutions.push(taskApplication.index.resolve(root.ref));
+        }
+      });
+      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      input.value = 'actual interleaving comment';
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      const file = app.vault.getAbstractFileByPath(root.source.filePath);
+      if (!(file instanceof TFile)) throw new Error('root task file missing');
+      const content = await app.vault.cachedRead(file);
+      expect(content.match(/actual interleaving comment/gu)).toHaveLength(1);
+      expect(taskApplication.index.list()[0]?.comments).toHaveLength(1);
+      expect(observedResolutions).toHaveLength(1);
+      expect(observedResolutions[0]).toMatchObject({
+        type: 'rebased',
+        evidence: 'authority-transition',
+      });
+      expect(view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value).toBe(
+        '',
+      );
+      expect(view.contentEl.querySelector('.tc-detached-draft')).toBeNull();
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      off();
     });
 
     it('clears owned-write acknowledgement when deletion/switch changes the selected root', () => {

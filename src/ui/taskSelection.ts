@@ -1,4 +1,12 @@
-import type { SubtaskRef, SubtaskSnapshot, TaskNodeRef, TaskRef, TaskSnapshot } from '../tasks';
+import type {
+  SubtaskRef,
+  SubtaskSnapshot,
+  TaskIndexEvent,
+  TaskNodeRef,
+  TaskQueryApi,
+  TaskRef,
+  TaskSnapshot,
+} from '../tasks';
 
 export type TaskSelectionNode = TaskSnapshot | SubtaskSnapshot;
 
@@ -44,4 +52,20 @@ export function rebuildTaskSelection(
     stack.push(child);
   }
   return stack;
+}
+
+export function renamedRootSelection(
+  event: TaskIndexEvent,
+  staleRoot: TaskSnapshot,
+  queries: TaskQueryApi,
+): TaskSnapshot | undefined {
+  if (event.type !== 'renamed' || staleRoot.ref.filePath !== event.oldPath) return undefined;
+  const matches = queries
+    .list({ filePath: event.newPath })
+    .filter(
+      (candidate) =>
+        candidate.source.line === staleRoot.source.line &&
+        candidate.source.originalBlock === staleRoot.source.originalBlock,
+    );
+  return matches.length === 1 ? matches[0] : undefined;
 }

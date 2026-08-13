@@ -622,7 +622,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         },
       };
     }
-    if (matches.length === 1) {
+    if (!this.options.refAuthority && matches.length === 1) {
       const currentTask = cloneTaskSnapshot(matches[0]!);
       const observedTask = cloneTaskSnapshot(currentTask);
       const observed: TaskSnapshot = {
@@ -685,6 +685,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.taskMap.clear();
     this.fileGenerations.clear();
     this.reconciliationTransitions.clear();
+    this.options.refAuthority?.clear();
     this.calendarDateIndex.clear();
     this.recurringSourcesByFile.clear();
   }
@@ -693,7 +694,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     file: TFile,
     path: string,
     forceContentFallback: boolean,
-    freshRootSet = false,
+    observedFile = false,
   ): Promise<boolean> {
     const observation = this.observe(file, path);
     if (!observation) return false;
@@ -723,7 +724,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           forceContentFallback ? cacheWithContentFallback(content, cache) : cache!,
           true,
           undefined,
-          freshRootSet,
+          observedFile,
         ),
         [],
         true,
@@ -742,7 +743,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     cache: CachedMetadata,
     allocateSuccessor = false,
     captureAuthorityTransitions?: (transitions: readonly ProvenRootRevisionOverride[]) => void,
-    freshRootSet = false,
+    observedFile = false,
   ): readonly TaskSnapshot[] {
     const authorityObservation = this.options.refAuthority?.observeTransition(filePath, content);
     const overrides = authorityObservation?.roots ?? [];
@@ -818,7 +819,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           priorBySource,
           sourceCounts,
           allocateSuccessor,
-          freshRootSet,
+          observedFile,
         ),
       };
       const presentation = {
@@ -879,7 +880,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
       (transitions) => {
         authorityTransitions = transitions;
       },
-      (this.taskMap.get(filePath)?.length ?? 0) === 0 && this.fileGenerations.has(filePath),
+      this.fileGenerations.has(filePath),
     );
     if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
     return tasks.map(cloneTaskSnapshot);
@@ -894,17 +895,16 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     priorBySource: ReadonlyMap<string, readonly TaskSnapshot[]>,
     currentSourceCounts: ReadonlyMap<string, number>,
     allocateSuccessor: boolean,
-    freshRootSet: boolean,
+    observedFile: boolean,
   ): string {
     const override = overrides.get(line);
     if (override?.source === source) return override.revision;
     if (this.options.refAuthority) {
-      if (freshRootSet && allocateSuccessor) {
-        return this.options.refAuthority.mintRevision(source);
-      }
       const hinted = priorByLine.get(line);
-      if (hinted?.source.originalBlock === source) return hinted.ref.revision;
       const prior = priorBySource.get(source) ?? [];
+      if (hinted?.source.originalBlock === source && sourceCount === 1 && prior.length === 1) {
+        return hinted.ref.revision;
+      }
       if (sourceCount === 1 && prior.length === 1) return prior[0]!.ref.revision;
       const hintedRelocated =
         hinted !== undefined &&
@@ -915,6 +915,9 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           this.options.refAuthority.successor(hinted.ref.revision, source) ??
           this.locator.revision(source)
         );
+      }
+      if (observedFile && allocateSuccessor) {
+        return this.options.refAuthority.mintRevision(source);
       }
     }
     return this.locator.revision(source);
@@ -929,6 +932,19 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     const current = this.taskMap.get(filePath) ?? [];
     const changed = JSON.stringify(current) !== JSON.stringify(tasks);
     if (!changed && !advanceGenerationOnUnchanged) return false;
+    // A repository install and Obsidian's matching metadata event can arrive in either order
+    // before the already-queued notification is delivered. Keep that batch's proven transition
+    // visible to subscribers instead of replacing it with an unchanged self-transition.
+    const queuedTransition = this.reconciliationTransitions.get(filePath);
+    if (
+      !changed &&
+      this.pendingFiles.has(filePath) &&
+      [...(queuedTransition?.writable.values() ?? [])].some(
+        (transition) => transition.evidence === 'authority-transition',
+      )
+    ) {
+      return false;
+    }
     const fromGeneration = this.fileGenerations.get(filePath) ?? 0;
     const toGeneration = fromGeneration + 1;
     this.fileGenerations.set(filePath, toGeneration);
@@ -966,8 +982,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         }
         this.advance(file, path);
         let authorityTransitions: readonly ProvenRootRevisionOverride[] = [];
-        const freshRootSet =
-          (this.taskMap.get(path)?.length ?? 0) === 0 && this.fileGenerations.has(path);
+        const observedFile = this.fileGenerations.has(path);
         const tasks = this.parseFile(
           path,
           data,
@@ -976,7 +991,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           (transitions) => {
             authorityTransitions = transitions;
           },
-          freshRootSet,
+          observedFile,
         );
         const changed = this.replaceFile(path, tasks, authorityTransitions, true);
         if (changed) this.queueChanged(path);

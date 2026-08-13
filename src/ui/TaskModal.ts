@@ -12,7 +12,12 @@ import type {
   TaskSnapshot,
 } from '../tasks';
 import { isDirtyDraftBundle } from './taskDraftContinuity';
-import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from './taskSelection';
+import {
+  rebuildTaskSelection,
+  renamedRootSelection,
+  rootTaskRef,
+  type TaskSelectionNode,
+} from './taskSelection';
 
 export class TaskModal {
   private backdropEl: HTMLElement | null = null;
@@ -71,9 +76,10 @@ export class TaskModal {
       this.app,
       this.statusRegistry,
       this.settings,
-      (root) => this.acknowledgeOwnWrite(root),
+      undefined,
       this.tasks,
       (actions) => this.renderCloseButton(actions),
+      (event) => this.trackOwnWrite(event),
     );
     this.innerPanel.mount(panelEl);
 
@@ -133,6 +139,16 @@ export class TaskModal {
     if (!stack || !root) return;
     const ref = rootTaskRef(root);
     if (!this.queries || !this.affects(event, ref.filePath)) return;
+    if ('source' in root) {
+      const renamed = renamedRootSelection(event, root, this.queries);
+      if (renamed) {
+        const draft = this.innerPanel?.captureDraftState();
+        this.ownedWriteRef = undefined;
+        this.innerState?.set('taskStack', rebuildTaskSelection(renamed, stack));
+        this.innerPanel?.restoreDraftState(draft, renamed);
+        return;
+      }
+    }
     this.applyResolution(this.queries.resolve(ref), stack);
   }
 
@@ -145,15 +161,23 @@ export class TaskModal {
 
   private applyResolution(resolution: TaskResolution, stack: TaskSelectionNode[]): void {
     this.clearResolutionMessage();
-    this.ownedWriteRef = undefined;
     if (resolution.type === 'exact' || resolution.type === 'rebased') {
       const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-      const draft = this.innerPanel?.captureDraftState();
+      const consumedOwnedRef =
+        resolution.type === 'rebased' &&
+        resolution.evidence === 'authority-transition' &&
+        this.ownedWriteRef &&
+        this.sameRef(this.ownedWriteRef, resolution.previous.ref)
+          ? this.ownedWriteRef
+          : undefined;
+      const draft = this.innerPanel?.captureDraftState(consumedOwnedRef);
+      this.ownedWriteRef = undefined;
       this.innerState?.set('taskStack', rebuildTaskSelection(current, stack));
       this.innerPanel?.restoreDraftState(draft, current);
       return;
     }
     const draft = this.innerPanel?.captureDraftState();
+    this.ownedWriteRef = undefined;
     if (resolution.type === 'visual') {
       this.innerState?.set('taskStack', [resolution.current]);
       this.innerPanel?.detachDraftState(draft);
@@ -178,6 +202,19 @@ export class TaskModal {
     if (suppliedRef && (!selectedRef || !this.sameRef(suppliedRef, selectedRef))) return;
     const acknowledged = suppliedRef ?? selectedRef;
     this.ownedWriteRef = acknowledged ? { ...acknowledged } : undefined;
+  }
+
+  private trackOwnWrite(event: {
+    readonly phase: 'started' | 'settled';
+    readonly ref: TaskRef;
+  }): void {
+    if (event.phase === 'started') {
+      this.acknowledgeOwnWrite(event.ref);
+      return;
+    }
+    if (this.ownedWriteRef && this.sameRef(this.ownedWriteRef, event.ref)) {
+      this.ownedWriteRef = undefined;
+    }
   }
 
   private sameRef(left: TaskRef, right: TaskRef): boolean {

@@ -176,6 +176,10 @@ export class TaskRefAuthority {
     this.transitions.delete(filePath);
   }
 
+  clear(): void {
+    this.transitions.clear();
+  }
+
   private encode(source: string, generation: string): string {
     return `${REVISION_PREFIX}${JSON.stringify([this.session, generation, source])}`;
   }

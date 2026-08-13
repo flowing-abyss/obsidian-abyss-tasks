@@ -16,7 +16,10 @@ import {
   taskComment,
   taskQueryApi,
   testStatusRegistry,
+  useRealMoment,
 } from './helpers';
+
+useRealMoment();
 
 function click(element: HTMLElement): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -97,6 +100,263 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.activeElement).toBe(restored);
     expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('does not recapture a submitted comment when its owned index event arrives before execute resolves', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      ...observed,
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      comments: [taskComment({ text: 'submitted once' })],
+      source: {
+        ...observed.source,
+        originalBlock: '- [ ] observed\n  - submitted once',
+      },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+    let release!: () => void;
+    const blocked = new Promise<void>((resolvePromise) => {
+      release = resolvePromise;
+    });
+    const queries = taskQueryApi({
+      resolve: () => resolution,
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+      resolution = {
+        type: 'rebased',
+        previous: observed,
+        current,
+        evidence: 'authority-transition',
+        basis: { observed },
+      };
+      listener?.({ type: 'changed', files: ['f.md'] });
+      await blocked;
+      return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const input = activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')!;
+    input.value = 'submitted once';
+    input.focus();
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    release();
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(activeDocument.querySelectorAll('.tc-modal .tc-comment-row')).toHaveLength(1);
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('');
+    expect(activeDocument.querySelector('.tc-modal .tc-detached-draft')).toBeNull();
+    expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
+  });
+
+  it.each([
+    {
+      field: 'title',
+      submit: () => {
+        click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-right-title-view')!);
+        const edit = activeDocument.querySelector<HTMLTextAreaElement>(
+          '.tc-modal .tc-right-title-edit',
+        )!;
+        edit.value = 'submitted title';
+        edit.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+      },
+      assertClosed: () =>
+        expect(activeDocument.querySelector('.tc-modal .tc-right-title-edit')).toBeNull(),
+    },
+    {
+      field: 'description',
+      submit: () => {
+        click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-right-desc-view')!);
+        const edit = activeDocument.querySelector<HTMLTextAreaElement>(
+          '.tc-modal .tc-right-desc-edit',
+        )!;
+        edit.value = 'submitted description';
+        edit.dispatchEvent(new FocusEvent('blur', { bubbles: false }));
+      },
+      assertClosed: () =>
+        expect(activeDocument.querySelector('.tc-modal .tc-right-desc-edit')).toBeNull(),
+    },
+    {
+      field: 'subtask',
+      submit: () => {
+        click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-subtask-add-row')!);
+        const edit = activeDocument.querySelector<HTMLInputElement>(
+          '.tc-modal .tc-subtask-new-input',
+        )!;
+        edit.value = 'submitted subtask';
+        edit.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+        );
+      },
+      assertClosed: () =>
+        expect(activeDocument.querySelector('.tc-modal .tc-subtask-new-input')).toBeNull(),
+    },
+    {
+      field: 'recurrence',
+      submit: () => {
+        click(activeDocument.querySelector<HTMLElement>('.tc-modal .tc-repeat-chip')!);
+        click(
+          activeDocument.querySelector<HTMLButtonElement>(
+            '.tc-modal [data-recurrence-preset="daily"]',
+          )!,
+        );
+        click(activeDocument.querySelector<HTMLButtonElement>('.tc-modal .tc-recurrence-save')!);
+      },
+      assertClosed: () =>
+        expect(activeDocument.querySelector('.tc-modal .tc-recurrence-popover')).toBeNull(),
+    },
+  ])(
+    'does not recapture a submitted $field draft during an early owned index event',
+    async ({ field, submit, assertClosed }) => {
+      const app = await createAppWithFiles({ 'f.md': '- [ ] observed 📅 2026-08-13\n' });
+      const observed = task({
+        title: 'observed',
+        markdownTitle: 'observed',
+        description: field === 'description' ? 'old description' : undefined,
+        planning: { due: '2026-08-13' as never },
+        ref: { filePath: 'f.md', line: 0, revision: 'old' },
+        source: {
+          filePath: 'f.md',
+          line: 0,
+          originalMarkdown: '- [ ] observed 📅 2026-08-13',
+          originalBlock: '- [ ] observed 📅 2026-08-13',
+        },
+      });
+      const current = task({
+        ...observed,
+        title: field === 'title' ? 'submitted title' : observed.title,
+        markdownTitle: field === 'title' ? 'submitted title' : observed.markdownTitle,
+        description: field === 'description' ? 'submitted description' : observed.description,
+        recurrence: field === 'recurrence' ? 'every day' : observed.recurrence,
+        ref: { filePath: 'f.md', line: 0, revision: 'new' },
+        source: { ...observed.source, originalBlock: '- [ ] current' },
+      });
+      let listener: ((event: TaskIndexEvent) => void) | undefined;
+      let resolution: TaskResolution = { type: 'exact', task: observed, basis: { observed } };
+      let release!: () => void;
+      const blocked = new Promise<void>((resolvePromise) => {
+        release = resolvePromise;
+      });
+      const queries = taskQueryApi({
+        resolve: () => resolution,
+        subscribe: (next) => {
+          listener = next;
+          return () => {
+            listener = undefined;
+          };
+        },
+      });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockImplementation(async () => {
+        resolution = {
+          type: 'rebased',
+          previous: observed,
+          current,
+          evidence: 'authority-transition',
+          basis: { observed },
+        };
+        listener?.({ type: 'changed', files: ['f.md'] });
+        await blocked;
+        return { type: 'ok', changed: true, outcome: { type: 'task', task: current } };
+      });
+      modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+        queries,
+        execute,
+      });
+      modal.open(observed);
+
+      submit();
+      await flushMicrotasks();
+      release();
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      assertClosed();
+      expect(activeDocument.querySelector('.tc-modal .tc-detached-draft')).toBeNull();
+      expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
+    },
+  );
+
+  it('bridges a selected task and its dirty draft directly across a rename event', async () => {
+    const app = await createAppWithFiles({ 'old.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'old.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'old.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const renamed = task({
+      ...observed,
+      ref: { filePath: 'renamed.md', line: 0, revision: 'fresh' },
+      source: { ...observed.source, filePath: 'renamed.md' },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = taskQueryApi({
+      list: (query) => (query?.filePath === 'renamed.md' ? [renamed] : []),
+      resolve: () => ({ type: 'not-found', ref: observed.ref }),
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(observed);
+    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    )!;
+    comment.value = 'rename-safe draft';
+    comment.focus();
+
+    listener?.({ type: 'renamed', oldPath: 'old.md', newPath: 'renamed.md' });
+
+    const title = activeDocument.querySelector('.tc-modal .tc-right-title');
+    expect(title).not.toBeNull();
+    expect(title!.textContent).toContain('observed');
+    expect(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,
+    ).toBe('rename-safe draft');
+    expect(activeDocument.activeElement).toBe(
+      activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input'),
+    );
+    expect(activeDocument.querySelector('.tc-modal .tc-detached-draft')).toBeNull();
   });
 
   it('shows fresh visual content while detaching every stale dirty draft silently', async () => {

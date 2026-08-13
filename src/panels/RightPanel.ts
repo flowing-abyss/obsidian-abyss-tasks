@@ -61,6 +61,11 @@ import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '..
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
 
+export interface RightPanelMutationLifecycle {
+  readonly phase: 'started' | 'settled';
+  readonly ref: TaskRef;
+}
+
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {
   let node: TaskNodeRef = target;
   while (node.type === 'subtask') node = node.ref.parent;
@@ -108,6 +113,10 @@ export class RightPanel {
   private draggingSub: SubtaskSnapshot | null = null;
   private md = new Component();
   private onSuccessfulMutation?: (ref?: TaskRef) => void;
+  private submittedDrafts = new Map<
+    object,
+    { readonly ref: TaskRef; readonly draftKey?: string }
+  >();
   private anchoredSurfaceCleanups = new Map<HTMLElement, () => void>();
   private recurrenceDraftEditor?: {
     readonly target: TaskNodeRef;
@@ -118,8 +127,11 @@ export class RightPanel {
     readonly id: number;
     readonly key: string;
     readonly draft: RightPanelDraftState;
+    readonly origin: RightPanelDraftBundle['origin'];
   }> = [];
   private nextDetachedDraftId = 0;
+  private detachedAnnouncement = '';
+  private detachedFocusTimer: number | undefined;
 
   constructor(
     private state: AppState,
@@ -129,6 +141,7 @@ export class RightPanel {
     onSuccessfulMutation?: (ref?: TaskRef) => void,
     private tasks?: TaskApplicationApi,
     private onRenderHeaderActions?: (actions: HTMLElement) => void,
+    private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -141,12 +154,13 @@ export class RightPanel {
 
   destroy(): void {
     this.off?.();
+    if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
     this.clearAnchoredSurfaces();
     this.el?.empty();
     this.md.unload();
   }
 
-  captureDraftState(): RightPanelDraftBundle | undefined {
+  captureDraftState(consumedOwnedRef?: TaskRef): RightPanelDraftBundle | undefined {
     if (!this.el) return undefined;
     const stack = this.state.get('taskStack');
     const task = stack[stack.length - 1];
@@ -212,15 +226,87 @@ export class RightPanel {
     if (newComment) {
       candidates.push({ kind: 'new-comment', parent: target, ...textDraft(newComment, '') });
     }
-    const entries = candidates.filter((candidate) => candidate.hadFocus || isDirtyDraft(candidate));
-    return entries.length > 0 ? { entries } : undefined;
+    const consumedKeys = new Set<string>();
+    if (consumedOwnedRef) {
+      for (const submitted of this.submittedDrafts.values()) {
+        if (sameTaskRef(submitted.ref, consumedOwnedRef) && submitted.draftKey) {
+          consumedKeys.add(submitted.draftKey);
+        }
+      }
+    }
+    const entries = candidates.filter(
+      (candidate) =>
+        (candidate.hadFocus || isDirtyDraft(candidate)) &&
+        !consumedKeys.has(draftIdentity(candidate)),
+    );
+    const root = stack[0];
+    return entries.length > 0
+      ? {
+          entries,
+          ...(root && 'source' in root
+            ? {
+                origin: {
+                  taskTitle: task.title,
+                  filePath: root.source.filePath,
+                  line: taskNodeLine(root, task),
+                },
+              }
+            : {}),
+        }
+      : undefined;
+  }
+
+  private beginDraftSubmission(
+    target: PlanningTarget,
+    kind?: RightPanelDraftState['kind'],
+  ): object {
+    const ref = rootRefForPlanningTarget(target);
+    const candidate = kind
+      ? this.captureDraftState()?.entries.find((draft) => draft.kind === kind)
+      : undefined;
+    const token = Object.freeze({});
+    this.submittedDrafts.set(token, {
+      ref: { ...ref },
+      ...(candidate && { draftKey: draftIdentity(candidate) }),
+    });
+    this.onMutationLifecycle?.({ phase: 'started', ref: { ...ref } });
+    return token;
+  }
+
+  private settleDraftSubmission(token: object): void {
+    const submitted = this.submittedDrafts.get(token);
+    if (!submitted) return;
+    this.submittedDrafts.delete(token);
+    this.onMutationLifecycle?.({ phase: 'settled', ref: { ...submitted.ref } });
+  }
+
+  private blockCommandDraftKind(
+    command: Extract<
+      TaskCommand,
+      {
+        readonly type:
+          | 'set-description'
+          | 'add-subtask'
+          | 'delete-subtask'
+          | 'reorder-subtask'
+          | 'add-comment'
+          | 'update-comment'
+          | 'delete-comment';
+      }
+    >,
+  ): RightPanelDraftState['kind'] | undefined {
+    if (command.type === 'set-description') return 'description';
+    if (command.type === 'add-subtask') return 'new-subtask';
+    if (command.type === 'add-comment') return 'new-comment';
+    if (command.type === 'update-comment') return 'existing-comment';
+    return undefined;
   }
 
   restoreDraftState(bundle: RightPanelDraftBundle | undefined, currentRoot: TaskSnapshot): void {
     if (!bundle) return;
     let focusTarget: HTMLElement | undefined;
     for (const draft of bundle.entries) {
-      const restoredFocus = this.restoreDraftEntry(draft, currentRoot);
+      const restoredFocus = this.restoreDraftEntry(draft, currentRoot, bundle.origin);
       if (restoredFocus) focusTarget = restoredFocus;
     }
     if (focusTarget) {
@@ -234,22 +320,23 @@ export class RightPanel {
   private restoreDraftEntry(
     draft: RightPanelDraftState,
     currentRoot: TaskSnapshot,
+    origin?: RightPanelDraftBundle['origin'],
   ): HTMLElement | undefined {
     const rebased = rebaseRightPanelDraft(draft, currentRoot);
     if (!rebased) {
-      if (isDirtyDraft(draft)) this.appendDetachedDraft(draft);
+      if (isDirtyDraft(draft)) this.appendDetachedDraft(draft, origin);
       return undefined;
     }
     const stack = this.state.get('taskStack');
     const task = stack[stack.length - 1];
     if (!task) {
-      if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased);
+      if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased, origin);
       return undefined;
     }
     if (rebased.kind === 'recurrence-editor') {
       const chip = this.el.querySelector<HTMLElement>('.tc-repeat-chip');
       if (!chip) {
-        if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased);
+        if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased, origin);
         return undefined;
       }
       this.showRecurrencePopover(chip, task, stack, false);
@@ -282,7 +369,7 @@ export class RightPanel {
       edit = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-input');
     }
     if (!edit) {
-      if (rebased.dirty) this.appendDetachedDraft(rebased);
+      if (rebased.dirty) this.appendDetachedDraft(rebased, origin);
       return undefined;
     }
     edit.value = rebased.value;
@@ -292,15 +379,46 @@ export class RightPanel {
 
   detachDraftState(bundle: RightPanelDraftBundle | undefined): void {
     for (const draft of bundle?.entries ?? []) {
-      if (isDirtyDraft(draft)) this.appendDetachedDraft(draft);
+      if (isDirtyDraft(draft)) this.appendDetachedDraft(draft, bundle?.origin);
     }
   }
 
-  private appendDetachedDraft(draft: RightPanelDraftState): void {
+  private appendDetachedDraft(
+    draft: RightPanelDraftState,
+    origin?: RightPanelDraftBundle['origin'],
+  ): void {
     const key = draftIdentity(draft);
-    if (this.detachedDrafts.some((entry) => entry.key === key)) return;
-    this.detachedDrafts.push({ id: ++this.nextDetachedDraftId, key, draft });
+    const index = this.detachedDrafts.findIndex((entry) => entry.key === key);
+    let id: number;
+    if (index >= 0) {
+      const existing = this.detachedDrafts[index]!;
+      id = existing.id;
+      this.detachedDrafts[index] = { id, key, draft, origin: origin ?? existing.origin };
+    } else {
+      id = ++this.nextDetachedDraftId;
+      this.detachedDrafts.push({ id, key, draft, origin });
+    }
+    this.detachedAnnouncement = `Draft preserved for ${this.detachedDraftLabel(draft, origin)}.`;
     this.renderDetachedDraftTray();
+    if (draft.hadFocus) {
+      if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
+      this.detachedFocusTimer = this.el.ownerDocument.defaultView?.setTimeout(() => {
+        this.detachedFocusTimer = undefined;
+        this.el
+          .querySelector<HTMLButtonElement>(
+            `[data-tc-detached-draft="${id}"] .tc-detached-draft-copy`,
+          )
+          ?.focus();
+      }, 0);
+    }
+  }
+
+  private detachedDraftLabel(
+    draft: RightPanelDraftState,
+    origin?: RightPanelDraftBundle['origin'],
+  ): string {
+    const field = draft.kind.replace(/-/gu, ' ');
+    return origin ? `${origin.taskTitle}, ${field}` : field;
   }
 
   private renderDetachedDraftTray(): void {
@@ -308,15 +426,32 @@ export class RightPanel {
     if (this.detachedDrafts.length === 0) return;
     const tray = this.el.createDiv({ cls: 'tc-detached-drafts' });
     tray.createDiv({ cls: 'tc-detached-drafts-title', text: 'Unsaved drafts' });
+    tray.createDiv({
+      cls: 'tc-detached-drafts-status',
+      text: this.detachedAnnouncement,
+      attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+    });
     for (const entry of this.detachedDrafts) {
-      const detached = tray.createDiv({ cls: 'tc-detached-draft' });
+      const label = this.detachedDraftLabel(entry.draft, entry.origin);
+      const detached = tray.createDiv({
+        cls: 'tc-detached-draft',
+        attr: {
+          'aria-label': `Unsaved draft for ${label}`,
+          'data-tc-detached-draft': String(entry.id),
+        },
+      });
       detached.createDiv({
-        text: `Unsaved ${entry.draft.kind.replace(/-/gu, ' ')} draft:`,
+        cls: 'tc-detached-draft-label',
+        text: label,
       });
       detached.createEl('pre', { text: draftPlainText(entry.draft) });
       const status = detached.createDiv({ attr: { 'aria-live': 'polite' } });
       const copy = detached.createEl('button', { cls: 'tc-detached-draft-copy', text: 'Copy' });
       copy.addEventListener('click', () => {
+        if (this.detachedFocusTimer !== undefined) {
+          window.clearTimeout(this.detachedFocusTimer);
+          this.detachedFocusTimer = undefined;
+        }
         void (async () => {
           try {
             const clipboard = this.el.ownerDocument.defaultView?.navigator.clipboard;
@@ -1506,8 +1641,13 @@ export class RightPanel {
     if (!target || !this.tasks) return;
     const patch = { markdownTitle: { type: 'set' as const, value: newText } };
     const command = { type: 'patch', target, patch } as TaskCommand;
-    const result = await this.tasks.execute(command);
-    this.applyPlanningResult(result, target);
+    const submission = this.beginDraftSubmission(target, 'title');
+    try {
+      const result = await this.tasks.execute(command);
+      this.applyPlanningResult(result, target);
+    } finally {
+      this.settleDraftSubmission(submission);
+    }
   }
 
   private async appendToTitle(task: TaskLike, text: string): Promise<void> {
@@ -1604,11 +1744,15 @@ export class RightPanel {
   ): Promise<boolean> {
     if (!this.tasks) return false;
     const initiatingStack = this.state.get('taskStack');
+    const draftKind = this.blockCommandDraftKind(command);
+    const submission = this.beginDraftSubmission(target, draftKind);
     let result: TaskCommandResult;
     try {
       result = await this.tasks.execute(command);
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    } finally {
+      this.settleDraftSubmission(submission);
     }
     this.applyPlanningResult(result, target, initiatingStack);
     return result.type === 'ok';
@@ -1654,6 +1798,12 @@ export class RightPanel {
     if (!target || !this.tasks) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
     }
+    const submission = this.beginDraftSubmission(
+      target,
+      patch.recurrence !== undefined || patch.onCompletion !== undefined
+        ? 'recurrence-editor'
+        : undefined,
+    );
     let result: TaskCommandResult;
     try {
       if (target.type === 'task') {
@@ -1666,7 +1816,9 @@ export class RightPanel {
         result = await this.tasks.execute({ type: 'patch', target, patch: subtaskPatch });
       }
     } catch {
-      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    } finally {
+      this.settleDraftSubmission(submission);
     }
     this.applyPlanningResult(result, target);
     return result;

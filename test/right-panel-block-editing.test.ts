@@ -357,10 +357,42 @@ describe('RightPanel block editing', () => {
     state.set('taskStack', [current]);
     panel.restoreDraftState(draft, current);
 
-    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain('local unsaved');
-    expect(container.querySelector('.tc-detached-draft-copy')).not.toBeNull();
+    const detached = container.querySelector<HTMLElement>('.tc-detached-draft')!;
+    const copy = container.querySelector<HTMLButtonElement>('.tc-detached-draft-copy')!;
+    expect(detached.textContent).toContain('local unsaved');
+    expect(detached.getAttribute('aria-label')).toContain('root');
+    expect(detached.getAttribute('aria-label')).toContain('existing comment');
+    expect(copy).not.toBeNull();
     expect(container.querySelector('.tc-detached-draft-discard')).not.toBeNull();
+    expect(container.querySelector('[role="status"][aria-live="polite"]')?.textContent).toContain(
+      'Draft preserved',
+    );
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    expect(activeDocument.activeElement).toBe(copy);
     expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('upserts the newest value when the same draft detaches again', async () => {
+    const initial = snapshot('old');
+    const { panel, state } = await panelWith(initial, vi.fn<TaskApplicationApi['execute']>());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const input = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    input.value = 'first value';
+    const first = panel.captureDraftState()!;
+    panel.detachDraftState(first);
+    input.value = 'newest value';
+    const newest = panel.captureDraftState()!;
+    panel.detachDraftState(newest);
+
+    const detached = container.querySelectorAll<HTMLElement>('.tc-detached-draft');
+    expect(detached).toHaveLength(1);
+    expect(detached[0]?.textContent).toContain('newest value');
+    expect(detached[0]?.textContent).not.toContain('first value');
+    state.set('taskStack', []);
+    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain('newest value');
     panel.destroy();
   });
 

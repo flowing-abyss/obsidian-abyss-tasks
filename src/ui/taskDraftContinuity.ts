@@ -66,6 +66,11 @@ export type RightPanelDraftState =
 
 export interface RightPanelDraftBundle {
   readonly entries: readonly RightPanelDraftState[];
+  readonly origin?: {
+    readonly taskTitle: string;
+    readonly filePath: string;
+    readonly line: number;
+  };
 }
 
 type TaskNode = TaskSnapshot | SubtaskSnapshot;

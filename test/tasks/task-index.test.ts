@@ -334,6 +334,52 @@ describe('TaskIndex lifecycle and events', () => {
     index.destroy();
   });
 
+  it('fresh-mints a recreated root while an unrelated sibling survives', async () => {
+    const alpha = '- [ ] alpha';
+    const sibling = '- [ ] sibling';
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup(
+      { 'task.md': `${alpha}\n${sibling}\n` },
+      authority,
+    );
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+    ]);
+    await index.initialize();
+    const observedAlpha = index.list()[0]!;
+    const file = mdFile(app, 'task.md');
+
+    fireChanged(file, `${sibling}\n`, rootsCache([0]));
+    fireChanged(file, `${alpha}\n${sibling}\n`, rootsCache([0, 1]));
+
+    const recreatedAlpha = index.list()[0]!;
+    expect(recreatedAlpha.ref.revision).not.toBe(observedAlpha.ref.revision);
+    expect(['exact', 'rebased']).not.toContain(index.resolve(observedAlpha.ref).type);
+    index.destroy();
+  });
+
+  it('does not identify either stale duplicate after two identical roots collapse to one', async () => {
+    const duplicate = '- [ ] duplicate';
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup(
+      { 'task.md': `${duplicate}\n${duplicate}\n` },
+      authority,
+    );
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+    ]);
+    await index.initialize();
+    const [first, second] = index.list();
+
+    fireChanged(mdFile(app, 'task.md'), `${duplicate}\n`, rootsCache([0]));
+
+    expect(['exact', 'rebased']).not.toContain(index.resolve(first!.ref).type);
+    expect(['exact', 'rebased']).not.toContain(index.resolve(second!.ref).type);
+    index.destroy();
+  });
+
   it('does not resolve a different task that replaces the observed stale line', async () => {
     const authority = new TaskRefAuthority('index-session');
     const { app, index, fireChanged } = await setup({ 'task.md': '- [ ] observed\n' }, authority);
@@ -732,6 +778,33 @@ describe('TaskIndex lifecycle and events', () => {
 
     index.destroy();
     expect(reconciliationState(index)).toEqual({ generations: [], transitions: [] });
+  });
+
+  it('clears pending authority state when the owning index is destroyed', async () => {
+    const source = '- [ ] old\n';
+    const candidate = '- [ ] changed\n';
+    const authority = new TaskRefAuthority('lifecycle-session');
+    const { index } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const observed = index.list()[0]!;
+    const successor = authority.successor(observed.ref.revision, candidate.trimEnd());
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: 'task.md',
+        candidateFingerprint: taskRefContentFingerprint(candidate),
+        candidateLength: candidate.length,
+        expectedRevision: observed.ref.revision,
+        roots: [{ line: 0, source: candidate.trimEnd(), revision: successor }],
+      },
+      observed.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing staged transition');
+    authority.commit(staged.token);
+
+    index.destroy();
+
+    expect(authority.observeTransition('task.md', candidate)).toBeUndefined();
   });
 
   it('unsubscribe and destroy dispose listeners and pending notifications', async () => {

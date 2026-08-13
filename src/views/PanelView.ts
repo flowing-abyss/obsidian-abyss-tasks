@@ -19,7 +19,12 @@ import type {
   TaskRef,
   TaskResolution,
 } from '../tasks';
-import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from '../ui/taskSelection';
+import {
+  rebuildTaskSelection,
+  renamedRootSelection,
+  rootTaskRef,
+  type TaskSelectionNode,
+} from '../ui/taskSelection';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
 
@@ -155,8 +160,10 @@ export class PanelView extends ItemView {
       this.app,
       this.statusRegistry,
       this.settings,
-      (root) => this.acknowledgeOwnWrite(root),
+      undefined,
       this.tasks,
+      undefined,
+      (event) => this.trackOwnWrite(event),
     );
 
     // Keep panels fresh when the project set / stats change. Only the left
@@ -233,6 +240,16 @@ export class PanelView extends ItemView {
       const root = stack[0];
       const ref = root ? rootTaskRef(root) : undefined;
       if (!ref || !this.affects(event, ref.filePath)) return;
+      if (root && 'source' in root) {
+        const renamed = renamedRootSelection(event, root, this.queries);
+        if (renamed) {
+          const draft = this.right.captureDraftState();
+          this.ownedWriteRef = undefined;
+          this.state.set('taskStack', rebuildTaskSelection(renamed, stack));
+          this.right.restoreDraftState(draft, renamed);
+          return;
+        }
+      }
       this.applyResolution(this.queries.resolve(ref));
     });
   }
@@ -262,15 +279,23 @@ export class PanelView extends ItemView {
   private applyResolution(resolution: TaskResolution): void {
     const stack = this.state.get('taskStack');
     this.clearSelectionMessage();
-    this.ownedWriteRef = undefined;
     if (resolution.type === 'exact' || resolution.type === 'rebased') {
       const current = resolution.type === 'exact' ? resolution.task : resolution.current;
-      const draft = this.right.captureDraftState();
+      const consumedOwnedRef =
+        resolution.type === 'rebased' &&
+        resolution.evidence === 'authority-transition' &&
+        this.ownedWriteRef &&
+        this.sameRef(this.ownedWriteRef, resolution.previous.ref)
+          ? this.ownedWriteRef
+          : undefined;
+      const draft = this.right.captureDraftState(consumedOwnedRef);
+      this.ownedWriteRef = undefined;
       this.state.set('taskStack', rebuildTaskSelection(current, stack));
       this.right.restoreDraftState(draft, current);
       return;
     }
     const draft = this.right.captureDraftState();
+    this.ownedWriteRef = undefined;
     if (resolution.type === 'visual') {
       this.state.set('taskStack', [resolution.current]);
       this.right.detachDraftState(draft);
@@ -294,6 +319,19 @@ export class PanelView extends ItemView {
     if (suppliedRef && (!selectedRef || !this.sameRef(suppliedRef, selectedRef))) return;
     const acknowledged = suppliedRef ?? selectedRef;
     this.ownedWriteRef = acknowledged ? { ...acknowledged } : undefined;
+  }
+
+  private trackOwnWrite(event: {
+    readonly phase: 'started' | 'settled';
+    readonly ref: TaskRef;
+  }): void {
+    if (event.phase === 'started') {
+      this.acknowledgeOwnWrite(event.ref);
+      return;
+    }
+    if (this.ownedWriteRef && this.sameRef(this.ownedWriteRef, event.ref)) {
+      this.ownedWriteRef = undefined;
+    }
   }
 
   private convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void {
