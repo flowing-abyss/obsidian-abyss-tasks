@@ -314,7 +314,6 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
         : undefined;
     if (kind === 'move' && !grabbedDate) return;
 
-    if (kind === 'move') source.focus();
     const pointerId = event.pointerId;
     const pointerOrigin = { x: event.clientX, y: event.clientY };
     const capturedElement = event.currentTarget as HTMLElement;
@@ -477,6 +476,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
       clearPreview();
       source.classList.remove('is-picked-up');
       delete source.dataset['activeResize'];
+      delete capturedElement.dataset['activeResize'];
       if (kind !== 'move') {
         if (originalDraggable === null) source.removeAttribute('draggable');
         else source.setAttribute('draggable', originalDraggable);
@@ -517,8 +517,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
 
     owner.begin(dispose);
     source.classList.toggle('is-picked-up', kind === 'move');
-    if (kind === 'start') source.dataset['activeResize'] = 'start-date';
-    else if (kind !== 'move') source.dataset['activeResize'] = 'due-date';
+    if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
     if (kind !== 'move') source.setAttribute('draggable', 'false');
     capture(capturedElement, pointerId);
     ownerWindow.addEventListener('pointermove', onPointerMove);

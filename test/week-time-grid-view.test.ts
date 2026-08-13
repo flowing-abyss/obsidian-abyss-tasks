@@ -543,7 +543,8 @@ describe('WeekTimeGridView', () => {
     ]);
     expect(container.querySelector('.tc-tg-allday-cell.is-drag-over')).toBeNull();
     expect(body.getAttribute('draggable')).toBe('false');
-    expect(body.dataset['activeResize']).toBe('due-date');
+    expect(handle.dataset['activeResize']).toBe('true');
+    expect(body.dataset['activeResize']).toBeUndefined();
     const preview = previews[0]!;
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     expect(preview.textContent).toContain(t.title);
@@ -564,6 +565,7 @@ describe('WeekTimeGridView', () => {
     expect(cbs.onExtendToSpan).toHaveBeenCalledTimes(1);
     expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
     expect(body.getAttribute('draggable')).toBe('true');
+    expect(handle.dataset['activeResize']).toBeUndefined();
     expect(body.dataset['activeResize']).toBeUndefined();
     view.destroy();
     restoreElementFromPoint();
@@ -665,6 +667,7 @@ describe('WeekTimeGridView', () => {
 
       expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
       expect(body.getAttribute('draggable')).toBe('true');
+      expect(handle.dataset['activeResize']).toBeUndefined();
       expect(body.dataset['activeResize']).toBeUndefined();
       window.dispatchEvent(
         new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 32 }),
@@ -706,6 +709,7 @@ describe('WeekTimeGridView', () => {
 
       expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
       expect(body.getAttribute('draggable')).toBe('true');
+      expect(handle.dataset['activeResize']).toBeUndefined();
       expect(body.dataset['activeResize']).toBeUndefined();
       window.dispatchEvent(
         new PointerEvent('pointerup', { clientX: 450, clientY: 50, pointerId: 33 }),

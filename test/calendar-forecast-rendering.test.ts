@@ -443,7 +443,7 @@ function expectLegacyVisualContract(fixture: LegacyVisualFixture): void {
   expect(forecast.querySelector('input[type="checkbox"]')).toBeNull();
   expect(forecast.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
   const forecastInner = forecast.querySelector<HTMLElement>(':scope > .inner')!;
-  expect(winningDeclaration(style, forecastInner, 'content', 'before')?.value).toBe('""');
+  expect(winningDeclaration(style, forecastInner, 'content', 'before')).toBeUndefined();
 
   for (const materialized of [ordinary, recurring]) {
     expect(materialized.dataset['controlSlot']).toBe('occupied');
@@ -865,7 +865,7 @@ describe('forecast visual system', () => {
     expect(forecastItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
   });
 
-  it('keeps only a checkbox-sized control slot when a calendar leading row has no recurrence badge', () => {
+  it('keeps reserved leading-slot diagnostics out of layout and hit geometry', () => {
     const style = installCalendarStyles();
 
     for (const surface of [
@@ -882,8 +882,11 @@ describe('forecast visual system', () => {
       ghost.setAttribute('data-control-slot', 'reserved');
       ghost.setAttribute('data-recurrence-slot', 'reserved');
 
-      expect(winningDeclaration(style, ghost, 'flex-basis', 'before')?.value).toBe('1.6em');
-      expect(winningDeclaration(style, ghost, 'inline-size', 'before')?.value).toBe('1.6em');
+      expect(ghost.childElementCount).toBe(0);
+      expect(winningDeclaration(style, ghost, 'content', 'before')).toBeUndefined();
+      expect(winningDeclaration(style, ghost, 'flex-basis', 'before')).toBeUndefined();
+      expect(winningDeclaration(style, ghost, 'inline-size', 'before')).toBeUndefined();
+      expect(winningDeclaration(style, ghost, 'min-width', 'before')).toBeUndefined();
     }
   });
 

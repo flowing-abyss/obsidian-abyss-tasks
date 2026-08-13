@@ -11,6 +11,7 @@ import { renderStatusMarker } from '../../ui/StatusMarker';
 import { showStatusMenuAt } from '../../ui/statusMenu';
 import { statusTitleClass } from '../../ui/statusTitleClass';
 import type { CalendarOccurrence } from '../calendarOccurrences';
+import { renderTimedContent } from './calendarPreview';
 import type { TimedDragTarget, TimedVerticalResizeTarget } from './dragGeometry';
 import {
   layoutTimedDay,
@@ -27,7 +28,6 @@ import {
   bindForecastInteractions,
   bindMaterializedInteractions,
   hasCountBadges,
-  renderCalendarLeadingSlots,
   renderCountBadges,
   type CalendarOccurrenceLookup,
   type ForecastInteractionCallbacks,
@@ -172,43 +172,56 @@ function timedSpanRole(
   return localDate ? `${baseRole}:${localDate}` : baseRole;
 }
 
-function renderTimedBlockHead(
+function timedCountLabel(task: TaskSnapshot): string | undefined {
+  const parts: string[] = [];
+  if (task.subtasks.length > 0) {
+    parts.push(
+      `${task.subtasks.filter((subtask) => subtask.status === 'done').length}/${task.subtasks.length}`,
+    );
+  }
+  if (task.comments.length > 0) parts.push(String(task.comments.length));
+  if (task.presentation.linkCount > 0) parts.push(String(task.presentation.linkCount));
+  return parts.length > 0 ? parts.join(' ') : undefined;
+}
+
+function renderTimedBlockControl(
+  row: HTMLElement,
+  task: TaskSnapshot,
+  callbacks: TimedBlockCallbacks,
+): void {
+  renderStatusMarker(row, {
+    task,
+    registry: callbacks.statusRegistry,
+    interactive: true,
+    onLeftClick: () => callbacks.onToggle(task),
+    onContextMenu: (event) => {
+      event.stopPropagation();
+      const anchor = event.currentTarget as HTMLElement;
+      showStatusMenuAt(event, {
+        task,
+        registry: callbacks.statusRegistry,
+        owner: callbacks.component,
+        onPickStatus: (status) => callbacks.onSetStatus(task, status),
+        onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
+        ...(callbacks.onEditRepeat && {
+          onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
+        }),
+      });
+    },
+  });
+}
+
+function renderTimedBlockTitle(
   head: HTMLElement,
   task: TaskSnapshot,
   occurrence: CalendarOccurrence,
   terminal: boolean,
   callbacks: TimedBlockCallbacks,
 ): void {
-  renderCalendarLeadingSlots(
-    head,
-    task.recurrence,
-    occurrence.kind === 'forecast',
-    occurrence.kind === 'materialized' && terminal
-      ? (slot) =>
-          renderStatusMarker(slot, {
-            task,
-            registry: callbacks.statusRegistry,
-            interactive: true,
-            onLeftClick: () => callbacks.onToggle(task),
-            onContextMenu: (event) => {
-              event.stopPropagation();
-              const anchor = event.currentTarget as HTMLElement;
-              showStatusMenuAt(event, {
-                task,
-                registry: callbacks.statusRegistry,
-                owner: callbacks.component,
-                onPickStatus: (status) => callbacks.onSetStatus(task, status),
-                onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
-                ...(callbacks.onEditRepeat && {
-                  onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
-                }),
-              });
-            },
-          })
-      : undefined,
-  );
   if (terminal && occurrence.kind === 'materialized') {
-    const title = head.createDiv({ cls: `tc-tg-block-title${statusTitleClass(task.status)}` });
+    const title = head.createDiv({
+      cls: `tc-tg-block-title tc-calendar-title${statusTitleClass(task.status)}`,
+    });
     renderTaskText(title, task.markdownTitle, {
       app: callbacks.app,
       sourcePath: task.source.filePath,
@@ -217,7 +230,7 @@ function renderTimedBlockHead(
     return;
   }
   head.createDiv({
-    cls: `${terminal ? 'tc-tg-block-title' : 'tc-tg-block-continuation-title'}${statusTitleClass(task.status)}`,
+    cls: `${terminal ? 'tc-tg-block-title' : 'tc-tg-block-continuation-title'} tc-calendar-title${statusTitleClass(task.status)}`,
     text: plainGhostTaskTitle(task),
   });
 }
@@ -282,32 +295,26 @@ export function renderTimedBlocksForDay(
       const textColorVar = tagFillTextColorVar(block, tagColor);
       if (textColorVar) block.setCssProps({ '--tc-tag-text-color': textColorVar });
     }
-    // Time-range+duration subtitle renders first (top of the block), e.g. "09:00–11:00 (2h)".
-    // Task 35: shares its row with the count-badges container (see below) via `.tc-tg-block-
-    // toprow`'s `justify-content: space-between` — real flex layout, not an absolutely
-    // positioned overlay, so the badges land in the block's visual top-right corner without
-    // ever covering the subtitle text (an earlier absolute-position attempt did overlap it on
-    // narrower blocks).
-    const topRow = block.createDiv({ cls: 'tc-tg-block-toprow' });
-    topRow.createDiv({
-      cls: 'tc-tg-block-subtitle',
-      text: `${minutesToTimeString(p.startMinutes)}–${minutesToTimeString(p.startMinutes + p.durationMinutes)} (${formatDurationFromMinutes(p.durationMinutes)})`,
-    });
-    // Task 35: count badges (subtasks/comments/links) only — tag chips were removed entirely
-    // for timed blocks (the block's own tag-colored fill, set above, already conveys the tag;
-    // a chip repeating it was redundant). Skipped entirely when the task has no counts, so a
-    // plain/tag-only task doesn't gain an empty container. Non-interactive (see
-    // renderTaskMeta.ts) — safe to sit inside the block without needing the pointerdown
-    // exclusion-guard below.
-    if (hasCountBadges(p.task)) {
-      const badges = topRow.createDiv({ cls: 'tc-tg-block-badges' });
-      renderCountBadges(badges, p.task);
-    }
-    // Status marker + title share one flex row so the checkbox and title render on the
-    // same line instead of stacking (the title div is block-level, which previously
-    // forced a line break after the inline marker span).
-    const head = block.createDiv({ cls: 'tc-tg-block-head' });
-    renderTimedBlockHead(head, p.task, occurrence, terminal, callbacks);
+    const hasCounts = hasCountBadges(p.task);
+    const countLabel = timedCountLabel(p.task);
+    renderTimedContent(
+      block,
+      {
+        timeLabel: `${minutesToTimeString(p.startMinutes)}–${minutesToTimeString(p.startMinutes + p.durationMinutes)} (${formatDurationFromMinutes(p.durationMinutes)})`,
+        title: p.task.title,
+        ...(p.task.recurrence && { recurrence: p.task.recurrence }),
+        actionable: occurrence.kind === 'materialized' && terminal,
+        ...(countLabel && { countLabel }),
+      },
+      {
+        forecast: occurrence.kind === 'forecast',
+        ...(occurrence.kind === 'materialized' && terminal
+          ? { renderControl: (row) => renderTimedBlockControl(row, p.task, callbacks) }
+          : {}),
+        ...(hasCounts ? { renderCounts: (row) => renderCountBadges(row, p.task) } : {}),
+        renderTitle: (head) => renderTimedBlockTitle(head, p.task, occurrence, terminal, callbacks),
+      },
+    );
     bindMaterializedInteractions(occurrence, (target) => {
       if (target.type !== 'task') return;
       attachTimedBlockControls(

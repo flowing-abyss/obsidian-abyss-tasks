@@ -82,9 +82,8 @@ export function applyOccurrenceDomState(
 }
 
 /**
- * Keeps calendar title baselines stable without inventing an interactive control for forecasts or
- * continuation pieces. The recurrence slot delegates its only visible content to the shared badge
- * renderer, so every calendar surface retains one repeat icon implementation.
+ * Renders only controls that actually exist. Slot attributes remain useful diagnostics, but a
+ * reserved slot has no node, hit target, pseudo-content, or layout width.
  */
 export function renderCalendarLeadingSlots(
   container: HTMLElement,
@@ -92,7 +91,7 @@ export function renderCalendarLeadingSlots(
   forecast: boolean,
   renderControl?: (row: HTMLElement) => void,
 ): void {
-  container.addClass('tc-calendar-leading-row');
+  container.classList.add('tc-calendar-leading-row');
   const childCount = container.childElementCount;
   renderControl?.(container);
   container.setAttribute(

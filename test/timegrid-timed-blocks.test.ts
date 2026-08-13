@@ -47,7 +47,29 @@ function expectInertPreview(preview: HTMLElement, title: string): void {
     preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
       ?.textContent,
   ).toBe(title);
-  expect(preview.querySelector('.tc-status-marker')).toBeNull();
+  expect(preview.querySelector('.tc-status-marker')?.getAttribute('role') ?? null).toBeNull();
+  expect(preview.querySelector('a')).toBeNull();
+  expect(preview.getAttribute('tabindex')).toBeNull();
+}
+
+function expectInertTimedPreview(
+  preview: HTMLElement,
+  title: string,
+  expectedTime: string,
+  actionable: boolean,
+): void {
+  expect(preview.getAttribute('aria-hidden')).toBe('true');
+  const shell = preview.querySelector<HTMLElement>(':scope > .tc-calendar-preview-shell')!;
+  expect(Array.from(shell.children).map((child) => child.className)).toEqual([
+    'tc-tg-block-toprow',
+    'tc-tg-block-head tc-calendar-leading-row',
+  ]);
+  expect(shell.querySelector('.tc-tg-block-toprow')?.textContent).toContain(expectedTime);
+  expect(shell.querySelector('.tc-tg-block-head .tc-calendar-title')?.textContent).toContain(title);
+  const marker = shell.querySelector<HTMLElement>('.tc-status-marker');
+  expect(marker !== null).toBe(actionable);
+  expect(marker?.getAttribute('role')).toBeNull();
+  expect(marker?.getAttribute('tabindex')).toBeNull();
   expect(preview.querySelector('a')).toBeNull();
   expect(preview.getAttribute('tabindex')).toBeNull();
 }
@@ -473,7 +495,7 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 22 }));
   });
 
-  it('focuses and selects a block when its body starts a pointer gesture', () => {
+  it('keeps an already focused block focused while its body starts a pointer gesture', () => {
     const { root, owner, columns } = timedGestureGrid();
     activeDocument.body.append(root);
     const cbs = callbacks();
@@ -483,6 +505,7 @@ describe('Task 2 unified timed interaction contract', () => {
     });
     const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    block.focus();
 
     block.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 23 }),
@@ -616,6 +639,12 @@ describe('Task 2 unified timed interaction contract', () => {
       { date: '2026-07-06', terminal: false },
     );
     const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const sourceIdentity = block;
+    const gridRow = columns[0].day.parentElement as HTMLElement;
+    gridRow.scrollTop = 137;
+    const focusSentinel = document.createElement('button');
+    document.body.appendChild(focusSentinel);
+    focusSentinel.focus();
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     block.style.setProperty('--tc-tag-color', '#123456');
     block.style.setProperty('--tc-tag-text-color', '#fefefe');
@@ -638,6 +667,10 @@ describe('Task 2 unified timed interaction contract', () => {
     expect(preview.style.height).toBe('48px');
     expect(block.style.top).toBe(originalTop);
     expect(block.style.height).toBe(originalHeight);
+    expect(block.isSameNode(sourceIdentity)).toBe(true);
+    expect(gridRow.scrollTop).toBe(137);
+    expect(document.activeElement).toBe(focusSentinel);
+    expect(block.querySelectorAll('[data-active-resize="true"]')).toHaveLength(0);
 
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 125, clientY: 592, pointerId: 1 }),
@@ -653,6 +686,33 @@ describe('Task 2 unified timed interaction contract', () => {
     expect(Object.isFrozen(target)).toBe(true);
     expect(preview.dataset['target']).toBe(JSON.stringify(target));
     expect(preview.isConnected).toBe(false);
+    focusSentinel.remove();
+  });
+
+  it('updates one stable timed preview overlay instead of rebuilding it on every pointer move', () => {
+    const { owner, columns } = timedGestureGrid();
+    const t = task({ planning: { due: '2026-07-06', time: '09:00', duration: 60 } });
+    renderTimedBlocksForDay(columns[0].hour, [t], { ...callbacks(), interactionOwner: owner }, [], {
+      date: '2026-07-06',
+      terminal: true,
+    });
+    const block = columns[0].hour.querySelector<HTMLElement>('.tc-tg-block')!;
+    block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
+    block.dispatchEvent(
+      new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 41 }),
+    );
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 41 }),
+    );
+    const first = columns[0].hour.querySelector<HTMLElement>('.tc-tg-drag-preview')!;
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { clientX: 25, clientY: 640, pointerId: 41 }),
+    );
+    const second = columns[0].hour.querySelector<HTMLElement>('.tc-tg-drag-preview')!;
+
+    expect(second).toBe(first);
+    expectInertTimedPreview(second, t.title, '11:00–12:00 (1h)', true);
+    window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 41 }));
   });
 
   it('moves to all-day by the delta from the grabbed visible ghost date', () => {
@@ -710,6 +770,7 @@ describe('Task 2 unified timed interaction contract', () => {
     const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
     expect(preview.style.height).toBe('72px');
     expectInertPreview(preview, t.title);
+    expectInertTimedPreview(preview, t.title, '09:00–10:30 (1h30m)', true);
     expect(preview.textContent).toContain('09:00–10:30 (1h30m)');
     expect(block.style.height).toBe(originalHeight);
     window.dispatchEvent(
@@ -747,7 +808,8 @@ describe('Task 2 unified timed interaction contract', () => {
     handle.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 50, clientY: 532, pointerId: 4 }),
     );
-    expect(block.dataset['activeResize']).toBe('start-time');
+    expect(handle.dataset['activeResize']).toBe('true');
+    expect(block.dataset['activeResize']).toBeUndefined();
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 50, clientY: 508, pointerId: 4 }),
     );
@@ -769,7 +831,7 @@ describe('Task 2 unified timed interaction contract', () => {
       endMinutes: 600,
     });
     expect(onTimedMove).not.toHaveBeenCalled();
-    expect(block.dataset['activeResize']).toBeUndefined();
+    expect(handle.dataset['activeResize']).toBeUndefined();
   });
 
   it('renders a block-sized boundary preview and commits that same frozen boundary target', () => {
@@ -864,13 +926,14 @@ describe('Task 2 unified timed interaction contract', () => {
     handle.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 5 }),
     );
-    expect(block.dataset['activeResize']).toBe('duration');
+    expect(handle.dataset['activeResize']).toBe('true');
+    expect(block.dataset['activeResize']).toBeUndefined();
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 5 }),
     );
     owner.disposeActive();
     expect(columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview')).toBeNull();
-    expect(block.dataset['activeResize']).toBeUndefined();
+    expect(handle.dataset['activeResize']).toBeUndefined();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 5 }),
     );
@@ -897,7 +960,8 @@ describe('Task 2 unified timed interaction contract', () => {
         new PointerEvent('pointerdown', { bubbles: true, clientY: 580, pointerId: 6 }),
       );
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 628, pointerId: 6 }));
-      expect(block.dataset['activeResize']).toBe('duration');
+      expect(handle.dataset['activeResize']).toBe('true');
+      expect(block.dataset['activeResize']).toBeUndefined();
       expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).not.toBeNull();
 
       if (eventType === 'blur') window.dispatchEvent(new Event('blur'));
@@ -907,7 +971,7 @@ describe('Task 2 unified timed interaction contract', () => {
         handle.dispatchEvent(new Event('lostpointercapture'));
       }
 
-      expect(block.dataset['activeResize']).toBeUndefined();
+      expect(handle.dataset['activeResize']).toBeUndefined();
       expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).toBeNull();
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 628, pointerId: 6 }));
       expect(onTimedDuration).not.toHaveBeenCalled();
@@ -946,23 +1010,20 @@ describe('renderTimedBlocksForDay', () => {
     expect(declarationsFor('.tc-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
   });
 
-  it('reveals edge-local grips on handle hover, active press, and only the matching active edge', () => {
+  it('reveals only the exact hovered or actively resized edge, never whole-block focus', () => {
     const revealed = declarationsForRuleContaining(
       '.tc-tg-resize-handle:hover::after',
       '.tc-tg-span-edge:hover::after',
       '.tc-tg-resize-handle:active::after',
       '.tc-tg-span-edge:active::after',
-      '.tc-tg-block:focus-within > .tc-tg-span-edge::after',
-      '.tc-span-piece:focus-within > .tc-tg-span-edge::after',
-      "[data-active-resize='start-time'] > [data-resize-edge='start-time']::after",
-      "[data-active-resize='duration'] > [data-resize-edge='duration']::after",
-      "[data-active-resize='start-date'] > [data-resize-edge='start-date']::after",
-      "[data-active-resize='due-date'] > [data-resize-edge='due-date']::after",
+      "[data-active-resize='true']::after",
     );
 
     expect(revealed).toMatch(/opacity\s*:\s*1/u);
-    expect(css).not.toContain('.tc-tg-block:focus-within > .tc-tg-resize-handle::after');
-    expect(css).not.toMatch(/\[data-active-resize\](?!\s*=)/u);
+    expect(css).not.toContain('.tc-tg-block:focus-within > .tc-tg-span-edge::after');
+    expect(css).not.toContain('.tc-span-piece:focus-within > .tc-tg-span-edge::after');
+    expect(css).not.toContain('.tc-span-piece:hover > .tc-tg-span-edge--proxy::after');
+    expect(css).not.toMatch(/\[data-active-resize=(?!['"]true['"])/u);
     expect(
       declarationsForRuleContaining(
         '.tc-tg-body[data-active-resize]',
@@ -3024,7 +3085,7 @@ describe('calendar surface style contract', () => {
     );
     const startHandle = declarationsForExactRule('.tc-tg-span-edge--left');
     const dueHandle = declarationsForExactRule('.tc-tg-span-edge--right');
-    const proxyRail = declarationsFor('.tc-span-piece:hover > .tc-tg-span-edge--proxy::after');
+    const proxyRail = declarationsFor('.tc-tg-span-edge--proxy');
     const proxyRailPosition = declarationsForExactRule('.tc-tg-span-edge--proxy::after');
     const marker = declarationsFor('.tc-tg-body > .tc-status-marker');
 
@@ -3051,7 +3112,7 @@ describe('calendar surface style contract', () => {
       expect(declarations).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
     }
     expect(literalRailPosition).toMatch(/inset-inline-start\s*:\s*4px/u);
-    expect(proxyRail).toMatch(/opacity\s*:\s*1/u);
+    expect(proxyRail).not.toMatch(/opacity\s*:/u);
     expect(proxyRailPosition).toMatch(/inset-inline-start\s*:\s*calc\(50% - 1px\)/u);
     expect(proxyRailPosition).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
     expect(marker).toMatch(/z-index\s*:\s*4/u);

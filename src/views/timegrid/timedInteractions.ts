@@ -133,17 +133,20 @@ function frozen<T extends object>(value: T): Readonly<T> {
 }
 
 function previewElement(
+  existing: HTMLElement | undefined,
   source: HTMLElement,
   target: object,
   className: 'tc-tg-drag-preview' | 'tc-tg-boundary-preview',
   content: {
     readonly title: string;
-    readonly time?: string;
+    readonly timeLabel: string;
+    readonly recurrence?: string;
     readonly phase: 'ghost' | 'terminal';
   },
   copyLaneGeometry = true,
 ): HTMLElement {
-  const preview = source.ownerDocument.createElement('div');
+  const preview = existing ?? source.ownerDocument.createElement('div');
+  const countLabel = source.querySelector<HTMLElement>('.tc-tg-block-badges')?.textContent;
   preview.className = className;
   preview.dataset['target'] = JSON.stringify(target);
   if (copyLaneGeometry) {
@@ -151,8 +154,17 @@ function previewElement(
     preview.style.width = source.style.width;
   }
   populateCalendarPreview(preview, source, {
-    ...content,
+    title: content.title,
+    timed: {
+      timeLabel: content.timeLabel,
+      title: content.title,
+      ...(content.recurrence && { recurrence: content.recurrence }),
+      actionable:
+        content.phase === 'terminal' && source.querySelector('.tc-status-marker') !== null,
+      ...(countLabel && { countLabel }),
+    },
     density: 'regular',
+    phase: content.phase,
   });
   return preview;
 }
@@ -283,8 +295,6 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     event.preventDefault();
     event.stopPropagation();
 
-    if (kind === 'move') source.focus();
-
     const columns = measuredColumns(source);
     const originColumn = columns.find((column) => column.date === segmentDate);
     if (!originColumn) return;
@@ -312,39 +322,45 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     };
 
     const renderMovePreview = (target: Readonly<TimedDragTarget>): void => {
-      clearPreview();
       const column = columns.find((candidate) => candidate.date === target.date);
       const host = target.destination === 'all-day' ? column?.allDay : column?.hour;
       if (!host) return;
       preview = previewElement(
+        preview,
         source,
         target,
         'tc-tg-drag-preview',
         {
           title: task.title,
-          time:
+          ...(task.recurrence && { recurrence: task.recurrence }),
+          timeLabel:
             target.destination === 'time-grid'
               ? timedPreviewText(target.startMinutes, durationMinutes)
-              : undefined,
+              : 'All day',
           phase: previewPhase(binding, target, target.date),
         },
         target.destination === 'time-grid',
       );
       if (target.destination === 'time-grid') {
+        preview.classList.remove('is-all-day');
         applyPreviewPacking(preview, binding, target, target.date);
         preview.style.top = `${minutesToPixels(target.startMinutes)}px`;
         preview.style.height = `${sourceRect.height}px`;
       } else {
         preview.classList.add('is-all-day');
+        preview.style.removeProperty('left');
+        preview.style.removeProperty('width');
+        preview.style.removeProperty('top');
+        preview.style.removeProperty('height');
       }
-      host.appendChild(preview);
+      if (preview.parentElement !== host) host.appendChild(preview);
     };
 
     const renderDurationPreview = (target: Readonly<TimedVerticalResizeTarget>): void => {
-      clearPreview();
-      preview = previewElement(source, target, 'tc-tg-drag-preview', {
+      preview = previewElement(preview, source, target, 'tc-tg-drag-preview', {
         title: task.title,
-        time: timedPreviewText(target.startMinutes, target.durationMinutes),
+        ...(task.recurrence && { recurrence: task.recurrence }),
+        timeLabel: timedPreviewText(target.startMinutes, target.durationMinutes),
         phase: previewPhase(binding, target, segmentDate),
       });
       applyPreviewPacking(preview, binding, target, segmentDate);
@@ -353,22 +369,22 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
         minutesToPixels(target.durationMinutes),
         minimumPreviewHeight(source),
       )}px`;
-      originColumn.hour.appendChild(preview);
+      if (preview.parentElement !== originColumn.hour) originColumn.hour.appendChild(preview);
     };
 
     const renderBoundaryPreview = (target: Readonly<TimedBoundaryTarget>): void => {
-      clearPreview();
       const column = columns.find((candidate) => candidate.date === target.date);
       if (!column) return;
-      preview = previewElement(source, target, 'tc-tg-boundary-preview', {
+      preview = previewElement(preview, source, target, 'tc-tg-boundary-preview', {
         title: task.title,
-        time: timedPreviewText(startMinutes, durationMinutes),
+        ...(task.recurrence && { recurrence: task.recurrence }),
+        timeLabel: timedPreviewText(startMinutes, durationMinutes),
         phase: previewPhase(binding, target, target.date),
       });
       applyPreviewPacking(preview, binding, target, target.date);
       preview.style.top = source.style.top;
       preview.style.height = `${sourceRect.height}px`;
-      column.hour.appendChild(preview);
+      if (preview.parentElement !== column.hour) column.hour.appendChild(preview);
     };
 
     const resolve = (pointer: PointerEvent): typeof latest => {
@@ -448,6 +464,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
       clearPreview();
       source.classList.remove('is-picked-up');
       delete source.dataset['activeResize'];
+      delete capturedElement.dataset['activeResize'];
       ownerWindow.removeEventListener('pointermove', onPointerMove);
       ownerWindow.removeEventListener('pointerup', onPointerUp);
       ownerWindow.removeEventListener('pointercancel', onCancel);
@@ -478,10 +495,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
 
     owner.begin(dispose);
     source.classList.toggle('is-picked-up', kind === 'move');
-    if (kind === 'start-time') source.dataset['activeResize'] = 'start-time';
-    else if (kind === 'duration') source.dataset['activeResize'] = 'duration';
-    else if (kind === 'start') source.dataset['activeResize'] = 'start-date';
-    else if (kind !== 'move') source.dataset['activeResize'] = 'due-date';
+    if (kind !== 'move') capturedElement.dataset['activeResize'] = 'true';
     capture(capturedElement, pointerId);
     ownerWindow.addEventListener('pointermove', onPointerMove);
     ownerWindow.addEventListener('pointerup', onPointerUp);
