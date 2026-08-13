@@ -234,6 +234,16 @@ describe('partial move recovery presentation', () => {
       resolution: { type: 'ambiguous', candidates: [] } as TaskResolution,
       message: 'Multiple possible originals',
     },
+    {
+      name: 'visual-only',
+      resolution: {
+        type: 'visual',
+        stale: source,
+        current: snapshot({ ...source, revision: 'visual-current' }),
+        evidence: 'same-line',
+      } as TaskResolution,
+      message: 'could not be identified safely',
+    },
   ])(
     'stops $name recovery without guessing or issuing a delete',
     async ({ resolution, message }) => {

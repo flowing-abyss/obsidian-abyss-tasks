@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   reconcileNested,
   reconcileRoot,
+  reconcileRootTransitions,
   type ProvenRootRevisionOverride,
   type RebaseEvidence,
+  type VisualEvidence,
 } from '../../src/tasks/domain/taskReconciliation';
 import { subtask, task } from '../helpers';
 
@@ -23,13 +25,15 @@ describe('task reconciliation', () => {
     const replacement = root(4, 'Different', 'revision:different');
 
     expect(reconcileRoot(previous, [replacement])).toEqual({
-      type: 'uncertain',
-      ref: previous.ref,
+      type: 'visual',
+      stale: previous.ref,
+      current: replacement,
+      evidence: 'same-line',
     });
   });
 
-  it.each(['byte-identical-relocation', 'authority-transition', 'anchored-range'] as const)(
-    'returns closed-set evidence %s',
+  it.each(['byte-identical-relocation', 'authority-transition'] as const)(
+    'returns closed-set writable evidence %s',
     (evidence: RebaseEvidence) => {
       const previous = root(4, 'Observed');
       let current = root(9, 'Observed', previous.ref.revision);
@@ -46,21 +50,36 @@ describe('task reconciliation', () => {
             revision: current.ref.revision,
           },
         ];
-      } else if (evidence === 'anchored-range') {
-        const before = root(1, 'Before');
-        const after = root(8, 'After');
-        previousRoots = [before, previous, after];
-        current = root(5, 'Externally edited', 'revision:edited');
-        return expect(
-          reconcileRoot(previous, [root(1, 'Before'), current, root(8, 'After')], {
-            previousRoots,
-          }),
-        ).toMatchObject({ type: 'rebased', evidence });
       }
 
       expect(
         reconcileRoot(previous, [current], { previousRoots, authorityTransitions }),
       ).toMatchObject({ type: 'rebased', evidence });
+    },
+  );
+
+  it.each(['same-line', 'anchored-range'] as const)(
+    'returns non-writable visual evidence %s without retaining a stale snapshot',
+    (evidence: VisualEvidence) => {
+      const previous = root(4, 'Observed');
+      const current = root(
+        evidence === 'same-line' ? 4 : 5,
+        'Externally edited',
+        'revision:edited',
+      );
+      const before = root(1, 'Before');
+      const after = root(8, 'After');
+      const options =
+        evidence === 'anchored-range' ? { previousRoots: [before, previous, after] } : undefined;
+      const roots =
+        evidence === 'anchored-range' ? [root(1, 'Before'), current, root(8, 'After')] : [current];
+
+      expect(reconcileRoot(previous, roots, options)).toEqual({
+        type: 'visual',
+        stale: previous.ref,
+        current,
+        evidence,
+      });
     },
   );
 
@@ -122,6 +141,38 @@ describe('task reconciliation', () => {
       reconcileRoot(observed, [before, replacement], {
         previousRoots: [before, observed],
       }),
-    ).toEqual({ type: 'uncertain', ref: observed.ref });
+    ).toEqual({
+      type: 'visual',
+      stale: observed.ref,
+      current: replacement,
+      evidence: 'same-line',
+    });
+  });
+
+  it('indexes authority candidates once instead of rescanning every root per transition', () => {
+    const size = 200;
+    let reads = 0;
+    const counted = <T>(values: readonly T[]): readonly T[] =>
+      new Proxy(values, {
+        get(target, property, receiver) {
+          if (typeof property === 'string' && /^\d+$/u.test(property)) reads += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      });
+    const previous = counted(
+      Array.from({ length: size }, (_, index) => root(index, `previous ${index}`, `old:${index}`)),
+    );
+    const current = counted(
+      Array.from({ length: size }, (_, index) => root(index, `current ${index}`, `new:${index}`)),
+    );
+    const authorities = Array.from({ length: size }, (_, index) => ({
+      previousRevision: `old:${index}`,
+      line: index,
+      source: `- [ ] current ${index}`,
+      revision: `new:${index}`,
+    }));
+
+    expect(reconcileRootTransitions(previous, current, authorities).writable).toHaveLength(size);
+    expect(reads).toBeLessThan(size * 20);
   });
 });

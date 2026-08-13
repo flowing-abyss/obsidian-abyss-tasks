@@ -20,7 +20,7 @@ export function taskNodeLine(root: TaskSnapshot, node: TaskSelectionNode): numbe
   let ref: SubtaskRef | undefined = node.ref;
   const offsets: number[] = [];
   while (ref) {
-    offsets.unshift(ref.relativeLine);
+    offsets.push(ref.relativeLine);
     ref = ref.parent.type === 'subtask' ? ref.parent.ref : undefined;
   }
   return offsets.reduce((sum, offset) => sum + offset, line);

@@ -48,6 +48,21 @@ describe('TaskRefAuthority', () => {
     );
   });
 
+  it('mints a fresh observed incarnation without retaining a path history', () => {
+    const authority = new TaskRefAuthority('session-a');
+    const source = '- [ ] task\n';
+    const initial = authority.revision(source);
+    const recreated = authority.mintRevision(source);
+
+    expect(recreated).not.toBe(initial);
+    expect(authority.evidence(recreated)).toMatchObject({
+      source,
+      session: 'session-a',
+      generation: '1',
+    });
+    expect(authority.mintRevision(source)).not.toBe(recreated);
+  });
+
   it('exposes staged publication to an early event without letting it destroy the transaction', () => {
     const authority = new TaskRefAuthority('session-a');
     const expectedRevision = authority.revision('- [ ] original\n');

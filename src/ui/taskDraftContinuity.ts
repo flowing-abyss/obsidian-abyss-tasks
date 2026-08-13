@@ -64,6 +64,10 @@ export type RightPanelDraftState =
       readonly hadFocus: boolean;
     };
 
+export interface RightPanelDraftBundle {
+  readonly entries: readonly RightPanelDraftState[];
+}
+
 type TaskNode = TaskSnapshot | SubtaskSnapshot;
 
 function uniqueExactOrSource<T>(exact: readonly T[], sourceMatches: readonly T[]): T | undefined {
@@ -74,8 +78,14 @@ function uniqueExactOrSource<T>(exact: readonly T[], sourceMatches: readonly T[]
 }
 
 function childPath(target: TaskNodeRef): readonly SubtaskRef[] {
-  if (target.type === 'task') return [];
-  return [...childPath(target.ref.parent), target.ref];
+  const path: SubtaskRef[] = [];
+  let current = target;
+  while (current.type === 'subtask') {
+    path.push(current.ref);
+    current = current.ref.parent;
+  }
+  path.reverse();
+  return path;
 }
 
 function rebaseNode(
@@ -181,4 +191,37 @@ export function draftPlainText(draft: RightPanelDraftState): string {
 export function isDirtyDraft(draft: RightPanelDraftState | undefined): boolean {
   if (!draft) return false;
   return draft.kind === 'recurrence-editor' ? draft.editor.dirty : draft.dirty;
+}
+
+export function isDirtyDraftBundle(bundle: RightPanelDraftBundle | undefined): boolean {
+  return bundle?.entries.some(isDirtyDraft) ?? false;
+}
+
+function nodeRefKey(target: TaskNodeRef): unknown {
+  const path: Array<readonly [number, string]> = [];
+  let current = target;
+  while (current.type === 'subtask') {
+    path.push([current.ref.relativeLine, current.ref.originalBlock]);
+    current = current.ref.parent;
+  }
+  path.reverse();
+  return [current.ref, path];
+}
+
+export function draftIdentity(draft: RightPanelDraftState): string {
+  if (draft.kind === 'title' || draft.kind === 'description') {
+    return JSON.stringify([draft.kind, nodeRefKey(draft.target.target)]);
+  }
+  if (draft.kind === 'existing-comment') {
+    return JSON.stringify([
+      draft.kind,
+      nodeRefKey(draft.target.ref.parent),
+      draft.target.ref.relativeLine,
+      draft.target.ref.originalMarkdown,
+    ]);
+  }
+  if (draft.kind === 'new-comment' || draft.kind === 'new-subtask') {
+    return JSON.stringify([draft.kind, nodeRefKey(draft.parent)]);
+  }
+  return JSON.stringify([draft.kind, nodeRefKey('target' in draft ? draft.target : draft.parent)]);
 }

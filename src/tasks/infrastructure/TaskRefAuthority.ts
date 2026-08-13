@@ -83,6 +83,11 @@ export class TaskRefAuthority {
     return this.encode(source, '0');
   }
 
+  mintRevision(source: string): string {
+    this.generation += 1;
+    return this.encode(source, this.generation.toString(36));
+  }
+
   successor(consumedRevision: string, source: string): string | undefined {
     const consumed = this.evidence(consumedRevision);
     if (!consumed) return undefined;
@@ -165,6 +170,10 @@ export class TaskRefAuthority {
     if (transition?.phase === 'committed' && matches(transition, content)) {
       this.transitions.delete(filePath);
     }
+  }
+
+  discard(filePath: string): void {
+    this.transitions.delete(filePath);
   }
 
   private encode(source: string, generation: string): string {

@@ -19,7 +19,6 @@ import type {
   TaskRef,
   TaskResolution,
 } from '../tasks';
-import { isDirtyDraft } from '../ui/taskDraftContinuity';
 import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from '../ui/taskSelection';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
@@ -271,37 +270,19 @@ export class PanelView extends ItemView {
       this.right.restoreDraftState(draft, current);
       return;
     }
-    if (resolution.type === 'not-found') {
-      const draft = this.right.captureDraftState();
+    const draft = this.right.captureDraftState();
+    if (resolution.type === 'visual') {
+      this.state.set('taskStack', [resolution.current]);
+      this.right.detachDraftState(draft);
+      return;
+    }
+    if (
+      resolution.type === 'not-found' ||
+      resolution.type === 'uncertain' ||
+      resolution.type === 'ambiguous'
+    ) {
       this.state.set('taskStack', []);
-      if (isDirtyDraft(draft)) this.right.detachDraftState(draft);
-      this.createSelectionMessage('tc-task-selection-missing', 'This task no longer exists.');
-      return;
-    }
-    if (resolution.type === 'uncertain') {
-      const banner = this.createSelectionMessage(
-        'tc-task-selection-uncertain',
-        'This task could not be identified safely after the file changed.',
-      );
-      this.addSelectionAction(banner, 'Close', 'tc-task-selection-close', () => {
-        this.state.set('taskStack', []);
-        this.clearSelectionMessage();
-      });
-      return;
-    }
-    const banner = this.createSelectionMessage(
-      'tc-task-selection-ambiguous',
-      'Choose the task to keep open:',
-    );
-    for (const candidate of resolution.candidates) {
-      const label = `${candidate.root.title} — ${candidate.root.source.filePath}:${candidate.root.source.line + 1}`;
-      this.addSelectionAction(banner, label, 'tc-task-selection-candidate', () => {
-        const stale = this.state.get('taskStack');
-        const draft = this.right.captureDraftState();
-        this.state.set('taskStack', rebuildTaskSelection(candidate.root, stale));
-        this.right.restoreDraftState(draft, candidate.root);
-        this.clearSelectionMessage();
-      });
+      this.right.detachDraftState(draft);
     }
   }
 
@@ -331,24 +312,6 @@ export class PanelView extends ItemView {
       left.line === right.line &&
       left.revision === right.revision
     );
-  }
-
-  private createSelectionMessage(className: string, text: string): HTMLElement {
-    const banner = activeDocument.createElement('div');
-    banner.className = `tc-task-selection-message ${className}`;
-    banner.createSpan({ text });
-    this.rightEl().prepend(banner);
-    return banner;
-  }
-
-  private addSelectionAction(
-    parent: HTMLElement,
-    label: string,
-    className: string,
-    action: () => void,
-  ): void {
-    const button = parent.createEl('button', { cls: className, text: label });
-    button.addEventListener('click', action);
   }
 
   private rightEl(): HTMLElement {

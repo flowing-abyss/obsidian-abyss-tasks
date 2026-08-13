@@ -56,9 +56,10 @@ function childChain(target: TaskStatusTarget): readonly SubtaskRef[] {
   const chain: SubtaskRef[] = [];
   let node: TaskNodeRef = target;
   while (node.type === 'subtask') {
-    chain.unshift(node.ref);
+    chain.push(node.ref);
     node = node.ref.parent;
   }
+  chain.reverse();
   return chain;
 }
 
@@ -390,7 +391,11 @@ export class TaskApplicationService implements TaskApplicationApi {
     const resolution = recent
       ? { type: 'exact' as const, task: recent, basis: { observed: recent } }
       : this.queries.resolve(rootRef);
-    if (resolution.type === 'not-found' || resolution.type === 'uncertain') {
+    if (
+      resolution.type === 'not-found' ||
+      resolution.type === 'uncertain' ||
+      resolution.type === 'visual'
+    ) {
       return { result: { type: 'not-found', target: command.target } };
     }
     if (resolution.type === 'ambiguous') {

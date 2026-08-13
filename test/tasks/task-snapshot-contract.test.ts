@@ -162,7 +162,7 @@ describe('TaskSnapshot contract', () => {
     index.destroy();
   });
 
-  it('resolves exact, proven drift, uncertainty, and ambiguous references safely', async () => {
+  it('resolves exact, proven drift, visual continuity, uncertainty, and ambiguity safely', async () => {
     const { index, fireChanged, file } = await snapshotIndex('- [ ] same');
     const observed = index.list()[0]!;
     expect(index.resolve(observed.ref)).toMatchObject({ type: 'exact', task: { title: 'same' } });
@@ -175,7 +175,12 @@ describe('TaskSnapshot contract', () => {
     });
 
     fireChanged(file, '- [ ] changed', cache([0]));
-    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'visual',
+      stale: observed.ref,
+      current: { title: 'changed' },
+      evidence: 'same-line',
+    });
     expect(index.resolve({ ...observed.ref, line: 50 })).toEqual({
       type: 'uncertain',
       ref: { ...observed.ref, line: 50 },

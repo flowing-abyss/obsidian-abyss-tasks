@@ -44,6 +44,7 @@ export class TaskMoveRecoveryModal extends Modal {
         this.renderConflict(resolution.current);
         break;
       case 'uncertain':
+      case 'visual':
         this.renderStopped(
           'The original task could not be identified safely. Nothing was removed.',
         );

@@ -82,7 +82,7 @@ describe('TaskModal with real RightPanel', () => {
       type: 'rebased',
       previous: observed,
       current,
-      evidence: 'anchored-range',
+      evidence: 'authority-transition',
       basis: { observed },
     };
 
@@ -95,7 +95,69 @@ describe('TaskModal with real RightPanel', () => {
     expect(restored.selectionStart).toBe(3);
     expect(restored.selectionEnd).toBe(8);
     expect(activeDocument.activeElement).toBe(restored);
-    expect(activeDocument.querySelector('.tc-task-selection-stale')).toBeNull();
+    expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('shows fresh visual content while detaching every stale dirty draft silently', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] observed\n' });
+    const observed = task({
+      title: 'observed',
+      markdownTitle: 'observed',
+      ref: { filePath: 'f.md', line: 0, revision: 'old' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] observed',
+        originalBlock: '- [ ] observed',
+      },
+    });
+    const current = task({
+      title: 'visual current',
+      markdownTitle: 'visual current',
+      ref: { filePath: 'f.md', line: 0, revision: 'new' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] visual current',
+        originalBlock: '- [ ] visual current',
+      },
+    });
+    let listener: ((event: TaskIndexEvent) => void) | undefined;
+    const queries = taskQueryApi({
+      resolve: () => ({
+        type: 'visual',
+        stale: observed.ref,
+        current,
+        evidence: 'same-line',
+      }),
+      subscribe: (next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute,
+    });
+    modal.open(observed);
+    const comment = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    )!;
+    comment.value = 'stale modal draft';
+
+    listener?.({ type: 'changed', files: ['f.md'] });
+
+    expect(activeDocument.querySelector('.tc-modal .tc-right-title')?.textContent).toContain(
+      'visual current',
+    );
+    expect(activeDocument.querySelector('.tc-modal .tc-detached-draft')?.textContent).toContain(
+      'stale modal draft',
+    );
+    expect(activeDocument.querySelector('.tc-task-selection-message')).toBeNull();
     expect(execute).not.toHaveBeenCalled();
   });
 

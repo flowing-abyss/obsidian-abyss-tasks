@@ -6,10 +6,9 @@ export interface RootRevisionOverride {
   readonly revision: string;
 }
 
-export type RebaseEvidence =
-  | 'byte-identical-relocation'
-  | 'authority-transition'
-  | 'anchored-range';
+export type RebaseEvidence = 'byte-identical-relocation' | 'authority-transition';
+
+export type VisualEvidence = 'same-line' | 'anchored-range';
 
 export interface RootReconciliationBasis {
   readonly observed: TaskSnapshot;
@@ -26,6 +25,12 @@ export type TaskResolution =
       readonly current: TaskSnapshot;
       readonly evidence: RebaseEvidence;
       readonly basis: RootReconciliationBasis;
+    }
+  | {
+      readonly type: 'visual';
+      readonly stale: TaskRef;
+      readonly current: TaskSnapshot;
+      readonly evidence: VisualEvidence;
     }
   | { readonly type: 'uncertain'; readonly ref: TaskRef }
   | { readonly type: 'not-found'; readonly ref: TaskRef }
@@ -45,6 +50,17 @@ export interface ProvenRootTransition {
   readonly current: TaskSnapshot;
   readonly evidence: RebaseEvidence;
   readonly basis: RootReconciliationBasis;
+}
+
+export interface VisualRootTransition {
+  readonly stale: TaskRef;
+  readonly current: TaskSnapshot;
+  readonly evidence: VisualEvidence;
+}
+
+export interface RootReconciliationTransitions {
+  readonly writable: ReadonlyMap<string, ProvenRootTransition>;
+  readonly visual: ReadonlyMap<string, VisualRootTransition>;
 }
 
 export type NestedTaskResolution =
@@ -68,10 +84,6 @@ export function taskReconciliationKey(ref: TaskRef): string {
 
 function rootCandidate(task: TaskSnapshot): TaskResolutionCandidate {
   return { root: task, target: { type: 'task', ref: task.ref } };
-}
-
-function rootAnchor(task: TaskSnapshot): { readonly line: number; readonly originalBlock: string } {
-  return { line: task.source.line, originalBlock: task.source.originalBlock };
 }
 
 function uniqueSourcePairs(
@@ -103,21 +115,28 @@ function authorityPairs(
   currentRoots: readonly TaskSnapshot[],
   authorityTransitions: readonly ProvenRootRevisionOverride[],
 ): Array<readonly [number, number, ProvenRootRevisionOverride]> {
+  const previousByRevision = new Map<string, number[]>();
+  const currentByAuthority = new Map<string, number[]>();
+  previousRoots.forEach((task, index) => {
+    const matches = previousByRevision.get(task.ref.revision) ?? [];
+    matches.push(index);
+    previousByRevision.set(task.ref.revision, matches);
+  });
+  currentRoots.forEach((task, index) => {
+    const key = JSON.stringify([task.source.line, task.source.originalBlock, task.ref.revision]);
+    const matches = currentByAuthority.get(key) ?? [];
+    matches.push(index);
+    currentByAuthority.set(key, matches);
+  });
   const pairs: Array<readonly [number, number, ProvenRootRevisionOverride]> = [];
   for (const transition of authorityTransitions) {
-    const currentMatches = currentRoots
-      .map((task, index) => ({ task, index }))
-      .filter(
-        ({ task }) =>
-          task.source.line === transition.line &&
-          task.source.originalBlock === transition.source &&
-          task.ref.revision === transition.revision,
-      );
-    const previousMatches = previousRoots
-      .map((task, index) => ({ task, index }))
-      .filter(({ task }) => task.ref.revision === transition.previousRevision);
+    const currentMatches =
+      currentByAuthority.get(
+        JSON.stringify([transition.line, transition.source, transition.revision]),
+      ) ?? [];
+    const previousMatches = previousByRevision.get(transition.previousRevision) ?? [];
     if (currentMatches.length === 1 && previousMatches.length === 1) {
-      pairs.push([previousMatches[0]!.index, currentMatches[0]!.index, transition]);
+      pairs.push([previousMatches[0]!, currentMatches[0]!, transition]);
     }
   }
   return pairs;
@@ -131,8 +150,9 @@ export function reconcileRootTransitions(
   previousRoots: readonly TaskSnapshot[],
   currentRoots: readonly TaskSnapshot[],
   authorityTransitions: readonly ProvenRootRevisionOverride[] = [],
-): ReadonlyMap<string, ProvenRootTransition> {
-  const resolved = new Map<number, ProvenRootTransition>();
+): RootReconciliationTransitions {
+  const resolved = new Map<number, ProvenRootTransition & { readonly currentIndex: number }>();
+  const visual = new Map<number, VisualRootTransition>();
   const occupiedCurrent = new Set<number>();
 
   const add = (
@@ -147,6 +167,7 @@ export function reconcileRootTransitions(
       current: currentRoots[currentIndex]!,
       evidence,
       basis,
+      currentIndex,
     });
     occupiedCurrent.add(currentIndex);
   };
@@ -175,7 +196,7 @@ export function reconcileRootTransitions(
   const anchors = [...resolved.entries()]
     .map(([previousIndex, transition]) => ({
       previousIndex,
-      currentIndex: currentRoots.indexOf(transition.current),
+      currentIndex: transition.currentIndex,
     }))
     .sort((left, right) => left.previousIndex - right.previousIndex);
   const monotonicAnchors = anchors.filter(
@@ -197,18 +218,31 @@ export function reconcileRootTransitions(
     for (let offset = 1; offset <= previousCount; offset++) {
       const previousIndex = left.previousIndex + offset;
       const currentIndex = left.currentIndex + offset;
+      if (resolved.has(previousIndex) || occupiedCurrent.has(currentIndex)) continue;
       const previous = previousRoots[previousIndex]!;
-      add(previousIndex, currentIndex, 'anchored-range', {
-        observed: previous,
-        ...(left.real && { previousRootAnchor: rootAnchor(previousRoots[left.previousIndex]!) }),
-        ...(right.real && { nextRootAnchor: rootAnchor(previousRoots[right.previousIndex]!) }),
+      visual.set(previousIndex, {
+        stale: previous.ref,
+        current: currentRoots[currentIndex]!,
+        evidence: 'anchored-range',
       });
+      occupiedCurrent.add(currentIndex);
     }
   }
 
-  return new Map(
-    [...resolved.values()].map((transition) => [refKey(transition.previous.ref), transition]),
-  );
+  return {
+    writable: new Map(
+      [...resolved.values()].map(({ currentIndex: _currentIndex, ...transition }) => [
+        refKey(transition.previous.ref),
+        transition,
+      ]),
+    ),
+    visual: new Map(
+      [...visual.entries()].map(([previousIndex, transition]) => [
+        refKey(previousRoots[previousIndex]!.ref),
+        transition,
+      ]),
+    ),
+  };
 }
 
 export function reconcileRoot(
@@ -227,11 +261,12 @@ export function reconcileRoot(
   if (exact) return { type: 'exact', task: exact, basis: { observed } };
 
   const previousRoots = options.previousRoots ?? [observed];
-  const transition = reconcileRootTransitions(
+  const transitions = reconcileRootTransitions(
     previousRoots,
     currentRoots,
     options.authorityTransitions,
-  ).get(refKey(observed.ref));
+  );
+  const transition = transitions.writable.get(refKey(observed.ref));
   if (transition) return { type: 'rebased', ...transition };
 
   const sourceMatches = currentRoots.filter(
@@ -239,6 +274,17 @@ export function reconcileRoot(
   );
   if (sourceMatches.length > 1) {
     return { type: 'ambiguous', candidates: sourceMatches.map(rootCandidate) };
+  }
+  const visual = transitions.visual.get(refKey(observed.ref));
+  if (visual) return { type: 'visual', ...visual };
+  const sameLine = currentRoots.find((task) => task.source.line === observed.source.line);
+  if (sameLine) {
+    return {
+      type: 'visual',
+      stale: observed.ref,
+      current: sameLine,
+      evidence: 'same-line',
+    };
   }
   return currentRoots.length === 0
     ? { type: 'not-found', ref: observed.ref }

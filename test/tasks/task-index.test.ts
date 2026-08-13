@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import * as taskTypes from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
@@ -33,6 +34,16 @@ function taskCache(line = 0, frontmatter?: Record<string, unknown>): CachedMetad
   } as CachedMetadata;
 }
 
+function rootsCache(lines: readonly number[]): CachedMetadata {
+  return {
+    listItems: lines.map((line) => ({
+      task: ' ',
+      parent: -1,
+      position: { start: { line }, end: { line } },
+    })),
+  } as CachedMetadata;
+}
+
 async function setup(
   files: Record<string, string>,
   refAuthority?: TaskRefAuthority,
@@ -57,6 +68,20 @@ function mdFile(app: Awaited<ReturnType<typeof createAppWithFiles>>, path: strin
   const file = app.vault.getAbstractFileByPath(path);
   if (!(file instanceof TFile)) throw new Error(`missing ${path}`);
   return file;
+}
+
+function reconciliationState(index: TaskIndex): {
+  readonly generations: readonly string[];
+  readonly transitions: readonly string[];
+} {
+  const internal = index as unknown as {
+    fileGenerations: ReadonlyMap<string, number>;
+    reconciliationTransitions: ReadonlyMap<string, unknown>;
+  };
+  return {
+    generations: [...internal.fileGenerations.keys()].sort(),
+    transitions: [...internal.reconciliationTransitions.keys()].sort(),
+  };
 }
 
 function deferred(): { readonly promise: Promise<void>; readonly release: () => void } {
@@ -109,6 +134,79 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('distinguishes a plugin-owned authority successor and rejects a stale retry', async () => {
+    const source = '- [ ] alpha\n';
+    const candidate = '- [ ] beta\n';
+    const authority = new TaskRefAuthority('identity-session');
+    const { index } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const observed = index.list()[0]!;
+    const successor = authority.successor(observed.ref.revision, candidate.trimEnd());
+    if (!successor) throw new Error('missing successor');
+    const staged = authority.stage(
+      {
+        filePath: 'task.md',
+        candidateFingerprint: taskRefContentFingerprint(candidate),
+        candidateLength: candidate.length,
+        expectedRevision: observed.ref.revision,
+        roots: [{ line: 0, source: candidate.trimEnd(), revision: successor }],
+      },
+      observed.ref.revision,
+    );
+    if (staged.type !== 'staged') throw new Error('missing staged transition');
+    authority.commit(staged.token);
+    const installed = index.installCommittedContent('task.md', candidate)[0]!;
+    authority.acknowledge('task.md', candidate);
+
+    expect(authority.evidence(observed.ref.revision)).toMatchObject({ generation: '0' });
+    expect(authority.evidence(installed.ref.revision)).toMatchObject({ generation: '1' });
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'rebased',
+      evidence: 'authority-transition',
+      previous: { ref: observed.ref },
+      current: { ref: installed.ref },
+    });
+
+    const edit = vi.fn();
+    const application = new TaskApplicationService(
+      index,
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      canonicalStatusCatalog(),
+      { today: () => localDate('2026-08-13') },
+    );
+    await expect(
+      application.execute({
+        type: 'toggle-completion',
+        target: { type: 'task', ref: observed.ref },
+      }),
+    ).resolves.toMatchObject({ type: 'conflict', current: { ref: installed.ref } });
+    expect(edit).not.toHaveBeenCalled();
+    index.destroy();
+  });
+
+  it('does not treat an ordinary external edit as authority provenance', async () => {
+    const source = '- [ ] alpha\n';
+    const candidate = '- [ ] beta\n';
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const observed = index.list()[0]!;
+
+    fireChanged(mdFile(app, 'task.md'), candidate, taskCache());
+    const current = index.list()[0]!;
+
+    expect(authority.evidence(observed.ref.revision)).toMatchObject({ generation: '0' });
+    expect(authority.evidence(current.ref.revision)).toMatchObject({ generation: '1' });
+    expect(authority.observeTransition('task.md', candidate)).toBeUndefined();
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'visual',
+      stale: observed.ref,
+      current: { ref: current.ref, title: 'beta' },
+      evidence: 'same-line',
+    });
+    index.destroy();
+  });
+
   it('installs a committed byte-identical successor and preserves it across line drift', async () => {
     const source = '- [ ] task\n';
     const authority = new TaskRefAuthority('index-session');
@@ -199,9 +297,39 @@ describe('TaskIndex lifecycle and events', () => {
     expect(intermediateRevision).not.toBe(initialRevision);
     expect(restoredRevision).not.toBe(initialRevision);
     expect(restoredRevision).not.toBe(intermediateRevision);
-    expect(index.resolve({ filePath: 'task.md', line: 0, revision: initialRevision })).toEqual({
-      type: 'uncertain',
-      ref: { filePath: 'task.md', line: 0, revision: initialRevision },
+    expect(authority.evidence(initialRevision)).toMatchObject({ generation: '0' });
+    expect(authority.evidence(intermediateRevision)).toMatchObject({ generation: '1' });
+    expect(authority.evidence(restoredRevision)).toMatchObject({ generation: '2' });
+    expect(
+      index.resolve({ filePath: 'task.md', line: 0, revision: initialRevision }),
+    ).toMatchObject({
+      type: 'visual',
+      stale: { filePath: 'task.md', line: 0, revision: initialRevision },
+      current: { ref: { revision: restoredRevision }, title: 'alpha' },
+      evidence: 'same-line',
+    });
+    index.destroy();
+  });
+
+  it('does not identify a deleted then recreated byte-identical root as the original', async () => {
+    const source = '- [ ] alpha\n';
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': source }, authority);
+    await index.initialize();
+    const observed = index.list()[0]!;
+    const file = mdFile(app, 'task.md');
+
+    fireChanged(file, '', rootsCache([]));
+    expect(index.resolve(observed.ref)).toEqual({ type: 'not-found', ref: observed.ref });
+    fireChanged(file, source, taskCache());
+
+    const recreated = index.list()[0]!;
+    expect(recreated.ref.revision).not.toBe(observed.ref.revision);
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'visual',
+      stale: observed.ref,
+      current: { ref: recreated.ref, title: 'alpha' },
+      evidence: 'same-line',
     });
     index.destroy();
   });
@@ -214,7 +342,12 @@ describe('TaskIndex lifecycle and events', () => {
 
     fireChanged(mdFile(app, 'task.md'), '- [ ] replacement\n', taskCache());
 
-    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'visual',
+      stale: observed.ref,
+      current: { title: 'replacement' },
+      evidence: 'same-line',
+    });
     index.destroy();
   });
 
@@ -240,9 +373,70 @@ describe('TaskIndex lifecycle and events', () => {
     } as CachedMetadata);
 
     expect(index.resolve(observed.ref)).toMatchObject({
-      type: 'rebased',
-      previous: { title: 'observed' },
+      type: 'visual',
+      stale: observed.ref,
       current: { title: 'edited externally' },
+      evidence: 'anchored-range',
+    });
+    index.destroy();
+  });
+
+  it('does not identify a replacement merely because two surrounding anchors survived', async () => {
+    const initial = ['- [ ] before', '- [ ] observed', '- [ ] after'].join('\n');
+    const replaced = ['- [ ] before', '- [ ] replacement', '- [ ] after'].join('\n');
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': initial }, authority);
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 2 },
+    ]);
+    await index.initialize();
+    const observed = index.list()[1]!;
+
+    fireChanged(mdFile(app, 'task.md'), replaced, rootsCache([0, 1, 2]));
+
+    expect(index.resolve(observed.ref)).toMatchObject({
+      type: 'visual',
+      stale: observed.ref,
+      current: { title: 'replacement' },
+      evidence: 'anchored-range',
+    });
+    index.destroy();
+  });
+
+  it('does not positionally identify changed roots that were also swapped', async () => {
+    const initial = ['- [ ] before', '- [ ] alpha', '- [ ] beta', '- [ ] after'].join('\n');
+    const swappedAndEdited = [
+      '- [ ] before',
+      '- [ ] beta edited',
+      '- [ ] alpha edited',
+      '- [ ] after',
+    ].join('\n');
+    const authority = new TaskRefAuthority('identity-session');
+    const { app, index, fireChanged } = await setup({ 'task.md': initial }, authority);
+    seedTaskCache(app, 'task.md', [
+      { task: ' ', parent: -1, line: 0 },
+      { task: ' ', parent: -1, line: 1 },
+      { task: ' ', parent: -1, line: 2 },
+      { task: ' ', parent: -1, line: 3 },
+    ]);
+    await index.initialize();
+    const alpha = index.list()[1]!;
+    const beta = index.list()[2]!;
+
+    fireChanged(mdFile(app, 'task.md'), swappedAndEdited, rootsCache([0, 1, 2, 3]));
+
+    expect(index.resolve(alpha.ref)).toMatchObject({
+      type: 'visual',
+      stale: alpha.ref,
+      current: { title: 'beta edited' },
+      evidence: 'anchored-range',
+    });
+    expect(index.resolve(beta.ref)).toMatchObject({
+      type: 'visual',
+      stale: beta.ref,
+      current: { title: 'alpha edited' },
       evidence: 'anchored-range',
     });
     index.destroy();
@@ -271,11 +465,11 @@ describe('TaskIndex lifecycle and events', () => {
 
     fireChanged(mdFile(app, 'task.md'), second, cache);
     const secondSnapshot = index.list()[1]!;
-    expect(index.resolve(observed.ref).type).toBe('rebased');
+    expect(index.resolve(observed.ref).type).toBe('visual');
     fireChanged(mdFile(app, 'task.md'), third, cache);
 
-    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
-    expect(index.resolve(secondSnapshot.ref).type).toBe('rebased');
+    expect(index.resolve(observed.ref)).toMatchObject({ type: 'visual', evidence: 'same-line' });
+    expect(index.resolve(secondSnapshot.ref).type).toBe('visual');
     index.destroy();
   });
 
@@ -300,10 +494,10 @@ describe('TaskIndex lifecycle and events', () => {
     } as CachedMetadata;
 
     fireChanged(mdFile(app, 'task.md'), changed, cache);
-    expect(index.resolve(observed.ref).type).toBe('rebased');
+    expect(index.resolve(observed.ref).type).toBe('visual');
     fireChanged(mdFile(app, 'task.md'), changed, cache);
 
-    expect(index.resolve(observed.ref)).toEqual({ type: 'uncertain', ref: observed.ref });
+    expect(index.resolve(observed.ref)).toMatchObject({ type: 'visual', evidence: 'same-line' });
     index.destroy();
   });
 
@@ -513,6 +707,31 @@ describe('TaskIndex lifecycle and events', () => {
     expect(events).toContainEqual({ type: 'renamed', oldPath: 'old.md', newPath: 'new.md' });
     expect(events).toContainEqual({ type: 'deleted', path: 'created.md' });
     index.destroy();
+  });
+
+  it('bounds reconciliation maps to live paths across rename, delete, and destroy', async () => {
+    const authority = new TaskRefAuthority('lifecycle-session');
+    const { app, index } = await setup({ 'old.md': '- [ ] old' }, authority);
+    await index.initialize();
+    const initialRevision = index.list()[0]!.ref.revision;
+    expect(reconciliationState(index)).toEqual({
+      generations: ['old.md'],
+      transitions: ['old.md'],
+    });
+
+    await app.vault.rename(mdFile(app, 'old.md'), 'new.md');
+    const renamedRevision = index.list()[0]!.ref.revision;
+    expect(renamedRevision).not.toBe(initialRevision);
+    expect(reconciliationState(index)).toEqual({
+      generations: ['new.md'],
+      transitions: ['new.md'],
+    });
+
+    await app.vault.delete(mdFile(app, 'new.md'));
+    expect(reconciliationState(index)).toEqual({ generations: [], transitions: [] });
+
+    index.destroy();
+    expect(reconciliationState(index)).toEqual({ generations: [], transitions: [] });
   });
 
   it('unsubscribe and destroy dispose listeners and pending notifications', async () => {

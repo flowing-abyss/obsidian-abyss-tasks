@@ -1097,6 +1097,28 @@ describe('TaskApplicationService planning commands', () => {
     expect(clock.today).not.toHaveBeenCalled();
   });
 
+  it('rejects a visual-only stale selection before toggling and never writes its fresh candidate', async () => {
+    const current = { ...snapshot(), ref: { ...ref, revision: 'visual-current' } };
+    const edit = vi.fn<TaskRepository['edit']>();
+    const visualQueries: TaskQueryApi = {
+      ...queries(),
+      resolve: () => ({
+        type: 'visual',
+        stale: ref,
+        current,
+        evidence: 'same-line',
+      }),
+    };
+
+    await expect(
+      service({ edit }, visualQueries).execute({
+        type: 'toggle-completion',
+        target: { type: 'task', ref },
+      }),
+    ).resolves.toEqual({ type: 'not-found', target: { type: 'task', ref } });
+    expect(edit).not.toHaveBeenCalled();
+  });
+
   it('toggles an unknown checkbox through the configured custom done default', async () => {
     const custom = new StatusCatalog([
       { id: 'todo', symbol: 'o', type: 'todo', defaultForType: true },

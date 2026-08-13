@@ -149,6 +149,114 @@ async function panelWith(
 }
 
 describe('RightPanel block editing', () => {
+  it('preserves simultaneous dirty title and new-comment drafts across refresh', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-right-title-view')!.click();
+    await flushMicrotasks();
+    const title = container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+    const comment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    comment.focus();
+    title.value = 'local title draft';
+    comment.value = 'local comment draft';
+
+    const drafts = panel.captureDraftState();
+    title.remove();
+    const current = {
+      ...snapshot('current'),
+      title: 'external title',
+      markdownTitle: 'external title',
+    };
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(drafts, current);
+
+    expect(container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')?.value).toBe(
+      'local title draft',
+    );
+    expect(container.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value).toBe(
+      'local comment draft',
+    );
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('captures every dirty editor plus the focused clean editor in one bundle', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-right-title-view')!.click();
+    await flushMicrotasks();
+    const title = container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+    const comment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    title.value = 'dirty title';
+    comment.focus();
+
+    const bundle = panel.captureDraftState();
+    title.remove();
+
+    expect(bundle?.entries).toHaveLength(2);
+    expect(
+      bundle?.entries.map((entry) => [
+        entry.kind,
+        'dirty' in entry ? entry.dirty : entry.editor.dirty,
+      ]),
+    ).toEqual([
+      ['title', true],
+      ['new-comment', false],
+    ]);
+    const current = { ...snapshot('current'), title: 'external', markdownTitle: 'external' };
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(bundle, current);
+    expect(container.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')?.value).toBe(
+      'dirty title',
+    );
+    expect(activeDocument.activeElement).toBe(
+      container.querySelector<HTMLTextAreaElement>('.tc-comment-input'),
+    );
+    panel.destroy();
+  });
+
+  it('preserves simultaneous dirty recurrence and new-comment drafts across refresh', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const comment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    comment.value = 'local comment draft';
+    container.querySelector<HTMLElement>('.tc-repeat-chip')!.click();
+    const interval = container.querySelector<HTMLInputElement>('.tc-recurrence-interval')!;
+    interval.value = '7';
+    interval.dispatchEvent(new Event('input', { bubbles: true }));
+    interval.focus();
+
+    const drafts = panel.captureDraftState();
+    const current = snapshot('current');
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(drafts, current);
+
+    expect(container.querySelector<HTMLInputElement>('.tc-recurrence-interval')?.value).toBe('7');
+    expect(container.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value).toBe(
+      'local comment draft',
+    );
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
   it.each([
     {
       kind: 'title',
@@ -253,6 +361,81 @@ describe('RightPanel block editing', () => {
     expect(container.querySelector('.tc-detached-draft-copy')).not.toBeNull();
     expect(container.querySelector('.tc-detached-draft-discard')).not.toBeNull();
     expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('keeps a detached draft visible across subsequent panel renders', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-comment-text')!.click();
+    const edit = container.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input')!;
+    edit.value = 'persistent detached draft';
+
+    const draft = panel.captureDraftState();
+    const current = { ...snapshot('current'), comments: [] };
+    state.set('taskStack', [current]);
+    panel.restoreDraftState(draft, current);
+    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain(
+      'persistent detached draft',
+    );
+
+    state.set('taskStack', [{ ...current, presentation: { linkCount: 1 } }]);
+
+    expect(container.querySelector('.tc-detached-draft')?.textContent).toContain(
+      'persistent detached draft',
+    );
+    expect(execute).not.toHaveBeenCalled();
+    panel.destroy();
+  });
+
+  it('keeps an append-once tray whose copy is non-destructive and discard removes one entry', async () => {
+    const initial = snapshot('old');
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const { panel, state } = await panelWith(initial, execute);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLElement>('.tc-comment-text')!.click();
+    const existing = container.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input')!;
+    existing.value = 'existing comment draft';
+    const existingBundle = panel.captureDraftState();
+    const withoutComment = { ...snapshot('current'), comments: [] };
+    state.set('taskStack', [withoutComment]);
+    panel.restoreDraftState(existingBundle, withoutComment);
+    panel.detachDraftState(existingBundle);
+
+    const newComment = container.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+    newComment.value = 'new comment draft';
+    const newBundle = panel.captureDraftState();
+    panel.detachDraftState(newBundle);
+
+    expect(container.querySelectorAll('.tc-detached-drafts-title')).toHaveLength(1);
+    expect(container.querySelectorAll('.tc-detached-draft')).toHaveLength(2);
+    const entries = [...container.querySelectorAll<HTMLElement>('.tc-detached-draft')];
+    expect(entries[0]?.textContent).toContain('existing comment draft');
+    expect(entries[1]?.textContent).toContain('new comment draft');
+
+    Object.defineProperty(container.ownerDocument.defaultView!.navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    });
+    const copy = entries[1]!.querySelector<HTMLButtonElement>('.tc-detached-draft-copy')!;
+    copy.click();
+    await flushMicrotasks();
+    expect(container.querySelectorAll('.tc-detached-draft')).toHaveLength(2);
+    expect(entries[1]?.querySelector('[aria-live="polite"]')?.textContent).toContain(
+      'Could not copy',
+    );
+    expect(activeDocument.activeElement).toBe(copy);
+
+    entries[0]!.querySelector<HTMLButtonElement>('.tc-detached-draft-discard')!.click();
+    const remaining = [...container.querySelectorAll<HTMLElement>('.tc-detached-draft')];
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.textContent).toContain('new comment draft');
     panel.destroy();
   });
 

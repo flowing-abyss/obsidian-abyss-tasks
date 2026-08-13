@@ -96,11 +96,12 @@ function selectedTask(source: TaskOccurrenceResult): TaskSelectionNode | undefin
   if (source.target.type === 'task') return source.root;
   const path = [];
   let current = source.target.ref;
-  path.unshift(current);
+  path.push(current);
   while (current.parent.type === 'subtask') {
     current = current.parent.ref;
-    path.unshift(current);
+    path.push(current);
   }
+  path.reverse();
   let selected: TaskSelectionNode = source.root;
   for (const ref of path) {
     const child: SubtaskSnapshot | undefined = selected.subtasks.find(
@@ -188,20 +189,13 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const controlKey = (element: Element | null): string | undefined => {
     if (!(element instanceof HTMLElement) || !options.container.contains(element)) return undefined;
-    if (element.matches('.tc-recurrence-raw')) return 'custom';
-    if (element.matches('.tc-recurrence-interval')) return 'interval';
-    if (element.matches('[name="recurrence-weekday"]')) {
-      return `weekday:${(element as HTMLInputElement).value}`;
-    }
-    return element.getAttribute('aria-label') ?? undefined;
+    return element.dataset['recurrenceFocusKey'];
   };
 
-  const controlForKey = (
-    key: string | undefined,
-  ): HTMLInputElement | HTMLSelectElement | undefined => {
+  const controlForKey = (key: string | undefined): HTMLElement | undefined => {
     if (!key) return undefined;
     const controls = [
-      ...options.container.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select'),
+      ...options.container.querySelectorAll<HTMLElement>('[data-recurrence-focus-key]'),
     ];
     return controls.find((control) => controlKey(control) === key);
   };
@@ -383,6 +377,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         'aria-label': 'Repeat interval',
         'aria-describedby': diagnosticId,
         'aria-invalid': 'false',
+        'data-recurrence-focus-key': 'interval',
       },
     });
     interval.addEventListener('input', () => {
@@ -392,7 +387,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.dirty = true;
       refresh();
     });
-    const unit = cadence.createEl('select', { attr: { 'aria-label': 'Repeat unit' } });
+    const unit = cadence.createEl('select', {
+      attr: { 'aria-label': 'Repeat unit', 'data-recurrence-focus-key': 'unit' },
+    });
     addOption(unit, 'days', 'Days', state.unit === 'days');
     addOption(unit, 'weeks', 'Weeks', state.unit === 'weeks');
     addOption(unit, 'months', 'Months', state.unit === 'months');
@@ -416,7 +413,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       for (const weekday of WEEKDAYS) {
         const label = days.createEl('label', { cls: 'tc-recurrence-weekday' });
         const checkbox = label.createEl('input', {
-          attr: { type: 'checkbox', name: 'recurrence-weekday', value: weekday },
+          attr: {
+            type: 'checkbox',
+            name: 'recurrence-weekday',
+            value: weekday,
+            'data-recurrence-focus-key': `weekday:${weekday}`,
+          },
         });
         checkbox.checked = state.weekdays.includes(weekday);
         label.createSpan({ text: weekday.slice(0, 2) });
@@ -437,7 +439,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const renderMonthlyControls = (parent: HTMLElement): void => {
     const row = parent.createDiv({ cls: 'tc-recurrence-detail-row' });
-    const pattern = row.createEl('select', { attr: { 'aria-label': 'Monthly pattern' } });
+    const pattern = row.createEl('select', {
+      attr: {
+        'aria-label': 'Monthly pattern',
+        'data-recurrence-focus-key': 'monthly-pattern',
+      },
+    });
     const value = state.monthly.type === 'edge' ? state.monthly.edge : state.monthly.type;
     addOption(pattern, 'same-date', 'Same date', value === 'same-date');
     addOption(pattern, 'day', 'Day of month', value === 'day');
@@ -468,6 +475,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
           'aria-label': 'Month day',
           'aria-describedby': diagnosticId,
           'aria-invalid': 'false',
+          'data-recurrence-focus-key': 'monthly-day',
         },
       });
       day.addEventListener('input', () => {
@@ -477,7 +485,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       });
     }
     if (state.monthly.type === 'weekday') {
-      const ordinal = row.createEl('select', { attr: { 'aria-label': 'Weekday ordinal' } });
+      const ordinal = row.createEl('select', {
+        attr: {
+          'aria-label': 'Weekday ordinal',
+          'data-recurrence-focus-key': 'monthly-ordinal',
+        },
+      });
       for (const [number, label] of [
         [1, 'First'],
         [2, 'Second'],
@@ -488,7 +501,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       ] as const) {
         addOption(ordinal, String(number), label, state.monthly.ordinal === number);
       }
-      const weekday = row.createEl('select', { attr: { 'aria-label': 'Monthly weekday' } });
+      const weekday = row.createEl('select', {
+        attr: {
+          'aria-label': 'Monthly weekday',
+          'data-recurrence-focus-key': 'monthly-weekday',
+        },
+      });
       for (const value of WEEKDAYS) {
         addOption(weekday, value, value, state.monthly.weekday === value);
       }
@@ -512,7 +530,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const renderYearlyControls = (parent: HTMLElement): void => {
     const row = parent.createDiv({ cls: 'tc-recurrence-detail-row' });
-    const pattern = row.createEl('select', { attr: { 'aria-label': 'Yearly pattern' } });
+    const pattern = row.createEl('select', {
+      attr: {
+        'aria-label': 'Yearly pattern',
+        'data-recurrence-focus-key': 'yearly-pattern',
+      },
+    });
     addOption(pattern, 'same-date', 'Same date', state.yearly.type === 'same-date');
     addOption(pattern, 'date', 'Calendar date', state.yearly.type === 'date');
     pattern.addEventListener('change', () => {
@@ -523,7 +546,12 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       render();
     });
     if (state.yearly.type !== 'date') return;
-    const month = row.createEl('select', { attr: { 'aria-label': 'Yearly month' } });
+    const month = row.createEl('select', {
+      attr: {
+        'aria-label': 'Yearly month',
+        'data-recurrence-focus-key': 'yearly-month',
+      },
+    });
     MONTHS.forEach((label, index) => {
       addOption(
         month,
@@ -542,6 +570,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         'aria-label': 'Yearly day',
         'aria-describedby': diagnosticId,
         'aria-invalid': 'false',
+        'data-recurrence-focus-key': 'yearly-day',
       },
     });
     month.addEventListener('change', () => {
@@ -573,7 +602,11 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const advanced = heading.createEl('button', {
       cls: `tc-recurrence-advanced${state.mode === 'advanced' ? ' is-selected' : ''}`,
       text: 'Advanced',
-      attr: { type: 'button', 'aria-pressed': String(state.mode === 'advanced') },
+      attr: {
+        type: 'button',
+        'aria-pressed': String(state.mode === 'advanced'),
+        'data-recurrence-focus-key': 'advanced',
+      },
     });
     advanced.addEventListener('click', () => {
       const parsed = parseState();
@@ -601,6 +634,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
         attr: {
           type: 'button',
           'data-recurrence-preset': preset,
+          'data-recurrence-focus-key': `preset:${preset}`,
           'aria-pressed': String(state.mode === 'controls' && state.preset === preset),
         },
       });
@@ -618,6 +652,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
           'aria-describedby': diagnosticId,
           'aria-invalid': 'false',
           spellcheck: 'false',
+          'data-recurrence-focus-key': 'custom',
         },
       });
       raw.addEventListener('input', () => {
@@ -633,7 +668,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const whenDone = editor.createEl('label', { cls: 'tc-recurrence-check-row' });
     const whenDoneInput = whenDone.createEl('input', {
       cls: 'tc-recurrence-when-done',
-      attr: { type: 'checkbox' },
+      attr: { type: 'checkbox', 'data-recurrence-focus-key': 'when-done' },
     });
     whenDoneInput.checked = state.whenDone;
     whenDone.createSpan({ text: 'Repeat from completion date' });
@@ -655,7 +690,10 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const completedRow = editor.createEl('label', { cls: 'tc-recurrence-completed-row' });
     completedRow.createSpan({ text: 'Completed task' });
     const completed = completedRow.createEl('select', {
-      attr: { 'aria-label': 'Completed task' },
+      attr: {
+        'aria-label': 'Completed task',
+        'data-recurrence-focus-key': 'completed-task',
+      },
     });
     addOption(completed, 'keep', 'Keep completed task', state.onCompletion === 'keep');
     addOption(completed, 'delete', 'Delete completed task', state.onCompletion === 'delete');
@@ -679,18 +717,21 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       const clearButton = actions.createEl('button', {
         cls: 'tc-recurrence-clear',
         text: 'Clear repeat',
-        attr: { type: 'button' },
+        attr: { type: 'button', 'data-recurrence-focus-key': 'clear' },
       });
       clearButton.addEventListener('click', () => void clear());
     }
     const spacer = actions.createSpan({ cls: 'tc-recurrence-actions-spacer' });
     spacer.setAttribute('aria-hidden', 'true');
-    const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
+    const cancel = actions.createEl('button', {
+      text: 'Cancel',
+      attr: { type: 'button', 'data-recurrence-focus-key': 'cancel' },
+    });
     cancel.addEventListener('click', dismiss);
     const save = actions.createEl('button', {
       cls: 'mod-cta tc-recurrence-save',
       text: 'Save repeat',
-      attr: { type: 'button' },
+      attr: { type: 'button', 'data-recurrence-focus-key': 'save' },
     });
     save.addEventListener('click', () => void submit());
     refresh();
@@ -821,6 +862,7 @@ export function mountAnchoredRecurrenceEditor(
   });
   let destroyed = false;
   let outsideTimer: number | undefined;
+  let autofocusTimer: number | undefined;
   let editor: RecurrenceEditorHandle | undefined;
 
   const position = (): void => {
@@ -849,6 +891,7 @@ export function mountAnchoredRecurrenceEditor(
     if (destroyed) return;
     destroyed = true;
     if (outsideTimer !== undefined) ownerWindow?.clearTimeout(outsideTimer);
+    if (autofocusTimer !== undefined) ownerWindow?.clearTimeout(autofocusTimer);
     ownerDocument.removeEventListener('mousedown', onOutside, true);
     ownerDocument.removeEventListener('scroll', position, true);
     ownerWindow?.removeEventListener('resize', position);
@@ -872,7 +915,10 @@ export function mountAnchoredRecurrenceEditor(
     outsideTimer = undefined;
     if (!destroyed) ownerDocument.addEventListener('mousedown', onOutside, true);
   }, 0);
-  ownerWindow?.setTimeout(() => editor?.focus(), 0);
+  autofocusTimer = ownerWindow?.setTimeout(() => {
+    autofocusTimer = undefined;
+    editor?.focus();
+  }, 0);
 
   return {
     destroy,
@@ -882,6 +928,12 @@ export function mountAnchoredRecurrenceEditor(
       if (!editor) throw new Error('recurrence-editor-unavailable');
       return editor.captureDraftState();
     },
-    restoreDraftState: (draft) => editor?.restoreDraftState(draft),
+    restoreDraftState: (draft) => {
+      if (autofocusTimer !== undefined) {
+        ownerWindow?.clearTimeout(autofocusTimer);
+        autofocusTimer = undefined;
+      }
+      editor?.restoreDraftState(draft);
+    },
   };
 }

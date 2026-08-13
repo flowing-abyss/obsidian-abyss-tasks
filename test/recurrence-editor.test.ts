@@ -147,6 +147,173 @@ describe('mountRecurrenceEditor', () => {
     },
   );
 
+  it.each([
+    ['advanced', (container: HTMLElement) => button(container, 'Advanced')],
+    ['preset:daily', (container: HTMLElement) => button(container, 'Daily')],
+    ['preset:weekdays', (container: HTMLElement) => button(container, 'Weekdays')],
+    ['preset:weekly', (container: HTMLElement) => button(container, 'Weekly')],
+    ['preset:monthly', (container: HTMLElement) => button(container, 'Monthly')],
+    ['preset:yearly', (container: HTMLElement) => button(container, 'Yearly')],
+    ['interval', (container: HTMLElement) => container.querySelector('.tc-recurrence-interval')!],
+    ['unit', (container: HTMLElement) => container.querySelector('[aria-label="Repeat unit"]')!],
+    [
+      'weekday:Monday',
+      (container: HTMLElement) => {
+        click(button(container, 'Weekly'));
+        return container.querySelector('[name="recurrence-weekday"][value="Monday"]')!;
+      },
+    ],
+    [
+      'monthly-pattern',
+      (container: HTMLElement) => {
+        click(button(container, 'Monthly'));
+        return container.querySelector('[aria-label="Monthly pattern"]')!;
+      },
+    ],
+    [
+      'monthly-day',
+      (container: HTMLElement) => {
+        click(button(container, 'Monthly'));
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!,
+          'day',
+        );
+        return container.querySelector('[aria-label="Month day"]')!;
+      },
+    ],
+    [
+      'monthly-ordinal',
+      (container: HTMLElement) => {
+        click(button(container, 'Monthly'));
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!,
+          'weekday',
+        );
+        return container.querySelector('[aria-label="Weekday ordinal"]')!;
+      },
+    ],
+    [
+      'monthly-weekday',
+      (container: HTMLElement) => {
+        click(button(container, 'Monthly'));
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!,
+          'weekday',
+        );
+        return container.querySelector('[aria-label="Monthly weekday"]')!;
+      },
+    ],
+    [
+      'yearly-pattern',
+      (container: HTMLElement) => {
+        click(button(container, 'Yearly'));
+        return container.querySelector('[aria-label="Yearly pattern"]')!;
+      },
+    ],
+    [
+      'yearly-month',
+      (container: HTMLElement) => {
+        click(button(container, 'Yearly'));
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Yearly pattern"]')!,
+          'date',
+        );
+        return container.querySelector('[aria-label="Yearly month"]')!;
+      },
+    ],
+    [
+      'yearly-day',
+      (container: HTMLElement) => {
+        click(button(container, 'Yearly'));
+        change(
+          container.querySelector<HTMLSelectElement>('[aria-label="Yearly pattern"]')!,
+          'date',
+        );
+        return container.querySelector('[aria-label="Yearly day"]')!;
+      },
+    ],
+    ['when-done', (container: HTMLElement) => container.querySelector('.tc-recurrence-when-done')!],
+    [
+      'completed-task',
+      (container: HTMLElement) => container.querySelector('[aria-label="Completed task"]')!,
+    ],
+    [
+      'custom',
+      (container: HTMLElement) => {
+        click(button(container, 'Advanced'));
+        return container.querySelector('.tc-recurrence-raw')!;
+      },
+    ],
+    ['cancel', (container: HTMLElement) => button(container, 'Cancel')],
+    ['save', (container: HTMLElement) => button(container, 'Save repeat')],
+  ] as const)('round-trips the focused recurrence control key %s', (expectedKey, locate) => {
+    const first = mount();
+    activeDocument.body.append(first.container);
+    const control = locate(first.container) as HTMLElement;
+    control.focus();
+    const draft = first.handle.captureDraftState();
+
+    expect(draft.focusedControl).toBe(expectedKey);
+    const second = mount();
+    activeDocument.body.append(second.container);
+    second.handle.restoreDraftState(draft);
+    expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe(
+      expectedKey,
+    );
+  });
+
+  it('cancels anchored default autofocus when restoring a recorded recurrence control', () => {
+    vi.useFakeTimers();
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    const root = task({ planning: { due: '2026-08-09' } });
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit: vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: root },
+      }),
+    });
+    mounted.push(handle);
+    handle.restoreDraftState({
+      mode: 'structured',
+      preset: 'daily',
+      intervalText: '1',
+      unit: 'days',
+      weekdays: ['Monday'],
+      monthly: { type: 'same-date' },
+      yearly: { type: 'same-date' },
+      whenDone: false,
+      onCompletion: 'keep',
+      customDraft: 'every day',
+      focusedControl: 'completed-task',
+      dirty: false,
+    });
+
+    vi.runAllTimers();
+
+    expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe(
+      'completed-task',
+    );
+  });
+
+  it('round-trips the focused clear action when an existing recurrence renders it', () => {
+    const root = task({ planning: { due: '2026-08-09' }, recurrence: 'every day' });
+    const first = mount({ source: { root, target: { type: 'task', ref: root.ref } } });
+    activeDocument.body.append(first.container);
+    button(first.container, 'Clear repeat').focus();
+    const draft = first.handle.captureDraftState();
+
+    expect(draft.focusedControl).toBe('clear');
+    const second = mount({ source: { root, target: { type: 'task', ref: root.ref } } });
+    activeDocument.body.append(second.container);
+    second.handle.restoreDraftState(draft);
+    expect(activeDocument.activeElement?.getAttribute('data-recurrence-focus-key')).toBe('clear');
+  });
+
   it('turns presets into adaptive controls and one canonical preview line', () => {
     const { container } = mount();
 

@@ -9,6 +9,9 @@ import { taskQueryApi, testStatusRegistry } from './helpers';
 const captured = vi.hoisted(() => ({
   state: null as AppState | null,
   acknowledgeOwnWrite: undefined as ((ref?: TaskRef) => void) | undefined,
+  captureDraftState: vi.fn(),
+  restoreDraftState: vi.fn(),
+  detachDraftState: vi.fn(),
 }));
 
 vi.mock('../src/panels/RightPanel', () => ({
@@ -25,9 +28,9 @@ vi.mock('../src/panels/RightPanel', () => ({
     return {
       mount: (el: HTMLElement) => el.createDiv({ cls: 'tc-right-header-actions' }),
       destroy: vi.fn(),
-      captureDraftState: vi.fn(),
-      restoreDraftState: vi.fn(),
-      detachDraftState: vi.fn(),
+      captureDraftState: captured.captureDraftState,
+      restoreDraftState: captured.restoreDraftState,
+      detachDraftState: captured.detachDraftState,
     };
   }),
 }));
@@ -83,6 +86,9 @@ describe('revision-aware TaskModal refresh', () => {
   beforeEach(() => {
     captured.state = null;
     captured.acknowledgeOwnWrite = undefined;
+    captured.captureDraftState.mockReset();
+    captured.restoreDraftState.mockReset();
+    captured.detachDraftState.mockReset();
     activeDocument.body.empty();
   });
 
@@ -109,7 +115,7 @@ describe('revision-aware TaskModal refresh', () => {
       type: 'rebased',
       previous: observed,
       current,
-      evidence: 'anchored-range',
+      evidence: 'authority-transition',
       basis: { observed },
     });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
@@ -119,7 +125,32 @@ describe('revision-aware TaskModal refresh', () => {
       title: 'Current',
       ref: current.ref,
     });
-    expect(activeDocument.body.querySelector('.tc-task-selection-stale')).toBeNull();
+    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    modal.close();
+  });
+
+  it('shows a visual candidate with its fresh ref and detaches stale drafts without a message', () => {
+    const observed = snapshot('old', 'Observed');
+    const current = snapshot('new', 'Current visual');
+    const bundle = { entries: [{ kind: 'new-comment', dirty: true }] };
+    captured.captureDraftState.mockReturnValue(bundle);
+    const h = queryHarness({
+      type: 'visual',
+      stale: observed.ref,
+      current,
+      evidence: 'same-line',
+    });
+    const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
+    modal.open(observed);
+    h.changed();
+
+    expect(captured.state?.get('taskStack')[0]).toMatchObject({
+      title: 'Current visual',
+      ref: current.ref,
+    });
+    expect(captured.detachDraftState).toHaveBeenCalledWith(bundle);
+    expect(captured.restoreDraftState).not.toHaveBeenCalled();
+    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -134,21 +165,19 @@ describe('revision-aware TaskModal refresh', () => {
     captured.acknowledgeOwnWrite?.(first.ref);
     captured.state?.set('taskStack', [first]);
     h.changed();
-    expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'First' });
-    expect(activeDocument.body.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
+    expect(captured.state?.get('taskStack')).toEqual([]);
+    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
     modal.close();
   });
 
-  it('keeps the observed task and offers no writing action when reconciliation is uncertain', () => {
+  it('silently clears an uncertain selection without exposing actions', () => {
     const observed = snapshot('old', 'Observed');
     const h = queryHarness({ type: 'uncertain', ref: observed.ref });
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
     h.changed();
-    expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'Observed' });
-    const banner = activeDocument.body.querySelector('.tc-task-selection-uncertain');
-    expect(banner?.textContent).toContain('identified safely');
-    expect(banner?.querySelectorAll('button')).toHaveLength(1);
+    expect(captured.state?.get('taskStack')).toEqual([]);
+    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -161,7 +190,7 @@ describe('revision-aware TaskModal refresh', () => {
     expect(activeDocument.body.querySelector('.tc-modal-backdrop')).toBeNull();
   });
 
-  it('requires an explicit candidate choice for an ambiguous resolution', () => {
+  it('silently clears an ambiguous resolution instead of rendering a chooser', () => {
     const observed = snapshot('old', 'Observed');
     const first = snapshot('a', 'First');
     const second = snapshot('b', 'Second');
@@ -175,11 +204,8 @@ describe('revision-aware TaskModal refresh', () => {
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
     h.changed();
-    expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'Observed' });
-    const choices = activeDocument.body.querySelectorAll('.tc-task-selection-candidate');
-    expect(choices).toHaveLength(2);
-    (choices[1] as HTMLButtonElement).click();
-    expect(captured.state?.get('taskStack')[0]).toMatchObject({ title: 'Second' });
+    expect(captured.state?.get('taskStack')).toEqual([]);
+    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
     modal.close();
   });
 });

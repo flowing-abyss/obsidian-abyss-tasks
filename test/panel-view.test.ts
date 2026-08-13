@@ -310,8 +310,8 @@ describe('PanelView', () => {
           applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
       ).applyResolution({ type: 'uncertain', ref: otherRoot.ref });
-      expect(state.get('taskStack')[0]).toBe(otherRoot);
-      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
+      expect(state.get('taskStack')).toEqual([]);
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
     });
 
     it('rejects a late write acknowledgement after selection switched away from its root', () => {
@@ -334,8 +334,8 @@ describe('PanelView', () => {
           applyResolution(result: { type: 'uncertain'; ref: TaskRef }): void;
         }
       ).applyResolution({ type: 'uncertain', ref: first.ref });
-      expect(state.get('taskStack')[0]).toBe(firstView);
-      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
+      expect(state.get('taskStack')).toEqual([]);
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
     });
 
     it('converges a selected Center or Left command immediately and accepts the next index event', () => {
@@ -369,7 +369,7 @@ describe('PanelView', () => {
       expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
     });
 
-    it('clears an index-uncertainty banner when the matching command result wins the race', () => {
+    it('keeps uncertainty silent when the matching command result wins the race', () => {
       const state = (view as unknown as { state: AppState }).state;
       const observed = taskApplication.index.list()[0]!;
       const updated = {
@@ -383,7 +383,7 @@ describe('PanelView', () => {
           applyResolution(resolution: { type: 'uncertain'; ref: TaskRef }): void;
         }
       ).applyResolution({ type: 'uncertain', ref: observed.ref });
-      expect(view.contentEl.querySelector('.tc-task-selection-uncertain')).not.toBeNull();
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
 
       (
         view as unknown as {
@@ -395,8 +395,47 @@ describe('PanelView', () => {
         changed: true,
       });
 
-      expect(state.get('taskStack')[0]).toMatchObject({ title: 'Owned after conflict' });
+      expect(state.get('taskStack')).toEqual([]);
       expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
+    });
+
+    it('renders a fresh visual candidate and detaches the stale draft without a message', () => {
+      const state = (view as unknown as { state: AppState }).state;
+      const observed = taskApplication.index.list()[0]!;
+      const current = {
+        ...observed,
+        ref: { ...observed.ref, revision: 'visual-current' },
+        title: 'Visual current',
+        markdownTitle: 'Visual current',
+      };
+      state.set('taskStack', [observed]);
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      comment.value = 'stale local draft';
+
+      (
+        view as unknown as {
+          applyResolution(resolution: {
+            type: 'visual';
+            stale: TaskRef;
+            current: typeof current;
+            evidence: 'same-line';
+          }): void;
+        }
+      ).applyResolution({
+        type: 'visual',
+        stale: observed.ref,
+        current,
+        evidence: 'same-line',
+      });
+
+      expect(state.get('taskStack')[0]).toMatchObject({
+        title: 'Visual current',
+        ref: current.ref,
+      });
+      expect(view.contentEl.querySelector('.tc-detached-draft')?.textContent).toContain(
+        'stale local draft',
+      );
+      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
     });
 
     it('does not let a late Center or Left result replace a different selection', () => {

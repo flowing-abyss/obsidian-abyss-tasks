@@ -11,7 +11,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../tasks';
-import { isDirtyDraft } from './taskDraftContinuity';
+import { isDirtyDraftBundle } from './taskDraftContinuity';
 import { rebuildTaskSelection, rootTaskRef, type TaskSelectionNode } from './taskSelection';
 
 export class TaskModal {
@@ -153,37 +153,20 @@ export class TaskModal {
       this.innerPanel?.restoreDraftState(draft, current);
       return;
     }
-    if (resolution.type === 'not-found') {
-      const draft = this.innerPanel?.captureDraftState();
-      if (isDirtyDraft(draft)) {
-        this.innerState?.set('taskStack', []);
-        this.innerPanel?.detachDraftState(draft);
-        return;
-      }
-      this.close();
+    const draft = this.innerPanel?.captureDraftState();
+    if (resolution.type === 'visual') {
+      this.innerState?.set('taskStack', [resolution.current]);
+      this.innerPanel?.detachDraftState(draft);
       return;
     }
-    if (resolution.type === 'uncertain') {
-      const banner = this.createResolutionMessage(
-        'tc-task-selection-uncertain',
-        'This task could not be identified safely after the file changed.',
-      );
-      this.addAction(banner, 'Close', 'tc-task-selection-close', () => this.close());
-      return;
-    }
-    const banner = this.createResolutionMessage(
-      'tc-task-selection-ambiguous',
-      'Choose the task to keep open:',
-    );
-    for (const candidate of resolution.candidates) {
-      const label = `${candidate.root.title} — ${candidate.root.source.filePath}:${candidate.root.source.line + 1}`;
-      this.addAction(banner, label, 'tc-task-selection-candidate', () => {
-        const stale = this.innerState?.get('taskStack') ?? [];
-        const draft = this.innerPanel?.captureDraftState();
-        this.innerState?.set('taskStack', rebuildTaskSelection(candidate.root, stale));
-        this.innerPanel?.restoreDraftState(draft, candidate.root);
-        this.clearResolutionMessage();
-      });
+    if (
+      resolution.type === 'not-found' ||
+      resolution.type === 'uncertain' ||
+      resolution.type === 'ambiguous'
+    ) {
+      this.innerState?.set('taskStack', []);
+      this.innerPanel?.detachDraftState(draft);
+      if (!isDirtyDraftBundle(draft)) this.close();
     }
   }
 
@@ -203,24 +186,6 @@ export class TaskModal {
       left.line === right.line &&
       left.revision === right.revision
     );
-  }
-
-  private createResolutionMessage(className: string, text: string): HTMLElement {
-    const banner = activeDocument.createElement('div');
-    banner.className = `tc-task-selection-message ${className}`;
-    banner.createSpan({ text });
-    this.modalEl?.prepend(banner);
-    return banner;
-  }
-
-  private addAction(
-    parent: HTMLElement,
-    label: string,
-    className: string,
-    action: () => void,
-  ): void {
-    const button = parent.createEl('button', { cls: className, text: label });
-    button.addEventListener('click', action);
   }
 
   private clearResolutionMessage(): void {

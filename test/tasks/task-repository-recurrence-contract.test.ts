@@ -665,7 +665,7 @@ for (const adapter of ['in-memory', 'obsidian'] as const) {
         throw new Error('missing created task');
       }
       expect(harness.authority.evidence(result.outcome.task.ref.revision)).toMatchObject({
-        generation: '0',
+        generation: '1',
       });
       expect(harness.index.list()[0]?.ref).toEqual(result.outcome.task.ref);
     });
