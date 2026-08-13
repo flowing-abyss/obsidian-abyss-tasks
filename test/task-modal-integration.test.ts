@@ -541,10 +541,6 @@ describe('TaskModal with real RightPanel', () => {
     input.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
     );
-    input.value = 'second submission';
-    input.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
-    );
     resolution = {
       type: 'rebased',
       previous: observed,
@@ -553,6 +549,13 @@ describe('TaskModal with real RightPanel', () => {
       basis: { observed },
     };
     listener?.({ type: 'changed', files: ['f.md'] });
+    const successorInput = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.tc-modal .tc-comment-input',
+    )!;
+    successorInput.value = 'second submission';
+    successorInput.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
 
     expect(
       activeDocument.querySelector<HTMLTextAreaElement>('.tc-modal .tc-comment-input')?.value,

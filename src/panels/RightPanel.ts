@@ -70,6 +70,7 @@ export interface RightPanelMutationLifecycle {
 
 interface SubmittedDraft {
   readonly ref: TaskRef;
+  readonly rootAliases: TaskRef[];
   readonly draft?: RightPanelDraftState;
   readonly origin: RightPanelDraftBundle['origin'];
   consumed: boolean;
@@ -273,16 +274,26 @@ export class RightPanel {
 
   captureDraftStateForOwnedTransition(
     consumedOwnedRef: TaskRef,
+    successorRef: TaskRef,
     token?: object,
   ): RightPanelDraftBundle | undefined {
     const bundle = this.captureDraftState();
     const submitted = token
       ? this.submittedDrafts.get(token)
       : [...this.submittedDrafts.values()].find(
-          (candidate) => !candidate.consumed && sameTaskRef(candidate.ref, consumedOwnedRef),
+          (candidate) =>
+            !candidate.consumed &&
+            candidate.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef)),
         );
-    if (!submitted || submitted.consumed || !sameTaskRef(submitted.ref, consumedOwnedRef)) {
+    if (
+      !submitted ||
+      submitted.consumed ||
+      !submitted.rootAliases.some((alias) => sameTaskRef(alias, consumedOwnedRef))
+    ) {
       return bundle;
+    }
+    if (!submitted.rootAliases.some((alias) => sameTaskRef(alias, successorRef))) {
+      submitted.rootAliases.push({ ...successorRef });
     }
     submitted.consumed = true;
     if (!submitted.draft || !bundle) return bundle;
@@ -335,7 +346,11 @@ export class RightPanel {
     matchesDraft?: (draft: RightPanelDraftState) => boolean,
   ): object | undefined {
     const ref = rootRefForPlanningTarget(target);
-    if ([...this.submittedDrafts.values()].some((submitted) => sameTaskRef(submitted.ref, ref))) {
+    if (
+      [...this.submittedDrafts.values()].some((submitted) =>
+        submitted.rootAliases.some((alias) => sameTaskRef(alias, ref)),
+      )
+    ) {
       return undefined;
     }
     const bundle = this.captureDraftState();
@@ -343,6 +358,7 @@ export class RightPanel {
     const token = Object.freeze({});
     this.submittedDrafts.set(token, {
       ref: { ...ref },
+      rootAliases: [{ ...ref }],
       ...(candidate && { draft: this.snapshotDraft(candidate) }),
       origin: bundle?.origin,
       consumed: false,
