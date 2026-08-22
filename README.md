@@ -1,14 +1,6 @@
-[Obsidian-Tasks-Calendar](https://github.com/702573N/Obsidian-Tasks-Calendar?tab=readme-ov-file#obsidian-tasks-calendar)
+# Abyss Tasks
 
-```js
-const tasks = dv.pages().file.tasks.where((t) => t.text.includes('📅'));
+A task management interface for Markdown tasks in Obsidian.
 
-await window.renderCalendar(dv, {
-  tasks,
-  view: 'month',
-  firstDayOfWeek: '1',
-  options: 'style3',
-  dailyNoteFolder: 'periodic/daily',
-  dailyNoteFormat: 'YYYY-MM-DD',
-});
-```
+The plugin is currently distributed as part of the [Flowing Abyss vault](https://flowing-abyss.com/Description-of-Obsidian-Vault).
+Documentation and a wider public release will follow after the initial testing period.
