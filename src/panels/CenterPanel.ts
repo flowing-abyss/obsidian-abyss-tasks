@@ -1,4 +1,4 @@
-import { Component, Menu, setIcon, TFile, type App, type MenuItem } from 'obsidian';
+import { Component, Menu, setIcon, type App, type MenuItem } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import {
   isListViewCustomized,
@@ -30,6 +30,7 @@ import {
   type CommentTimeContextProvider,
   type LocalDate,
   type TaskApplicationApi,
+  type TaskCaptureApplicationApi,
   type TaskCommandResult,
   type TaskPriority,
   type TaskQueryApi,
@@ -52,6 +53,11 @@ import {
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { buildStatusSubmenu, showStatusMenuAt } from '../ui/statusMenu';
+import {
+  CaptureTargetResolver,
+  commandBodyForCapture,
+  type CaptureTarget,
+} from '../ui/taskCapture/CaptureTargetResolver';
 import {
   presentTaskCommandResult,
   presentTaskCreationResult,
@@ -202,6 +208,8 @@ export class CenterPanel {
   private searchResultsFrame: number | null = null;
 
   private projectsPanel: ProjectsPanel | null = null;
+  private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
+  private readonly captureTargets: CaptureTargetResolver | null;
 
   constructor(
     private state: AppState,
@@ -214,8 +222,13 @@ export class CenterPanel {
     private projectManager: ProjectManager | null = null,
     private tasks?: TaskApplicationApi,
     private commentTimeContext?: CommentTimeContextProvider,
+    captureApplication?: TaskApplicationApi & TaskCaptureApplicationApi,
   ) {
     this.onSaveSettings = onSaveSettings;
+    this.captureApplication = captureApplication ?? null;
+    this.captureTargets = this.captureApplication
+      ? new CaptureTargetResolver(this.captureApplication, settings)
+      : null;
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
         onCommitted: (task, intent, sequence, changed) => {
@@ -479,6 +492,7 @@ export class CenterPanel {
     trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
     bar.addEventListener('click', () => {
       if (bar.querySelector('.abyss-quick-capture')) return;
+      const target = this.captureTargets?.resolve({ type: 'project-dashboard', path });
       trigger.remove();
       const form = bar.createDiv({ cls: 'abyss-quick-capture' });
       const input = form.createEl('input', {
@@ -490,7 +504,7 @@ export class CenterPanel {
         if (committed) return;
         committed = true;
         const text = input.value.trim();
-        if (text) void this.createInProject(path, text);
+        if (text && target) void target.then((resolved) => this.submitCapture(resolved, text));
       };
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
@@ -2755,6 +2769,10 @@ export class CenterPanel {
   }
 
   private showQuickCapture(container: HTMLElement): void {
+    const target = this.captureTargets?.resolve({
+      type: 'list',
+      selection: this.state.get('selectedList'),
+    });
     const form = container.createDiv({ cls: 'abyss-quick-capture' });
     const input = form.createEl('input', {
       cls: 'abyss-quick-capture-input',
@@ -2766,8 +2784,11 @@ export class CenterPanel {
       if (committed) return;
       committed = true;
       const text = input.value.trim();
-      if (text) void this.createTask(text).then(() => this.render());
-      else this.render();
+      if (text && target) {
+        void target
+          .then((resolved) => this.submitCapture(resolved, text))
+          .then(() => this.render());
+      } else this.render();
     };
 
     input.addEventListener('keydown', (e) => {
@@ -2786,69 +2807,12 @@ export class CenterPanel {
   }
 
   private async createTask(text: string): Promise<void> {
-    const sel = this.state.get('selectedList');
-    const today = localDate(window.moment().format('YYYY-MM-DD'));
-
-    // Today and upcoming use the configured destination and typed scheduling fields.
-    if (sel === 'today' || sel === 'upcoming') {
-      await this.executeCreate(
-        this.withDefaultTaskPrefix(text),
-        {
-          type: 'configured-default',
-        },
-        {
-          due: { type: 'set', value: localDate(today) },
-        },
-      );
-      return;
-    }
-
-    // Project context keeps its project-specific destination and insertion policy.
-    if (typeof sel === 'object' && sel.type === 'project') {
-      await this.createInProject(sel.path, text);
-      return;
-    }
-
-    // Dateless contexts preserve their tag rules while sharing the same create command.
-    let markdownBody: string;
-    let fallbackPath: string;
-
-    if (sel === 'inbox') {
-      markdownBody =
-        this.settings.inbox.mode !== 'untagged' ? `${text} ${this.settings.inbox.tag}` : text;
-      fallbackPath = this.settings.customFilePath || 'Inbox.md';
-    } else if (typeof sel === 'object' && sel.type === 'tag') {
-      markdownBody = `${text} ${sel.tag}`;
-      fallbackPath = this.settings.customFilePath || 'Inbox.md';
-    } else if (typeof sel === 'object' && sel.type === 'group') {
-      const group = this.settings.tagGroups.find((g) => g.id === sel.groupId);
-      const tag = group?.mode === 'prefix' ? `#${group.prefix ?? ''}` : (group?.tags?.[0] ?? '');
-      markdownBody = tag ? `${text} ${tag}` : text;
-      fallbackPath = this.settings.customFilePath || 'Inbox.md';
-    } else {
-      await this.executeCreate(
-        this.withDefaultTaskPrefix(text),
-        {
-          type: 'configured-default',
-        },
-        {
-          due: { type: 'set', value: localDate(today) },
-        },
-      );
-      return;
-    }
-
-    if (this.settings.addToToday) {
-      await this.executeCreate(markdownBody, { type: 'configured-default' });
-      return;
-    }
-
-    const path = this.resolveFallbackTaskPath(fallbackPath);
-    await this.executeCreate(markdownBody, {
-      type: 'explicit',
-      destination: { filePath: path, insertion: { type: 'append' } },
-      provision: 'if-missing',
+    if (!this.captureTargets) return;
+    const target = await this.captureTargets.resolve({
+      type: 'list',
+      selection: this.state.get('selectedList'),
     });
+    await this.submitCapture(target, text);
   }
 
   private async deleteTask(task: TaskSnapshot): Promise<void> {
@@ -2865,17 +2829,17 @@ export class CenterPanel {
   }
 
   private async createInProject(path: string, markdownBody: string): Promise<void> {
-    const { taskInsertionMode, taskInsertionSection } = this.settings.projects;
-    await this.executeCreate(markdownBody, {
-      type: 'explicit',
-      destination: {
-        filePath: path,
-        insertion:
-          taskInsertionMode === 'section' && taskInsertionSection.trim().length > 0
-            ? { type: 'section', heading: taskInsertionSection }
-            : { type: 'append' },
-      },
+    if (!this.captureTargets) return;
+    const target = await this.captureTargets.resolve({ type: 'project-dashboard', path });
+    await this.submitCapture(target, markdownBody);
+  }
+
+  private async submitCapture(target: CaptureTarget, markdownBody: string): Promise<void> {
+    const result = await target.session.execute({
+      markdownBody: commandBodyForCapture(target, markdownBody),
+      ...(target.initial !== undefined && { initial: target.initial }),
     });
+    presentTaskCreationResult(result);
   }
 
   private withDefaultTaskPrefix(markdownBody: string): string {
@@ -2899,14 +2863,6 @@ export class CenterPanel {
       announceSuccess: destination.type === 'configured-default',
     });
     return result;
-  }
-
-  private resolveFallbackTaskPath(configuredPath: string): string {
-    const existing = this.app.vault.getAbstractFileByPath(configuredPath);
-    if (existing instanceof TFile) return existing.path;
-    const withExtension = configuredPath.endsWith('.md') ? configuredPath : `${configuredPath}.md`;
-    const markdownFile = this.app.vault.getAbstractFileByPath(withExtension);
-    return markdownFile instanceof TFile ? markdownFile.path : withExtension;
   }
 
   private sameTaskRef(left: TaskRef, right: TaskRef): boolean {

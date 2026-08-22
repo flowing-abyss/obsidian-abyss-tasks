@@ -1,7 +1,10 @@
 export type {
   CalendarProjectionSources,
   CalendarTaskSource,
+  CreateTaskCommandInitial,
   TaskApplicationApi,
+  TaskCaptureApplicationApi,
+  TaskCreateSession,
   TaskIndexEvent,
   TaskQueryApi,
 } from './application/TaskApplicationApi';

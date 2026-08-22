@@ -3,7 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskCommandResult, TaskIndexEvent, TaskQueryApi, TaskRef } from '../src/tasks';
+import type {
+  TaskApplicationApi,
+  TaskCaptureApplicationApi,
+  TaskCommandResult,
+  TaskIndexEvent,
+  TaskQueryApi,
+  TaskRef,
+} from '../src/tasks';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -51,7 +58,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         tagManager,
         taskApplication.index,
-        taskApplication.tasks,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -73,6 +80,29 @@ describe('PanelView', () => {
       expect(layout?.querySelector('.abyss-left')).not.toBeNull();
       expect(layout?.querySelector('.abyss-center')).not.toBeNull();
       expect(layout?.querySelector('.abyss-right')).not.toBeNull();
+    });
+
+    it('keeps planCreate on the PanelView application wrapper', async () => {
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const planCreate = vi.spyOn(application, 'planCreate');
+      const center = (
+        view as unknown as {
+          center: {
+            captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
+          };
+        }
+      ).center;
+
+      expect(center.captureApplication).not.toBeNull();
+      await center.captureApplication?.planCreate({
+        type: 'explicit',
+        destination: { filePath: 'planned.md', insertion: { type: 'append' } },
+      });
+
+      expect(planCreate).toHaveBeenCalledWith({
+        type: 'explicit',
+        destination: { filePath: 'planned.md', insertion: { type: 'append' } },
+      });
     });
 
     it('abyss-rail has 4 rail buttons (tasks/projects/calendar/search) + 1 settings button', () => {
@@ -244,7 +274,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
         taskApplication.statusRegistry,
       );
       await view.onOpen();
@@ -642,7 +672,7 @@ describe('PanelView', () => {
         DEFAULT_SETTINGS,
         makeTagManager(app),
         taskApplication.index,
-        taskApplication.tasks,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
         taskApplication.statusRegistry,
       );
       await view.onOpen();

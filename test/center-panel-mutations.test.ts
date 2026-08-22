@@ -7,7 +7,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import type { TaskApplicationApi, TaskCaptureApplicationApi, TaskSnapshot } from '../src/tasks';
 import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
 import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../src/tasks/domain/types';
@@ -311,6 +311,23 @@ describe('CenterPanel root lifecycle API delegation', () => {
       type: 'invalid',
       issues: [{ code: 'invalid-target' }],
     });
+    const sessionExecute = vi.fn().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-target' }],
+    });
+    const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>(async (destination) => ({
+      type: 'ready',
+      destination:
+        destination.type === 'explicit'
+          ? destination.destination
+          : { filePath: 'Capture.md', insertion: { type: 'append' } },
+      execute: sessionExecute,
+    }));
+    const tasks: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries,
+      execute,
+      planCreate,
+    };
     const panel = new CenterPanel(
       state,
       app,
@@ -320,41 +337,42 @@ describe('CenterPanel root lifecycle API delegation', () => {
       undefined,
       null,
       null,
-      { queries, execute },
+      tasks,
+      undefined,
+      tasks,
     );
     const process = vi.spyOn(app.vault, 'process');
 
     state.set('selectedList', 'today');
     await callPrivate(panel, 'createTask', 'buy milk');
-    expect(execute).toHaveBeenLastCalledWith({
-      type: 'create',
-      destination: { type: 'configured-default' },
+    expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
+    expect(sessionExecute).toHaveBeenLastCalledWith({
       markdownBody: '#task/one-off buy milk',
       initial: { due: { type: 'set', value: expect.any(String) } },
     });
 
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
     await callPrivate(panel, 'createTask', 'project task');
-    expect(execute).toHaveBeenLastCalledWith({
-      type: 'create',
-      destination: {
-        type: 'explicit',
-        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
-      },
+    expect(planCreate).toHaveBeenLastCalledWith({
+      type: 'explicit',
+      destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
+    });
+    expect(sessionExecute).toHaveBeenLastCalledWith({
       markdownBody: 'project task',
     });
+    expect(execute).not.toHaveBeenCalled();
     expect(process).not.toHaveBeenCalled();
   });
 
   it.each([
-    ['missing custom path', {}, 'Capture', 'Capture.md'],
-    ['custom path with extension', {}, 'Capture.md', 'Capture.md'],
-    ['existing extensionless custom file', { Capture: '' }, 'Capture', 'Capture'],
-    ['existing custom Markdown file', { 'Capture.md': '' }, 'Capture', 'Capture.md'],
-    ['missing default inbox', {}, '', 'Inbox.md'],
+    ['missing custom path', {}, 'Capture'],
+    ['custom path with extension', {}, 'Capture.md'],
+    ['existing extensionless custom file', { Capture: '' }, 'Capture'],
+    ['existing custom Markdown file', { 'Capture.md': '' }, 'Capture'],
+    ['missing default inbox', {}, ''],
   ])(
-    'requests provider preparation for $name using legacy path resolution',
-    async (_name, files, customFilePath, filePath) => {
+    'plans $name through the configured capture API without legacy path guessing',
+    async (_name, files, customFilePath) => {
       const app = await createAppWithFiles(files);
       const state = new AppState();
       state.set('selectedList', 'inbox');
@@ -365,6 +383,19 @@ describe('CenterPanel root lifecycle API delegation', () => {
         type: 'invalid',
         issues: [{ code: 'destination-unavailable', field: 'destination' }],
       });
+      const sessionExecute = vi.fn().mockResolvedValue({
+        type: 'invalid',
+        issues: [{ code: 'destination-unavailable', field: 'destination' }],
+      });
+      const planCreate = vi
+        .fn<TaskCaptureApplicationApi['planCreate']>()
+        .mockResolvedValue({ type: 'unavailable', execute: sessionExecute });
+      const tasks: TaskApplicationApi & TaskCaptureApplicationApi = {
+        queries,
+        execute,
+        planCreate,
+      };
+      const lookup = vi.spyOn(app.vault, 'getAbstractFileByPath');
       const panel = new CenterPanel(
         state,
         app,
@@ -374,20 +405,19 @@ describe('CenterPanel root lifecycle API delegation', () => {
         undefined,
         null,
         null,
-        { queries, execute },
+        tasks,
+        undefined,
+        tasks,
       );
 
       await callPrivate(panel, 'createTask', 'captured');
 
-      expect(execute).toHaveBeenCalledWith({
-        type: 'create',
-        destination: {
-          type: 'explicit',
-          destination: { filePath, insertion: { type: 'append' } },
-          provision: 'if-missing',
-        },
+      expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' });
+      expect(sessionExecute).toHaveBeenCalledWith({
         markdownBody: `captured ${DEFAULT_SETTINGS.inbox.tag}`,
       });
+      expect(execute).not.toHaveBeenCalled();
+      expect(lookup).not.toHaveBeenCalled();
     },
   );
 

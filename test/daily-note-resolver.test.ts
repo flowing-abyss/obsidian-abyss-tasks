@@ -1,8 +1,9 @@
-import { App } from 'obsidian';
-import { describe, expect, it } from 'vitest';
+import { App, TFile } from 'obsidian';
+import { describe, expect, it, vi } from 'vitest';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { useRealMoment } from './helpers';
+import type { CalendarSettings } from '../src/settings/types';
+import { createAppWithFiles, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -89,5 +90,81 @@ describe('DailyNoteResolver.getAvailableProviders', () => {
     const resolver = new DailyNoteResolver(app, DEFAULT_SETTINGS);
     const autoEntry = resolver.getAvailableProviders().find((p) => p.id === 'auto');
     expect(autoEntry?.label).toContain('Periodic Notes');
+  });
+});
+
+describe('DailyNoteResolver destination planning', () => {
+  it('plans without writes and prepares from frozen provider and insertion settings', async () => {
+    const app = await createAppWithFiles({
+      'templates/first.md': '# {{title}}\n\n## Captured\n',
+      'templates/second.md': '# changed\n',
+    });
+    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
+    const options = {
+      folder: 'daily/original',
+      format: 'YYYY-MM-DD',
+      template: 'templates/first',
+    };
+    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
+      getPluginById: (id: string) =>
+        id === 'daily-notes' ? { enabled: true, instance: { options } } : null,
+    };
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      dailyNoteProvider: 'core' as const,
+      taskInsertionMode: 'section' as const,
+      taskInsertionSection: '## Captured',
+    };
+    const create = vi.spyOn(app.vault, 'create');
+    const createFolder = vi.spyOn(app.vault, 'createFolder');
+    const resolver = new DailyNoteResolver(app, settings);
+
+    const plan = resolver.planDailyNoteDestination();
+    const today = window.moment().format('YYYY-MM-DD');
+
+    expect(plan.destination).toEqual({
+      filePath: `daily/original/${today}.md`,
+      insertion: { type: 'section', heading: '## Captured' },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(createFolder).not.toHaveBeenCalled();
+
+    options.folder = 'daily/changed';
+    options.template = 'templates/second';
+    settings.taskInsertionMode = 'append';
+    settings.taskInsertionSection = '## Changed';
+
+    await expect(plan.prepare()).resolves.toEqual({
+      type: 'resolved',
+      destination: {
+        filePath: `daily/original/${today}.md`,
+        insertion: { type: 'section', heading: '## Captured' },
+      },
+    });
+    expect(createFolder).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenCalledOnce();
+    const file = app.vault.getAbstractFileByPath(`daily/original/${today}.md`);
+    expect(file).toBeInstanceOf(TFile);
+    expect(await app.vault.cachedRead(file as TFile)).toContain(`# ${today}`);
+  });
+
+  it('keeps the legacy resolver adapter returning a TaskDestination', async () => {
+    const app = await createAppWithFiles({});
+    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
+    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
+      getPluginById: () => null,
+    };
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      dailyNoteProvider: 'manual' as const,
+      manualDailyNotePath: 'legacy/YYYY-MM-DD',
+    };
+
+    const destination = await new DailyNoteResolver(app, settings).resolveDailyNoteDestination();
+
+    expect(destination).toEqual({
+      filePath: `legacy/${window.moment().format('YYYY-MM-DD')}.md`,
+      insertion: { type: 'append' },
+    });
   });
 });

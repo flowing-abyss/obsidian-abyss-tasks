@@ -13,6 +13,7 @@ import type { TagManager } from '../tags/TagManager';
 import type {
   CommentTimeContextProvider,
   TaskApplicationApi,
+  TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
   TaskNodeRef,
@@ -78,13 +79,12 @@ export class PanelView extends ItemView {
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
   private ownedWriteRef: TaskRef | undefined = undefined;
-
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
     private tagManager: TagManager,
     private queries: TaskQueryApi,
-    private tasks: TaskApplicationApi,
+    private readonly tasks: TaskApplicationApi & TaskCaptureApplicationApi,
     private statusRegistry: StatusRegistry,
     private onSaveSettings: () => Promise<void> = async () => {},
     private commentTimeContext?: CommentTimeContextProvider,
@@ -113,8 +113,9 @@ export class PanelView extends ItemView {
       getSelectedList: () => this.state.get('selectedList'),
       setSelectedList: (selection) => this.state.set('selectedList', selection),
     });
-    const selectionTasks: TaskApplicationApi = {
+    const selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries: this.tasks.queries,
+      planCreate: (destination) => this.tasks.planCreate(destination),
       execute: async (command) => {
         const initiatingRef = commandRootRef(command);
         const result = await this.tasks.execute(command);
@@ -158,6 +159,7 @@ export class PanelView extends ItemView {
       projectManager,
       selectionTasks,
       this.commentTimeContext,
+      selectionTasks,
     );
     this.right = new RightPanel(
       this.state,

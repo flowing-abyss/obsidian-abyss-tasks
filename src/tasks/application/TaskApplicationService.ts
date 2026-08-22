@@ -19,9 +19,21 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import { isSingleLineText } from '../domain/validation';
-import type { TaskApplicationApi, TaskQueryApi } from './TaskApplicationApi';
+import type {
+  CreateTaskCommand,
+  CreateTaskCommandDestination,
+  CreateTaskCommandInitial,
+  TaskApplicationApi,
+  TaskCaptureApplicationApi,
+  TaskCreateSession,
+  TaskQueryApi,
+} from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
-import type { TaskDestinationProvider } from './TaskDestinationProvider';
+import type {
+  TaskDestinationPlan,
+  TaskDestinationProvider,
+  TaskDestinationResolution,
+} from './TaskDestinationProvider';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
@@ -379,7 +391,19 @@ function captureClock(
   return 'read' in clock ? clock.read() : { localDate: clock.today() };
 }
 
-export class TaskApplicationService implements TaskApplicationApi {
+interface TaskCreateRequest {
+  readonly markdownBody: string;
+  readonly initial?: CreateTaskCommandInitial;
+}
+
+function destinationUnavailableResult(): TaskCommandResult {
+  return {
+    type: 'invalid',
+    issues: [{ code: 'destination-unavailable', field: 'destination' }],
+  };
+}
+
+export class TaskApplicationService implements TaskApplicationApi, TaskCaptureApplicationApi {
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes = new Map<string, RecentOutcome>();
@@ -393,6 +417,18 @@ export class TaskApplicationService implements TaskApplicationApi {
     private readonly behaviorSettings: TaskBehaviorSettingsProvider = () =>
       DEFAULT_BEHAVIOR_SETTINGS,
   ) {}
+
+  async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {
+    const settings = snapshotBehaviorSettings(this.behaviorSettings);
+    const reading = captureClock(this.clock);
+    try {
+      const plan = await this.destinationPlan(destination);
+      if (plan === undefined) return this.unavailableCreateSession();
+      return this.readyCreateSession(plan, settings, reading);
+    } catch {
+      return this.unavailableCreateSession();
+    }
+  }
 
   async execute(command: TaskCommand): Promise<TaskCommandResult> {
     try {
@@ -484,50 +520,54 @@ export class TaskApplicationService implements TaskApplicationApi {
   }
 
   private async create(
-    command: Extract<TaskCommand, { readonly type: 'create' }>,
+    command: CreateTaskCommand,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): Promise<TaskCommandResult> {
+    const resolveDestination = async (): Promise<TaskDestinationResolution | undefined> => {
+      if (command.destination.type === 'explicit') {
+        if (command.destination.provision === undefined) {
+          return {
+            type: 'resolved',
+            destination: {
+              filePath: command.destination.destination.filePath,
+              insertion: { ...command.destination.destination.insertion },
+            },
+          };
+        }
+        return await this.destinationProvider?.prepare(command.destination.destination);
+      }
+      return await this.destinationProvider?.resolveConfiguredDefault();
+    };
+    return await this.executePlannedCreate(command, resolveDestination, settings, reading);
+  }
+
+  private async executePlannedCreate(
+    request: TaskCreateRequest,
+    resolveDestination: () => Promise<TaskDestinationResolution | undefined>,
     settings: TaskBehaviorSettings,
     reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
   ): Promise<TaskCommandResult> {
     if (
-      command.markdownBody.replace(/\r\n/gu, '').includes('\r') ||
-      command.markdownBody.split(/\r?\n/u)[0]?.trim().length === 0
+      request.markdownBody.replace(/\r\n/gu, '').includes('\r') ||
+      request.markdownBody.split(/\r?\n/u)[0]?.trim().length === 0
     ) {
       return { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] };
     }
-    let destination: TaskDestination;
-    if (command.destination.type === 'explicit') {
-      if (command.destination.provision === undefined) {
-        destination = command.destination.destination;
-      } else {
-        const resolution = await this.destinationProvider?.prepare(command.destination.destination);
-        if (resolution === undefined || resolution.type === 'unavailable') {
-          return {
-            type: 'invalid',
-            issues: [{ code: 'destination-unavailable', field: 'destination' }],
-          };
-        }
-        destination = resolution.destination;
-      }
-    } else {
-      const resolution = await this.destinationProvider?.resolveConfiguredDefault();
-      if (resolution === undefined || resolution.type === 'unavailable') {
-        return {
-          type: 'invalid',
-          issues: [{ code: 'destination-unavailable', field: 'destination' }],
-        };
-      }
-      destination = resolution.destination;
+    const resolution = await resolveDestination();
+    if (resolution === undefined || resolution.type === 'unavailable') {
+      return destinationUnavailableResult();
     }
-    const tags = command.initial?.tags && normalizeTagChange(command.initial.tags);
-    if (command.initial?.tags !== undefined && tags === undefined) {
+    const tags = request.initial?.tags && normalizeTagChange(request.initial.tags);
+    if (request.initial?.tags !== undefined && tags === undefined) {
       return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] };
     }
     const initial =
-      command.initial === undefined
+      request.initial === undefined
         ? undefined
-        : { ...command.initial, ...(tags !== undefined && { tags }) };
-    const result = await this.repository.create(destination, {
-      markdownBody: command.markdownBody,
+        : { ...request.initial, ...(tags !== undefined && { tags }) };
+    const result = await this.repository.create(resolution.destination, {
+      markdownBody: request.markdownBody,
       ...(initial !== undefined && { initial }),
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
@@ -535,6 +575,63 @@ export class TaskApplicationService implements TaskApplicationApi {
     if (result.type !== 'committed') return this.terminalRepositoryResult(result);
     if (result.outcome.type === 'task') this.remember(result.outcome.task);
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
+  }
+
+  private async destinationPlan(
+    destination: CreateTaskCommandDestination,
+  ): Promise<TaskDestinationPlan | undefined> {
+    if (destination.type === 'configured-default') {
+      return await this.destinationProvider?.planConfiguredDefault();
+    }
+    if (destination.provision !== undefined) {
+      return await this.destinationProvider?.planExplicit(destination.destination);
+    }
+    const planned: TaskDestination = {
+      filePath: destination.destination.filePath,
+      insertion: { ...destination.destination.insertion },
+    };
+    return {
+      destination: planned,
+      prepare: async () => ({ type: 'resolved', destination: planned }),
+    };
+  }
+
+  private readyCreateSession(
+    plan: TaskDestinationPlan,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+  ): TaskCreateSession {
+    const destination: TaskDestination = {
+      filePath: plan.destination.filePath,
+      insertion: { ...plan.destination.insertion },
+    };
+    let preparation: Promise<TaskDestinationResolution> | undefined;
+    const prepareOnce = (): Promise<TaskDestinationResolution> => {
+      preparation ??= Promise.resolve().then(() => plan.prepare());
+      return preparation;
+    };
+    return {
+      type: 'ready',
+      destination,
+      execute: async (request) => {
+        try {
+          return await this.executePlannedCreate(request, prepareOnce, settings, reading);
+        } catch {
+          return {
+            type: 'io-error',
+            cause: 'repository-error',
+            contentState: 'unknown',
+          };
+        }
+      },
+    };
+  }
+
+  private unavailableCreateSession(): TaskCreateSession {
+    return {
+      type: 'unavailable',
+      execute: async () => destinationUnavailableResult(),
+    };
   }
 
   private prepare(

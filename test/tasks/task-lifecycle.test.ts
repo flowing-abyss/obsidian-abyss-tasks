@@ -334,6 +334,8 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     const edit = vi.fn<TaskRepository['edit']>();
     const destinationProvider: TaskDestinationProvider = {
+      planConfiguredDefault: vi.fn(),
+      planExplicit: vi.fn(),
       resolveConfiguredDefault: vi.fn().mockResolvedValue({
         type: 'resolved',
         destination: appendDestination,
@@ -380,6 +382,8 @@ describe('TaskApplicationService lifecycle routing', () => {
       changed: true,
     });
     const provider: TaskDestinationProvider = {
+      planConfiguredDefault: vi.fn(),
+      planExplicit: vi.fn(),
       resolveConfiguredDefault: vi.fn().mockResolvedValue({ type: 'unavailable' }),
       prepare: vi.fn().mockResolvedValue({
         type: 'resolved',
@@ -474,6 +478,128 @@ describe('TaskApplicationService lifecycle routing', () => {
       type: 'invalid',
       issues: [{ code: 'invalid-target', field: 'tags' }],
     });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('preserves legacy destination-error precedence over invalid initial tags', async () => {
+    const create = vi.fn<TaskRepository['create']>();
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn(),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn().mockResolvedValue({ type: 'unavailable' as const }),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      queries,
+      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      catalog,
+      clock,
+      destinationProvider,
+    );
+
+    await expect(
+      application.execute({
+        type: 'create',
+        destination: { type: 'configured-default' },
+        markdownBody: 'invalid tag target',
+        initial: { tags: { add: ['bad tag'] } },
+      }),
+    ).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    expect(destinationProvider.resolveConfiguredDefault).toHaveBeenCalledOnce();
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('plans without provisioning and freezes clock, behavior, and preparation once per session', async () => {
+    const create = vi.fn<TaskRepository['create']>().mockResolvedValue({
+      type: 'committed',
+      outcome: { type: 'task', task: committedTask },
+      changed: true,
+    });
+    const prepare = vi.fn().mockResolvedValue({
+      type: 'resolved' as const,
+      destination: appendDestination,
+    });
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn().mockResolvedValue({
+        destination: appendDestination,
+        prepare,
+      }),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn(),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    let today = localDate('2026-07-14');
+    let addCreatedDate = true;
+    const clock = vi.fn(() => today);
+    const behavior = vi.fn<TaskBehaviorSettingsProvider>(() => ({
+      taskLifecycle: { addCreatedDate, addCompletionDate: true },
+      recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+    }));
+    const application = new TaskApplicationService(
+      queries,
+      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      catalog,
+      { today: clock },
+      destinationProvider,
+      behavior,
+    );
+
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    expect(session).toMatchObject({ type: 'ready', destination: appendDestination });
+    expect(destinationProvider.planConfiguredDefault).toHaveBeenCalledOnce();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(clock).toHaveBeenCalledOnce();
+    expect(behavior).toHaveBeenCalledOnce();
+
+    today = localDate('2026-08-22');
+    addCreatedDate = false;
+    await session.execute({ markdownBody: 'first planned task' });
+    await session.execute({ markdownBody: 'second planned task' });
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(create).toHaveBeenNthCalledWith(1, appendDestination, {
+      markdownBody: 'first planned task',
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
+    expect(create).toHaveBeenNthCalledWith(2, appendDestination, {
+      markdownBody: 'second planned task',
+      today: localDate('2026-07-14'),
+      addCreatedDate: true,
+    });
+    expect(clock).toHaveBeenCalledOnce();
+    expect(behavior).toHaveBeenCalledOnce();
+  });
+
+  it('returns a frozen executable unavailable session without repository writes', async () => {
+    const create = vi.fn<TaskRepository['create']>();
+    const destinationProvider = {
+      planConfiguredDefault: vi.fn().mockResolvedValue(undefined),
+      planExplicit: vi.fn(),
+      resolveConfiguredDefault: vi.fn(),
+      prepare: vi.fn(),
+    } satisfies TaskDestinationProvider;
+    const application = new TaskApplicationService(
+      queries,
+      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      catalog,
+      clock,
+      destinationProvider,
+    );
+
+    const session = await application.planCreate({ type: 'configured-default' });
+
+    expect(session.type).toBe('unavailable');
+    await expect(session.execute({ markdownBody: 'preserve this draft' })).resolves.toEqual({
+      type: 'invalid',
+      issues: [{ code: 'destination-unavailable', field: 'destination' }],
+    });
+    expect(destinationProvider.planConfiguredDefault).toHaveBeenCalledOnce();
     expect(create).not.toHaveBeenCalled();
   });
 });
@@ -605,6 +731,35 @@ describe('TaskApplicationService lifecycle settings', () => {
 });
 
 describe('ObsidianTaskDestinationProvider', () => {
+  it('plans an existing explicit destination without creating it', async () => {
+    const app = await createAppWithFiles({ 'existing.md': '# Existing\n' });
+    const provider = new ObsidianTaskDestinationProvider(
+      app,
+      DEFAULT_SETTINGS,
+      new DailyNoteResolver(app, DEFAULT_SETTINGS),
+    );
+    const create = vi.spyOn(app.vault, 'create');
+
+    const plan = await provider.planExplicit({
+      filePath: 'existing.md',
+      insertion: { type: 'section', heading: '## Tasks' },
+    });
+
+    expect(plan.destination).toEqual({
+      filePath: 'existing.md',
+      insertion: { type: 'section', heading: '## Tasks' },
+    });
+    expect(create).not.toHaveBeenCalled();
+    await expect(plan.prepare()).resolves.toEqual({
+      type: 'resolved',
+      destination: {
+        filePath: 'existing.md',
+        insertion: { type: 'section', heading: '## Tasks' },
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('creates and resolves a daily note without inserting task Markdown', async () => {
     const app = await createAppWithFiles({});
     (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
@@ -681,6 +836,64 @@ describe('ObsidianTaskDestinationProvider', () => {
 });
 
 describe('configured destination end-to-end lifecycle', () => {
+  it('executes a frozen daily-note session with exactly-once provisioning', async () => {
+    const app = await createAppWithFiles({
+      'templates/frozen.md': '# {{title}}\n\n## Frozen tasks\n',
+      'templates/changed.md': '# Changed template\n',
+    });
+    (app as unknown as { plugins: unknown }).plugins = { getPlugin: () => null };
+    const options = {
+      folder: 'daily/frozen',
+      format: 'YYYY-MM-DD',
+      template: 'templates/frozen',
+    };
+    (app as unknown as { internalPlugins: unknown }).internalPlugins = {
+      getPluginById: (id: string) =>
+        id === 'daily-notes' ? { enabled: true, instance: { options } } : null,
+    };
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      addToToday: true,
+      dailyNoteProvider: 'core',
+      taskInsertionMode: 'section',
+      taskInsertionSection: '## Frozen tasks',
+    };
+    const application = applicationFor(app, settings);
+    const create = vi.spyOn(app.vault, 'create');
+    const createFolder = vi.spyOn(app.vault, 'createFolder');
+
+    const session = await application.planCreate({ type: 'configured-default' });
+    const today = window.moment().format('YYYY-MM-DD');
+
+    expect(session).toMatchObject({
+      type: 'ready',
+      destination: {
+        filePath: `daily/frozen/${today}.md`,
+        insertion: { type: 'section', heading: '## Frozen tasks' },
+      },
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(createFolder).not.toHaveBeenCalled();
+
+    options.folder = 'daily/changed';
+    options.template = 'templates/changed';
+    settings.taskInsertionMode = 'append';
+    settings.taskInsertionSection = '## Changed tasks';
+    await session.execute({ markdownBody: 'first frozen task' });
+    await session.execute({ markdownBody: 'second frozen task' });
+
+    expect(create).toHaveBeenCalledOnce();
+    expect(createFolder).toHaveBeenCalledOnce();
+    const file = app.vault.getAbstractFileByPath(`daily/frozen/${today}.md`);
+    expect(file).toBeInstanceOf(TFile);
+    const content = await app.vault.cachedRead(file as TFile);
+    expect(content).toContain(`# ${today}`);
+    expect(content).toContain('## Frozen tasks\n- [ ] second frozen task');
+    expect(content).toContain('- [ ] first frozen task');
+    expect(content).not.toContain('Changed template');
+    expect(app.vault.getAbstractFileByPath(`daily/changed/${today}.md`)).toBeNull();
+  });
+
   it.each([
     {
       name: 'configured custom note',

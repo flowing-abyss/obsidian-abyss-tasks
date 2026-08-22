@@ -1,5 +1,6 @@
 import { TFile, normalizePath, type App } from 'obsidian';
 import type { CalendarSettings } from '../settings/types';
+import type { TaskDestinationPlan } from '../tasks/application/TaskDestinationProvider';
 import type { TaskDestination } from '../tasks/domain/types';
 import { CoreDailyNotesAdapter } from './adapters/CoreDailyNotesAdapter';
 import { JournalAdapter } from './adapters/JournalAdapter';
@@ -52,10 +53,28 @@ export class DailyNoteResolver {
   }
 
   async resolveDailyNoteDestination(): Promise<TaskDestination> {
-    const adapter = this.getActiveAdapter();
-    const file = await this.ensureNote(adapter.getSettings(this.app, this.settings));
+    const resolution = await this.planDailyNoteDestination().prepare();
+    if (resolution.type === 'unavailable') throw new Error('daily-note-unavailable');
+    return resolution.destination;
+  }
+
+  planDailyNoteDestination(): TaskDestinationPlan {
+    const providerSettings = { ...this.getActiveAdapter().getSettings(this.app, this.settings) };
+    const destination = this.destinationFor(providerSettings);
     return {
-      filePath: file.path,
+      destination,
+      prepare: async () => ({
+        type: 'resolved',
+        destination: await this.ensurePlannedDestination(providerSettings, destination),
+      }),
+    };
+  }
+
+  private destinationFor(ps: DailyNoteProviderSettings): TaskDestination {
+    const fileName = window.moment().format(ps.format);
+    const filePath = normalizePath(ps.folder ? `${ps.folder}/${fileName}.md` : `${fileName}.md`);
+    return {
+      filePath,
       insertion:
         this.settings.taskInsertionMode === 'section' &&
         this.settings.taskInsertionSection.trim().length > 0
@@ -64,18 +83,26 @@ export class DailyNoteResolver {
     };
   }
 
-  private async ensureNote(ps: DailyNoteProviderSettings): Promise<TFile> {
-    const fileName = window.moment().format(ps.format);
-    const filePath = normalizePath(ps.folder ? `${ps.folder}/${fileName}.md` : `${fileName}.md`);
-    const existing = this.app.vault.getAbstractFileByPath(filePath);
-    if (existing instanceof TFile) return existing;
+  private async ensurePlannedDestination(
+    ps: DailyNoteProviderSettings,
+    destination: TaskDestination,
+  ): Promise<TaskDestination> {
+    const existing = this.app.vault.getAbstractFileByPath(destination.filePath);
+    if (existing instanceof TFile) {
+      return { filePath: existing.path, insertion: destination.insertion };
+    }
 
-    const folderPath = filePath.substring(0, filePath.lastIndexOf('/'));
+    const folderPath = destination.filePath.substring(0, destination.filePath.lastIndexOf('/'));
     if (folderPath && !this.app.vault.getAbstractFileByPath(folderPath)) {
       await this.app.vault.createFolder(folderPath);
     }
 
-    return this.createNoteWithTemplate(filePath, ps.template, fileName);
+    const fileName = destination.filePath.slice(
+      destination.filePath.lastIndexOf('/') + 1,
+      -'.md'.length,
+    );
+    const file = await this.createNoteWithTemplate(destination.filePath, ps.template, fileName);
+    return { filePath: file.path, insertion: destination.insertion };
   }
 
   /**

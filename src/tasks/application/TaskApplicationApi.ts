@@ -4,6 +4,7 @@ import type {
   DateRange,
   LocalDate,
   SubtaskSnapshot,
+  TaskDestination,
   TaskNodeRef,
   TaskRef,
   TaskSnapshot,
@@ -45,4 +46,28 @@ export interface TaskQueryApi {
 export interface TaskApplicationApi {
   readonly queries: TaskQueryApi;
   execute(command: TaskCommand): Promise<TaskCommandResult>;
+}
+
+export type CreateTaskCommand = Extract<TaskCommand, { readonly type: 'create' }>;
+export type CreateTaskCommandDestination = CreateTaskCommand['destination'];
+export type CreateTaskCommandInitial = NonNullable<CreateTaskCommand['initial']>;
+
+interface TaskCreateRequest {
+  readonly markdownBody: string;
+  readonly initial?: CreateTaskCommandInitial;
+}
+
+export type TaskCreateSession =
+  | {
+      readonly type: 'ready';
+      readonly destination: TaskDestination;
+      execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
+    }
+  | {
+      readonly type: 'unavailable';
+      execute(request: TaskCreateRequest): Promise<TaskCommandResult>;
+    };
+
+export interface TaskCaptureApplicationApi {
+  planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession>;
 }

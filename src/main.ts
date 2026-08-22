@@ -9,7 +9,12 @@ import { toStatusRules } from './settings/statusCatalogAdapter';
 import type { CalendarSettings, CodeBlockParams } from './settings/types';
 import { StatusRegistry } from './status/StatusRegistry';
 import { TagManager } from './tags/TagManager';
-import { localDate, type TaskApplicationApi, type TaskQueryApi } from './tasks';
+import {
+  localDate,
+  type TaskApplicationApi,
+  type TaskCaptureApplicationApi,
+  type TaskQueryApi,
+} from './tasks';
 import { TaskApplicationService } from './tasks/application/TaskApplicationService';
 import { systemClock } from './tasks/domain/clock';
 import type { CommentTimeContextProvider } from './tasks/domain/commentTimeLabel';
@@ -29,7 +34,7 @@ export default class TaskCalendarPlugin extends Plugin {
   settings!: CalendarSettings;
   tagManager!: TagManager;
   queries!: TaskQueryApi;
-  tasks!: TaskApplicationApi;
+  tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;

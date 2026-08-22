@@ -10,6 +10,7 @@ import { StatusRegistry } from '../src/status/StatusRegistry';
 import type {
   LocalDate,
   TaskApplicationApi,
+  TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskIndexEvent,
   TaskQueryApi,
@@ -158,7 +159,9 @@ async function makePanel(
     undefined,
     null,
     null,
-    taskApplication.tasks,
+    taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+    undefined,
+    taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
   );
   return {
     panel,
@@ -532,6 +535,31 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 });
 
 describe('CenterPanel.createTask', () => {
+  it('freezes the configured destination when the inline capture opens', async () => {
+    const settings: CalendarSettings = {
+      ...DEFAULT_SETTINGS,
+      addToToday: false,
+      customFilePath: 'first.md',
+      taskPrefix: '',
+    };
+    const { panel, state, app } = await makePanel({ 'first.md': '', 'changed.md': '' }, settings);
+    state.set('selectedList', 'today');
+    const container = freshContainer();
+    panel.mount(container);
+
+    container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+    await flushMicrotasks();
+    settings.customFilePath = 'changed.md';
+    const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+    input.value = 'frozen target';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await vi.waitFor(async () => {
+      expect(await readMd(app, 'first.md')).toContain('- [ ] frozen target');
+    });
+    expect(await readMd(app, 'changed.md')).toBe('');
+  });
+
   it("sel='today' creates through TaskApplicationApi in customFilePath when addToToday=false", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
@@ -547,7 +575,7 @@ describe('CenterPanel.createTask', () => {
     expect(content).toContain(`- [ ] buy milk ➕ ${TODAY} 📅 ${TODAY}`);
   });
 
-  it("sel='upcoming' uses the same configured TaskApplicationApi route as today", async () => {
+  it("sel='upcoming' freezes tomorrow through the capture application route", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
       addToToday: false,
@@ -559,8 +587,8 @@ describe('CenterPanel.createTask', () => {
     fixedToday(TODAY);
     await call<void>(panel, 'createTask', 'future task');
     const content = await readMd(app, 'inbox.md');
-    // CURRENT BEHAVIOR: upcoming uses today's date as the due date (same as 'today')
-    expect(content).toContain(`- [ ] future task ➕ ${TODAY} 📅 ${TODAY}`);
+    const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
+    expect(content).toContain(`- [ ] future task ➕ ${TODAY} 📅 ${tomorrow}`);
   });
 
   it("sel='inbox' tag mode appends task line with inboxTag to customFilePath", async () => {

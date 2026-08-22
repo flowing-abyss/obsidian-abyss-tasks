@@ -58,7 +58,7 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     mutation: 'vault-wide tag rename',
     reason: 'A global tag rename intentionally updates task and non-task text across the vault.',
   },
-  'src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider.ts#ObsidianTaskDestinationProvider.prepare#vault.create#1':
+  'src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider.ts#ObsidianTaskDestinationProvider.planExplicit#vault.create#1':
     {
       mutation: 'destination provisioning',
       reason: 'Provisions the configured destination without inserting task Markdown.',
@@ -76,6 +76,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CommentRef: ['src/panels/RightPanel.ts'],
   CommentTimeContext: ['src/panels/RightPanel.ts'],
   CommentTimeContextProvider: ['src/views/PanelView.ts'],
+  CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
@@ -86,9 +87,11 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   SubtaskRef: ['src/panels/RightPanel.ts'],
   SubtaskSnapshot: ['src/panels/RightPanel.ts'],
   TaskApplicationApi: ['src/main.ts'],
+  TaskCaptureApplicationApi: ['src/main.ts'],
   TaskCommand: ['src/panels/RightPanel.ts'],
   TaskCommandResult: ['src/projects/ProjectManager.ts'],
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
+  TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
   TaskNodeRef: ['src/panels/RightPanel.ts'],
   TaskPlanning: ['src/views/calendarOccurrences.ts'],
