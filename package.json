@@ -1,7 +1,7 @@
 {
-  "name": "obsidian-task-calendar",
+  "name": "obsidian-abyss-tasks",
   "version": "1.2.0",
-  "description": "Flexible Task Calendar plugin for Obsidian",
+  "description": "A task management interface for Markdown tasks in Obsidian",
   "main": "main.js",
   "type": "module",
   "engines": {
@@ -35,6 +35,10 @@
   ],
   "author": "flowing-abyss",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/flowing-abyss/obsidian-abyss-tasks.git"
+  },
   "devDependencies": {
     "@commitlint/cli": "21.0.2",
     "@commitlint/config-conventional": "21.0.2",

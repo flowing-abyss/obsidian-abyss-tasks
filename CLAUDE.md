@@ -1,4 +1,4 @@
-# Obsidian Task Calendar plugin
+# Abyss Tasks plugin
 
 An Obsidian sidebar plugin that renders vault tasks in month, week, and list views. Registers a custom `ItemView` (panel) with left/center/right sub-panels.
 
@@ -33,7 +33,7 @@ obsidian vault="dev-vault" plugin:reload id=task-calendar           # reload aft
 obsidian vault="dev-vault" eval code="app.vault.getFiles().length"  # run JS in app
 obsidian vault="dev-vault" devtools                                 # toggle dev tools
 obsidian vault="dev-vault" dev:screenshot path=screenshot.png       # screenshot
-obsidian vault="dev-vault" dev:dom selector=".tc-panel-view" text   # query DOM
+obsidian vault="dev-vault" dev:dom selector=".abyss-panel-view" text # query DOM
 ```
 
 Typical loop: `npm run dev` → `obsidian plugin:reload id=task-calendar`.

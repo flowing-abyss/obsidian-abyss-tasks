@@ -10,7 +10,7 @@ useRealMoment();
 
 const MANIFEST = {
   id: 'task-calendar',
-  name: 'Task Calendar',
+  name: 'Abyss Tasks',
   version: '1.0.0',
 } as ConstructorParameters<typeof TaskCalendarPlugin>[1];
 
