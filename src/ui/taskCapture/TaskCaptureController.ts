@@ -120,6 +120,7 @@ export class TaskCaptureController {
     }
     this.closeAfterSuccess = false;
     this.emit();
+    if (this.destroyed) return;
     this.onResult(result, description);
     if (shouldRequestClose && !this.destroyed && token === this.submissionToken) {
       this.onRequestClose();
@@ -154,6 +155,9 @@ export class TaskCaptureController {
 
   private emit(): void {
     const snapshot = this.snapshot();
-    for (const observer of [...this.observers]) observer(snapshot);
+    for (const observer of [...this.observers]) {
+      if (this.destroyed) return;
+      if (this.observers.has(observer)) observer(snapshot);
+    }
   }
 }

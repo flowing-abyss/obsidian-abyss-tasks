@@ -112,6 +112,24 @@ describe('TaskCaptureController', () => {
     expect(attached).toHaveBeenCalledWith(controller.snapshot());
   });
 
+  it('skips an observer released by an earlier observer during the same emission', () => {
+    const { controller } = harness();
+    const notifications: string[] = [];
+    let laterSubscription!: { release(): void };
+    controller.subscribe((snapshot) => {
+      if (snapshot.draft !== 'release later') return;
+      notifications.push('earlier');
+      laterSubscription.release();
+    });
+    laterSubscription = controller.subscribe((snapshot) => {
+      if (snapshot.draft === 'release later') notifications.push('later');
+    });
+
+    controller.setDraft('release later');
+
+    expect(notifications).toEqual(['earlier']);
+  });
+
   it('snapshots the exact draft and synchronously exposes readonly pending state', async () => {
     const pending = deferred<TaskCommandResult>();
     const { controller, execute } = harness(() => pending.promise);
@@ -156,17 +174,41 @@ describe('TaskCaptureController', () => {
     controller.subscribe((snapshot) => {
       if (snapshot.phase === 'submitting') controller.destroy();
     });
+    const laterObserver = vi.fn();
+    controller.subscribe(laterObserver);
     controller.setDraft('destroy before execute');
+    laterObserver.mockClear();
 
     await controller.submit('enter');
 
     expect(execute).not.toHaveBeenCalled();
     expect(onResult).not.toHaveBeenCalled();
     expect(onRequestClose).not.toHaveBeenCalled();
+    expect(laterObserver).not.toHaveBeenCalled();
     expect(controller.snapshot()).toMatchObject({
       phase: 'closed',
       draft: 'destroy before execute',
     });
+  });
+
+  it('stops a terminal emission and result continuation when an observer destroys it', async () => {
+    const { controller, execute, onResult, onRequestClose } = harness();
+    let submitted = false;
+    controller.subscribe((snapshot) => {
+      if (snapshot.phase === 'submitting') submitted = true;
+      if (submitted && snapshot.phase === 'idle') controller.destroy();
+    });
+    const laterPhases: string[] = [];
+    controller.subscribe((snapshot) => laterPhases.push(snapshot.phase));
+    controller.setDraft('destroy on terminal');
+
+    await controller.submit('enter');
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(onResult).not.toHaveBeenCalled();
+    expect(onRequestClose).not.toHaveBeenCalled();
+    expect(laterPhases).toEqual(['idle', 'idle', 'submitting']);
+    expect(controller.snapshot()).toMatchObject({ phase: 'closed', draft: '' });
   });
 
   it('clears an Enter submission, remains open, and advances focusEpoch on success', async () => {
