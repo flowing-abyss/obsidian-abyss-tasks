@@ -1,5 +1,10 @@
 import { Notice, type App } from 'obsidian';
-import { parseRecurrenceRule, type TaskApplicationApi, type TaskCommandResult } from '../tasks';
+import {
+  parseRecurrenceRule,
+  type TaskApplicationApi,
+  type TaskCommandResult,
+  type TaskSnapshot,
+} from '../tasks';
 import { TaskMoveRecoveryModal } from './TaskMoveRecoveryModal';
 
 interface CompletionConfirmationTask {
@@ -110,28 +115,40 @@ export function requestTaskCompletion(
 
 export function presentTaskCommandResult(result: TaskCommandResult): void {
   if (result.type === 'ok') return;
-  let message: string;
+  new Notice(describeCommandError(result).message);
+}
+
+interface CommandErrorDescription {
+  readonly message: string;
+  readonly requiresRecovery: boolean;
+}
+
+function describeCommandError(
+  result: Exclude<TaskCommandResult, { readonly type: 'ok' }>,
+): CommandErrorDescription {
   switch (result.type) {
     case 'conflict':
-      message = 'This task changed before the update could be applied.';
-      break;
+      return {
+        message: 'This task changed before the update could be applied.',
+        requiresRecovery: true,
+      };
     case 'ambiguous':
-      message = 'Multiple matching tasks were found. Reopen the task and try again.';
-      break;
+      return {
+        message: 'Multiple matching tasks were found. Reopen the task and try again.',
+        requiresRecovery: true,
+      };
     case 'not-found':
-      message = 'This task no longer exists.';
-      break;
+      return { message: 'This task no longer exists.', requiresRecovery: true };
     case 'invalid':
-      message = 'The task update is invalid and was not saved.';
-      break;
+      return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
     case 'io-error':
-      message = 'Failed to update task. Please try again.';
-      break;
+      return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
     case 'partial':
-      message = 'The task was copied, but the original could not be removed.';
-      break;
+      return {
+        message: 'The task was copied, but the original could not be removed.',
+        requiresRecovery: true,
+      };
   }
-  new Notice(message);
 }
 
 export function presentTaskMoveResult(
@@ -157,24 +174,69 @@ export function presentTaskCreationResult(
   result: TaskCommandResult,
   options: { readonly announceSuccess: boolean } = { announceSuccess: true },
 ): void {
-  if (result.type === 'ok') {
-    if (!options.announceSuccess || result.outcome.type !== 'task') return;
-    const path = result.outcome.task.source.filePath;
-    new Notice(`Task added to ${path.split('/').pop() ?? path}`);
+  const description = describeTaskCreationResult(result);
+  if (description.kind === 'success') {
+    if (!options.announceSuccess || description.task === undefined) return;
+    new Notice(description.message);
     return;
   }
+  new Notice(description.message);
+}
+
+export interface CreationResultDescription {
+  readonly kind: 'success' | 'error';
+  readonly message: string;
+  readonly ariaLive: 'polite' | 'assertive';
+  readonly task?: TaskSnapshot;
+  readonly requiresRecovery: boolean;
+}
+
+export function describeTaskCreationResult(result: TaskCommandResult): CreationResultDescription {
+  if (result.type === 'ok') {
+    if (result.outcome.type !== 'task') {
+      return {
+        kind: 'success',
+        message: '',
+        ariaLive: 'polite',
+        requiresRecovery: false,
+      };
+    }
+    const path = result.outcome.task.source.filePath;
+    return {
+      kind: 'success',
+      message: `Task added to ${path.split('/').pop() ?? path}`,
+      ariaLive: 'polite',
+      task: result.outcome.task,
+      requiresRecovery: false,
+    };
+  }
+
   if (result.type === 'invalid') {
     const unavailable = result.issues.some((issue) => issue.code === 'destination-unavailable');
-    new Notice(
-      unavailable
+    return {
+      kind: 'error',
+      message: unavailable
         ? 'No target file found for task.'
         : 'The new task is invalid and was not created.',
-    );
-    return;
+      ariaLive: 'assertive',
+      requiresRecovery: unavailable,
+    };
   }
+
   if (result.type === 'io-error') {
-    new Notice('Failed to create task. Please try again.');
-    return;
+    return {
+      kind: 'error',
+      message: 'Failed to create task. Please try again.',
+      ariaLive: 'assertive',
+      requiresRecovery: true,
+    };
   }
-  presentTaskCommandResult(result);
+
+  const error = describeCommandError(result);
+  return {
+    kind: 'error',
+    message: error.message,
+    ariaLive: 'assertive',
+    requiresRecovery: error.requiresRecovery,
+  };
 }

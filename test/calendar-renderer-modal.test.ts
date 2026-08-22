@@ -1,4 +1,4 @@
-import type { App } from 'obsidian';
+import { Notice, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -31,7 +31,7 @@ vi.mock('obsidian', async () => {
     onOpen(): void {}
     onClose(): void {}
   }
-  return { ...actual, Modal: MockModal };
+  return { ...actual, Modal: MockModal, Notice: vi.fn() };
 });
 
 // Import AFTER vi.mock
@@ -91,6 +91,7 @@ describe('CalendarRenderer TaskInputModal submit', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.mocked(Notice).mockClear();
     store = new StubStore();
     root = freshContainer();
     renderer = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
@@ -172,5 +173,20 @@ describe('CalendarRenderer TaskInputModal submit', () => {
         initial: { due: { type: 'set', value: expectedDate } },
       }),
     );
+  });
+
+  it('reports a failed modal create through the shared creation result Notice adapter', async () => {
+    store.execute.mockResolvedValueOnce({
+      type: 'invalid',
+      issues: [{ code: 'invalid-title', field: 'title' }],
+    });
+    const cell = root.querySelector('.cell.currentMonth') as HTMLElement;
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const input = activeDocument.body.querySelector('input[type="text"]') as HTMLInputElement;
+    input.value = 'Task from modal';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+    await Promise.resolve();
+    expect(Notice).toHaveBeenCalledWith('The new task is invalid and was not created.');
   });
 });

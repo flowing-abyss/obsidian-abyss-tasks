@@ -1,8 +1,9 @@
 import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TaskApplicationApi, TaskCommandResult } from '../src/tasks';
+import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
 import {
+  describeTaskCreationResult,
   presentTaskCommandResult,
   presentTaskCreationResult,
   presentTaskMoveResult,
@@ -205,6 +206,94 @@ describe('task command result presentation', () => {
       },
     });
     expect(noticeCalls()).toEqual([['Task added to 2026-07-14.md']]);
+  });
+
+  describe('describeTaskCreationResult', () => {
+    const createdTask = { source: { filePath: 'daily/2026-07-14.md' } } as TaskSnapshot;
+
+    it.each([
+      [
+        'ok',
+        {
+          type: 'ok',
+          changed: true,
+          outcome: { type: 'task', task: createdTask },
+        },
+        {
+          kind: 'success',
+          message: 'Task added to 2026-07-14.md',
+          ariaLive: 'polite',
+          task: createdTask,
+          requiresRecovery: false,
+        },
+      ],
+      [
+        'invalid title',
+        { type: 'invalid', issues: [{ code: 'invalid-title', field: 'title' }] },
+        {
+          kind: 'error',
+          message: 'The new task is invalid and was not created.',
+          ariaLive: 'assertive',
+          requiresRecovery: false,
+        },
+      ],
+      [
+        'unavailable destination',
+        {
+          type: 'invalid',
+          issues: [{ code: 'destination-unavailable', field: 'destination' }],
+        },
+        {
+          kind: 'error',
+          message: 'No target file found for task.',
+          ariaLive: 'assertive',
+          requiresRecovery: true,
+        },
+      ],
+      [
+        'conflict',
+        { type: 'conflict', current: {} },
+        {
+          kind: 'error',
+          message: 'This task changed before the update could be applied.',
+          ariaLive: 'assertive',
+          requiresRecovery: true,
+        },
+      ],
+      [
+        'ambiguous',
+        { type: 'ambiguous', candidates: [] },
+        {
+          kind: 'error',
+          message: 'Multiple matching tasks were found. Reopen the task and try again.',
+          ariaLive: 'assertive',
+          requiresRecovery: true,
+        },
+      ],
+      [
+        'not-found',
+        { type: 'not-found', target: {} },
+        {
+          kind: 'error',
+          message: 'This task no longer exists.',
+          ariaLive: 'assertive',
+          requiresRecovery: true,
+        },
+      ],
+      [
+        'I/O failure',
+        { type: 'io-error', cause: 'process-error', contentState: 'unknown' },
+        {
+          kind: 'error',
+          message: 'Failed to create task. Please try again.',
+          ariaLive: 'assertive',
+          requiresRecovery: true,
+        },
+      ],
+    ] as const)('describes %s without presentation side effects', (_name, result, expected) => {
+      expect(describeTaskCreationResult(result as TaskCommandResult)).toEqual(expected);
+      expect(noticeCalls()).toHaveLength(0);
+    });
   });
 
   it.each([
