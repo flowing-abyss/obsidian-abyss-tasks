@@ -147,6 +147,9 @@ describe('CenterPanel multi-selection', () => {
     expect(Array.from(scroll.children)).toEqual(childOrder);
     expect(cards[0]!.getAttribute('aria-describedby')).toContain('abyss-selected-state-');
     expect(cards[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
+    const selectedStates = Array.from(el.querySelectorAll<HTMLElement>('.abyss-selected-state'));
+    expect(selectedStates).toHaveLength(2);
+    selectedStates.forEach((state) => expect(state.classList.contains('abyss-sr-only')).toBe(true));
 
     const menuTitles: string[] = [];
     const makeMenu = (): { addItem: (callback: (item: never) => unknown) => unknown } => ({

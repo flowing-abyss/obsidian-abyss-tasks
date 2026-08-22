@@ -3456,6 +3456,7 @@ export class CenterPanel {
 
       if (isSelected) {
         const description = selectedState ?? card.createDiv({ cls: 'abyss-selected-state' });
+        description.addClass('abyss-sr-only');
         description.id = selectedStateId;
         description.textContent = 'Selected';
         const describedBy = (card.getAttribute('aria-describedby') ?? '')
