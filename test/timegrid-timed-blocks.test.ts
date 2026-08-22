@@ -93,7 +93,6 @@ function callbacks() {
     onToggle: vi.fn(),
     onSetStatus: vi.fn(),
     onSetPriority: vi.fn(),
-    onEditRepeat: vi.fn(),
     statusRegistry: registry,
   };
 }
@@ -1146,7 +1145,6 @@ describe('renderTimedBlocksForDay', () => {
 
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(document.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
-    expect(cbs.onEditRepeat).not.toHaveBeenCalled();
   });
 
   it('picking a status from the popover fires onSetStatus with the task and chosen symbol', () => {
