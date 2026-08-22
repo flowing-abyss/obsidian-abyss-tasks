@@ -20,6 +20,7 @@ export interface TaskCardOptions {
   onEditLink?: (occurrenceIndex: number, token: LinkToken) => void;
   statusRegistry?: StatusRegistry;
   onContextMenu?: (ev: MouseEvent, task: TaskSnapshot) => void;
+  onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
 }
 
 const TASK_ICONS: Record<string, string> = {
@@ -121,6 +122,14 @@ export function createTaskCard(
   content.appendChild(descEl);
   // Clicking anywhere on the card (except a link) opens the source note.
   content.addEventListener('click', () => options.onOpenNote(task));
+  if (options.onTaskBodyContextMenu) {
+    content.addEventListener('contextmenu', (event) => {
+      if ((event.target as HTMLElement | null)?.closest('a')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      options.onTaskBodyContextMenu?.(event, task, content);
+    });
+  }
   inner.appendChild(content);
   div.appendChild(inner);
 

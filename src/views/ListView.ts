@@ -27,6 +27,7 @@ export interface ListViewCallbacks {
   onEditLink?: (task: TaskSnapshot, occurrenceIndex: number, token: LinkToken) => void;
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
+  onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
 }
 
 export class ListView extends BaseView {
@@ -184,6 +185,15 @@ export class ListView extends BaseView {
       if (marker.contains(e.target as Node)) return;
       this.callbacks.onTaskClick?.(task);
     });
+    if (this.callbacks.onTaskBodyContextMenu) {
+      row.addEventListener('contextmenu', (event) => {
+        if (marker.contains(event.target as Node)) return;
+        if ((event.target as HTMLElement | null)?.closest('a')) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.callbacks.onTaskBodyContextMenu?.(event, task, row);
+      });
+    }
   }
 
   destroy(): void {

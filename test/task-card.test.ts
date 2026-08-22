@@ -161,6 +161,28 @@ describe('createTaskCard', () => {
       expect(onOpenNote).toHaveBeenCalledTimes(1);
       expect(onOpenNote.mock.calls[0]?.[0]).toBe(t);
     });
+
+    it('routes a body context interaction without handling the sibling status marker', () => {
+      const onTaskBodyContextMenu = vi.fn();
+      const t = task({ source: { filePath: 'notes/x.md' } });
+      const el = createTaskCard(t, 'due', baseOptions({ onTaskBodyContextMenu }));
+      const body = el.querySelector<HTMLElement>('.inner-link')!;
+      const marker = el.querySelector<HTMLElement>('.tc-status-marker')!;
+      const bodyEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+      body.dispatchEvent(bodyEvent);
+      expect(bodyEvent.defaultPrevented).toBe(true);
+      expect(onTaskBodyContextMenu).toHaveBeenCalledWith(bodyEvent, t, body);
+
+      const nestedLink = body.createEl('a', { text: 'Linked task text' });
+      const linkEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+      nestedLink.dispatchEvent(linkEvent);
+      expect(linkEvent.defaultPrevented).toBe(false);
+      expect(onTaskBodyContextMenu).toHaveBeenCalledOnce();
+
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(onTaskBodyContextMenu).toHaveBeenCalledOnce();
+    });
   });
 
   describe('icon', () => {

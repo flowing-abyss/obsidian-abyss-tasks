@@ -25,6 +25,7 @@ function makeView(
     onTaskClick: (t: Task) => void;
     onEditLink: (t: Task, occ: number, token: LinkToken) => void;
     onContextMenu: (ev: MouseEvent, t: Task) => void;
+    onTaskBodyContextMenu: (ev: MouseEvent, t: Task, anchor: HTMLElement) => void;
   }> = {},
   statusRegistry: StatusRegistry = new StatusRegistry(buildDefaultTaskStatuses()),
 ) {
@@ -36,6 +37,7 @@ function makeView(
     onEditLink: vi.fn(callbacks.onEditLink),
     statusRegistry,
     onContextMenu: vi.fn(callbacks.onContextMenu),
+    onTaskBodyContextMenu: vi.fn(callbacks.onTaskBodyContextMenu),
   };
   const view = new ListView(spies);
   return { view, spies };
@@ -330,6 +332,24 @@ describe('ListView', () => {
       const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
       marker.dispatchEvent(ev);
       expect(spies.onContextMenu).toHaveBeenCalledWith(ev, t);
+    });
+
+    it('routes a list-task body context interaction without invoking the marker menu', () => {
+      const { view, spies } = makeView();
+      const c = freshContainer();
+      const t = task({ status: 'open', planning: { due: today() } });
+      view.render(c, [t], resolvedConfig());
+      const row = c.querySelector<HTMLElement>('.tc-list-task')!;
+      const marker = row.querySelector<HTMLElement>('.tc-status-marker')!;
+      const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+
+      row.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(spies.onTaskBodyContextMenu).toHaveBeenCalledWith(event, t, row);
+
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(spies.onTaskBodyContextMenu).toHaveBeenCalledOnce();
+      expect(spies.onContextMenu).toHaveBeenCalledWith(expect.any(MouseEvent), t);
     });
 
     it('status marker data-status-type reflects an open task', () => {

@@ -201,6 +201,10 @@ export class CalendarRenderer {
         this.switchView('week');
       },
       onDateClick: (date: string) => this.openAddTaskModal(date),
+      onTaskBodyContextMenu: (_ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => {
+        if (isForecastCalendarTask(task)) return;
+        this.openRecurrenceEditor(anchor, task);
+      },
       onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => {
         if (isForecastCalendarTask(task)) return;
         const target = calendarMutationTarget(task);
@@ -363,6 +367,7 @@ export class CalendarRenderer {
             this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
+          onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
       } else if (this.activeViewType === 'week') {
@@ -378,6 +383,7 @@ export class CalendarRenderer {
             this.openForecastSource(source, referenceDate),
           onForecastContextMenu: (source) => this.openForecastRecurrenceEditor(source),
           statusRegistry: this.statusRegistry,
+          onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
       } else {
@@ -386,6 +392,7 @@ export class CalendarRenderer {
           onToggle: cb.onToggle,
           onDateClick: cb.onDateClick,
           statusRegistry: this.statusRegistry,
+          onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
         });
       }

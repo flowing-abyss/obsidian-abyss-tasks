@@ -766,7 +766,7 @@ describe('CalendarRenderer', () => {
       configured.index.destroy();
     });
 
-    it('keeps ordinary task checkbox menus focused on status and priority', () => {
+    it('opens recurrence from the materialized task body but keeps checkbox menus focused on task state', () => {
       const store = new StubStore();
       const root = freshContainer();
       const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
@@ -776,7 +776,18 @@ describe('CalendarRenderer', () => {
       ]);
       r.mount();
 
+      const body = root.querySelector<HTMLElement>('.task .inner-link')!;
       const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+
+      body.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const recurrence = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
+      expect(recurrence?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+        'every week',
+      );
+      recurrence
+        ?.querySelector<HTMLElement>('.tc-recurrence-editor')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expect(activeDocument.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
       expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();

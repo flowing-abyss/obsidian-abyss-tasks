@@ -25,6 +25,7 @@ export interface WeekViewCallbacks {
   onEditLink?: (task: TaskSnapshot, occurrenceIndex: number, token: LinkToken) => void;
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
+  onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
   onForecastClick?: (
     source: CalendarTaskSource,
     referenceDate: import('../tasks').LocalDate,
@@ -97,6 +98,7 @@ export class WeekView extends BaseView {
           onEditLink: onEditLink ? (occ, token) => onEditLink(task, occ, token) : undefined,
           statusRegistry: this.callbacks.statusRegistry,
           onContextMenu: this.callbacks.onContextMenu,
+          onTaskBodyContextMenu: this.callbacks.onTaskBodyContextMenu,
         });
         applyOccurrenceDomState(card, occurrence, 'single', `${cls}-body`);
         bindMaterializedInteractions(occurrence, (target) => {
