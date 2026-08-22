@@ -215,7 +215,7 @@ function renderTimedBlockTitle(
 ): void {
   if (terminal && occurrence.kind === 'materialized') {
     const title = head.createDiv({
-      cls: `tc-tg-block-title tc-calendar-title${statusTitleClass(task.status)}`,
+      cls: `abyss-tg-block-title abyss-calendar-title${statusTitleClass(task.status)}`,
     });
     renderTaskText(title, task.markdownTitle, {
       app: callbacks.app,
@@ -225,7 +225,7 @@ function renderTimedBlockTitle(
     return;
   }
   head.createDiv({
-    cls: `${terminal ? 'tc-tg-block-title' : 'tc-tg-block-continuation-title'} tc-calendar-title${statusTitleClass(task.status)}`,
+    cls: `${terminal ? 'abyss-tg-block-title' : 'abyss-tg-block-continuation-title'} abyss-calendar-title${statusTitleClass(task.status)}`,
     text: plainGhostTaskTitle(task),
   });
 }
@@ -239,7 +239,7 @@ export function renderTimedBlocksForDay(
 ): void {
   const inputs: TimedBlockInput[] = toTimedBlockInputs(tasksWithTime);
   const { positioned, minHeightCaps } = layoutTimedDay(inputs);
-  // Task 36: `.tc-tg-block`'s CSS min-height keeps a short block's checkbox+title row legible,
+  // Task 36: `.abyss-tg-block`'s CSS min-height keeps a short block's checkbox+title row legible,
   // but only ever grows a block past its duration-derived height — see capMinHeightsPx's own
   // doc comment for why a same-column neighbor can still need that growth clamped back down so
   // the two blocks never visually cross.
@@ -250,14 +250,14 @@ export function renderTimedBlocksForDay(
       ? (options.terminal ?? (!p.task.planning.due || p.task.planning.due === options.date))
       : true;
     const block = hourColumnEl.createDiv({
-      cls: `tc-tg-block${terminal ? '' : ' tc-tg-block-continuation'}`,
+      cls: `abyss-tg-block${terminal ? '' : ' abyss-tg-block-continuation'}`,
     });
     const continuity = timedContinuity(p.task, terminal);
     const spanRole = timedSpanRole(p.task, continuity, options?.date);
     applyOccurrenceDomState(block, occurrence, continuity, spanRole);
-    block.setAttribute('data-tc-task-file', p.task.source.filePath);
-    block.setAttribute('data-tc-task-line', String(p.task.source.line));
-    block.setAttribute('data-tc-start-minutes', String(p.startMinutes));
+    block.setAttribute('data-abyss-task-file', p.task.source.filePath);
+    block.setAttribute('data-abyss-task-line', String(p.task.source.line));
+    block.setAttribute('data-abyss-start-minutes', String(p.startMinutes));
     if (options) block.setAttribute('data-tg-segment-date', options.date);
     // Keep each block as the stable focus root used by relative arrow intents and same-day
     // Tab/Shift+Tab navigation, including when a key event starts from a nested link.
@@ -281,14 +281,14 @@ export function renderTimedBlocksForDay(
     // priority border on the block itself was redundant visual noise.
     const tagColor = tagColorFor(p.task.tags, tagGroups);
     if (tagColor) {
-      block.setCssProps({ '--tc-tag-color': tagColor });
+      block.setCssProps({ '--abyss-tag-color': tagColor });
       // Task 40 (Round 4): a single fixed var(--text-normal) title/subtitle color (the
       // pre-existing behavior) loses contrast against a bright/pale tag color's fill in light
       // mode, or a very dark/desaturated one in dark mode — see tagFillContrast.ts's own doc
       // comment for the full reasoning. Only set when a variant was actually computed (falls
       // through to the CSS rule's own var(--text-normal) fallback otherwise).
       const textColorVar = tagFillTextColorVar(block, tagColor);
-      if (textColorVar) block.setCssProps({ '--tc-tag-text-color': textColorVar });
+      if (textColorVar) block.setCssProps({ '--abyss-tag-text-color': textColorVar });
     }
     const hasCounts = hasCountBadges(p.task);
     const countLabel = timedCountLabel(p.task);
@@ -338,12 +338,12 @@ function attachTimedBlockControls(
   options?: TimedDayRenderOptions,
 ): void {
   const durationHandle = block.createDiv({
-    cls: 'tc-tg-resize-handle tc-tg-resize-handle--duration',
+    cls: 'abyss-tg-resize-handle abyss-tg-resize-handle--duration',
   });
   durationHandle.dataset['resizeEdge'] = 'duration';
   durationHandle.setAttribute('draggable', 'false');
   const startHandle = block.createDiv({
-    cls: 'tc-tg-resize-handle tc-tg-resize-handle--start-time',
+    cls: 'abyss-tg-resize-handle abyss-tg-resize-handle--start-time',
   });
   startHandle.dataset['resizeEdge'] = 'start-time';
   startHandle.setAttribute('draggable', 'false');
@@ -374,7 +374,8 @@ function attachTimedBlockControls(
 
   block.addEventListener('contextmenu', (event) => {
     event.preventDefault();
-    if ((event.target as HTMLElement).closest('.tc-tg-resize-handle, .tc-tg-span-edge')) return;
+    if ((event.target as HTMLElement).closest('.abyss-tg-resize-handle, .abyss-tg-span-edge'))
+      return;
     callbacks.onTaskClick(task);
   });
 
@@ -402,7 +403,7 @@ function createBoundaryHandle(
   side: 'left' | 'right',
   boundary: 'start' | 'due' | 'create-span',
 ): HTMLElement {
-  const edge = block.createDiv({ cls: `tc-tg-span-edge tc-tg-span-edge--${side}` });
+  const edge = block.createDiv({ cls: `abyss-tg-span-edge abyss-tg-span-edge--${side}` });
   edge.dataset['boundary'] = boundary;
   edge.dataset['resizeEdge'] = boundary === 'start' ? 'start-date' : 'due-date';
   edge.setAttribute('draggable', 'false');
@@ -415,7 +416,7 @@ function attachLegacyBoundaryHandles(
   task: TaskSnapshot,
   callbacks: TimedBlockCallbacks,
 ): void {
-  const left = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+  const left = block.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--left' });
   attachHorizontalResize(
     left,
     hourColumnEl,
@@ -423,7 +424,7 @@ function attachLegacyBoundaryHandles(
     callbacks.onStartChange,
     task.planning.due ? { date: task.planning.due, kind: 'max' } : undefined,
   );
-  const right = block.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+  const right = block.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
   const rightEdgeAnchor = task.planning.start ?? task.planning.scheduled ?? task.planning.due;
   attachHorizontalResize(
     right,
@@ -523,15 +524,17 @@ function attachKeyboardHandling(
 
 function focusAdjacentTimedBlock(block: HTMLElement, direction: -1 | 1): void {
   const scope =
-    block.closest<HTMLElement>('.tc-tg-day-column') ??
-    block.closest<HTMLElement>('.tc-tg-hour-column');
+    block.closest<HTMLElement>('.abyss-tg-day-column') ??
+    block.closest<HTMLElement>('.abyss-tg-hour-column');
   if (!scope) return;
 
-  const domBlocks = Array.from(scope.querySelectorAll<HTMLElement>('.tc-tg-block[tabindex="0"]'));
+  const domBlocks = Array.from(
+    scope.querySelectorAll<HTMLElement>('.abyss-tg-block[tabindex="0"]'),
+  );
   const domIndex = new Map(domBlocks.map((candidate, index) => [candidate, index]));
   const visualBlocks = [...domBlocks].sort((a, b) => {
     const startDifference =
-      Number(a.dataset['tcStartMinutes']) - Number(b.dataset['tcStartMinutes']);
+      Number(a.dataset['abyssStartMinutes']) - Number(b.dataset['abyssStartMinutes']);
     return startDifference || domIndex.get(a)! - domIndex.get(b)!;
   });
   const currentIndex = visualBlocks.indexOf(block);
@@ -645,13 +648,13 @@ function attachDrag(
     // click handler runs onToggle, or before the link's own click handler navigates). Mirrors
     // the existing resize-handle exclusion below. `a` covers renderTaskText's rendered links —
     // matched by tag, not a task-calendar-specific class, since MarkdownRenderer owns that markup.
-    // `.tc-tg-span-edge` (Task 29's horizontal resize handle) is excluded too: it has its own
+    // `.abyss-tg-span-edge` (Task 29's horizontal resize handle) is excluded too: it has its own
     // dedicated pointerdown listener (attachHorizontalResize) that stops propagation before this
     // block-level listener would ever see it, so this closest() never actually matches in
     // practice — kept as a defensive, explicit belt-and-suspenders guard rather than relying
     // solely on stopPropagation ordering.
-    if ((e.target as HTMLElement).closest('.tc-status-marker, a, .tc-tg-span-edge')) return;
-    mode = (e.target as HTMLElement).closest('.tc-tg-resize-handle') ? 'resize' : 'move';
+    if ((e.target as HTMLElement).closest('.abyss-status-marker, a, .abyss-tg-span-edge')) return;
+    mode = (e.target as HTMLElement).closest('.abyss-tg-resize-handle') ? 'resize' : 'move';
     startY = e.clientY;
     startMinutes = initialStart;
     startDuration = initialDuration;
@@ -684,7 +687,7 @@ function attachDrag(
  * live visual feedback while dragging, just a commit-on-release that resolves the day under the
  * pointer) rather than inventing a new interaction style — the day boundary crossing is resolved
  * from the pointer's final (clientX, clientY) via `activeDocument.elementFromPoint`, walking up
- * to the nearest `[data-tg-date]` ancestor (HourGrid.ts's `.tc-tg-day-column`, one per rendered
+ * to the nearest `[data-tg-date]` ancestor (HourGrid.ts's `.abyss-tg-day-column`, one per rendered
  * date), NOT by accumulating a per-pixel delta within a single column — so dragging across 2-3
  * day columns resolves to whichever column the pointer is over at release, however far that is.
  *
@@ -719,7 +722,7 @@ function attachHorizontalResize(
   // Compatibility-only horizontal handles remain explicitly non-draggable. Their root is also
   // marked non-draggable while armed and returns to the normal attribute-free state on cleanup.
   handle.setAttribute('draggable', 'false');
-  const block = handle.closest<HTMLElement>('.tc-tg-block');
+  const block = handle.closest<HTMLElement>('.abyss-tg-block');
 
   // Dates are always well-formed, zero-padded `YYYY-MM-DD` strings by the time they reach here
   // (either `task.planning.due`/`task.planning.start`/`task.planning.scheduled`, already-parsed fields, or a `data-tg-date`

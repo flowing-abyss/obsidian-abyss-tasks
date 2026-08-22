@@ -110,7 +110,7 @@ function spanDropDateAt(
 ): string | undefined {
   if (!Number.isFinite(clientX)) return undefined;
   const attr = variant === 'month' ? 'data-mg-date' : 'data-tg-date';
-  const cls = variant === 'month' ? 'tc-mg-cell' : 'tc-tg-allday-cell';
+  const cls = variant === 'month' ? 'abyss-mg-cell' : 'abyss-tg-allday-cell';
   const parent = layerEl.parentElement;
   if (!parent || parent.ownerDocument !== layerEl.ownerDocument) return undefined;
   return (
@@ -170,7 +170,7 @@ function renderAllDayBody(
   continuity: CalendarContinuity = 'single',
   spanRole = 'body',
 ): HTMLElement {
-  const el = cellEl.createDiv({ cls: `tc-tg-body ${cls}` });
+  const el = cellEl.createDiv({ cls: `abyss-tg-body ${cls}` });
   const occurrence = callbacks.occurrenceFor(task);
   applyOccurrenceDomState(el, occurrence, continuity, spanRole);
   // Status marker first: lets a user mark the item done without opening the modal. Its own
@@ -200,14 +200,14 @@ function renderAllDayBody(
           })
       : undefined,
   );
-  // Task 21: `.tc-tg-body-title` (not a bare span) so it can be a flex child that
-  // truncates independently — `.tc-tg-body` itself is now a flex row (marker + title +
-  // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.tc-tg-block-head`.
+  // Task 21: `.abyss-tg-body-title` (not a bare span) so it can be a flex child that
+  // truncates independently — `.abyss-tg-body` itself is now a flex row (marker + title +
+  // meta) instead of block-stacking, matching renderTimedBlocks.ts's `.abyss-tg-block-head`.
   // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed
   // blocks (renderTimedBlocks.ts) — previously missing here, so a completed all-day
   // span/plain item read as plain/untouched while the same task's timed block elsewhere
   // showed struck-through.
-  const titleEl = el.createSpan({ cls: `tc-tg-body-title${statusTitleClass(task.status)}` });
+  const titleEl = el.createSpan({ cls: `abyss-tg-body-title${statusTitleClass(task.status)}` });
   if (occurrence.kind === 'materialized' && interactive) {
     renderTaskText(titleEl, task.markdownTitle, {
       app: callbacks.app,
@@ -226,7 +226,7 @@ function renderAllDayBody(
   // renderTaskMeta.ts for why (avoids needing a pointerdown exclusion-guard here, next to
   // the whole-body drag and edge-resize handles this element carries).
   if (hasCountBadges(task)) {
-    const meta = el.createSpan({ cls: 'tc-tg-body-meta' });
+    const meta = el.createSpan({ cls: 'abyss-tg-body-meta' });
     renderCountBadges(meta, task);
   }
   // Tag-colored fill only — the priority-colored border was removed (Task 12): the
@@ -234,14 +234,14 @@ function renderAllDayBody(
   // priority border on the body was redundant visual noise.
   const tagColor = tagColorFor(task.tags, tagGroups);
   if (tagColor) {
-    el.setCssProps({ '--tc-tag-color': tagColor });
+    el.setCssProps({ '--abyss-tag-color': tagColor });
     // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
     // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
     // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
     // All committed calendar bodies use the shared event fill, so this resolves against the
     // same light/dark percentage in terminals and continuations.
     const textColorVar = tagFillTextColorVar(el, tagColor);
-    if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
+    if (textColorVar) el.setCssProps({ '--abyss-tag-text-color': textColorVar });
   }
   bindMaterializedInteractions(occurrence, (target) => {
     if (nativeDraggable && target.type === 'task') {
@@ -281,14 +281,14 @@ function renderAllDaySpanSegment(
   const index = indexByDate.get(segment.date);
   if (index === undefined) return;
   const classes = [
-    segment.kind === 'ghost' ? 'tc-tg-span-continuation' : 'tc-tg-span',
-    'tc-span-piece',
-    variant === 'month' ? 'tc-mg-span-segment' : '',
-    variant === 'month' && segment.kind === 'ghost' ? 'tc-mg-span-continuation' : '',
+    segment.kind === 'ghost' ? 'abyss-tg-span-continuation' : 'abyss-tg-span',
+    'abyss-span-piece',
+    variant === 'month' ? 'abyss-mg-span-segment' : '',
+    variant === 'month' && segment.kind === 'ghost' ? 'abyss-mg-span-continuation' : '',
   ]
     .filter(Boolean)
     .join(' ');
-  const host = layerEl.createDiv({ cls: 'tc-span-piece-host' });
+  const host = layerEl.createDiv({ cls: 'abyss-span-piece-host' });
   host.setAttribute(variant === 'month' ? 'data-mg-date' : 'data-tg-date', segment.date);
   host.style.gridColumn = `${index + 1} / ${index + 2}`;
   host.style.gridRow = String(segment.lane + 1);
@@ -313,12 +313,12 @@ function renderAllDaySpanSegment(
   body.style.gridColumn = `${index + 1} / ${index + 2}`;
   body.style.gridRow = String(segment.lane + 1);
   if (variant === 'month') {
-    body.querySelector('.tc-tg-body-title')?.classList.add('tc-mg-item-title');
+    body.querySelector('.abyss-tg-body-title')?.classList.add('abyss-mg-item-title');
     if (segment.task.planning.time) {
       const time = body.ownerDocument.createElement('span');
-      time.className = 'tc-mg-item-time';
+      time.className = 'abyss-mg-item-time';
       time.textContent = `${segment.task.planning.time} `;
-      const title = body.querySelector('.tc-tg-body-title');
+      const title = body.querySelector('.abyss-tg-body-title');
       body.insertBefore(time, title);
     }
   }
@@ -335,10 +335,10 @@ function renderAllDaySpanSegment(
     // a visible edge. Do not add proxies to a one-day Today surface (it has no adjacent target date),
     // or to a checkbox-bearing terminal piece: those retain only their literal boundary ownership.
     const exposesRangeProxy = indexByDate.size > 1 && segment.kind === 'ghost';
-    const proxyClass = exposesRangeProxy ? ' tc-tg-span-edge--proxy' : '';
+    const proxyClass = exposesRangeProxy ? ' abyss-tg-span-edge--proxy' : '';
     if (segment.ownsStartBoundary || exposesRangeProxy) {
       const leftHandle = body.createDiv({
-        cls: `tc-tg-span-edge tc-tg-span-edge--left${proxyClass}`,
+        cls: `abyss-tg-span-edge abyss-tg-span-edge--left${proxyClass}`,
       });
       leftHandle.setAttribute('data-boundary', 'start');
       leftHandle.setAttribute('data-resize-edge', 'start-date');
@@ -346,7 +346,7 @@ function renderAllDaySpanSegment(
     }
     if (segment.ownsDueBoundary || exposesRangeProxy) {
       const rightHandle = body.createDiv({
-        cls: `tc-tg-span-edge tc-tg-span-edge--right${proxyClass}`,
+        cls: `abyss-tg-span-edge abyss-tg-span-edge--right${proxyClass}`,
       });
       rightHandle.setAttribute('data-boundary', 'due');
       rightHandle.setAttribute('data-resize-edge', 'due-date');
@@ -378,7 +378,7 @@ export function renderAllDaySpanLayer(
 ): void {
   layerEl.empty();
   layerEl.setAttribute('data-span-lanes', String(row.laneCount));
-  layerEl.style.setProperty('--tc-span-track-count', String(dates.length));
+  layerEl.style.setProperty('--abyss-span-track-count', String(dates.length));
   attachSpanOverlayDropForwarding(layerEl, callbacks, variant);
   const indexByDate = new Map(dates.map((date, index) => [date, index]));
   const context: AllDaySpanSegmentRenderContext = {
@@ -414,7 +414,7 @@ function renderSpanContinuation(
 ): HTMLElement {
   return renderAllDayBody(
     cellEl,
-    'tc-tg-span-continuation',
+    'abyss-tg-span-continuation',
     task,
     callbacks,
     tagGroups,
@@ -459,7 +459,7 @@ function attachEdgeResize(
   // duration of the gesture (armed on this handle's pointerdown, restored on pointerup/cancel),
   // which actually prevents the fallback per spec, instead of racing it.
   handle.setAttribute('draggable', 'false');
-  const body = handle.closest<HTMLElement>('.tc-tg-body');
+  const body = handle.closest<HTMLElement>('.abyss-tg-body');
   const ownerDocument = handle.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
   if (!ownerWindow) return;
@@ -470,7 +470,7 @@ function attachEdgeResize(
   const withHook = cellEl as AllDayResizeCell;
 
   // Task 37: a deliberate, lightweight "this is being reshaped" state — toggled purely as a CSS
-  // class on the dragged item's own element (see .tc-tg-body.is-edge-resizing in styles.css), no
+  // class on the dragged item's own element (see .abyss-tg-body.is-edge-resizing in styles.css), no
   // DOM creation/measurement and no sibling elements touched, so it can't itself cause the sibling
   // layout thrash the "grid becomes uneven" report described.
   let capturedPointerId: number | null = null;
@@ -540,12 +540,19 @@ export function renderAllDayCell(
       renderSpanContinuation(cellEl, t, callbacks, tagGroups);
       continue;
     }
-    const bar = renderDraggableBody(cellEl, 'tc-tg-span', t, callbacks, tagGroups, 'span-terminal');
+    const bar = renderDraggableBody(
+      cellEl,
+      'abyss-tg-span',
+      t,
+      callbacks,
+      tagGroups,
+      'span-terminal',
+    );
     const occurrence = callbacks.occurrenceFor(t);
     applyOccurrenceDomState(bar, occurrence, 'terminal', 'span-terminal');
     bindMaterializedInteractions(occurrence, (target) => {
       if (target.type !== 'task') return;
-      const leftEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--left' });
+      const leftEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--left' });
       leftEdge.setAttribute('data-boundary', 'start');
       leftEdge.setAttribute('data-resize-edge', 'start-date');
       attachEdgeResize(
@@ -555,7 +562,7 @@ export function renderAllDayCell(
         callbacks.onStartChange,
         callbacks.spanInteractionOwner,
       );
-      const rightEdge = bar.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      const rightEdge = bar.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
       rightEdge.setAttribute('data-boundary', 'due');
       rightEdge.setAttribute('data-resize-edge', 'due-date');
       attachEdgeResize(rightEdge, cellEl, t, callbacks.onDueChange, callbacks.spanInteractionOwner);
@@ -566,13 +573,13 @@ export function renderAllDayCell(
       t.planning.scheduled && t.planning.scheduled !== t.planning.due
         ? 'scheduled-body'
         : 'all-day-body';
-    const chip = renderDraggableBody(cellEl, 'tc-tg-plain', t, callbacks, tagGroups, role);
+    const chip = renderDraggableBody(cellEl, 'abyss-tg-plain', t, callbacks, tagGroups, role);
     // A plain task has no `start` yet: dragging this handle doesn't just move `due`
     // (there'd be nothing anchoring the other end) — it extends the task into a real
     // multi-day span, so it's wired to onExtendToSpan rather than onDueChange.
     bindMaterializedInteractions(callbacks.occurrenceFor(t), (target) => {
       if (target.type !== 'task') return;
-      const rightEdge = chip.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      const rightEdge = chip.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
       rightEdge.setAttribute('data-boundary', 'create-span');
       rightEdge.setAttribute('data-resize-edge', 'due-date');
       if (callbacks.spanInteractionOwner) {
@@ -594,7 +601,7 @@ export function renderAllDayCell(
     });
   }
   for (const t of deadlines) {
-    const marker = cellEl.createDiv({ cls: 'tc-tg-deadline-marker' });
+    const marker = cellEl.createDiv({ cls: 'abyss-tg-deadline-marker' });
     const occurrence = callbacks.occurrenceFor(t);
     applyOccurrenceDomState(marker, occurrence, 'single', 'due-deadline');
     // Priority-colored border (color = priority convention); no tag fill — deadline
@@ -627,7 +634,9 @@ export function renderAllDayCell(
     marker.createSpan({ text: '📅 ' });
     // Task 38 follow-up: same is-done/is-cancelled strikethrough convention as timed blocks
     // and all-day span/plain items above — previously this title had no status class at all.
-    const titleEl = marker.createSpan({ cls: `tc-tg-deadline-title${statusTitleClass(t.status)}` });
+    const titleEl = marker.createSpan({
+      cls: `abyss-tg-deadline-title${statusTitleClass(t.status)}`,
+    });
     if (occurrence.kind === 'forecast') {
       titleEl.setText(plainGhostTaskTitle(t));
     } else {
@@ -644,7 +653,7 @@ export function renderAllDayCell(
       (t.comments?.length ?? 0) > 0 ||
       (t.presentation.linkCount ?? 0) > 0
     ) {
-      const meta = marker.createSpan({ cls: 'tc-tg-body-meta' });
+      const meta = marker.createSpan({ cls: 'abyss-tg-body-meta' });
       renderCountBadges(meta, t);
     }
     bindMaterializedInteractions(occurrence, () => {
@@ -680,7 +689,7 @@ export function renderAllDayCell(
     cellEl.addEventListener('click', (e) => {
       if (
         (e.target as HTMLElement).closest(
-          '.tc-tg-body, .tc-tg-deadline-marker, .tc-tg-allday-quick-add',
+          '.abyss-tg-body, .abyss-tg-deadline-marker, .abyss-tg-allday-quick-add',
         )
       )
         return;

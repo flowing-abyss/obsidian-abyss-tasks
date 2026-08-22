@@ -21,11 +21,11 @@ export function renderSourceNoteChip(
 ): void {
   const noteName = task.source.filePath.split('/').pop()?.replace(/\.md$/, '') ?? '';
   const chip = container.createEl('span', {
-    cls: `tc-task-source-note${onClick ? ' tc-task-source-note--clickable' : ''}`,
+    cls: `abyss-task-source-note${onClick ? ' abyss-task-source-note--clickable' : ''}`,
   });
-  const iconEl = chip.createEl('span', { cls: 'tc-task-source-note-icon' });
+  const iconEl = chip.createEl('span', { cls: 'abyss-task-source-note-icon' });
   setIcon(iconEl, 'file-text');
-  chip.createEl('span', { cls: 'tc-task-source-note-name', text: noteName });
+  chip.createEl('span', { cls: 'abyss-task-source-note-name', text: noteName });
   if (onClick) {
     chip.addEventListener('click', (e) => {
       e.stopPropagation();

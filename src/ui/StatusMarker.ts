@@ -33,8 +33,8 @@ function getLucideIcon(iconId: string): SVGElement | null {
 export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement {
   const { task, registry, interactive = true, onLeftClick, onContextMenu } = opts;
   const def = registry.bySymbol(task.statusSymbol);
-  const el = parent.createSpan({ cls: 'tc-status-marker' });
-  if (!interactive) el.addClass('tc-status-marker--inert');
+  const el = parent.createSpan({ cls: 'abyss-status-marker' });
+  if (!interactive) el.addClass('abyss-status-marker--inert');
   el.setAttribute('data-status', def?.id ?? 'other');
   el.setAttribute('data-status-type', def?.type ?? 'todo');
   if (task.priority && task.priority !== 'D') {

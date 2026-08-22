@@ -10,7 +10,7 @@ export abstract class BaseView {
    * ever passes `false`, for an explicit same-date refresh it has already scrolled for.
    *
    * `preservedScrollTop` (Task 31): a full CenterPanel refresh recreates the view instance, so a
-   * freshly-created `.tc-tg-grid-row` starts at `scrollTop = 0`. When `shouldScrollToNow` is
+   * freshly-created `.abyss-tg-grid-row` starts at `scrollTop = 0`. When `shouldScrollToNow` is
    * false, TodayView/WeekTimeGridView restore this value onto the new grid-row. Query updates use
    * `patch()` and retain that grid node directly. Ignored when `shouldScrollToNow` is true — a
    * genuine fresh navigation takes the scroll-to-now path instead of inheriting stale position.

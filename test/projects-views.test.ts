@@ -27,14 +27,14 @@ describe('renderProgressBar', () => {
   it('renders a fill proportional to done/total', () => {
     const el = freshContainer();
     renderProgressBar(el, 3, 4);
-    expect((el.querySelector('.tc-progress-fill') as HTMLElement).style.width).toBe('75%');
-    expect(el.querySelector('.tc-progress-label')?.textContent).toBe('3/4');
+    expect((el.querySelector('.abyss-progress-fill') as HTMLElement).style.width).toBe('75%');
+    expect(el.querySelector('.abyss-progress-label')?.textContent).toBe('3/4');
   });
 
   it('handles total=0 without NaN', () => {
     const el = freshContainer();
     renderProgressBar(el, 0, 0);
-    expect((el.querySelector('.tc-progress-fill') as HTMLElement).style.width).toBe('0%');
+    expect((el.querySelector('.abyss-progress-fill') as HTMLElement).style.width).toBe('0%');
   });
 });
 
@@ -54,7 +54,7 @@ describe('renderProjectsList', () => {
       [proj({}), proj({ path: 'Projects/B.md', name: 'B', statusId: null, rawStatus: 'archive' })],
       { ...ctx, state: new AppState() },
     );
-    const headers = Array.from(el.querySelectorAll('.tc-projects-group-label')).map(
+    const headers = Array.from(el.querySelectorAll('.abyss-projects-group-label')).map(
       (h) => h.textContent,
     );
     expect(headers[0]).toBe('Active');
@@ -66,7 +66,7 @@ describe('renderProjectsList', () => {
     const state = new AppState();
     const el = freshContainer();
     renderProjectsList(el, [proj({})], { ...ctx, state });
-    (el.querySelector('.tc-project-row') as HTMLElement).click();
+    (el.querySelector('.abyss-project-row') as HTMLElement).click();
     expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/A.md' });
   });
 
@@ -74,8 +74,8 @@ describe('renderProjectsList', () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
     const el = freshContainer();
     renderProjectsList(el, [proj({})], { ...ctx, state: new AppState(), onCreate });
-    (el.querySelector('.tc-projects-new') as HTMLElement).click();
-    const input = el.querySelector('.tc-projects-new-input') as HTMLInputElement;
+    (el.querySelector('.abyss-projects-new') as HTMLElement).click();
+    const input = el.querySelector('.abyss-projects-new-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'Fresh Project';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
@@ -96,9 +96,9 @@ describe('renderProjectDashboard', () => {
       openNote: vi.fn(),
       renderTasks,
     });
-    expect(el.querySelector('.tc-project-dashboard-title')?.textContent).toBe('A');
+    expect(el.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('A');
     expect(renderTasks).toHaveBeenCalled();
-    (el.querySelector('.tc-project-back') as HTMLElement).click();
+    (el.querySelector('.abyss-project-back') as HTMLElement).click();
     expect(state.get('projectsPanel')).toEqual({ view: 'list' });
   });
 
@@ -111,7 +111,7 @@ describe('renderProjectDashboard', () => {
       openNote: vi.fn(),
       renderTasks: vi.fn(),
     });
-    expect(el.querySelector('.tc-projects-empty')?.textContent).toBe('Project not found');
+    expect(el.querySelector('.abyss-projects-empty')?.textContent).toBe('Project not found');
   });
 
   it('does not render premature time statistics from stale runtime data', () => {
@@ -135,7 +135,7 @@ describe('renderProjectDashboard', () => {
       renderTasks: vi.fn(),
     });
 
-    expect(el.querySelector('.tc-project-time')).toBeNull();
+    expect(el.querySelector('.abyss-project-time')).toBeNull();
   });
 });
 
@@ -154,7 +154,7 @@ describe('ProjectsPanel dispatch', () => {
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never);
     const el = freshContainer();
     panel.mount(el);
-    expect(el.querySelector('.tc-projects-list')).toBeTruthy();
+    expect(el.querySelector('.abyss-projects-list')).toBeTruthy();
   });
 
   it('renders the dashboard when projectsPanel is dashboard', () => {
@@ -163,6 +163,6 @@ describe('ProjectsPanel dispatch', () => {
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never);
     const el = freshContainer();
     panel.mount(el);
-    expect(el.querySelector('.tc-projects-dashboard')).toBeTruthy();
+    expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
   });
 });

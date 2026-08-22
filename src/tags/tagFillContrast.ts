@@ -1,6 +1,6 @@
 /**
- * Task 40 (Round 4): the tag-fill background (styles.css's shared `.tc-tg-block`/`.tc-tg-body`/
- * `.tc-mg-*` rule — an opaque, theme-dependent mix against `var(--background-primary)`)
+ * Task 40 (Round 4): the tag-fill background (styles.css's shared `.abyss-tg-block`/`.abyss-tg-body`/
+ * `.abyss-mg-*` rule — an opaque, theme-dependent mix against `var(--background-primary)`)
  * lets a user pick ANY hex color for a tag group. A single fixed `var(--text-normal)` title/
  * subtitle color (the pre-existing behavior) reads fine against a mid-saturation color like blue
  * or red, but loses contrast against a bright/pale tag color in light mode, or a very dark/
@@ -14,7 +14,7 @@
  *
  * Deliberately pure/DOM-free so it's unit-testable without a real browser's `color-mix` support
  * (jsdom, used by this project's tests, doesn't implement `color-mix()`), and reusable from every
- * render site that sets `--tc-tag-color` (renderTimedBlocks.ts, renderAllDay.ts, MonthGridView.ts).
+ * render site that sets `--abyss-tag-color` (renderTimedBlocks.ts, renderAllDay.ts, MonthGridView.ts).
  */
 
 /** Parses a `#rgb` or `#rrggbb` hex color into 0-255 RGB channels, or null if unparseable. */
@@ -129,8 +129,8 @@ function currentTagFillPercent(referenceEl: HTMLElement): number {
 /**
  * Convenience wrapper combining `currentBackgroundPrimaryHex` + `tagFillTextVariant`: given the
  * element the tag-colored fill was just applied to and the tag's own hex color, returns the CSS
- * custom property value (already wrapped in `var(--tc-tag-text-<variant>)`) a render site should
- * set as `--tc-tag-text-color` on that same element — or `undefined` when there's nothing to
+ * custom property value (already wrapped in `var(--abyss-tag-text-<variant>)`) a render site should
+ * set as `--abyss-tag-text-color` on that same element — or `undefined` when there's nothing to
  * override, in which case the caller should simply not set the property at all and let the CSS
  * rule's own `var(--text-normal)` fallback apply, unchanged from before this module existed.
  */
@@ -143,5 +143,5 @@ export function tagFillTextColorVar(
     currentBackgroundPrimaryHex(el),
     currentTagFillPercent(el),
   );
-  return variant ? `var(--tc-tag-text-${variant})` : undefined;
+  return variant ? `var(--abyss-tag-text-${variant})` : undefined;
 }

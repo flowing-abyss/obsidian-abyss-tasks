@@ -95,7 +95,7 @@ afterEach(() => {
 describe('mountRecurrenceEditor', () => {
   it('presents presets and Custom as one pressed-state mode group', () => {
     const { container } = mount();
-    const group = container.querySelector<HTMLElement>('.tc-recurrence-presets')!;
+    const group = container.querySelector<HTMLElement>('.abyss-recurrence-presets')!;
 
     expect(group.getAttribute('role')).toBe('group');
     expect(group.getAttribute('aria-label')).toBe('Repeat pattern');
@@ -115,7 +115,7 @@ describe('mountRecurrenceEditor', () => {
     expect(
       Array.from(
         container.querySelectorAll<HTMLButtonElement>(
-          '.tc-recurrence-presets button[aria-pressed="true"]',
+          '.abyss-recurrence-presets button[aria-pressed="true"]',
         ),
       ),
     ).toEqual([button(container, 'Custom')]);
@@ -199,9 +199,9 @@ describe('mountRecurrenceEditor', () => {
       }
 
       expect(
-        container.querySelectorAll('.tc-recurrence-presets [aria-pressed="true"]'),
+        container.querySelectorAll('.abyss-recurrence-presets [aria-pressed="true"]'),
       ).toHaveLength(0);
-      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+      expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
         expectedRule,
       );
     },
@@ -256,7 +256,7 @@ describe('mountRecurrenceEditor', () => {
         initialRule,
       );
       click(button(container, 'Daily'));
-      const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
+      const whenDone = container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done')!;
       whenDone.checked = presetWhenDone;
       whenDone.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -265,12 +265,12 @@ describe('mountRecurrenceEditor', () => {
       expect(
         container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')?.value,
       ).toBe(expectedCustom);
-      expect(container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')?.checked).toBe(
-        presetWhenDone,
-      );
+      expect(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done')?.checked,
+      ).toBe(presetWhenDone);
 
       click(button(container, 'Monthly'));
-      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+      expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
         expectedPreset,
       );
     },
@@ -278,19 +278,19 @@ describe('mountRecurrenceEditor', () => {
 
   it('keeps empty diagnostics addressable without reserving visual rows', () => {
     const { container } = mount();
-    const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
-    const warning = container.querySelector<HTMLElement>('.tc-recurrence-delete-warning')!;
+    const status = container.querySelector<HTMLElement>('.abyss-recurrence-status')!;
+    const warning = container.querySelector<HTMLElement>('.abyss-recurrence-delete-warning')!;
 
     expect(status.id).not.toBe('');
     expect(status.hidden).toBe(true);
     expect(warning.hidden).toBe(true);
 
     click(button(container, 'Custom'));
-    input(container.querySelector<HTMLInputElement>('.tc-recurrence-raw')!, 'weekly');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')?.hidden).toBe(false);
+    input(container.querySelector<HTMLInputElement>('.abyss-recurrence-raw')!, 'weekly');
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-status')?.hidden).toBe(false);
 
     change(container.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!, 'delete');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-delete-warning')?.hidden).toBe(
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-delete-warning')?.hidden).toBe(
       false,
     );
   });
@@ -328,7 +328,7 @@ describe('mountRecurrenceEditor', () => {
       activeDocument.body.append(first.container);
       if (mode === 'custom') click(button(first.container, 'Custom'));
       const firstEdit = first.container.querySelector<HTMLInputElement>(
-        mode === 'custom' ? '.tc-recurrence-raw' : '.tc-recurrence-interval',
+        mode === 'custom' ? '.abyss-recurrence-raw' : '.abyss-recurrence-interval',
       )!;
       input(firstEdit, mode === 'custom' ? 'every 13 days' : '12345');
       firstEdit.focus();
@@ -340,7 +340,7 @@ describe('mountRecurrenceEditor', () => {
       second.handle.restoreDraftState(draft);
 
       const restored = second.container.querySelector<HTMLInputElement>(
-        mode === 'custom' ? '.tc-recurrence-raw' : '.tc-recurrence-interval',
+        mode === 'custom' ? '.abyss-recurrence-raw' : '.abyss-recurrence-interval',
       )!;
       expect(restored.value).toBe(mode === 'custom' ? 'every 13 days' : '12345');
       expect(restored.selectionStart).toBe(2);
@@ -356,7 +356,10 @@ describe('mountRecurrenceEditor', () => {
     ['preset:weekly', (container: HTMLElement) => button(container, 'Weekly')],
     ['preset:monthly', (container: HTMLElement) => button(container, 'Monthly')],
     ['preset:yearly', (container: HTMLElement) => button(container, 'Yearly')],
-    ['interval', (container: HTMLElement) => container.querySelector('.tc-recurrence-interval')!],
+    [
+      'interval',
+      (container: HTMLElement) => container.querySelector('.abyss-recurrence-interval')!,
+    ],
     ['unit', (container: HTMLElement) => container.querySelector('[aria-label="Repeat unit"]')!],
     [
       'weekday:Monday',
@@ -434,7 +437,10 @@ describe('mountRecurrenceEditor', () => {
         return container.querySelector('[aria-label="Yearly day"]')!;
       },
     ],
-    ['when-done', (container: HTMLElement) => container.querySelector('.tc-recurrence-when-done')!],
+    [
+      'when-done',
+      (container: HTMLElement) => container.querySelector('.abyss-recurrence-when-done')!,
+    ],
     [
       'completed-task',
       (container: HTMLElement) => container.querySelector('[aria-label="Completed task"]')!,
@@ -443,7 +449,7 @@ describe('mountRecurrenceEditor', () => {
       'custom',
       (container: HTMLElement) => {
         click(button(container, 'Custom'));
-        return container.querySelector('.tc-recurrence-raw')!;
+        return container.querySelector('.abyss-recurrence-raw')!;
       },
     ],
     ['cancel', (container: HTMLElement) => button(container, 'Cancel')],
@@ -527,7 +533,7 @@ describe('mountRecurrenceEditor', () => {
 
     click(button(container, 'Weekly'));
     expect(button(container, 'Weekly').getAttribute('aria-pressed')).toBe('true');
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every week on Sunday',
     );
     expect(
@@ -541,7 +547,7 @@ describe('mountRecurrenceEditor', () => {
     )!;
     monday.checked = true;
     monday.dispatchEvent(new Event('change', { bubbles: true }));
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every 2 weeks on Monday, Sunday',
     );
 
@@ -550,7 +556,7 @@ describe('mountRecurrenceEditor', () => {
     expect(
       container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')?.value,
     ).toBe('same-date');
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every 2 months',
     );
 
@@ -573,14 +579,14 @@ describe('mountRecurrenceEditor', () => {
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'weekly');
 
-    const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const status = container.querySelector<HTMLElement>('.abyss-recurrence-status')!;
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.textContent).toBe('Start the rule with “every”.');
     expect(button(container, 'Save repeat').disabled).toBe(true);
 
     input(raw, 'every 2 weeks on Thursday when done');
     expect(status.textContent).toBe('');
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every 2 weeks on Thursday when done',
     );
     expect(button(container, 'Save repeat').disabled).toBe(false);
@@ -592,7 +598,7 @@ describe('mountRecurrenceEditor', () => {
 
     input(interval, '0');
 
-    expect(container.querySelector('.tc-recurrence-status')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(
       'Use a whole number greater than zero.',
     );
     expect(button(container, 'Save repeat').disabled).toBe(true);
@@ -609,7 +615,7 @@ describe('mountRecurrenceEditor', () => {
         ownershipConflict: conflict,
       });
 
-      expect(container.querySelector('.tc-recurrence-status')?.textContent).toBe(message);
+      expect(container.querySelector('.abyss-recurrence-status')?.textContent).toBe(message);
       expect(button(container, 'Save repeat').disabled).toBe(true);
     },
   );
@@ -623,7 +629,7 @@ describe('mountRecurrenceEditor', () => {
 
     click(button(container, 'Weekly'));
 
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every week on Monday',
     );
   });
@@ -632,7 +638,7 @@ describe('mountRecurrenceEditor', () => {
     const { container, onSubmit, onClose } = mount();
     click(button(container, 'Weekdays'));
     change(container.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!, 'delete');
-    expect(container.querySelector('.tc-recurrence-delete-warning')?.textContent).toContain(
+    expect(container.querySelector('.abyss-recurrence-delete-warning')?.textContent).toContain(
       'deletes the finished task and its owned sub-tasks',
     );
 
@@ -707,7 +713,7 @@ describe('mountRecurrenceEditor', () => {
     await flushMicrotasks();
 
     expect(shortcut.defaultPrevented).toBe(true);
-    expect(container.querySelector('.tc-recurrence-status')?.textContent).not.toBe('');
+    expect(container.querySelector('.abyss-recurrence-status')?.textContent).not.toBe('');
     expect(button(container, 'Save repeat').disabled).toBe(true);
     expect(onSubmit).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
@@ -859,12 +865,12 @@ describe('mountRecurrenceEditor', () => {
     click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     input(raw, 'every day');
-    const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
+    const whenDone = container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done')!;
     whenDone.checked = true;
     whenDone.dispatchEvent(new Event('change', { bubbles: true }));
 
     expect(raw.value).toBe('every day when done');
-    expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+    expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
       'every day when done',
     );
 
@@ -883,7 +889,7 @@ describe('mountRecurrenceEditor', () => {
     (initialWhenDone, advancedRule, expectedChecked, expectedPresetRule) => {
       const { container } = mount();
       const controlsWhenDone = container.querySelector<HTMLInputElement>(
-        '.tc-recurrence-when-done',
+        '.abyss-recurrence-when-done',
       )!;
       if (initialWhenDone) {
         controlsWhenDone.checked = true;
@@ -894,11 +900,11 @@ describe('mountRecurrenceEditor', () => {
 
       input(raw, advancedRule);
 
-      expect(container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')?.checked).toBe(
-        expectedChecked,
-      );
+      expect(
+        container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done')?.checked,
+      ).toBe(expectedChecked);
       click(button(container, 'Weekly'));
-      expect(container.querySelector('.tc-recurrence-preview-rule')?.textContent).toBe(
+      expect(container.querySelector('.abyss-recurrence-preview-rule')?.textContent).toBe(
         expectedPresetRule,
       );
     },
@@ -908,7 +914,7 @@ describe('mountRecurrenceEditor', () => {
     const { container } = mount();
     click(button(container, 'Custom'));
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
-    const whenDone = container.querySelector<HTMLInputElement>('.tc-recurrence-when-done')!;
+    const whenDone = container.querySelector<HTMLInputElement>('.abyss-recurrence-when-done')!;
     input(raw, 'weekly');
 
     whenDone.checked = true;
@@ -951,9 +957,9 @@ describe('mountRecurrenceEditor', () => {
 
   it('keeps one diagnostic id wired to dynamic validity across controls and advanced rerenders', () => {
     const { container } = mount();
-    const editor = container.querySelector<HTMLElement>('.tc-recurrence-editor')!;
-    const title = container.querySelector<HTMLElement>('.tc-recurrence-title')!;
-    const status = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const editor = container.querySelector<HTMLElement>('.abyss-recurrence-editor')!;
+    const title = container.querySelector<HTMLElement>('.abyss-recurrence-title')!;
+    const status = container.querySelector<HTMLElement>('.abyss-recurrence-status')!;
     const diagnosticId = status.id;
     const interval = container.querySelector<HTMLInputElement>('[aria-label="Repeat interval"]')!;
 
@@ -970,7 +976,7 @@ describe('mountRecurrenceEditor', () => {
     expect(interval.getAttribute('aria-invalid')).toBe('false');
 
     click(button(container, 'Custom'));
-    const advancedStatus = container.querySelector<HTMLElement>('.tc-recurrence-status')!;
+    const advancedStatus = container.querySelector<HTMLElement>('.abyss-recurrence-status')!;
     const raw = container.querySelector<HTMLInputElement>('[aria-label="Recurrence rule"]')!;
     expect(advancedStatus.id).toBe(diagnosticId);
     expect(raw.getAttribute('aria-describedby')).toBe(diagnosticId);
@@ -983,7 +989,7 @@ describe('mountRecurrenceEditor', () => {
 
   it('associates Month day validation with the stable diagnostic and only invalidates that field', () => {
     const { container } = mount();
-    const diagnosticId = container.querySelector<HTMLElement>('.tc-recurrence-status')!.id;
+    const diagnosticId = container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id;
     click(button(container, 'Monthly'));
     change(container.querySelector<HTMLSelectElement>('[aria-label="Monthly pattern"]')!, 'day');
     const day = container.querySelector<HTMLInputElement>('[aria-label="Month day"]')!;
@@ -994,15 +1000,15 @@ describe('mountRecurrenceEditor', () => {
     input(day, '0');
     expect(day.getAttribute('aria-invalid')).toBe('true');
     expect(interval.getAttribute('aria-invalid')).toBe('false');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id).toBe(diagnosticId);
     input(day, '31');
     expect(day.getAttribute('aria-invalid')).toBe('false');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id).toBe(diagnosticId);
   });
 
   it('associates Yearly day validation with the stable diagnostic and only invalidates that field', () => {
     const { container } = mount();
-    const diagnosticId = container.querySelector<HTMLElement>('.tc-recurrence-status')!.id;
+    const diagnosticId = container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id;
     click(button(container, 'Yearly'));
     change(container.querySelector<HTMLSelectElement>('[aria-label="Yearly pattern"]')!, 'date');
     const day = container.querySelector<HTMLInputElement>('[aria-label="Yearly day"]')!;
@@ -1013,10 +1019,10 @@ describe('mountRecurrenceEditor', () => {
     input(day, '32');
     expect(day.getAttribute('aria-invalid')).toBe('true');
     expect(interval.getAttribute('aria-invalid')).toBe('false');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id).toBe(diagnosticId);
     input(day, '29');
     expect(day.getAttribute('aria-invalid')).toBe('false');
-    expect(container.querySelector<HTMLElement>('.tc-recurrence-status')!.id).toBe(diagnosticId);
+    expect(container.querySelector<HTMLElement>('.abyss-recurrence-status')!.id).toBe(diagnosticId);
   });
 
   it('labels an anchored editor as a non-modal dialog without nested modal semantics', () => {
@@ -1035,8 +1041,8 @@ describe('mountRecurrenceEditor', () => {
     });
     mounted.push(handle);
 
-    const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover')!;
-    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title')!;
+    const popover = activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover')!;
+    const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title')!;
     expect(popover.getAttribute('role')).toBe('dialog');
     expect(popover.getAttribute('aria-modal')).toBe('false');
     expect(popover.getAttribute('aria-labelledby')).toBe(title.id);
@@ -1091,7 +1097,7 @@ describe('mountRecurrenceEditor', () => {
       new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
     );
 
-    expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
     expect(activeDocument.activeElement).toBe(anchor);
     vi.useRealTimers();
   });

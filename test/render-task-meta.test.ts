@@ -73,7 +73,7 @@ describe('renderTaskMeta', () => {
     it('renders nothing for a task with no counts', () => {
       const container = freshContainer();
       renderCountBadges(container, task());
-      expect(container.querySelectorAll('.tc-task-count-badge')).toHaveLength(0);
+      expect(container.querySelectorAll('.abyss-task-count-badge')).toHaveLength(0);
     });
 
     it('renders a done/total badge for subtasks', () => {
@@ -85,7 +85,7 @@ describe('renderTaskMeta', () => {
         ],
       });
       renderCountBadges(container, t);
-      const badges = container.querySelectorAll('.tc-task-count-badge');
+      const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
       expect(badges[0]!.textContent).toContain('1/2');
     });
@@ -99,7 +99,7 @@ describe('renderTaskMeta', () => {
         ],
       });
       renderCountBadges(container, t);
-      const badges = container.querySelectorAll('.tc-task-count-badge');
+      const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
       expect(badges[0]!.textContent).toContain('2');
     });
@@ -107,7 +107,7 @@ describe('renderTaskMeta', () => {
     it('renders a link count badge from the precomputed linkCount field', () => {
       const container = freshContainer();
       renderCountBadges(container, task({ presentation: { linkCount: 3 } }));
-      const badges = container.querySelectorAll('.tc-task-count-badge');
+      const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(1);
       expect(badges[0]!.textContent).toContain('3');
     });
@@ -120,7 +120,7 @@ describe('renderTaskMeta', () => {
         presentation: { linkCount: 1 },
       });
       renderCountBadges(container, t);
-      const badges = container.querySelectorAll('.tc-task-count-badge');
+      const badges = container.querySelectorAll('.abyss-task-count-badge');
       expect(badges).toHaveLength(3);
     });
   });
@@ -136,10 +136,10 @@ describe('renderTaskMeta', () => {
         }),
         [],
       );
-      const chip = container.querySelector('.tc-task-tag') as HTMLElement;
+      const chip = container.querySelector('.abyss-task-tag') as HTMLElement;
       expect(chip).not.toBeNull();
       expect(chip.textContent).toBe('#misc');
-      expect(chip.classList.contains('tc-task-tag--colored')).toBe(false);
+      expect(chip.classList.contains('abyss-task-tag--colored')).toBe(false);
     });
 
     it('colors the chip when the tag matches a configured tag group', () => {
@@ -152,9 +152,9 @@ describe('renderTaskMeta', () => {
         }),
         [{ id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' }],
       );
-      const chip = container.querySelector('.tc-task-tag') as HTMLElement;
-      expect(chip.classList.contains('tc-task-tag--colored')).toBe(true);
-      expect(chip.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+      const chip = container.querySelector('.abyss-task-tag') as HTMLElement;
+      expect(chip.classList.contains('abyss-task-tag--colored')).toBe(true);
+      expect(chip.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
     });
 
     it('caps the number of chips at max', () => {
@@ -168,7 +168,7 @@ describe('renderTaskMeta', () => {
         [],
         2,
       );
-      expect(container.querySelectorAll('.tc-task-tag')).toHaveLength(2);
+      expect(container.querySelectorAll('.abyss-task-tag')).toHaveLength(2);
     });
 
     it('renders no click handlers (presentational-only, safe inside drag surfaces)', () => {
@@ -181,7 +181,7 @@ describe('renderTaskMeta', () => {
         }),
         [],
       );
-      const chip = container.querySelector('.tc-task-tag') as HTMLElement;
+      const chip = container.querySelector('.abyss-task-tag') as HTMLElement;
       // jsdom doesn't expose a listener-count API; the contract this test protects is
       // "clicking the chip does nothing and does not throw" — no filter/drag wiring.
       expect(() => chip.dispatchEvent(new MouseEvent('click', { bubbles: true }))).not.toThrow();

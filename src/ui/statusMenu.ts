@@ -109,13 +109,13 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       : null;
 
   // Only one status popover at a time.
-  eventDocument.querySelectorAll<HTMLElement>('.tc-status-popover').forEach((element) => {
+  eventDocument.querySelectorAll<HTMLElement>('.abyss-status-popover').forEach((element) => {
     const closeExisting = statusPopoverClose.get(element);
     if (closeExisting) closeExisting();
     else element.remove();
   });
 
-  const pop = eventDocument.body.createDiv({ cls: 'tc-status-popover' });
+  const pop = eventDocument.body.createDiv({ cls: 'abyss-status-popover' });
   const ownerDocument = pop.ownerDocument;
   const ownerWindow = ownerDocument.defaultView ?? window;
   let dismissTimer: number | undefined;
@@ -163,15 +163,15 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
 
   // ── Priority row ──────────────────────────────────────────
   const priorityRow = pop.createDiv({
-    cls: 'tc-status-popover-priority-row',
+    cls: 'abyss-status-popover-priority-row',
     attr: { role: 'group', 'aria-label': 'Priority' },
   });
   const currentPriority = task.priority ?? 'D';
   for (const opt of PRIORITY_OPTIONS) {
     const btn = priorityRow.createEl('button', {
-      cls: `tc-status-popover-flag${currentPriority === opt.p ? ' is-active' : ''}`,
+      cls: `abyss-status-popover-flag${currentPriority === opt.p ? ' is-active' : ''}`,
       attr: {
-        'data-tc-priority': opt.p,
+        'data-abyss-priority': opt.p,
         'aria-label': opt.label,
         role: 'menuitemradio',
         'aria-checked': String(currentPriority === opt.p),
@@ -185,14 +185,14 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
     });
   }
 
-  pop.createDiv({ cls: 'tc-status-popover-divider' });
+  pop.createDiv({ cls: 'abyss-status-popover-divider' });
 
   // ── Status list ───────────────────────────────────────────
-  const list = pop.createDiv({ cls: 'tc-status-popover-list' });
+  const list = pop.createDiv({ cls: 'abyss-status-popover-list' });
   const groups = registry.grouped();
   groups.forEach((group, groupIndex) => {
     for (const def of group.statuses) {
-      const row = list.createDiv({ cls: 'tc-status-popover-row' });
+      const row = list.createDiv({ cls: 'abyss-status-popover-row' });
       const isCurrent = task.statusSymbol === def.symbol;
       row.setAttrs({ role: 'menuitemradio', tabindex: '0', 'aria-checked': String(isCurrent) });
       renderStatusMarker(row, {
@@ -204,10 +204,10 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
         onLeftClick: () => {},
         onContextMenu: () => {},
       });
-      row.createSpan({ cls: 'tc-status-popover-name', text: def.name });
+      row.createSpan({ cls: 'abyss-status-popover-name', text: def.name });
       if (isCurrent) {
         row.addClass('is-current');
-        const check = row.createSpan({ cls: 'tc-status-popover-check' });
+        const check = row.createSpan({ cls: 'abyss-status-popover-check' });
         setIcon(check, 'check');
       }
       const pickStatus = (): void => {
@@ -223,7 +223,7 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       });
     }
     if (groupIndex < groups.length - 1) {
-      list.createDiv({ cls: 'tc-status-popover-divider' });
+      list.createDiv({ cls: 'abyss-status-popover-divider' });
     }
   });
 

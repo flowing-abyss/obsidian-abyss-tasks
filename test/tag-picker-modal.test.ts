@@ -81,7 +81,7 @@ afterEach(() => {
 describe('TagPickerModal', () => {
   it('renders filtered tag choices as native pressed buttons with truthful bulk states', () => {
     const { modal } = makeTagPicker();
-    const search = modal.contentEl.querySelector<HTMLInputElement>('.tc-tag-picker-search')!;
+    const search = modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search')!;
 
     expect(tagButton(modal, '#all')).toBeInstanceOf(HTMLButtonElement);
     expect(tagButton(modal, '#all').getAttribute('aria-pressed')).toBe('true');
@@ -91,13 +91,13 @@ describe('TagPickerModal', () => {
     search.value = 'some';
     search.dispatchEvent(new Event('input', { bubbles: true }));
 
-    expect(modal.contentEl.querySelectorAll('.tc-tag-picker-item')).toHaveLength(1);
+    expect(modal.contentEl.querySelectorAll('.abyss-tag-picker-item')).toHaveLength(1);
     expect(tagButton(modal, '#some')).toBeInstanceOf(HTMLButtonElement);
   });
 
   it('keeps focus on the toggled tag as native activation rebuilds the filtered list', () => {
     const { modal } = makeTagPicker();
-    const search = modal.contentEl.querySelector<HTMLInputElement>('.tc-tag-picker-search')!;
+    const search = modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search')!;
     search.value = 'some';
     search.dispatchEvent(new Event('input', { bubbles: true }));
     const partial = tagButton(modal, '#some');

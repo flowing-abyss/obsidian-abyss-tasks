@@ -40,7 +40,7 @@ function makeCallbacks(): { callbacks: ToolbarCallbacks; spies: ToolbarSpies } {
 
 function secondaryDocument(): { ownerDocument: Document; remove: () => void } {
   const frame = document.createElement('iframe');
-  frame.dataset['tcToolbarTest'] = 'true';
+  frame.dataset['abyssToolbarTest'] = 'true';
   document.body.append(frame);
   const ownerDocument = frame.contentDocument!;
   const ownerWindow = frame.contentWindow as Window & typeof globalThis;
@@ -73,7 +73,7 @@ describe('Toolbar', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     activeDocument
-      .querySelectorAll('iframe[data-tc-toolbar-test]')
+      .querySelectorAll('iframe[data-abyss-toolbar-test]')
       .forEach((element) => element.remove());
     container.remove();
   });

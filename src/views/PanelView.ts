@@ -105,7 +105,7 @@ export class PanelView extends ItemView {
   // eslint-disable-next-line @typescript-eslint/require-await
   async onOpen(): Promise<void> {
     this.contentEl.empty();
-    this.contentEl.addClass('tc-panel-view');
+    this.contentEl.addClass('abyss-panel-view');
 
     this.state = new AppState();
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
@@ -122,11 +122,11 @@ export class PanelView extends ItemView {
       },
     };
 
-    const layout = this.contentEl.createDiv({ cls: 'tc-layout tc-layout--tasks' });
-    const railEl = layout.createDiv({ cls: 'tc-rail' });
-    const leftEl = layout.createDiv({ cls: 'tc-left' });
-    const centerEl = layout.createDiv({ cls: 'tc-center' });
-    const rightEl = layout.createDiv({ cls: 'tc-right' });
+    const layout = this.contentEl.createDiv({ cls: 'abyss-layout abyss-layout--tasks' });
+    const railEl = layout.createDiv({ cls: 'abyss-rail' });
+    const leftEl = layout.createDiv({ cls: 'abyss-left' });
+    const centerEl = layout.createDiv({ cls: 'abyss-center' });
+    const rightEl = layout.createDiv({ cls: 'abyss-right' });
 
     const resolver = new DailyNoteResolver(this.app, this.settings);
     const projectStore = new ProjectStore(this.app, this.queries, this.settings);
@@ -180,7 +180,7 @@ export class PanelView extends ItemView {
     });
 
     // Task 40 (Round 4): the tag-fill text-color contrast fix (tagFillContrast.ts) bakes a
-    // computed `--tc-tag-text-color` custom property into each block/item's inline style at
+    // computed `--abyss-tag-text-color` custom property into each block/item's inline style at
     // render time, from that moment's actual `--background-primary` — unlike a plain CSS
     // `var(--text-normal)` reference, this does NOT automatically track a live theme switch
     // (light/dark toggle, or swapping community themes) the way the rest of this view's colors
@@ -228,7 +228,7 @@ export class PanelView extends ItemView {
 
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
-      layout.className = `tc-layout tc-layout--${mode}`;
+      layout.className = `abyss-layout abyss-layout--${mode}`;
     });
     this.selectionUnsub = this.state.on('taskStack', (stack) => {
       if (!this.ownedWriteRef) return;
@@ -361,10 +361,10 @@ export class PanelView extends ItemView {
   }
 
   private rightEl(): HTMLElement {
-    return this.contentEl.querySelector<HTMLElement>('.tc-right') ?? this.contentEl;
+    return this.contentEl.querySelector<HTMLElement>('.abyss-right') ?? this.contentEl;
   }
 
   private clearSelectionMessage(): void {
-    this.rightEl().querySelector('.tc-task-selection-message')?.remove();
+    this.rightEl().querySelector('.abyss-task-selection-message')?.remove();
   }
 }

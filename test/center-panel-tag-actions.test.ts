@@ -18,12 +18,16 @@ useRealMoment();
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  activeDocument.querySelectorAll('.tc-date-picker-popover').forEach((element) => element.remove());
   activeDocument
-    .querySelectorAll('.tc-test-center-attached')
+    .querySelectorAll('.abyss-date-picker-popover')
     .forEach((element) => element.remove());
   activeDocument
-    .querySelectorAll('.tc-status-popover, .tc-recurrence-popover, .tc-recurrence-delete-confirm')
+    .querySelectorAll('.abyss-test-center-attached')
+    .forEach((element) => element.remove());
+  activeDocument
+    .querySelectorAll(
+      '.abyss-status-popover, .abyss-recurrence-popover, .abyss-recurrence-delete-confirm',
+    )
     .forEach((element) => element.remove());
 });
 
@@ -248,14 +252,14 @@ async function settleChangedCustomDate(
 ): Promise<HTMLElement> {
   const ownerWindow = el.ownerDocument.defaultView;
   if (!ownerWindow) throw new Error('missing owner window');
-  const card = el.querySelector<HTMLElement>('.tc-task-card');
+  const card = el.querySelector<HTMLElement>('.abyss-task-card');
   if (!card) throw new Error('missing task card');
   card.focus();
   openMenu(card);
   items
     .find((item) => item.title__ === 'Set date…')
     ?.onClick__?.(new ownerWindow.MouseEvent('click'));
-  const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]');
+  const input = el.querySelector<HTMLInputElement>('.abyss-date-picker-popover input[type="date"]');
   if (!input) throw new Error('missing custom date input');
   input.value = '2026-08-02';
   input.dispatchEvent(ownerEvent(ownerWindow, 'change', { bubbles: true }));
@@ -273,7 +277,7 @@ describe('CenterPanel drag source', () => {
       }),
     ];
     const { el } = makeCenter(tasks);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
     expect(card.getAttribute('draggable')).toBe('true');
   });
 
@@ -284,7 +288,7 @@ describe('CenterPanel drag source', () => {
       source: { originalMarkdown: '- [ ] t #task/inbox', originalBlock: '- [ ] t #task/inbox' },
     });
     const { el, state } = makeCenter([t]);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
     const ev = new MouseEvent('dragstart', { bubbles: true });
     card.dispatchEvent(ev);
     expect(state.get('draggingTask')).toBeTruthy();
@@ -297,7 +301,7 @@ describe('CenterPanel drag source', () => {
       source: { originalMarkdown: '- [ ] t #task/inbox', originalBlock: '- [ ] t #task/inbox' },
     });
     const { el, state } = makeCenter([t]);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
     const startEv = new MouseEvent('dragstart', { bubbles: true });
     card.dispatchEvent(startEv);
     const endEv = new MouseEvent('dragend', { bubbles: true });
@@ -314,16 +318,16 @@ describe('CenterPanel tag→task drop target', () => {
       source: { originalMarkdown: '- [ ] t #task/inbox', originalBlock: '- [ ] t #task/inbox' },
     });
     const { el, state, execute } = makeCenter([t]);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
 
     state.set('draggingTag', '#task/next');
     const overEv = new MouseEvent('dragover', { bubbles: true });
     card.dispatchEvent(overEv);
-    expect(card.classList.contains('tc-drop-target')).toBe(true);
+    expect(card.classList.contains('abyss-drop-target')).toBe(true);
 
     const dropEv = new MouseEvent('drop', { bubbles: true });
     card.dispatchEvent(dropEv);
-    expect(card.classList.contains('tc-drop-target')).toBe(false);
+    expect(card.classList.contains('abyss-drop-target')).toBe(false);
     expect(execute).toHaveBeenCalledWith({
       type: 'patch',
       target: {
@@ -342,10 +346,10 @@ describe('CenterPanel tag→task drop target', () => {
     });
     const { el, state } = makeCenter([t]);
     state.set('draggingTag', null);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
     const overEv = new MouseEvent('dragover', { bubbles: true });
     card.dispatchEvent(overEv);
-    expect(card.classList.contains('tc-drop-target')).toBe(false);
+    expect(card.classList.contains('abyss-drop-target')).toBe(false);
   });
 
   it('ignores inline-code tag lookalikes and adds the real tag through the API', () => {
@@ -362,11 +366,11 @@ describe('CenterPanel tag→task drop target', () => {
       },
     );
     const { el, state, execute } = makeCenter([t]);
-    const card = el.querySelector('.tc-task-card') as HTMLElement;
+    const card = el.querySelector('.abyss-task-card') as HTMLElement;
 
-    expect(Array.from(el.querySelectorAll('.tc-task-tag')).map((chip) => chip.textContent)).toEqual(
-      ['#task/inbox'],
-    );
+    expect(
+      Array.from(el.querySelectorAll('.abyss-task-tag')).map((chip) => chip.textContent),
+    ).toEqual(['#task/inbox']);
     state.set('draggingTag', '#work');
     card.dispatchEvent(new MouseEvent('drop', { bubbles: true }));
 
@@ -448,7 +452,7 @@ describe('CenterPanel pinned-tag context menu', () => {
     );
     const { el, execute } = makeCenter([t], {}, ['#work']);
 
-    (el.querySelector('.tc-task-card') as HTMLElement).dispatchEvent(
+    (el.querySelector('.abyss-task-card') as HTMLElement).dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
     const pinned = items.find((item) => item.title__ === '#work');
@@ -501,7 +505,7 @@ describe('CenterPanel task date context menus', () => {
     });
     const { el, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+    const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
 
     try {
       card.focus();
@@ -521,7 +525,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
 
-    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
 
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
   });
@@ -530,7 +534,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
 
-    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
 
     const editRepeat = items.find((item) => item.title__ === 'Edit repeat…');
     expect(editRepeat).toBeDefined();
@@ -540,7 +544,7 @@ describe('CenterPanel task date context menus', () => {
   it('uses the center panel as the explicit boundary for custom-date placement', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
-    const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+    const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 50, 300, 200),
@@ -553,23 +557,23 @@ describe('CenterPanel task date context menus', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
-      if (this.classList.contains('tc-date-picker-popover')) return rect(0, 0, 120, 40);
+      if (this.classList.contains('abyss-date-picker-popover')) return rect(0, 0, 120, 40);
       return real.call(this);
     });
 
     openMenu(card);
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
 
-    const popover = el.querySelector<HTMLElement>('.tc-date-picker-popover')!;
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('172px');
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('44px');
+    const popover = el.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('172px');
+    expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('44px');
   });
 
   it('restores custom-date focus to the matching replacement card after refresh', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+    const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
 
     try {
       execute.mockImplementation(() => {
@@ -584,14 +588,14 @@ describe('CenterPanel task date context menus', () => {
       openMenu(originalCard);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.focus();
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
 
-      const replacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const replacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
       expect(originalCard.isConnected).toBe(false);
       expect(replacement).not.toBe(originalCard);
       expect(replacement.dataset['filePath']).toBe('a.md');
@@ -607,7 +611,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first]);
     activeDocument.body.append(el);
-    const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+    const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
@@ -615,7 +619,7 @@ describe('CenterPanel task date context menus', () => {
       openMenu(originalCard);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
 
@@ -623,7 +627,7 @@ describe('CenterPanel task date context menus', () => {
       await flushMicrotasks();
       panel.refresh();
 
-      const replacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const replacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
       expect(execute).toHaveBeenCalledOnce();
       expect(originalCard.isConnected).toBe(false);
       expect(replacement).not.toBe(originalCard);
@@ -646,7 +650,7 @@ describe('CenterPanel task date context menus', () => {
       el.ownerDocument.defaultView?.dispatchEvent(new Event('blur'));
       panel.refresh();
 
-      const replacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const replacement = el.querySelector<HTMLElement>('.abyss-task-card');
       expect(original.isConnected).toBe(false);
       expect(replacement).not.toBeNull();
       expect(activeDocument.activeElement).toBe(activeDocument.body);
@@ -672,7 +676,7 @@ describe('CenterPanel task date context menus', () => {
       );
       panel.refresh();
 
-      const replacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const replacement = el.querySelector<HTMLElement>('.abyss-task-card');
       expect(original.isConnected).toBe(false);
       expect(replacement).not.toBeNull();
       expect(activeDocument.activeElement).toBe(activeDocument.body);
@@ -739,12 +743,12 @@ describe('CenterPanel task date context menus', () => {
       window.dispatchEvent(new Event('blur'));
       activeDocument.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
       panel.refresh();
-      const ownerReplacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const ownerReplacement = el.querySelector<HTMLElement>('.abyss-task-card');
       const ownerActiveAfterPrimaryDeparture = ownerDocument.activeElement;
 
       ownerWindow.dispatchEvent(ownerEvent(ownerWindow, 'blur'));
       panel.refresh();
-      const finalReplacement = el.querySelector<HTMLElement>('.tc-task-card');
+      const finalReplacement = el.querySelector<HTMLElement>('.abyss-task-card');
       const ownerActiveAfterOwnerBlur = ownerDocument.activeElement;
       panel.destroy();
       destroyed = true;
@@ -793,7 +797,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first, second]);
     activeDocument.body.append(el);
-    const cards = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    const cards = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card'));
     const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
 
     try {
@@ -807,21 +811,21 @@ describe('CenterPanel task date context menus', () => {
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
 
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
       panel.refresh();
-      const firstReplacement = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
-        (card) => card.dataset['line'] === '0',
-      )!;
+      const firstReplacement = Array.from(
+        el.querySelectorAll<HTMLElement>('.abyss-task-card'),
+      ).find((card) => card.dataset['line'] === '0')!;
       panel.refresh();
 
-      const finalReplacement = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
-        (card) => card.dataset['line'] === '0',
-      )!;
+      const finalReplacement = Array.from(
+        el.querySelectorAll<HTMLElement>('.abyss-task-card'),
+      ).find((card) => card.dataset['line'] === '0')!;
       expect(execute).toHaveBeenCalledTimes(2);
       expect(originalTrigger.isConnected).toBe(false);
       expect(firstReplacement.isConnected).toBe(false);
@@ -841,11 +845,11 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
-      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -871,17 +875,17 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(changedTaskResult(first));
-      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
       await flushMicrotasks();
       panel.refresh();
-      expect(activeDocument.activeElement).toBe(el.querySelector<HTMLElement>('.tc-task-card'));
+      expect(activeDocument.activeElement).toBe(el.querySelector<HTMLElement>('.abyss-task-card'));
 
       tasks.splice(0);
       panel.refresh();
@@ -889,7 +893,7 @@ describe('CenterPanel task date context menus', () => {
       tasks.push(first);
       panel.refresh();
 
-      expect(el.querySelector('.tc-task-card')).not.toBeNull();
+      expect(el.querySelector('.abyss-task-card')).not.toBeNull();
       expect(activeDocument.activeElement).toBe(activeDocument.body);
     } finally {
       panel.destroy();
@@ -920,12 +924,12 @@ describe('CenterPanel task date context menus', () => {
         await flushMicrotasks();
         state.set('searchQuery', 'focus needle');
         flush();
-        const originalCard = el.querySelector<HTMLElement>('.tc-task-card')!;
+        const originalCard = el.querySelector<HTMLElement>('.abyss-task-card')!;
         originalCard.focus();
         openMenu(originalCard);
         items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
         const input = el.querySelector<HTMLInputElement>(
-          '.tc-date-picker-popover input[type="date"]',
+          '.abyss-date-picker-popover input[type="date"]',
         )!;
         input.value = '2026-08-02';
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -936,14 +940,14 @@ describe('CenterPanel task date context menus', () => {
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const coalescedReplacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+        const coalescedReplacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
         expect(originalCard.isConnected).toBe(false);
         expect(activeDocument.activeElement).toBe(coalescedReplacement);
 
         panel.refresh();
         expect(callbacks).toHaveLength(1);
         flush();
-        const laterReplacement = el.querySelector<HTMLElement>('.tc-task-card')!;
+        const laterReplacement = el.querySelector<HTMLElement>('.abyss-task-card')!;
         expect(coalescedReplacement.isConnected).toBe(false);
         expect(activeDocument.activeElement).toBe(laterReplacement);
 
@@ -963,7 +967,7 @@ describe('CenterPanel task date context menus', () => {
     const items = captureMenu();
     const { el, execute, panel } = makeCenter([first, second]);
     activeDocument.body.append(el);
-    const cards = Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    const cards = Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card'));
     const originalTrigger = cards.find((card) => card.dataset['line'] === '0')!;
     const replacements: HTMLElement[] = [];
 
@@ -975,7 +979,7 @@ describe('CenterPanel task date context menus', () => {
       execute.mockImplementation(() => {
         panel.refresh();
         replacements.push(
-          Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
             (card) => card.dataset['line'] === '0',
           )!,
         );
@@ -985,7 +989,7 @@ describe('CenterPanel task date context menus', () => {
       openMenu(originalTrigger);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
 
@@ -1014,11 +1018,11 @@ describe('CenterPanel task date context menus', () => {
 
     try {
       execute.mockResolvedValue(result);
-      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.value = '2026-08-02';
       input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1040,12 +1044,12 @@ describe('CenterPanel task date context menus', () => {
     activeDocument.body.append(el);
 
     try {
-      const card = el.querySelector<HTMLElement>('.tc-task-card')!;
+      const card = el.querySelector<HTMLElement>('.abyss-task-card')!;
       openMenu(card);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       vi.runOnlyPendingTimers();
       const input = el.querySelector<HTMLInputElement>(
-        '.tc-date-picker-popover input[type="date"]',
+        '.abyss-date-picker-popover input[type="date"]',
       )!;
       input.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
@@ -1064,7 +1068,7 @@ describe('CenterPanel task date context menus', () => {
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
     const items = captureMenu();
     const { el, execute } = makeCenter([first]);
-    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
 
     items.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
@@ -1078,7 +1082,7 @@ describe('CenterPanel task date context menus', () => {
     const tomorrowTask = { ...first, planning: { due: tomorrow as never } };
     const clearItems = captureMenu();
     const clearCenter = makeCenter([tomorrowTask]);
-    openMenu(clearCenter.el.querySelector<HTMLElement>('.tc-task-card')!);
+    openMenu(clearCenter.el.querySelector<HTMLElement>('.abyss-task-card')!);
     clearItems.find((item) => item.title__ === 'Tomorrow')?.onClick__?.(new MouseEvent('click'));
     await flushMicrotasks();
     expect(clearCenter.execute).toHaveBeenLastCalledWith({
@@ -1091,7 +1095,7 @@ describe('CenterPanel task date context menus', () => {
   it('orders Today, Tomorrow, Set date…, and Set tag… in the bulk menu', () => {
     const items = captureMenu();
     const { el } = makeCenter([first, second]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
 
@@ -1105,7 +1109,7 @@ describe('CenterPanel task date context menus', () => {
     const mixedSecond = { ...second, planning: { due: tomorrow as never } };
     const items = captureMenu();
     const mixedCenter = makeCenter([first, mixedSecond]);
-    const mixedCards = Array.from(mixedCenter.el.querySelectorAll<HTMLElement>('.tc-task-card'));
+    const mixedCards = Array.from(mixedCenter.el.querySelectorAll<HTMLElement>('.abyss-task-card'));
     for (const card of mixedCards) {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     }
@@ -1135,7 +1139,7 @@ describe('CenterPanel task date context menus', () => {
     const clearItems = captureMenu();
     const matchingCenter = makeCenter([matchingFirst, matchingSecond]);
     const matchingCards = Array.from(
-      matchingCenter.el.querySelectorAll<HTMLElement>('.tc-task-card'),
+      matchingCenter.el.querySelectorAll<HTMLElement>('.abyss-task-card'),
     );
     for (const card of matchingCards) {
       card.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
@@ -1181,7 +1185,7 @@ describe('CenterPanel task date context menus', () => {
         cause: 'test',
         contentState: 'unchanged',
       });
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     const firstCard = Array.from(cards).find((card) => card.dataset['line'] === '0')!;
@@ -1190,7 +1194,9 @@ describe('CenterPanel task date context menus', () => {
     openMenu(firstCard);
 
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]');
+    const input = el.querySelector<HTMLInputElement>(
+      '.abyss-date-picker-popover input[type="date"]',
+    );
     expect(input?.value).toBe('');
     input!.value = '2026-08-02';
     input!.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1218,9 +1224,11 @@ describe('CenterPanel task date context menus', () => {
   it('rejects an invalid custom date before executing a command', () => {
     const items = captureMenu();
     const { el, execute } = makeCenter([first]);
-    openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+    openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
-    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]')!;
+    const input = el.querySelector<HTMLInputElement>(
+      '.abyss-date-picker-popover input[type="date"]',
+    )!;
 
     input.value = 'not-a-date';
     input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -1237,7 +1245,7 @@ describe('CenterPanel task date context menus', () => {
       const ownerDocument = el.ownerDocument;
       const addListener = vi.spyOn(ownerDocument, 'addEventListener');
       const removeListener = vi.spyOn(ownerDocument, 'removeEventListener');
-      openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
+      openMenu(el.querySelector<HTMLElement>('.abyss-task-card')!);
       items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
       vi.runOnlyPendingTimers();
       const added = addListener.mock.calls as unknown as Array<
@@ -1273,16 +1281,18 @@ describe('CenterPanel task date context menus', () => {
     vi.useFakeTimers();
     const items = captureMenu();
     const { el, panel, state } = makeCenter([first, second]);
-    el.addClass('tc-test-center-attached');
+    el.addClass('abyss-test-center-attached');
     activeDocument.body.append(el);
     state.set('taskStack', [first]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     openMenu(cards[0]!);
     items.find((item) => item.title__ === 'Set date…')?.onClick__?.(new MouseEvent('click'));
     vi.runOnlyPendingTimers();
-    const input = el.querySelector<HTMLInputElement>('.tc-date-picker-popover input[type="date"]')!;
+    const input = el.querySelector<HTMLInputElement>(
+      '.abyss-date-picker-popover input[type="date"]',
+    )!;
     const event = new KeyboardEvent('keydown', {
       key: 'Escape',
       bubbles: true,
@@ -1291,9 +1301,9 @@ describe('CenterPanel task date context menus', () => {
 
     input.dispatchEvent(event);
 
-    const selectedAfterEscape = el.querySelectorAll('.tc-task-card.tc-multi-selected').length;
+    const selectedAfterEscape = el.querySelectorAll('.abyss-task-card.abyss-multi-selected').length;
     const detailAfterEscape = state.get('taskStack');
-    const pickerClosed = el.querySelector('.tc-date-picker-popover') === null;
+    const pickerClosed = el.querySelector('.abyss-date-picker-popover') === null;
     panel.destroy();
 
     expect(event.defaultPrevented).toBe(true);
@@ -1319,14 +1329,14 @@ describe('CenterPanel tag chip replace on drop', () => {
     });
 
     state.set('draggingTag', '#task/next');
-    const chip = el.querySelector('.tc-task-tag') as HTMLElement;
+    const chip = el.querySelector('.abyss-task-tag') as HTMLElement;
     expect(chip).not.toBeNull();
 
     chip.dispatchEvent(new MouseEvent('dragover', { bubbles: true }));
-    expect(chip.classList.contains('tc-drop-target')).toBe(true);
+    expect(chip.classList.contains('abyss-drop-target')).toBe(true);
 
     chip.dispatchEvent(new MouseEvent('drop', { bubbles: true }));
-    expect(chip.classList.contains('tc-drop-target')).toBe(false);
+    expect(chip.classList.contains('abyss-drop-target')).toBe(false);
     expect(execute).toHaveBeenCalledWith({
       type: 'patch',
       target: {
@@ -1348,9 +1358,9 @@ describe('CenterPanel tag chip replace on drop', () => {
     });
 
     state.set('draggingTag', '#work');
-    const chip = el.querySelector('.tc-task-tag') as HTMLElement;
+    const chip = el.querySelector('.abyss-task-tag') as HTMLElement;
     chip.dispatchEvent(new MouseEvent('dragover', { bubbles: true }));
-    expect(chip.classList.contains('tc-drop-target')).toBe(false);
+    expect(chip.classList.contains('abyss-drop-target')).toBe(false);
 
     chip.dispatchEvent(new MouseEvent('drop', { bubbles: true }));
     expect(execute).not.toHaveBeenCalled();
@@ -1369,9 +1379,9 @@ describe('CenterPanel tag chip replace on drop', () => {
     );
     const { el } = makeCenter([t]);
 
-    expect(Array.from(el.querySelectorAll('.tc-task-tag')).map((chip) => chip.textContent)).toEqual(
-      ['#work', '#task/inbox'],
-    );
+    expect(
+      Array.from(el.querySelectorAll('.abyss-task-tag')).map((chip) => chip.textContent),
+    ).toEqual(['#work', '#task/inbox']);
   });
 });
 
@@ -1392,7 +1402,7 @@ describe('CenterPanel inbox tasks (new inbox object)', () => {
     const { el } = makeCenter(tasks, {
       inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const cards = el.querySelectorAll('.tc-task-card');
+    const cards = el.querySelectorAll('.abyss-task-card');
     expect(cards).toHaveLength(1);
   });
 
@@ -1411,7 +1421,7 @@ describe('CenterPanel inbox tasks (new inbox object)', () => {
     const { el } = makeCenter(tasks, {
       inbox: { mode: 'untagged', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const cards = el.querySelectorAll('.tc-task-card');
+    const cards = el.querySelectorAll('.abyss-task-card');
     expect(cards).toHaveLength(1);
   });
 });

@@ -109,7 +109,7 @@ describe('RailPanel', () => {
     state.set('mode', 'calendar');
     const panel = new RailPanel(state, { setting: {} });
     panel.mount(freshContainer());
-    const active = panel['el'].querySelector('.tc-rail-btn.is-active');
+    const active = panel['el'].querySelector('.abyss-rail-btn.is-active');
     expect(active?.getAttribute('aria-label')).toBe('Calendar');
   });
 
@@ -152,7 +152,7 @@ describe('RailPanel', () => {
     const panel = new RailPanel(state, { setting: {} });
     panel.mount(freshContainer());
     state.set('mode', 'search');
-    const active = panel['el'].querySelector('.tc-rail-btn.is-active');
+    const active = panel['el'].querySelector('.abyss-rail-btn.is-active');
     expect(active?.getAttribute('aria-label')).toBe('Search');
   });
 
@@ -196,7 +196,7 @@ describe('RailPanel', () => {
         settingsButton.click();
 
         expect(
-          Array.from(panel['el'].querySelectorAll('.tc-rail-btn.is-active')).map((button) =>
+          Array.from(panel['el'].querySelectorAll('.abyss-rail-btn.is-active')).map((button) =>
             button.getAttribute('aria-label'),
           ),
         ).toEqual([mode === 'projects' ? 'Projects' : 'Search', 'Settings']);
@@ -212,7 +212,7 @@ describe('RailPanel', () => {
         await vi.waitFor(() => expect(settingsButton.classList.contains('is-active')).toBe(false));
 
         expect(
-          panel['el'].querySelector('.tc-rail-btn.is-active')?.getAttribute('aria-label'),
+          panel['el'].querySelector('.abyss-rail-btn.is-active')?.getAttribute('aria-label'),
         ).toBe(mode === 'projects' ? 'Projects' : 'Search');
         expect(harness.observers[0]!.disconnectCalls).toBe(1);
       } finally {
@@ -291,9 +291,9 @@ describe('RailPanel', () => {
 
       expect(observer.disconnectCalls).toBe(1);
       expect(harness.observers).toHaveLength(1);
-      expect(panel['el'].querySelector('.tc-rail-btn.is-active')?.getAttribute('aria-label')).toBe(
-        'Search',
-      );
+      expect(
+        panel['el'].querySelector('.abyss-rail-btn.is-active')?.getAttribute('aria-label'),
+      ).toBe('Search');
       expect(
         panel['el']
           .querySelector<HTMLButtonElement>('[aria-label="Settings"]')!

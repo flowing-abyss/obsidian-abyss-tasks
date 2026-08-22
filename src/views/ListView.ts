@@ -57,7 +57,7 @@ export class ListView extends BaseView {
       ? window.moment(config.startPosition, 'YYYY-MM').date(1)
       : window.moment().date(1);
 
-    const grid = container.createDiv({ cls: 'tc-list-view' });
+    const grid = container.createDiv({ cls: 'abyss-list-view' });
 
     // Overdue section first
     const overdueTasks = tasks.filter(
@@ -65,13 +65,13 @@ export class ListView extends BaseView {
     );
     const overdueIds = new Set(overdueTasks.map(taskPresentationIdentity));
     if (overdueTasks.length > 0) {
-      const section = grid.createDiv({ cls: 'tc-list-section' });
+      const section = grid.createDiv({ cls: 'abyss-list-section' });
       const overdueHeader = section.createDiv({
-        cls: 'tc-list-date-header tc-list-overdue-header',
+        cls: 'abyss-list-date-header abyss-list-overdue-header',
       });
-      overdueHeader.createEl('span', { cls: 'tc-list-date-label', text: 'Overdue' });
+      overdueHeader.createEl('span', { cls: 'abyss-list-date-label', text: 'Overdue' });
       overdueHeader.createEl('span', {
-        cls: 'tc-list-date-count',
+        cls: 'abyss-list-date-count',
         text: String(overdueTasks.length),
       });
       for (const task of sortTasks(overdueTasks)) {
@@ -105,17 +105,17 @@ export class ListView extends BaseView {
       );
       if (openDayTasks.length === 0) continue;
 
-      const section = grid.createDiv({ cls: 'tc-list-section' });
+      const section = grid.createDiv({ cls: 'abyss-list-section' });
 
       let dateLabel: string;
       if (currentDate === today) dateLabel = 'Today';
       else if (currentDate === yesterday) dateLabel = 'Yesterday';
       else dateLabel = window.moment(currentDate).format('ddd, D MMM');
 
-      const dateHeader = section.createDiv({ cls: 'tc-list-date-header' });
-      dateHeader.createEl('span', { cls: 'tc-list-date-label', text: dateLabel });
+      const dateHeader = section.createDiv({ cls: 'abyss-list-date-header' });
+      dateHeader.createEl('span', { cls: 'abyss-list-date-label', text: dateLabel });
       dateHeader.createEl('span', {
-        cls: 'tc-list-date-count',
+        cls: 'abyss-list-date-count',
         text: String(openDayTasks.length),
       });
       dateHeader.addEventListener('click', () => this.callbacks.onDateClick(currentDate));
@@ -127,7 +127,7 @@ export class ListView extends BaseView {
   }
 
   private renderListTask(container: HTMLElement, task: TaskSnapshot): void {
-    const row = container.createDiv({ cls: 'tc-list-task' });
+    const row = container.createDiv({ cls: 'abyss-list-task' });
 
     const marker = renderStatusMarker(row, {
       task,
@@ -150,7 +150,7 @@ export class ListView extends BaseView {
     } else if (task.status === 'cancelled') {
       statusClass = ' is-cancelled';
     }
-    const titleEl = row.createEl('span', { cls: `tc-list-task-title${statusClass}` });
+    const titleEl = row.createEl('span', { cls: `abyss-list-task-title${statusClass}` });
     const onEditLink = this.callbacks.onEditLink;
     renderTaskText(titleEl, task.markdownTitle, {
       app: this.callbacks.app,
@@ -159,9 +159,9 @@ export class ListView extends BaseView {
       onEditLink: onEditLink ? (occ, token) => onEditLink(task, occ, token) : undefined,
     });
 
-    const meta = row.createDiv({ cls: 'tc-list-task-meta' });
+    const meta = row.createDiv({ cls: 'abyss-list-task-meta' });
     if (task.planning.time) {
-      meta.createEl('span', { cls: 'tc-task-time', text: task.planning.time });
+      meta.createEl('span', { cls: 'abyss-task-time', text: task.planning.time });
     }
 
     // Source note chip — before tags
@@ -171,12 +171,12 @@ export class ListView extends BaseView {
 
     const tags = task.tags ?? [];
     for (const tag of tags.slice(0, 1)) {
-      meta.createEl('span', { cls: 'tc-task-tag', text: tag });
+      meta.createEl('span', { cls: 'abyss-task-tag', text: tag });
     }
     if ((task.subtasks?.length ?? 0) > 0) {
       const done = task.subtasks.filter((s) => s.status === 'done').length;
       meta.createEl('span', {
-        cls: 'tc-task-progress',
+        cls: 'abyss-task-progress',
         text: `${done}/${task.subtasks.length}`,
       });
     }

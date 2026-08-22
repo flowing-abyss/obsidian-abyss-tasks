@@ -69,7 +69,7 @@ export class WeekTimeGridView extends BaseView {
       this.callbacks.onCreateAtTime,
       this.callbacks.onDayHeaderClick,
     );
-    handles.rootEl.addClass('tc-tg-root--week');
+    handles.rootEl.addClass('abyss-tg-root--week');
     this.gridHandles = handles;
     this.renderTaskLayers(tasks, dates, handles, true);
 
@@ -235,7 +235,7 @@ export class WeekTimeGridView extends BaseView {
       if (!installCellBindings) {
         day.hourColumnEl
           .querySelectorAll<HTMLElement>(
-            ':scope > .tc-tg-block, :scope > .tc-tg-block-continuation',
+            ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
           )
           .forEach((element) => element.remove());
       }
@@ -246,7 +246,7 @@ export class WeekTimeGridView extends BaseView {
         tagGroups,
         { date: day.date, previewPositionFor },
       );
-      day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+      day.allDayCellEl.style.setProperty('--abyss-span-lane-count', String(spanRow.laneCount));
       if (installCellBindings) {
         renderAllDayCell(
           day.allDayCellEl,
@@ -257,14 +257,14 @@ export class WeekTimeGridView extends BaseView {
           allDayCallbacks,
           tagGroups,
         );
-        const items = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+        const items = day.allDayCellEl.createDiv({ cls: 'abyss-tg-cell-items' });
         for (const child of Array.from(day.allDayCellEl.children)) {
           if (child !== items) items.appendChild(child);
         }
         continue;
       }
 
-      const items = day.allDayCellEl.querySelector<HTMLElement>(':scope > .tc-tg-cell-items');
+      const items = day.allDayCellEl.querySelector<HTMLElement>(':scope > .abyss-tg-cell-items');
       if (!items) continue;
       items.empty();
       const scratch = day.allDayCellEl.ownerDocument.createElement('div');

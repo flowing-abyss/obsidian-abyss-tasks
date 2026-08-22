@@ -48,8 +48,8 @@ function gridRect(left: number, top: number, width: number, height: number): DOM
 }
 
 function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined> {
-  const badge = root.querySelector<HTMLElement>('.tc-recurrence-badge');
-  const icon = badge?.querySelector<HTMLElement>('.tc-recurrence-badge-icon');
+  const badge = root.querySelector<HTMLElement>('.abyss-recurrence-badge');
+  const icon = badge?.querySelector<HTMLElement>('.abyss-recurrence-badge-icon');
   return {
     rootClass: badge?.className,
     validity: badge?.dataset['recurrenceValidity'],
@@ -75,11 +75,13 @@ describe('TodayView', () => {
       false,
     );
 
-    expect(recurrenceBadgeDom(container.querySelector<HTMLElement>('.tc-tg-block-head')!)).toEqual({
-      rootClass: 'tc-recurrence-badge',
+    expect(
+      recurrenceBadgeDom(container.querySelector<HTMLElement>('.abyss-tg-block-head')!),
+    ).toEqual({
+      rootClass: 'abyss-recurrence-badge',
       validity: 'valid',
       label: 'Repeats: every week',
-      iconClass: 'tc-recurrence-badge-icon',
+      iconClass: 'abyss-recurrence-badge-icon',
       icon: 'repeat-2',
     });
   });
@@ -100,16 +102,16 @@ describe('TodayView', () => {
       const setIntervalSpy = vi.spyOn(window, 'setInterval');
 
       view.render(container, [initial], config, false);
-      const header = container.querySelector('.tc-tg-header-row');
-      const gridRow = container.querySelector('.tc-tg-grid-row') as HTMLElement;
-      const hourRow = container.querySelector('.tc-tg-hour-row');
-      const dayColumn = container.querySelector('.tc-tg-day-column');
-      const allDayCell = container.querySelector('.tc-tg-allday-cell');
-      const nowLine = container.querySelector('.tc-tg-now-line');
-      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.tc-tg-hour-column');
+      const header = container.querySelector('.abyss-tg-header-row');
+      const gridRow = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
+      const hourRow = container.querySelector('.abyss-tg-hour-row');
+      const dayColumn = container.querySelector('.abyss-tg-day-column');
+      const allDayCell = container.querySelector('.abyss-tg-allday-cell');
+      const nowLine = container.querySelector('.abyss-tg-now-line');
+      const todayHourColumn = (dayColumn as HTMLElement).querySelector('.abyss-tg-hour-column');
       const quickAdd = (dayColumn as HTMLElement)
-        .querySelector<HTMLElement>('.tc-tg-hour-column')!
-        .createDiv({ cls: 'tc-tg-quick-add' });
+        .querySelector<HTMLElement>('.abyss-tg-hour-column')!
+        .createDiv({ cls: 'abyss-tg-quick-add' });
       gridRow.scrollTop = 321;
 
       for (let revision = 1; revision <= 3; revision++) {
@@ -126,21 +128,21 @@ describe('TodayView', () => {
         );
       }
 
-      expect(container.querySelector('.tc-tg-header-row')).toBe(header);
-      expect(container.querySelector('.tc-tg-grid-row')).toBe(gridRow);
-      expect(container.querySelector('.tc-tg-hour-row')).toBe(hourRow);
-      expect(container.querySelector('.tc-tg-day-column')).toBe(dayColumn);
-      expect(container.querySelector('.tc-tg-allday-cell')).toBe(allDayCell);
-      expect(container.querySelector('.tc-tg-now-line')).toBe(nowLine);
+      expect(container.querySelector('.abyss-tg-header-row')).toBe(header);
+      expect(container.querySelector('.abyss-tg-grid-row')).toBe(gridRow);
+      expect(container.querySelector('.abyss-tg-hour-row')).toBe(hourRow);
+      expect(container.querySelector('.abyss-tg-day-column')).toBe(dayColumn);
+      expect(container.querySelector('.abyss-tg-allday-cell')).toBe(allDayCell);
+      expect(container.querySelector('.abyss-tg-now-line')).toBe(nowLine);
       expect(nowLine?.parentElement).toBe(gridRow);
-      expect(nowLine?.querySelector<HTMLElement>('.tc-tg-now-line-dot')?.style.left).toBe('50%');
-      expect(container.querySelector('.tc-tg-quick-add')).toBe(quickAdd);
+      expect(nowLine?.querySelector<HTMLElement>('.abyss-tg-now-line-dot')?.style.left).toBe('50%');
+      expect(container.querySelector('.abyss-tg-quick-add')).toBe(quickAdd);
       expect(gridRow.scrollTop).toBe(321);
       expect(container.textContent).not.toContain('Initial task');
       expect(container.textContent).toContain('Updated task 3');
       expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 
-      const hourColumn = container.querySelector('.tc-tg-hour-column') as HTMLElement;
+      const hourColumn = container.querySelector('.abyss-tg-hour-column') as HTMLElement;
       hourColumn.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 96 }));
       expect(cbs.onCreateAtTime).toHaveBeenCalledTimes(1);
       const drop = new MouseEvent('drop', { bubbles: true });
@@ -161,12 +163,12 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig({ startPosition: '2026-07-10' }));
-    const header = container.querySelector('.tc-tg-header-row');
+    const header = container.querySelector('.abyss-tg-header-row');
 
     view.patch(container, [], resolvedConfig({ startPosition: '2026-07-11' }));
 
-    expect(container.querySelector('.tc-tg-header-row')).not.toBe(header);
-    expect(container.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+    expect(container.querySelector('.abyss-tg-header-row')).not.toBe(header);
+    expect(container.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
       '2026-07-11',
     );
   });
@@ -178,7 +180,7 @@ describe('TodayView', () => {
     const t = task({ planning: { due: '2026-07-10', time: '15:00', duration: 60 } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
 
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown' }));
 
     expect(cbs.onKeyboardIntent).toHaveBeenCalledWith(t, {
@@ -192,7 +194,7 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { due: '2026-07-10', time: '15:00', duration: 60 } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(container.querySelector('.tc-tg-block')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-block')).not.toBeNull();
   });
 
   it('threads onDropTime through to the hour-grid column, firing on drop', () => {
@@ -200,7 +202,7 @@ describe('TodayView', () => {
     const cbs = callbacks();
     const view = new TodayView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07-10' }));
-    const hourColumnEl = container.querySelector('.tc-tg-hour-column') as HTMLElement;
+    const hourColumnEl = container.querySelector('.abyss-tg-hour-column') as HTMLElement;
     const dt = { getData: () => 'f.md:::0' } as unknown as DataTransfer;
     const ev = new MouseEvent('drop', { bubbles: true, clientY: 148 });
     Object.defineProperty(ev, 'dataTransfer', { value: dt, configurable: true });
@@ -213,9 +215,9 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { due: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(container.querySelector('.tc-tg-plain')).not.toBeNull();
-    expect(container.querySelector('.tc-tg-block')).toBeNull();
-    expect(container.querySelector('.tc-tg-root--week')).toBeNull();
+    expect(container.querySelector('.abyss-tg-plain')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-block')).toBeNull();
+    expect(container.querySelector('.abyss-tg-root--week')).toBeNull();
   });
 
   it('gives a Day all-day span one stylesheet-backed track so its segment fills the layer', () => {
@@ -227,12 +229,12 @@ describe('TodayView', () => {
       resolvedConfig({ startPosition: '2026-07-10' }),
     );
 
-    const layer = container.querySelector<HTMLElement>('.tc-tg-span-layer')!;
-    const segment = layer.querySelector<HTMLElement>('.tc-span-piece')!;
-    expect(layer.style.getPropertyValue('--tc-span-track-count')).toBe('1');
+    const layer = container.querySelector<HTMLElement>('.abyss-tg-span-layer')!;
+    const segment = layer.querySelector<HTMLElement>('.abyss-span-piece')!;
+    expect(layer.style.getPropertyValue('--abyss-span-track-count')).toBe('1');
     expect(segment.style.gridColumn).toBe('1 / 2');
     expect(css).toMatch(
-      /\.tc-tg-span-layer,\s*\.tc-mg-span-layer\s*\{[^}]*grid-template-columns:\s*repeat\(var\(--tc-span-track-count\),\s*minmax\(0,\s*1fr\)\)/u,
+      /\.abyss-tg-span-layer,\s*\.abyss-mg-span-layer\s*\{[^}]*grid-template-columns:\s*repeat\(var\(--abyss-span-track-count\),\s*minmax\(0,\s*1fr\)\)/u,
     );
   });
 
@@ -241,8 +243,8 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { due: '2026-07-15', scheduled: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(container.querySelector('.tc-tg-plain')).not.toBeNull();
-    expect(container.querySelector('.tc-tg-deadline-marker')).toBeNull();
+    expect(container.querySelector('.abyss-tg-plain')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-deadline-marker')).toBeNull();
   });
 
   it('Task 38: bucketTasksForDate does NOT filter out done/cancelled tasks (timed, plain, deadlines)', () => {
@@ -275,7 +277,7 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { due: '2026-08-01' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(container.querySelector('.tc-tg-plain')).toBeNull();
+    expect(container.querySelector('.abyss-tg-plain')).toBeNull();
   });
 
   it('Task 38: a done timed task still renders as a full block in the hour grid, checkbox checked, not removed', () => {
@@ -287,11 +289,11 @@ describe('TodayView', () => {
       planning: { due: '2026-07-10', time: '15:00', duration: 60 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block).not.toBeNull();
-    const marker = block.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = block.querySelector('.abyss-status-marker') as HTMLElement;
     expect(marker.getAttribute('data-status-type')).toBe('done');
-    const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
     expect(title.classList.contains('is-done')).toBe(true);
   });
 
@@ -300,7 +302,7 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ status: 'done', statusSymbol: 'x', planning: { due: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    expect(container.querySelector('.tc-tg-plain')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-plain')).not.toBeNull();
   });
 
   it('destroy() does not throw', () => {
@@ -317,10 +319,10 @@ describe('TodayView', () => {
     const t = task({ planning: { due: '2026-07-10', time: '09:00', duration: 60 } });
 
     const arm = (): HTMLElement => {
-      const day = container.querySelector('.tc-tg-day-column') as HTMLElement;
-      const hour = container.querySelector('.tc-tg-hour-column') as HTMLElement;
-      const allDay = container.querySelector('.tc-tg-allday-cell') as HTMLElement;
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const day = container.querySelector('.abyss-tg-day-column') as HTMLElement;
+      const hour = container.querySelector('.abyss-tg-hour-column') as HTMLElement;
+      const allDay = container.querySelector('.abyss-tg-allday-cell') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       day.getBoundingClientRect = () => gridRect(0, 100, 100, 24 * 48);
       hour.getBoundingClientRect = () => gridRect(0, 100, 100, 24 * 48);
       allDay.getBoundingClientRect = () => gridRect(0, 10, 100, 30);
@@ -336,14 +338,14 @@ describe('TodayView', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 21 }),
       );
-      expect(container.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+      expect(container.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
       return block;
     };
 
     view.render(container, [t], config);
     arm();
     view.patch(container, [t], config);
-    expect(container.querySelector('.tc-tg-drag-preview')).toBeNull();
+    expect(container.querySelector('.abyss-tg-drag-preview')).toBeNull();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 21 }),
     );
@@ -351,7 +353,7 @@ describe('TodayView', () => {
 
     arm();
     view.destroy();
-    expect(container.querySelector('.tc-tg-drag-preview')).toBeNull();
+    expect(container.querySelector('.abyss-tg-drag-preview')).toBeNull();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 21 }),
     );
@@ -366,7 +368,7 @@ describe('TodayView', () => {
       const today = window.moment().format('YYYY-MM-DD');
       view.render(container, [], resolvedConfig({ startPosition: today }));
 
-      const nowLineEl = container.querySelector('.tc-tg-now-line') as HTMLElement;
+      const nowLineEl = container.querySelector('.abyss-tg-now-line') as HTMLElement;
       expect(nowLineEl).not.toBeNull();
       const initialTop = nowLineEl.style.top;
 
@@ -428,7 +430,7 @@ describe('TodayView', () => {
     const view = new TodayView(cbs);
     const t = task({ planning: { due: '2026-07-10', time: '15:00', duration: 60 } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    const marker = container.querySelector('.tc-tg-block .tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-tg-block .abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -440,7 +442,7 @@ describe('TodayView', () => {
     const view = new TodayView(cbs);
     const t = task({ planning: { due: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    const marker = container.querySelector('.tc-tg-plain .tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-tg-plain .abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -455,11 +457,11 @@ describe('TodayView', () => {
       planning: { due: '2026-07-10', time: '15:00', duration: 60 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-10' }));
-    const title = container.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = container.querySelector('.abyss-tg-block-title') as HTMLElement;
     // MarkdownRenderer is a noop in this test harness (see test/center-panel-integration.test.ts
-    // and friends); `.tc-md` is the reliable signal that renderTaskText's markdown path (not a
+    // and friends); `.abyss-md` is the reliable signal that renderTaskText's markdown path (not a
     // raw textContent assignment) was taken.
-    expect(title.querySelector('.tc-md')).not.toBeNull();
+    expect(title.querySelector('.abyss-md')).not.toBeNull();
   });
 
   it('a second render() call does not leak the previous Component (unload/reload lifecycle mirrors legacy MonthView)', () => {
@@ -488,8 +490,8 @@ describe('TodayView', () => {
       planning: { start: '2026-07-01', due: '2026-07-05', scheduled: '2026-07-03' },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-05' }));
-    expect(container.querySelector('.tc-tg-span')).not.toBeNull();
-    expect(container.querySelector('.tc-tg-deadline-marker')).toBeNull();
+    expect(container.querySelector('.abyss-tg-span')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-deadline-marker')).toBeNull();
   });
 
   it('renders an untimed multi-day span as a continuation before its due date', () => {
@@ -497,8 +499,8 @@ describe('TodayView', () => {
     const view = new TodayView(callbacks());
     const t = task({ planning: { start: '2026-07-01', due: '2026-07-05' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07-04' }));
-    expect(container.querySelector('.tc-tg-span-continuation')).not.toBeNull();
-    expect(container.querySelector('.tc-tg-span')).toBeNull();
+    expect(container.querySelector('.abyss-tg-span-continuation')).not.toBeNull();
+    expect(container.querySelector('.abyss-tg-span')).toBeNull();
   });
 
   describe('timed multi-day spans (Task 29)', () => {
@@ -540,7 +542,7 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig());
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     Object.defineProperty(gridRowEl, 'clientHeight', { value: 400, configurable: true });
     expect(gridRowEl.scrollTop).toBe(0);
     // Use runOnlyPendingTimers, not runAllTimers: render() now also registers a repeating
@@ -557,7 +559,7 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig(), false);
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     Object.defineProperty(gridRowEl, 'clientHeight', { value: 400, configurable: true });
     vi.runOnlyPendingTimers();
     expect(gridRowEl.scrollTop).toBe(0);
@@ -575,7 +577,7 @@ describe('TodayView', () => {
       view.render(container, [], resolvedConfig({ startPosition: today }), false);
       expect(setIntervalSpy).toHaveBeenCalledTimes(1);
 
-      const nowLineEl = container.querySelector('.tc-tg-now-line') as HTMLElement;
+      const nowLineEl = container.querySelector('.abyss-tg-now-line') as HTMLElement;
       expect(nowLineEl).not.toBeNull();
       const initialTop = nowLineEl.style.top;
       vi.setSystemTime(new Date(Date.now() + 2 * 60 * 60 * 1000));
@@ -595,7 +597,7 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig());
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     Object.defineProperty(gridRowEl, 'clientHeight', { value: 400, configurable: true });
     vi.runOnlyPendingTimers();
     expect(gridRowEl.scrollTop).toBe(496);
@@ -607,7 +609,7 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig(), false, 321);
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     expect(gridRowEl.scrollTop).toBe(0);
     vi.runOnlyPendingTimers();
     expect(gridRowEl.scrollTop).toBe(321);
@@ -620,7 +622,7 @@ describe('TodayView', () => {
     const container = freshContainer();
     const view = new TodayView(callbacks());
     view.render(container, [], resolvedConfig(), true, 321);
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     Object.defineProperty(gridRowEl, 'clientHeight', { value: 400, configurable: true });
     vi.runOnlyPendingTimers();
     // Scrolls to center-on-now (496), not the stale preservedScrollTop (321).
@@ -636,7 +638,7 @@ describe('TodayView', () => {
     // is unconditional on date — this documents that shouldScrollToNow=false with an explicit
     // preservedScrollTop still applies regardless of which day is shown.
     view.render(container, [], resolvedConfig({ startPosition: '2020-01-01' }), false, 55);
-    const gridRowEl = container.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = container.querySelector('.abyss-tg-grid-row') as HTMLElement;
     vi.runOnlyPendingTimers();
     expect(gridRowEl.scrollTop).toBe(55);
     vi.useRealTimers();
@@ -651,8 +653,8 @@ describe('TodayView', () => {
         planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07-08' }));
-      expect(container.querySelector('.tc-tg-block')).not.toBeNull();
-      expect(container.querySelector('.tc-tg-block-continuation')).toBeNull();
+      expect(container.querySelector('.abyss-tg-block')).not.toBeNull();
+      expect(container.querySelector('.abyss-tg-block-continuation')).toBeNull();
     });
 
     it('renders a continuation segment as the common interactive block root on a pre-due day', () => {
@@ -663,12 +665,14 @@ describe('TodayView', () => {
         planning: { start: '2026-07-06', due: '2026-07-08', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07-07' }));
-      const ghost = container.querySelector('.tc-tg-block.tc-tg-block-continuation') as HTMLElement;
+      const ghost = container.querySelector(
+        '.abyss-tg-block.abyss-tg-block-continuation',
+      ) as HTMLElement;
       expect(ghost).not.toBeNull();
       expect(ghost.tabIndex).toBe(0);
       expect(ghost.getAttribute('draggable')).toBeNull();
-      expect(ghost.querySelector('.tc-tg-resize-handle')).not.toBeNull();
-      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+      expect(ghost.querySelector('.abyss-tg-resize-handle')).not.toBeNull();
+      expect(ghost.querySelector('.abyss-status-marker')).toBeNull();
     });
   });
 });

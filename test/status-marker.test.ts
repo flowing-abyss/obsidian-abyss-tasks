@@ -68,7 +68,7 @@ describe('renderStatusMarker', () => {
     expect(el.hasAttribute('aria-checked')).toBe(false);
     expect(el.hasAttribute('aria-label')).toBe(false);
     expect(el.hasAttribute('tabindex')).toBe(false);
-    expect(el.classList.contains('tc-status-marker--inert')).toBe(true);
+    expect(el.classList.contains('abyss-status-marker--inert')).toBe(true);
     expect(left).not.toHaveBeenCalled();
     expect(context).not.toHaveBeenCalled();
   });
@@ -77,7 +77,7 @@ describe('renderStatusMarker', () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
-    const rule = /\.tc-status-marker--inert\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const rule = /\.abyss-status-marker--inert\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
 
     expect(rule).toMatch(/cursor:\s*default/u);
   });
@@ -90,10 +90,10 @@ describe('renderStatusMarker', () => {
       onLeftClick: () => {},
       onContextMenu: () => {},
     });
-    expect(el.classList.contains('tc-status-marker')).toBe(true);
+    expect(el.classList.contains('abyss-status-marker')).toBe(true);
     expect(el.getAttribute('data-status-type')).toBe('todo');
     expect(el.getAttribute('data-priority')).toBe('A');
-    expect(el.style.getPropertyValue('--tc-status-color')).toBe('');
+    expect(el.style.getPropertyValue('--abyss-status-color')).toBe('');
   });
 
   it('renders the in-progress group with data-status-type used for circular shape', () => {
@@ -132,13 +132,13 @@ describe('renderStatusMarker', () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
-    const popoverSizing = css.indexOf('.tc-status-popover-row .tc-status-marker {');
-    const nativeSizing = css.indexOf('.menu-item-icon .tc-status-marker {');
+    const popoverSizing = css.indexOf('.abyss-status-popover-row .abyss-status-marker {');
+    const nativeSizing = css.indexOf('.menu-item-icon .abyss-status-marker {');
     const circularOverride = css.indexOf(
-      ".tc-status-popover-row .tc-status-marker[data-status-type='in-progress']",
+      ".abyss-status-popover-row .abyss-status-marker[data-status-type='in-progress']",
     );
     const nativeCircularOverride = css.indexOf(
-      ".menu-item-icon .tc-status-marker[data-status-type='in-progress']",
+      ".menu-item-icon .abyss-status-marker[data-status-type='in-progress']",
     );
     expect(circularOverride).toBeGreaterThan(popoverSizing);
     expect(circularOverride).toBeGreaterThan(nativeSizing);

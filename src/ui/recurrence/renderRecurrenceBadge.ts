@@ -45,7 +45,7 @@ export function renderRecurrenceBadge(
       ? `Invalid repeat rule: ${input.reason ?? 'Enter a supported repeat rule.'}`
       : `Repeats: ${input.rule}`;
   const badge = container.createSpan({
-    cls: 'tc-recurrence-badge',
+    cls: 'abyss-recurrence-badge',
     attr: {
       title: tooltip,
       'aria-label': tooltip,
@@ -54,7 +54,7 @@ export function renderRecurrenceBadge(
     },
   });
   const icon = badge.createSpan({
-    cls: 'tc-recurrence-badge-icon',
+    cls: 'abyss-recurrence-badge-icon',
     attr: { 'aria-hidden': 'true', 'data-icon': 'repeat-2' },
   });
   setIcon(icon, 'repeat-2');

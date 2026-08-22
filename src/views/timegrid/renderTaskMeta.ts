@@ -61,7 +61,7 @@ export function applyOccurrenceDomState(
   continuity: CalendarContinuity,
   spanRole: string,
 ): void {
-  element.addClass('tc-calendar-item');
+  element.addClass('abyss-calendar-item');
   element.setAttribute('data-occurrence-state', occurrence.kind);
   element.setAttribute('data-continuity', continuity);
   element.setAttribute(
@@ -73,11 +73,11 @@ export function applyOccurrenceDomState(
   element.setAttribute('data-segment-identity', `${occurrence.key}:${spanRole}`);
   element.setAttribute(
     'data-control-slot',
-    element.querySelector('.tc-status-marker') === null ? 'reserved' : 'occupied',
+    element.querySelector('.abyss-status-marker') === null ? 'reserved' : 'occupied',
   );
   element.setAttribute(
     'data-recurrence-slot',
-    element.querySelector('.tc-recurrence-badge') === null ? 'reserved' : 'occupied',
+    element.querySelector('.abyss-recurrence-badge') === null ? 'reserved' : 'occupied',
   );
 }
 
@@ -91,7 +91,7 @@ export function renderCalendarLeadingSlots(
   forecast: boolean,
   renderControl?: (row: HTMLElement) => void,
 ): void {
-  container.classList.add('tc-calendar-leading-row');
+  container.classList.add('abyss-calendar-leading-row');
   const childCount = container.childElementCount;
   renderControl?.(container);
   container.setAttribute(
@@ -125,7 +125,7 @@ export function createCalendarProjectionDiagnosticOwner(
   ownerDocument: Document,
 ): CalendarProjectionDiagnosticOwner {
   const diagnostic = ownerDocument.createElement('div');
-  diagnostic.addClass('tc-calendar-projection-diagnostic');
+  diagnostic.addClass('abyss-calendar-projection-diagnostic');
   diagnostic.setAttribute('aria-live', 'polite');
   diagnostic.setAttribute('aria-atomic', 'true');
   let lastSignature: string | null = null;
@@ -184,16 +184,16 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
       const restoreTarget = active?.restoreTarget ?? focusedElement() ?? anchor;
       dismiss({ restoreFocus: false });
       const menu = ownerDocument.body.createDiv({
-        cls: 'tc-status-popover tc-forecast-context-menu',
+        cls: 'abyss-status-popover abyss-forecast-context-menu',
         attr: { role: 'menu' },
       });
       const edit = menu.createEl('button', {
-        cls: 'tc-forecast-context-menu-edit-repeat',
+        cls: 'abyss-forecast-context-menu-edit-repeat',
         attr: { type: 'button', role: 'menuitem' },
         text: 'Edit repeat…',
       });
       const open = menu.createEl('button', {
-        cls: 'tc-forecast-context-menu-open-source',
+        cls: 'abyss-forecast-context-menu-open-source',
         attr: { type: 'button', role: 'menuitem' },
         text: 'Open source task',
       });
@@ -302,7 +302,7 @@ export function extractTags(task: TaskSnapshot, max = Infinity): string[] {
 
 /**
  * Renders subtask/comment/link count badges into `container`, matching CenterPanel's
- * `.tc-task-count-badge` visual language (same class + lucide icons) so the calendar's
+ * `.abyss-task-count-badge` visual language (same class + lucide icons) so the calendar's
  * badges look identical to the main task list's. Purely presentational — these badges
  * carry no click handlers in CenterPanel either, so no drag/pointerdown guard is needed
  * here (unlike tag chips below, which CenterPanel makes interactive — see renderTagChips).
@@ -314,24 +314,24 @@ export function renderCountBadges(container: HTMLElement, task: TaskSnapshot): v
 
   if (subtaskCount > 0) {
     const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
-    const badge = container.createEl('span', { cls: 'tc-task-count-badge' });
+    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
     setIcon(badge, 'check-square');
     badge.createEl('span', { text: `${doneCount}/${subtaskCount}` });
   }
   if (commentCount > 0) {
-    const badge = container.createEl('span', { cls: 'tc-task-count-badge' });
+    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
     setIcon(badge, 'message-square');
     badge.createEl('span', { text: String(commentCount) });
   }
   if (linkCount > 0) {
-    const badge = container.createEl('span', { cls: 'tc-task-count-badge' });
+    const badge = container.createEl('span', { cls: 'abyss-task-count-badge' });
     setIcon(badge, 'paperclip');
     badge.createEl('span', { text: String(linkCount) });
   }
 }
 
 /**
- * Renders up to `max` tag chips into `container`, matching CenterPanel's `.tc-task-tag`
+ * Renders up to `max` tag chips into `container`, matching CenterPanel's `.abyss-task-tag`
  * visual language (color driven by the same `colorForTag` lookup). Deliberately
  * NON-interactive (no click-to-filter, no drag-to-replace) — CenterPanel's tag chips are
  * interactive, but calendar blocks already run delicate pointerdown-based drag/resize
@@ -348,11 +348,11 @@ export function renderTagChips(
 ): void {
   const tags = extractTags(task, max);
   for (const tag of tags) {
-    const tagEl = container.createEl('span', { cls: 'tc-task-tag', text: tag });
+    const tagEl = container.createEl('span', { cls: 'abyss-task-tag', text: tag });
     const color = colorForTag(tag, tagGroups);
     if (color) {
-      tagEl.setCssProps({ '--tc-tag-color': color });
-      tagEl.addClass('tc-task-tag--colored');
+      tagEl.setCssProps({ '--abyss-tag-color': color });
+      tagEl.addClass('abyss-task-tag--colored');
     }
   }
 }

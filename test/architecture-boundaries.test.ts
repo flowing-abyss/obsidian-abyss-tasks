@@ -133,6 +133,28 @@ function sourceFiles(directory = SRC_ROOT): string[] {
   });
 }
 
+function typeScriptFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = resolve(directory, entry.name);
+    if (entry.isDirectory()) return typeScriptFiles(path);
+    return entry.isFile() && entry.name.endsWith('.ts') ? [path] : [];
+  });
+}
+
+function retiredNamespaceSites(): string[] {
+  const retiredPrefix = ['t', 'c', '-'].join('');
+  const files = [
+    ...typeScriptFiles(SRC_ROOT),
+    ...typeScriptFiles(resolve(ROOT, 'test')),
+    resolve(ROOT, 'styles.css'),
+  ];
+  return files.flatMap((absolute) => {
+    const path = repoPath(absolute);
+    const matches = source(path).match(new RegExp(retiredPrefix, 'gu')) ?? [];
+    return matches.map(() => path);
+  });
+}
+
 function calendarModules(): string[] {
   return [...CALENDAR_COMPOSITION_ROOTS, ...sourceFiles(resolve(SRC_ROOT, 'views')).map(repoPath)];
 }
@@ -804,5 +826,9 @@ describe('task architecture boundaries', () => {
       const name = member.slice(member.indexOf('.') + 1);
       expect(propertyAccesses(path).has(name)).toBe(true);
     }
+  });
+
+  it('rejects the retired tc UI namespace', () => {
+    expect(retiredNamespaceSites()).toEqual([]);
   });
 });

@@ -35,8 +35,8 @@ describe('status and priority consumer delegation', () => {
       onPickStatus: () => {},
       onPickPriority: () => {},
     });
-    const popover = activeDocument.querySelector<HTMLElement>('.tc-status-popover')!;
-    const firstFlag = popover.querySelector<HTMLButtonElement>('.tc-status-popover-flag')!;
+    const popover = activeDocument.querySelector<HTMLElement>('.abyss-status-popover')!;
+    const firstFlag = popover.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!;
 
     expect(activeDocument.activeElement).toBe(firstFlag);
     expect(popover.contains(activeDocument.activeElement)).toBe(true);
@@ -61,7 +61,7 @@ describe('status and priority consumer delegation', () => {
         onPickStatus: () => {},
         onPickPriority: () => {},
       });
-      const popover = ownerDocument.querySelector<HTMLElement>('.tc-status-popover')!;
+      const popover = ownerDocument.querySelector<HTMLElement>('.abyss-status-popover')!;
       vi.stubGlobal('activeDocument', replacementDocument);
       vi.runOnlyPendingTimers();
 
@@ -73,7 +73,9 @@ describe('status and priority consumer delegation', () => {
       expect(popover.isConnected).toBe(false);
       expect(ownerRemove).toHaveBeenCalledWith('keydown', keyRegistration![1], true);
     } finally {
-      ownerDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+      ownerDocument
+        .querySelectorAll('.abyss-status-popover')
+        .forEach((element) => element.remove());
       vi.stubGlobal('activeDocument', originalActiveDocument);
       ownerAdd.mockRestore();
       ownerRemove.mockRestore();
@@ -101,10 +103,12 @@ describe('status and priority consumer delegation', () => {
 
       showStatusMenuAt(new MouseEvent('contextmenu'), opts);
 
-      expect(activeDocument.querySelectorAll('.tc-status-popover')).toHaveLength(1);
+      expect(activeDocument.querySelectorAll('.abyss-status-popover')).toHaveLength(1);
       expect(remove).toHaveBeenCalledWith('keydown', firstKeyRegistration[1], true);
     } finally {
-      activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+      activeDocument
+        .querySelectorAll('.abyss-status-popover')
+        .forEach((element) => element.remove());
       add.mockRestore();
       remove.mockRestore();
       vi.clearAllTimers();
@@ -137,7 +141,9 @@ describe('status and priority consumer delegation', () => {
         }),
       );
       vi.runOnlyPendingTimers();
-      const firstFlag = activeDocument.querySelector<HTMLButtonElement>('.tc-status-popover-flag')!;
+      const firstFlag = activeDocument.querySelector<HTMLButtonElement>(
+        '.abyss-status-popover-flag',
+      )!;
       const escape = new KeyboardEvent('keydown', {
         key: 'Escape',
         bubbles: true,
@@ -148,11 +154,13 @@ describe('status and priority consumer delegation', () => {
 
       expect(escape.defaultPrevented).toBe(true);
       expect(parentKeydown).not.toHaveBeenCalled();
-      expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
       expect(activeDocument.activeElement).toBe(trigger);
     } finally {
       activeDocument.body.removeEventListener('keydown', parentKeydown);
-      activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+      activeDocument
+        .querySelectorAll('.abyss-status-popover')
+        .forEach((element) => element.remove());
       trigger.remove();
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -175,16 +183,18 @@ describe('status and priority consumer delegation', () => {
     try {
       showStatusMenuAt(new MouseEvent('contextmenu'), options);
       vi.runOnlyPendingTimers();
-      expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+      expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
 
       owner.unload();
 
-      expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
       expect(remove.mock.calls.some(([type]) => type === 'keydown')).toBe(true);
       expect(remove.mock.calls.some(([type]) => type === 'mousedown')).toBe(true);
     } finally {
       owner.unload();
-      activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+      activeDocument
+        .querySelectorAll('.abyss-status-popover')
+        .forEach((element) => element.remove());
       remove.mockRestore();
       vi.clearAllTimers();
       vi.useRealTimers();
@@ -211,10 +221,12 @@ describe('status and priority consumer delegation', () => {
 
       expect(addChild).toHaveBeenCalledTimes(3);
       expect(removeChild).toHaveBeenCalledTimes(3);
-      expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
     } finally {
       owner.unload();
-      activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+      activeDocument
+        .querySelectorAll('.abyss-status-popover')
+        .forEach((element) => element.remove());
       addChild.mockRestore();
       removeChild.mockRestore();
     }
@@ -231,10 +243,10 @@ describe('status and priority consumer delegation', () => {
       onClose,
     });
     const current = handle.element.querySelector<HTMLButtonElement>(
-      ".tc-status-popover-flag[data-tc-priority='B']",
+      ".abyss-status-popover-flag[data-abyss-priority='B']",
     )!;
     const other = handle.element.querySelector<HTMLButtonElement>(
-      ".tc-status-popover-flag[data-tc-priority='D']",
+      ".abyss-status-popover-flag[data-abyss-priority='D']",
     )!;
 
     expect(current.tagName).toBe('BUTTON');
@@ -263,7 +275,7 @@ describe('status and priority consumer delegation', () => {
     };
 
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
-    let row = activeDocument.querySelector<HTMLElement>('.tc-status-popover-row')!;
+    let row = activeDocument.querySelector<HTMLElement>('.abyss-status-popover-row')!;
     expect(row.getAttribute('role')).toBe('menuitemradio');
     expect(row.getAttribute('aria-checked')).toBe('true');
     expect(row.tabIndex).toBe(0);
@@ -272,16 +284,16 @@ describe('status and priority consumer delegation', () => {
     expect(onPickStatus).toHaveBeenCalledOnce();
 
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
-    expect(activeDocument.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
 
-    activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
+    activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => element.remove());
   });
 
   it('builds native-menu status icons as inert previews', () => {
     const iconSlots: HTMLElement[] = [];
     buildStatusSubmenu(fakeMenuWithIconSlots(iconSlots), task(), testStatusRegistry(), () => {});
 
-    const marker = iconSlots[0]!.querySelector<HTMLElement>('.tc-status-marker')!;
+    const marker = iconSlots[0]!.querySelector<HTMLElement>('.abyss-status-marker')!;
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     marker.dispatchEvent(click);
 
@@ -299,7 +311,7 @@ describe('status and priority consumer delegation', () => {
       onPickPriority: () => {},
     });
     const marker = activeDocument.querySelector<HTMLElement>(
-      '.tc-status-popover-row .tc-status-marker',
+      '.abyss-status-popover-row .abyss-status-marker',
     )!;
 
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));

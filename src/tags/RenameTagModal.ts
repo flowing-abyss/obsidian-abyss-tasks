@@ -54,7 +54,7 @@ export class RenameTagModal extends Modal {
 
   onOpen(): void {
     const { contentEl } = this;
-    contentEl.addClass('tc-rename-tag-modal');
+    contentEl.addClass('abyss-rename-tag-modal');
     contentEl.createEl('h3', {
       text:
         this.renameScope === 'prefix'
@@ -64,12 +64,12 @@ export class RenameTagModal extends Modal {
     const confirmation = contentEl.createEl('p');
 
     this.input = contentEl.createEl('input', {
-      cls: 'tc-rename-input',
+      cls: 'abyss-rename-input',
       attr: { type: 'text', value: this.currentTag },
     });
     this.input.select();
 
-    const btnRow = contentEl.createDiv({ cls: 'tc-rename-btn-row' });
+    const btnRow = contentEl.createDiv({ cls: 'abyss-rename-btn-row' });
     const okBtn = btnRow.createEl('button', { text: 'Rename across vault', cls: 'mod-cta' });
     const cancelBtn = btnRow.createEl('button', { text: 'Cancel' });
     let pending = false;

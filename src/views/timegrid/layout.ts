@@ -51,12 +51,12 @@ export function snapMinutes(rawMinutes: number, stepMinutes: number): number {
   return result === 0 ? 0 : result;
 }
 
-// Task 36: minimum rendered height for a `.tc-tg-block`, mirroring
+// Task 36: minimum rendered height for a `.abyss-tg-block`, mirroring
 // styles.css's own `min-height` rule there (kept in sync by cross-referencing comments on both
 // sides, not read from the DOM — see the comment on `capMinHeightsPx` below for why this can't
-// just be measured). The value is derived, not guessed: `.tc-tg-block` sets `padding: 2px 6px`
-// (2px top + 2px bottom) and `font-size: 0.8em`; its tallest row is `.tc-tg-block-head`, whose
-// checkbox (`.tc-status-marker`) is sized at `1.6em` of that same 0.8em block font-size — so the
+// just be measured). The value is derived, not guessed: `.abyss-tg-block` sets `padding: 2px 6px`
+// (2px top + 2px bottom) and `font-size: 0.8em`; its tallest row is `.abyss-tg-block-head`, whose
+// checkbox (`.abyss-status-marker`) is sized at `1.6em` of that same 0.8em block font-size — so the
 // minimum height that keeps the checkbox+title row fully legible is 2*2px of padding plus that
 // 1.6em marker height. Obsidian's own base font-size is 16px, so this resolves to a concrete
 // pixel figure for the JS-side collision-avoidance pass below; the CSS rule itself uses `calc()`
@@ -72,7 +72,7 @@ export const MIN_BLOCK_HEIGHT_PX = BLOCK_FONT_PX * 1.6 + 2 * 2;
 const MIN_BLOCK_GAP_MARGIN_PX = 2;
 
 /**
- * Task 36: `.tc-tg-block`'s CSS `min-height` (see styles.css) guarantees a short-duration block
+ * Task 36: `.abyss-tg-block`'s CSS `min-height` (see styles.css) guarantees a short-duration block
  * never renders too short to show its checkbox+title row legibly — but that min-height can only
  * ever GROW a block past the height its actual duration would give it (`minutesToPixels`
  * never shrinks to make room). Two blocks in the same column are only ever placed there by

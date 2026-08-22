@@ -139,8 +139,8 @@ function projectNameFromPath(path: string): string {
 function applyPriorityFlagColor(si: MenuItem, value: TaskPriority): void {
   const dom = (si as unknown as { dom?: HTMLElement }).dom;
   if (dom) {
-    dom.addClass('tc-menu-priority-flag');
-    dom.setAttribute('data-tc-priority', value);
+    dom.addClass('abyss-menu-priority-flag');
+    dom.setAttribute('data-abyss-priority', value);
   }
 }
 
@@ -302,7 +302,7 @@ export class CenterPanel {
         const stack = this.state.get('taskStack');
         const root = stack[0];
         const current = stack[stack.length - 1];
-        this.el.querySelectorAll<HTMLElement>('.tc-task-card').forEach((card) => {
+        this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
           const isSelected =
             root !== undefined &&
             current !== undefined &&
@@ -334,7 +334,7 @@ export class CenterPanel {
       if (
         isRealmHTMLElement(target) &&
         target.closest(
-          'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .tc-status-marker, .tc-popover',
+          'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-popover',
         )
       ) {
         return;
@@ -345,7 +345,7 @@ export class CenterPanel {
       e.preventDefault();
 
       const targetCard = isRealmHTMLElement(target)
-        ? target.closest<HTMLElement>('.tc-task-card')
+        ? target.closest<HTMLElement>('.abyss-task-card')
         : null;
       const targetKey =
         targetCard && this.el.contains(targetCard)
@@ -403,7 +403,7 @@ export class CenterPanel {
       // actual body focusin has already revoked task-date ownership above; timed-block restoration
       // still treats body/documentElement as transient renderer state.
       if (target === ownerDocument.body || target === ownerDocument.documentElement) return;
-      const block = target.closest<HTMLElement>('.tc-tg-block');
+      const block = target.closest<HTMLElement>('.abyss-tg-block');
       if (block && this.el.contains(block)) {
         this.retainTimedBlockFocus(block);
       } else if (this.pendingTimedBlockFocus) {
@@ -466,23 +466,23 @@ export class CenterPanel {
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
   private renderProjectTasks(host: HTMLElement, path: string): void {
     const tasks = [...this.queries.list({ filePath: path })];
-    const scroll = host.createDiv({ cls: 'tc-center-scroll tc-project-tasks-scroll' });
+    const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
     if (tasks.length === 0) {
-      scroll.createDiv({ cls: 'tc-center-empty', text: 'No tasks yet' });
+      scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
       for (const task of tasks) this.renderTaskCard(scroll, task);
     }
 
-    const bar = host.createDiv({ cls: 'tc-add-task-bar' });
-    const trigger = bar.createDiv({ cls: 'tc-add-task-trigger' });
-    trigger.createEl('span', { cls: 'tc-add-task-plus', text: '+' });
-    trigger.createEl('span', { cls: 'tc-add-task-label', text: 'Add task' });
+    const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
+    const trigger = bar.createDiv({ cls: 'abyss-add-task-trigger' });
+    trigger.createEl('span', { cls: 'abyss-add-task-plus', text: '+' });
+    trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
     bar.addEventListener('click', () => {
-      if (bar.querySelector('.tc-quick-capture')) return;
+      if (bar.querySelector('.abyss-quick-capture')) return;
       trigger.remove();
-      const form = bar.createDiv({ cls: 'tc-quick-capture' });
+      const form = bar.createDiv({ cls: 'abyss-quick-capture' });
       const input = form.createEl('input', {
-        cls: 'tc-quick-capture-input',
+        cls: 'abyss-quick-capture-input',
         attr: { type: 'text', placeholder: 'Task name…' },
       });
       let committed = false;
@@ -589,15 +589,16 @@ export class CenterPanel {
     if (mode === 'calendar') {
       // Explicit refreshes (configuration/theme/view changes) remain full renders.
       this.captureActiveTimedBlockFocus();
-      this.pendingCalScrollTop = this.el.querySelector<HTMLElement>('.tc-tg-grid-row')?.scrollTop;
+      this.pendingCalScrollTop =
+        this.el.querySelector<HTMLElement>('.abyss-tg-grid-row')?.scrollTop;
       this.el.empty();
-      this.el.addClass('tc-center--calendar');
+      this.el.addClass('abyss-center--calendar');
       this.destroyCalendarView();
       this.renderCalendarMode();
       return;
     }
 
-    this.el.removeClass('tc-center--calendar');
+    this.el.removeClass('abyss-center--calendar');
     this.destroyCalendarView();
     this.el.empty();
 
@@ -607,7 +608,7 @@ export class CenterPanel {
     }
 
     if (mode === 'projects') {
-      this.el.addClass('tc-center--projects');
+      this.el.addClass('abyss-center--projects');
       if (this.projectStore && this.projectManager) {
         // Rebuild the panel fresh; it owns its own subscriptions and cleans them
         // up in destroy(), so recreating on each render is leak-free.
@@ -622,25 +623,25 @@ export class CenterPanel {
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never
         // lands on the shared center element (which would leak layout into tasks mode).
-        const host = this.el.createDiv({ cls: 'tc-projects-host' });
+        const host = this.el.createDiv({ cls: 'abyss-projects-host' });
         this.projectsPanel.mount(host);
       } else {
-        this.el.createDiv({ cls: 'tc-center-empty', text: 'Projects unavailable' });
+        this.el.createDiv({ cls: 'abyss-center-empty', text: 'Projects unavailable' });
       }
       return;
     }
-    this.el.removeClass('tc-center--projects');
+    this.el.removeClass('abyss-center--projects');
 
     // Header: title + right-aligned [chips] [↕] [search]
-    const header = this.el.createDiv({ cls: 'tc-center-header' });
-    header.createEl('h2', { cls: 'tc-center-title', text: this.getTitle() });
+    const header = this.el.createDiv({ cls: 'abyss-center-header' });
+    header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle() });
 
-    const controls = header.createDiv({ cls: 'tc-center-controls' });
+    const controls = header.createDiv({ cls: 'abyss-center-controls' });
     this.renderPropertyChips(controls);
     this.renderViewStateButton(controls);
 
     const searchInput = controls.createEl('input', {
-      cls: 'tc-center-search',
+      cls: 'abyss-center-search',
       attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter tasks' },
     });
     searchInput.value = this.state.get('centerFilter');
@@ -663,10 +664,10 @@ export class CenterPanel {
     });
 
     const tasks = this.getFilteredTasks();
-    const scroll = this.el.createDiv({ cls: 'tc-center-scroll' });
+    const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
 
     if (tasks.length === 0) {
-      scroll.createDiv({ cls: 'tc-center-empty', text: 'No tasks' });
+      scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks' });
     } else {
       this.renderWithGrouping(scroll, tasks);
     }
@@ -685,39 +686,39 @@ export class CenterPanel {
       this.el.ownerDocument,
     );
     this.projectionDiagnosticOwner = projectionDiagnosticOwner;
-    const nav = this.el.createDiv({ cls: 'tc-cal-nav' });
+    const nav = this.el.createDiv({ cls: 'abyss-cal-nav' });
 
-    const leftGroup = nav.createDiv({ cls: 'tc-cal-nav-left' });
+    const leftGroup = nav.createDiv({ cls: 'abyss-cal-nav-left' });
     const prevBtn = leftGroup.createEl('button', {
-      cls: 'tc-cal-nav-btn',
+      cls: 'abyss-cal-nav-btn',
       attr: { 'aria-label': 'Previous' },
     });
     setIcon(prevBtn, 'chevron-left');
 
-    const titleGroup = leftGroup.createDiv({ cls: 'tc-cal-nav-title-group' });
+    const titleGroup = leftGroup.createDiv({ cls: 'abyss-cal-nav-title-group' });
     const monthBtn = titleGroup.createEl('button', {
-      cls: 'tc-cal-nav-month',
+      cls: 'abyss-cal-nav-month',
       attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
     });
     const yearBtn = titleGroup.createEl('button', {
-      cls: 'tc-cal-nav-year',
+      cls: 'abyss-cal-nav-year',
       attr: { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' },
     });
 
     const nextBtn = leftGroup.createEl('button', {
-      cls: 'tc-cal-nav-btn',
+      cls: 'abyss-cal-nav-btn',
       attr: { 'aria-label': 'Next' },
     });
     setIcon(nextBtn, 'chevron-right');
 
-    const rightGroup = nav.createDiv({ cls: 'tc-cal-nav-right' });
-    const todayBtn = rightGroup.createEl('button', { cls: 'tc-cal-nav-today', text: 'Today' });
+    const rightGroup = nav.createDiv({ cls: 'abyss-cal-nav-right' });
+    const todayBtn = rightGroup.createEl('button', { cls: 'abyss-cal-nav-today', text: 'Today' });
 
-    const viewSwitcher = rightGroup.createDiv({ cls: 'tc-cal-view-switcher' });
+    const viewSwitcher = rightGroup.createDiv({ cls: 'abyss-cal-view-switcher' });
     const CAL_VIEWS = ['today', 'week', 'month'] as const;
     for (const v of CAL_VIEWS) {
       const btn = viewSwitcher.createEl('button', {
-        cls: `tc-cal-view-btn${this.calViewType === v ? ' is-active' : ''}`,
+        cls: `abyss-cal-view-btn${this.calViewType === v ? ' is-active' : ''}`,
         text: v === 'today' ? 'Day' : v.charAt(0).toUpperCase() + v.slice(1),
       });
       btn.addEventListener('click', () => {
@@ -730,7 +731,7 @@ export class CenterPanel {
       });
     }
 
-    const viewContainer = this.el.createDiv({ cls: 'tc-cal-body' });
+    const viewContainer = this.el.createDiv({ cls: 'abyss-cal-body' });
 
     const updateTitle = (): void => {
       if (this.calViewType === 'week') {
@@ -752,10 +753,10 @@ export class CenterPanel {
     };
     const handleForecastClick = (source: CalendarTaskSource, referenceDate: LocalDate): void => {
       this.taskModal?.open(source.root);
-      const modal = activeDocument.querySelector<HTMLElement>('.tc-modal');
+      const modal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
       if (!modal) return;
       const context = modal.createDiv({
-        cls: 'tc-forecast-source-context',
+        cls: 'abyss-forecast-source-context',
         text: `Forecast for ${referenceDate}`,
       });
       modal.prepend(context);
@@ -814,7 +815,7 @@ export class CenterPanel {
       if (!this.keyboardQueue) return;
       const active = this.el.ownerDocument.activeElement;
       const originElement = isRealmHTMLElement(active)
-        ? (active.closest<HTMLElement>('.tc-tg-block') ?? undefined)
+        ? (active.closest<HTMLElement>('.abyss-tg-block') ?? undefined)
         : undefined;
       const previousQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       const focusSequence = ++this.nextTimedBlockFocusSequence;
@@ -852,26 +853,26 @@ export class CenterPanel {
     };
     const handleCreateAtTime = (date: string, time: string): void => {
       const dayColumn = viewContainer.querySelector<HTMLElement>(
-        `.tc-tg-day-column[data-tg-date="${date}"]`,
+        `.abyss-tg-day-column[data-tg-date="${date}"]`,
       );
-      const hourColumnEl = dayColumn?.querySelector<HTMLElement>('.tc-tg-hour-column');
+      const hourColumnEl = dayColumn?.querySelector<HTMLElement>('.abyss-tg-hour-column');
       if (!hourColumnEl) return;
       this.showTimeGridQuickAdd(hourColumnEl, date, time);
     };
     const handleCreateAtDate = (date: string): void => {
       const cell = viewContainer.querySelector<HTMLElement>(`[data-mg-date="${date}"]`);
       if (!cell) return;
-      this.showFillCellQuickAdd(cell, date, 'tc-mg-quick-add');
+      this.showFillCellQuickAdd(cell, date, 'abyss-mg-quick-add');
     };
     const handleCreateAtDateAllDay = (date: string): void => {
-      // Scoped to .tc-tg-allday-cell specifically: HourGrid.ts's day-column element also
+      // Scoped to .abyss-tg-allday-cell specifically: HourGrid.ts's day-column element also
       // carries data-tg-date (for edge-resize date resolution), so a bare attribute selector
       // would risk matching the wrong element.
       const cell = viewContainer.querySelector<HTMLElement>(
-        `.tc-tg-allday-cell[data-tg-date="${date}"]`,
+        `.abyss-tg-allday-cell[data-tg-date="${date}"]`,
       );
       if (!cell) return;
-      this.showFillCellQuickAdd(cell, date, 'tc-tg-allday-quick-add');
+      this.showFillCellQuickAdd(cell, date, 'abyss-tg-allday-quick-add');
     };
 
     const startPositionFor = (viewType: CalViewType, firstDayOfWeek: number): string => {
@@ -933,7 +934,7 @@ export class CenterPanel {
       // explicit same-date refresh. Query notifications never enter this path: patchView retains
       // the grid itself. The fallback covers render() emptying the outer center before this
       // closure can inspect its former viewContainer.
-      const outgoingGridRow = viewContainer.querySelector<HTMLElement>('.tc-tg-grid-row');
+      const outgoingGridRow = viewContainer.querySelector<HTMLElement>('.abyss-tg-grid-row');
       const preservedScrollTop = outgoingGridRow
         ? outgoingGridRow.scrollTop
         : this.pendingCalScrollTop;
@@ -1097,14 +1098,14 @@ export class CenterPanel {
 
     // Month/year/prev/next/today nav — unchanged from the existing implementation
     monthBtn.addEventListener('click', () => {
-      const existing = this.el.querySelector('.tc-month-picker');
+      const existing = this.el.querySelector('.abyss-month-picker');
       if (existing) {
         this.clearCalendarPicker();
         return;
       }
       this.clearCalendarPicker();
       const picker = this.el.createDiv({
-        cls: 'tc-month-picker tc-popover',
+        cls: 'abyss-month-picker abyss-popover',
         attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select month' },
       });
       const MONTH_NAMES = [
@@ -1124,7 +1125,7 @@ export class CenterPanel {
       MONTH_NAMES.forEach((m, i) => {
         const selected = i === this.calDate.month();
         const btn = picker.createEl('button', {
-          cls: 'tc-month-picker-btn',
+          cls: 'abyss-month-picker-btn',
           text: m,
           attr: { 'aria-pressed': String(selected) },
         });
@@ -1142,21 +1143,21 @@ export class CenterPanel {
     });
 
     yearBtn.addEventListener('click', () => {
-      const existing = this.el.querySelector('.tc-year-picker');
+      const existing = this.el.querySelector('.abyss-year-picker');
       if (existing) {
         this.clearCalendarPicker();
         return;
       }
       this.clearCalendarPicker();
       const picker = this.el.createDiv({
-        cls: 'tc-year-picker tc-popover',
+        cls: 'abyss-year-picker abyss-popover',
         attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Select year' },
       });
       const currentYear = this.calDate.year();
       for (let y = currentYear - 5; y <= currentYear + 5; y++) {
         const selected = y === currentYear;
         const btn = picker.createEl('button', {
-          cls: 'tc-year-picker-btn',
+          cls: 'abyss-year-picker-btn',
           text: String(y),
           attr: { 'aria-pressed': String(selected) },
         });
@@ -1219,14 +1220,14 @@ export class CenterPanel {
     if (this.pendingTimedBlockFocus?.queueSequence !== undefined) return;
     const active = this.el.ownerDocument.activeElement;
     if (!isRealmHTMLElement(active) || !this.el.contains(active)) return;
-    const block = active.closest<HTMLElement>('.tc-tg-block');
+    const block = active.closest<HTMLElement>('.abyss-tg-block');
     if (!block) return;
     this.retainTimedBlockFocus(block);
   }
 
   private retainTimedBlockFocus(block: HTMLElement): void {
-    const filePath = block.dataset['tcTaskFile'];
-    const lineText = block.dataset['tcTaskLine'];
+    const filePath = block.dataset['abyssTaskFile'];
+    const lineText = block.dataset['abyssTaskLine'];
     if (filePath === undefined || lineText === undefined) return;
     const line = Number(lineText);
     if (!Number.isInteger(line)) return;
@@ -1277,11 +1278,11 @@ export class CenterPanel {
     if (queueSequence !== undefined && !this.committedKeyboardSequences.has(queueSequence)) return;
 
     const scheduledCandidate = Array.from(
-      container.querySelectorAll<HTMLElement>('.tc-tg-block'),
+      container.querySelectorAll<HTMLElement>('.abyss-tg-block'),
     ).find(
       (block) =>
-        block.dataset['tcTaskFile'] === scheduled.filePath &&
-        block.dataset['tcTaskLine'] === String(scheduled.line) &&
+        block.dataset['abyssTaskFile'] === scheduled.filePath &&
+        block.dataset['abyssTaskLine'] === String(scheduled.line) &&
         (scheduled.segmentDate === undefined ||
           block.dataset['tgSegmentDate'] === scheduled.segmentDate),
     );
@@ -1317,10 +1318,10 @@ export class CenterPanel {
       ) {
         return;
       }
-      const candidate = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
+      const candidate = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
         (block) =>
-          block.dataset['tcTaskFile'] === pending.filePath &&
-          block.dataset['tcTaskLine'] === String(pending.line) &&
+          block.dataset['abyssTaskFile'] === pending.filePath &&
+          block.dataset['abyssTaskLine'] === String(pending.line) &&
           (pending.segmentDate === undefined ||
             block.dataset['tgSegmentDate'] === pending.segmentDate),
       );
@@ -1450,17 +1451,17 @@ export class CenterPanel {
   }
 
   private renderSearch(): void {
-    const header = this.el.createDiv({ cls: 'tc-center-header' });
-    header.createEl('h2', { cls: 'tc-center-title', text: 'Search' });
+    const header = this.el.createDiv({ cls: 'abyss-center-header' });
+    header.createEl('h2', { cls: 'abyss-center-title', text: 'Search' });
     const input = header.createEl('input', {
-      cls: 'tc-center-search tc-search-global',
+      cls: 'abyss-center-search abyss-search-global',
       attr: { type: 'text', placeholder: 'Search all tasks…', 'aria-label': 'Search all tasks' },
     });
     input.value = this.state.get('searchQuery');
     input.addEventListener('input', () => this.state.set('searchQuery', input.value));
     this.searchInputEl = input;
 
-    const results = this.el.createDiv({ cls: 'tc-center-scroll' });
+    const results = this.el.createDiv({ cls: 'abyss-center-scroll' });
     this.searchResultsEl = results;
     this.renderSearchResults(results, input.value);
 
@@ -1511,24 +1512,24 @@ export class CenterPanel {
     this.md = new Component();
     this.md.load();
     host.empty();
-    host.toggleClass('tc-search-empty', query.length === 0);
+    host.toggleClass('abyss-search-empty', query.length === 0);
 
     if (!query) {
-      host.createEl('p', { cls: 'tc-empty-state', text: 'Type to search tasks…' });
+      host.createEl('p', { cls: 'abyss-empty-state', text: 'Type to search tasks…' });
       this.completeTaskCardRender();
       return;
     }
 
     const matchingTasks = [...searchTaskList(this.queries.list(), query)];
     if (matchingTasks.length === 0) {
-      host.createDiv({ cls: 'tc-center-empty', text: 'No results' });
+      host.createDiv({ cls: 'abyss-center-empty', text: 'No results' });
       this.completeTaskCardRender();
       return;
     }
     this.renderFlat(host, matchingTasks);
 
     // Navigate to task in tasks mode when clicking a search result
-    host.querySelectorAll<HTMLElement>('.tc-task-card').forEach((cardEl, idx) => {
+    host.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((cardEl, idx) => {
       const task = matchingTasks[idx];
       if (!task) return;
       cardEl.addEventListener(
@@ -1577,7 +1578,9 @@ export class CenterPanel {
     let firstGroup = true;
     for (const group of groups) {
       if (group.tasks.length === 0) continue;
-      const cls = firstGroup ? 'tc-group-header tc-group-header--first' : 'tc-group-header';
+      const cls = firstGroup
+        ? 'abyss-group-header abyss-group-header--first'
+        : 'abyss-group-header';
       container.createDiv({ cls, text: `${group.label}  ${group.tasks.length}` });
       firstGroup = false;
       for (const task of group.tasks) this.renderTaskCard(container, task);
@@ -1600,13 +1603,13 @@ export class CenterPanel {
       root.source.filePath === task.source.filePath;
 
     const card = container.createDiv({
-      cls: `tc-task-card${isSelected ? ' is-selected' : ''}`,
+      cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
       attr: { tabindex: '-1' },
     });
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
 
-    const mainRow = card.createDiv({ cls: 'tc-task-card-main-row' });
+    const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
 
     renderStatusMarker(mainRow, {
       task,
@@ -1634,8 +1637,8 @@ export class CenterPanel {
     const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
     const suppressToday = sel === 'today' && d === today;
 
-    const body = mainRow.createDiv({ cls: 'tc-task-body' });
-    const titleRow = body.createDiv({ cls: 'tc-task-title-row' });
+    const body = mainRow.createDiv({ cls: 'abyss-task-body' });
+    const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
 
     if (task.recurrence) {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
@@ -1643,24 +1646,24 @@ export class CenterPanel {
 
     // Count badges BEFORE title text so they're seen while reading left-to-right
     if (subtaskCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'tc-task-count-badge' });
+      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
       setIcon(badge, 'check-square');
       badge.createEl('span', { text: `${doneCount}/${subtaskCount}` });
     }
     if (commentCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'tc-task-count-badge' });
+      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
       setIcon(badge, 'message-square');
       badge.createEl('span', { text: String(commentCount) });
     }
     // Attached materials: link count precomputed by TaskIndex (no per-render parsing).
     const linkCount = task.presentation.linkCount ?? 0;
     if (linkCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'tc-task-count-badge' });
+      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
       setIcon(badge, 'paperclip');
       badge.createEl('span', { text: String(linkCount) });
     }
 
-    const titleEl = titleRow.createEl('span', { cls: 'tc-task-title' });
+    const titleEl = titleRow.createEl('span', { cls: 'abyss-task-title' });
     renderTaskText(titleEl, task.markdownTitle, {
       app: this.app,
       sourcePath: task.source.filePath,
@@ -1668,7 +1671,7 @@ export class CenterPanel {
       onEditLink: (occ, token) => this.editTaskLink(task, occ, token),
     });
     if (task.description) {
-      const descEl = card.createDiv({ cls: 'tc-task-desc' });
+      const descEl = card.createDiv({ cls: 'abyss-task-desc' });
       // Render the first description line as markdown so links are clickable here too.
       // No onEditLink: the card is a compact preview; link editing happens in the panel.
       renderTaskText(descEl, task.description.split('\n')[0] ?? '', {
@@ -1686,16 +1689,18 @@ export class CenterPanel {
     const hasRightMeta =
       showSourceNote || (d && !suppressToday) || task.planning.time || tags.length > 0;
     if (hasRightMeta) {
-      const metaRight = mainRow.createDiv({ cls: 'tc-task-meta-right' });
+      const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
 
       // Date + optional time: date part and time part are separately clickable
       if (d && !suppressToday) {
         const dateEl = metaRight.createEl('span', {
-          cls: `tc-task-date ${this.getDateClass(d)}`.trim(),
+          cls: `abyss-task-date ${this.getDateClass(d)}`.trim(),
         });
         // Date part: calendar icon + date text — click to filter by date
-        const datePart = dateEl.createEl('span', { cls: 'tc-task-date-part tc-cursor-pointer' });
-        const calIcon = datePart.createEl('span', { cls: 'tc-date-icon' });
+        const datePart = dateEl.createEl('span', {
+          cls: 'abyss-task-date-part abyss-cursor-pointer',
+        });
+        const calIcon = datePart.createEl('span', { cls: 'abyss-date-icon' });
         setIcon(calIcon, 'calendar');
         datePart.createEl('span', { text: this.formatDate(d) });
         datePart.addEventListener('click', (e) => {
@@ -1704,8 +1709,10 @@ export class CenterPanel {
         });
         // Time part: clock icon + time text — click to filter by time
         if (task.planning.time) {
-          const timePart = dateEl.createEl('span', { cls: 'tc-task-time-part tc-cursor-pointer' });
-          const clockIcon = timePart.createEl('span', { cls: 'tc-date-icon' });
+          const timePart = dateEl.createEl('span', {
+            cls: 'abyss-task-time-part abyss-cursor-pointer',
+          });
+          const clockIcon = timePart.createEl('span', { cls: 'abyss-date-icon' });
           setIcon(clockIcon, 'clock');
           timePart.createEl('span', { text: task.planning.time });
           timePart.addEventListener('click', (e) => {
@@ -1714,8 +1721,8 @@ export class CenterPanel {
           });
         }
       } else if (!d && task.planning.time) {
-        const timeEl = metaRight.createEl('span', { cls: 'tc-task-date tc-cursor-pointer' });
-        const clockIcon = timeEl.createEl('span', { cls: 'tc-date-icon' });
+        const timeEl = metaRight.createEl('span', { cls: 'abyss-task-date abyss-cursor-pointer' });
+        const clockIcon = timeEl.createEl('span', { cls: 'abyss-date-icon' });
         setIcon(clockIcon, 'clock');
         timeEl.createEl('span', { text: task.planning.time });
         timeEl.addEventListener('click', (e) => {
@@ -1733,32 +1740,32 @@ export class CenterPanel {
 
       // Tags last (max 2, with group color)
       for (const tag of tags.slice(0, 2)) {
-        const tagEl = metaRight.createEl('span', { cls: 'tc-task-tag', text: tag });
+        const tagEl = metaRight.createEl('span', { cls: 'abyss-task-tag', text: tag });
         const color = this.getTagColor(tag);
         if (color) {
-          tagEl.setCssProps({ '--tc-tag-color': color });
-          tagEl.addClass('tc-task-tag--colored');
+          tagEl.setCssProps({ '--abyss-tag-color': color });
+          tagEl.addClass('abyss-task-tag--colored');
         }
         tagEl.addEventListener('click', (e) => {
           e.stopPropagation();
           this.addPropertyFilter({ type: 'tag', value: tag });
         });
-        tagEl.addClass('tc-cursor-pointer');
+        tagEl.addClass('abyss-cursor-pointer');
         // Drop target: dragging a tag onto a chip replaces it
         tagEl.addEventListener('dragover', (e) => {
           const dragging = this.state.get('draggingTag');
           if (!dragging || dragging === tag) return;
           e.preventDefault();
           e.stopPropagation();
-          tagEl.classList.add('tc-drop-target');
+          tagEl.classList.add('abyss-drop-target');
         });
         tagEl.addEventListener('dragleave', () => {
-          tagEl.classList.remove('tc-drop-target');
+          tagEl.classList.remove('abyss-drop-target');
         });
         tagEl.addEventListener('drop', (e) => {
           e.preventDefault();
           e.stopPropagation();
-          tagEl.classList.remove('tc-drop-target');
+          tagEl.classList.remove('abyss-drop-target');
           const dragging = this.state.get('draggingTag');
           if (!dragging || dragging === tag) return;
           void this.patchTaskTags(task, [dragging], [tag]);
@@ -1807,7 +1814,7 @@ export class CenterPanel {
 
     // Delete button (visible on hover)
     const deleteBtn = mainRow.createEl('button', {
-      cls: 'tc-task-delete-btn',
+      cls: 'abyss-task-delete-btn',
       attr: { title: 'Delete task', 'aria-label': 'Delete task' },
     });
     setIcon(deleteBtn, 'x');
@@ -1820,11 +1827,11 @@ export class CenterPanel {
     card.setAttribute('draggable', 'true');
     card.addEventListener('dragstart', () => {
       this.state.set('draggingTask', task);
-      card.classList.add('tc-dragging');
+      card.classList.add('abyss-dragging');
     });
     card.addEventListener('dragend', () => {
       this.state.set('draggingTask', null);
-      card.classList.remove('tc-dragging');
+      card.classList.remove('abyss-dragging');
     });
 
     // Drop target for tag→task drag, and for project→task drag (drop a project
@@ -1835,13 +1842,13 @@ export class CenterPanel {
         !!project && project !== task.source.filePath && !!this.projectManager && !!this.tasks;
       if (!this.state.get('draggingTag') && !canDropProject) return;
       e.preventDefault();
-      card.classList.add('tc-drop-target');
+      card.classList.add('abyss-drop-target');
     });
     card.addEventListener('dragleave', () => {
-      card.classList.remove('tc-drop-target');
+      card.classList.remove('abyss-drop-target');
     });
     card.addEventListener('drop', (e) => {
-      card.classList.remove('tc-drop-target');
+      card.classList.remove('abyss-drop-target');
       const tag = this.state.get('draggingTag');
       const project = this.state.get('draggingProject');
       if (tag) {
@@ -2236,9 +2243,9 @@ export class CenterPanel {
     for (let i = 0; i < vs.filters.length; i++) {
       const f = vs.filters[i]!;
       const label = this.filterChipLabel(f);
-      const chip = container.createEl('span', { cls: 'tc-filter-chip' });
-      chip.createEl('span', { cls: 'tc-filter-chip-label', text: label });
-      const x = chip.createEl('button', { cls: 'tc-filter-chip-x', text: '×' });
+      const chip = container.createEl('span', { cls: 'abyss-filter-chip' });
+      chip.createEl('span', { cls: 'abyss-filter-chip-label', text: label });
+      const x = chip.createEl('button', { cls: 'abyss-filter-chip-x', text: '×' });
       const idx = i;
       x.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2300,7 +2307,7 @@ export class CenterPanel {
       !statusGroupsEqual(vs.statusGroups, defaults.statusGroups);
 
     const btn = container.createEl('button', {
-      cls: `tc-view-state-btn${isNonDefault ? ' tc-view-state-btn--active' : ''}`,
+      cls: `abyss-view-state-btn${isNonDefault ? ' abyss-view-state-btn--active' : ''}`,
       attr: { 'aria-label': 'Sort & group options' },
     });
     setIcon(btn, 'arrow-up-down');
@@ -2320,7 +2327,7 @@ export class CenterPanel {
 
     const vs = this.state.get('centerListViewState');
     const popover = this.el.createDiv({
-      cls: 'tc-view-state-popover tc-popover',
+      cls: 'abyss-view-state-popover abyss-popover',
       attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
     });
     const ownerDocument = popover.ownerDocument;
@@ -2358,16 +2365,16 @@ export class CenterPanel {
 
     const bindExpandableRow = (rowMain: HTMLElement, subList: HTMLElement): void => {
       const toggle = (): void => {
-        const isOpen = !subList.hasClass('tc-hidden');
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-sublist').forEach((el) => {
-          el.addClass('tc-hidden');
+        const isOpen = !subList.hasClass('abyss-hidden');
+        popover.querySelectorAll<HTMLElement>('.abyss-view-state-sublist').forEach((el) => {
+          el.addClass('abyss-hidden');
         });
-        popover.querySelectorAll<HTMLElement>('.tc-view-state-row-main').forEach((el) => {
+        popover.querySelectorAll<HTMLElement>('.abyss-view-state-row-main').forEach((el) => {
           el.removeClass('is-open');
           el.setAttribute('aria-expanded', 'false');
         });
         if (!isOpen) {
-          subList.removeClass('tc-hidden');
+          subList.removeClass('abyss-hidden');
           rowMain.addClass('is-open');
           rowMain.setAttribute('aria-expanded', 'true');
         }
@@ -2389,33 +2396,33 @@ export class CenterPanel {
       options: Array<{ label: string; value: string }>,
       onSelect: (value: string) => void,
     ): void => {
-      const row = popover.createDiv({ cls: 'tc-view-state-row' });
+      const row = popover.createDiv({ cls: 'abyss-view-state-row' });
       const rowMain = row.createDiv({
-        cls: 'tc-view-state-row-main',
+        cls: 'abyss-view-state-row-main',
         attr: { role: 'button', tabindex: '0', 'aria-expanded': 'false' },
       });
-      const iconEl = rowMain.createEl('span', { cls: 'tc-view-state-row-icon' });
+      const iconEl = rowMain.createEl('span', { cls: 'abyss-view-state-row-icon' });
       setIcon(iconEl, icon);
-      rowMain.createEl('span', { cls: 'tc-view-state-row-label', text: label });
-      rowMain.createEl('span', { cls: 'tc-view-state-row-value', text: displayValue });
-      const chevEl = rowMain.createEl('span', { cls: 'tc-view-state-row-chevron' });
+      rowMain.createEl('span', { cls: 'abyss-view-state-row-label', text: label });
+      rowMain.createEl('span', { cls: 'abyss-view-state-row-value', text: displayValue });
+      const chevEl = rowMain.createEl('span', { cls: 'abyss-view-state-row-chevron' });
       setIcon(chevEl, 'chevron-right');
 
-      const subList = row.createDiv({ cls: 'tc-view-state-sublist tc-hidden' });
+      const subList = row.createDiv({ cls: 'abyss-view-state-sublist abyss-hidden' });
       bindExpandableRow(rowMain, subList);
 
       for (const opt of options) {
         const isActive = opt.value === activeValue;
         const isDefault = opt.value === defaultValue;
         const optEl = subList.createEl('button', {
-          cls: 'tc-view-state-option',
+          cls: 'abyss-view-state-option',
           attr: { 'aria-pressed': String(isActive) },
         });
-        const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
+        const checkEl = optEl.createEl('span', { cls: 'abyss-view-state-option-check' });
         if (isActive) setIcon(checkEl, 'check');
-        optEl.createEl('span', { cls: 'tc-view-state-option-label', text: opt.label });
+        optEl.createEl('span', { cls: 'abyss-view-state-option-label', text: opt.label });
         if (isDefault) {
-          optEl.createEl('span', { cls: 'tc-view-state-option-default', text: 'Default' });
+          optEl.createEl('span', { cls: 'abyss-view-state-option-default', text: 'Default' });
         }
         optEl.addEventListener('click', () => {
           close();
@@ -2439,48 +2446,48 @@ export class CenterPanel {
       initiallyOpen = false,
       presets: Array<{ label: string; onClick: () => void; isActive?: boolean }> = [],
     ): void => {
-      const row = popover.createDiv({ cls: 'tc-view-state-row' });
+      const row = popover.createDiv({ cls: 'abyss-view-state-row' });
       const rowMain = row.createDiv({
-        cls: 'tc-view-state-row-main',
+        cls: 'abyss-view-state-row-main',
         attr: { role: 'button', tabindex: '0', 'aria-expanded': String(initiallyOpen) },
       });
-      const iconEl = rowMain.createEl('span', { cls: 'tc-view-state-row-icon' });
+      const iconEl = rowMain.createEl('span', { cls: 'abyss-view-state-row-icon' });
       setIcon(iconEl, icon);
-      rowMain.createEl('span', { cls: 'tc-view-state-row-label', text: label });
-      rowMain.createEl('span', { cls: 'tc-view-state-row-value', text: displayValue });
-      const chevEl = rowMain.createEl('span', { cls: 'tc-view-state-row-chevron' });
+      rowMain.createEl('span', { cls: 'abyss-view-state-row-label', text: label });
+      rowMain.createEl('span', { cls: 'abyss-view-state-row-value', text: displayValue });
+      const chevEl = rowMain.createEl('span', { cls: 'abyss-view-state-row-chevron' });
       setIcon(chevEl, 'chevron-right');
 
-      const subList = row.createDiv({ cls: 'tc-view-state-sublist tc-hidden' });
+      const subList = row.createDiv({ cls: 'abyss-view-state-sublist abyss-hidden' });
       if (initiallyOpen) {
-        subList.removeClass('tc-hidden');
+        subList.removeClass('abyss-hidden');
         rowMain.addClass('is-open');
       }
       bindExpandableRow(rowMain, subList);
 
       for (const preset of presets) {
         const optEl = subList.createEl('button', {
-          cls: 'tc-view-state-option',
+          cls: 'abyss-view-state-option',
           attr: { 'aria-pressed': String(preset.isActive === true) },
         });
-        const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
+        const checkEl = optEl.createEl('span', { cls: 'abyss-view-state-option-check' });
         if (preset.isActive) setIcon(checkEl, 'check');
-        optEl.createEl('span', { cls: 'tc-view-state-option-label', text: preset.label });
+        optEl.createEl('span', { cls: 'abyss-view-state-option-label', text: preset.label });
         optEl.addEventListener('click', () => preset.onClick());
       }
       if (presets.length > 0) {
-        subList.createDiv({ cls: 'tc-view-state-sublist-divider' });
+        subList.createDiv({ cls: 'abyss-view-state-sublist-divider' });
       }
 
       for (const opt of options) {
         const isActive = selected.includes(opt.value);
         const optEl = subList.createEl('button', {
-          cls: 'tc-view-state-option',
+          cls: 'abyss-view-state-option',
           attr: { 'aria-pressed': String(isActive) },
         });
-        const checkEl = optEl.createEl('span', { cls: 'tc-view-state-option-check' });
+        const checkEl = optEl.createEl('span', { cls: 'abyss-view-state-option-check' });
         if (isActive) setIcon(checkEl, 'check');
-        optEl.createEl('span', { cls: 'tc-view-state-option-label', text: opt.label });
+        optEl.createEl('span', { cls: 'abyss-view-state-option-label', text: opt.label });
         optEl.addEventListener('click', () => {
           onToggle(opt.value);
         });
@@ -2600,9 +2607,9 @@ export class CenterPanel {
     // Reset to defaults row — only shown when state differs from defaults.
     // Same predicate as the left-panel customization dot.
     if (isListViewCustomized(vs, this.currentListKey)) {
-      const resetRow = popover.createDiv({ cls: 'tc-view-state-reset' });
+      const resetRow = popover.createDiv({ cls: 'abyss-view-state-reset' });
       const resetBtn = resetRow.createEl('button', {
-        cls: 'tc-view-state-reset-btn',
+        cls: 'abyss-view-state-reset-btn',
         text: 'Reset to defaults',
       });
       resetBtn.addEventListener('click', () => {
@@ -2612,7 +2619,7 @@ export class CenterPanel {
     }
 
     anchor.after(popover);
-    popover.querySelector<HTMLElement>('.tc-view-state-row-main')?.focus();
+    popover.querySelector<HTMLElement>('.abyss-view-state-row-main')?.focus();
     dismissTimer = window.setTimeout(() => {
       dismissTimer = undefined;
       if (!popover.isConnected) return;
@@ -2631,11 +2638,11 @@ export class CenterPanel {
    * TaskApplicationApi; the shared task pipeline owns Markdown encoding and persistence.
    */
   private showTimeGridQuickAdd(hourColumnEl: HTMLElement, date: string, time: string): void {
-    hourColumnEl.querySelectorAll('.tc-tg-quick-add').forEach((el) => el.remove());
-    const pop = hourColumnEl.createDiv({ cls: 'tc-tg-quick-add' });
+    hourColumnEl.querySelectorAll('.abyss-tg-quick-add').forEach((el) => el.remove());
+    const pop = hourColumnEl.createDiv({ cls: 'abyss-tg-quick-add' });
     pop.style.top = `${minutesToPixels(timeStringToMinutes(time))}px`;
     const input = pop.createEl('input', {
-      cls: 'tc-tg-quick-add-input',
+      cls: 'abyss-tg-quick-add-input',
       attr: { type: 'text', placeholder: `Task at ${time}…` },
     });
 
@@ -2736,21 +2743,21 @@ export class CenterPanel {
   }
 
   private renderAddTaskBar(): void {
-    const bar = this.el.createDiv({ cls: 'tc-add-task-bar' });
-    const trigger = bar.createDiv({ cls: 'tc-add-task-trigger' });
-    trigger.createEl('span', { cls: 'tc-add-task-plus', text: '+' });
-    trigger.createEl('span', { cls: 'tc-add-task-label', text: 'Add task' });
+    const bar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
+    const trigger = bar.createDiv({ cls: 'abyss-add-task-trigger' });
+    trigger.createEl('span', { cls: 'abyss-add-task-plus', text: '+' });
+    trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
     bar.addEventListener('click', () => {
-      if (bar.querySelector('.tc-quick-capture')) return;
+      if (bar.querySelector('.abyss-quick-capture')) return;
       trigger.remove();
       this.showQuickCapture(bar);
     });
   }
 
   private showQuickCapture(container: HTMLElement): void {
-    const form = container.createDiv({ cls: 'tc-quick-capture' });
+    const form = container.createDiv({ cls: 'abyss-quick-capture' });
     const input = form.createEl('input', {
-      cls: 'tc-quick-capture-input',
+      cls: 'abyss-quick-capture-input',
       attr: { type: 'text', placeholder: 'Task name…' },
     });
 
@@ -3316,7 +3323,7 @@ export class CenterPanel {
     const ownerDocument = (target as { readonly ownerDocument?: Document }).ownerDocument;
     const ownerWindow = ownerDocument?.defaultView;
     if (!ownerWindow || !(target instanceof ownerWindow.Element)) return undefined;
-    const card = target.closest<HTMLElement>('.tc-task-card');
+    const card = target.closest<HTMLElement>('.abyss-task-card');
     const filePath = card?.dataset['filePath'];
     const line = card?.dataset['line'];
     return card && this.el.contains(card) && filePath !== undefined && line !== undefined
@@ -3325,7 +3332,7 @@ export class CenterPanel {
   }
 
   private focusTaskDateTrigger(key: string): boolean {
-    const card = Array.from(this.el.querySelectorAll<HTMLElement>('.tc-task-card')).find(
+    const card = Array.from(this.el.querySelectorAll<HTMLElement>('.abyss-task-card')).find(
       (candidate) =>
         `${candidate.dataset['filePath'] ?? ''}:${candidate.dataset['line'] ?? ''}` === key,
     );
@@ -3383,9 +3390,9 @@ export class CenterPanel {
   private visibleTaskCards(): HTMLElement[] {
     if (this.state.get('mode') !== 'tasks') return [];
     const scroll = Array.from(this.el.children).find((child) =>
-      child.classList.contains('tc-center-scroll'),
+      child.classList.contains('abyss-center-scroll'),
     );
-    return scroll ? Array.from(scroll.querySelectorAll<HTMLElement>('.tc-task-card')) : [];
+    return scroll ? Array.from(scroll.querySelectorAll<HTMLElement>('.abyss-task-card')) : [];
   }
 
   private visibleTaskKeys(): string[] {
@@ -3440,21 +3447,21 @@ export class CenterPanel {
   }
 
   private updateSelectionVisuals(): void {
-    // Sync tc-multi-selected class on each card
-    this.el.querySelectorAll<HTMLElement>('.tc-task-card').forEach((card) => {
+    // Sync abyss-multi-selected class on each card
+    this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
       const key = `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`;
-      card.classList.toggle('tc-multi-selected', this.selectedTaskKeys.has(key));
+      card.classList.toggle('abyss-multi-selected', this.selectedTaskKeys.has(key));
     });
 
     // Update or remove badge
-    const existing = this.el.querySelector('.tc-selection-badge');
+    const existing = this.el.querySelector('.abyss-selection-badge');
     if (this.selectedTaskKeys.size >= 2) {
       if (existing) {
         existing.textContent = `${this.selectedTaskKeys.size} selected`;
       } else {
-        const list = this.el.querySelector('.tc-center-scroll');
+        const list = this.el.querySelector('.abyss-center-scroll');
         if (list) {
-          const badge = list.createDiv({ cls: 'tc-selection-badge' });
+          const badge = list.createDiv({ cls: 'abyss-selection-badge' });
           badge.textContent = `${this.selectedTaskKeys.size} selected`;
           list.prepend(badge);
         }

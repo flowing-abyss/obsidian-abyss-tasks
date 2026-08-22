@@ -165,17 +165,17 @@ interface MeasuredSpanColumn {
 }
 
 function measuredColumns(source: HTMLElement): MeasuredSpanColumn[] {
-  const root = source.closest<HTMLElement>('.tc-tg-root, .tc-mg-grid');
+  const root = source.closest<HTMLElement>('.abyss-tg-root, .abyss-mg-grid');
   if (!root) return [];
-  const selector = root.classList.contains('tc-tg-root')
-    ? '.tc-tg-allday-cell[data-tg-date]'
-    : '.tc-mg-cell[data-mg-date]';
+  const selector = root.classList.contains('abyss-tg-root')
+    ? '.abyss-tg-allday-cell[data-tg-date]'
+    : '.abyss-mg-cell[data-mg-date]';
   return Array.from(root.querySelectorAll<HTMLElement>(selector)).flatMap((element) => {
     const dateValue = element.dataset['tgDate'] ?? element.dataset['mgDate'];
     const date = parsedDate(dateValue);
-    const row = element.closest<HTMLElement>('.tc-tg-allday-days, .tc-mg-row');
+    const row = element.closest<HTMLElement>('.abyss-tg-allday-days, .abyss-mg-row');
     const layer = row?.querySelector<HTMLElement>(
-      ':scope > .tc-tg-span-layer, :scope > .tc-mg-span-layer',
+      ':scope > .abyss-tg-span-layer, :scope > .abyss-mg-span-layer',
     );
     if (!date || !row || !layer) return [];
     const rect = element.getBoundingClientRect();
@@ -293,7 +293,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     if (event.button !== 0) return;
     if (
       kind === 'move' &&
-      (event.target as Element).closest('.tc-status-marker, a, [data-boundary]')
+      (event.target as Element).closest('.abyss-status-marker, a, [data-boundary]')
     )
       return;
     event.preventDefault();
@@ -304,7 +304,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
     const sourceColumn = columns.find((column) => column.date === parsedDate(binding.segmentStart));
     if (!sourceColumn) return;
     const sourceRowColumns = rowColumns(sourceColumn, columns);
-    const isMonth = source.closest('.tc-mg-grid') !== null;
+    const isMonth = source.closest('.abyss-mg-grid') !== null;
     const grabbedDate =
       kind === 'move'
         ? resolveGrabbedDate(
@@ -365,7 +365,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           const index = candidates.indexOf(column);
           const preview = createPreview(
             source,
-            'tc-span-move-preview',
+            'abyss-span-move-preview',
             target,
             task,
             column.date === shiftedEnd ? 'terminal' : 'ghost',
@@ -413,7 +413,7 @@ export function attachSpanInteractions(binding: SpanInteractionBinding): void {
           const index = candidates.indexOf(column);
           const preview = createPreview(
             source,
-            'tc-span-boundary-preview',
+            'abyss-span-boundary-preview',
             target,
             task,
             column.date === prospectiveDue ? 'terminal' : 'ghost',

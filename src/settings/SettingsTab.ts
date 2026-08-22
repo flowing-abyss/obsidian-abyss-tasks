@@ -70,19 +70,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
     items.forEach((item, idx) => {
       const id = opts.id(item);
       const expanded = this.expandedCards.has(id);
-      const card = containerEl.createDiv({ cls: `tc-settings-card${expanded ? ' is-open' : ''}` });
+      const card = containerEl.createDiv({
+        cls: `abyss-settings-card${expanded ? ' is-open' : ''}`,
+      });
 
       // The card is a drop target; only its header is the drag SOURCE, so text
       // selection inside expanded body inputs isn't hijacked by dragging.
       card.addEventListener('dragover', (e) => {
         e.preventDefault();
-        card.addClass('tc-drag-over');
+        card.addClass('abyss-drag-over');
       });
-      card.addEventListener('dragleave', () => card.removeClass('tc-drag-over'));
+      card.addEventListener('dragleave', () => card.removeClass('abyss-drag-over'));
       card.addEventListener('drop', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        card.removeClass('tc-drag-over');
+        card.removeClass('abyss-drag-over');
         const raw = e.dataTransfer?.getData('text/plain');
         if (!raw) return;
         let payload: { idx: number; id: string; groupKey?: string };
@@ -100,26 +102,26 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
 
       const header = card.createDiv({
-        cls: 'tc-settings-card-header',
+        cls: 'abyss-settings-card-header',
         attr: { draggable: 'true' },
       });
       header.addEventListener('dragstart', (e) => {
         e.dataTransfer?.setData('text/plain', JSON.stringify({ idx, id, groupKey: opts.groupKey }));
-        card.addClass('tc-dragging');
+        card.addClass('abyss-dragging');
       });
-      header.addEventListener('dragend', () => card.removeClass('tc-dragging'));
-      const grip = header.createSpan({ cls: 'tc-settings-card-grip' });
+      header.addEventListener('dragend', () => card.removeClass('abyss-dragging'));
+      const grip = header.createSpan({ cls: 'abyss-settings-card-grip' });
       setIcon(grip, 'grip-vertical');
       opts.preview?.(header, item);
       const accent = opts.accent?.(item);
       if (accent) {
-        const dot = header.createSpan({ cls: 'tc-status-dot' });
+        const dot = header.createSpan({ cls: 'abyss-status-dot' });
         dot.style.background = accent;
       }
-      header.createSpan({ cls: 'tc-settings-card-title', text: opts.title(item) });
+      header.createSpan({ cls: 'abyss-settings-card-title', text: opts.title(item) });
       const badge = opts.badge?.(item);
-      if (badge) header.createSpan({ cls: 'tc-settings-card-badge', text: badge });
-      const chevron = header.createSpan({ cls: 'tc-settings-card-chevron' });
+      if (badge) header.createSpan({ cls: 'abyss-settings-card-badge', text: badge });
+      const chevron = header.createSpan({ cls: 'abyss-settings-card-chevron' });
       setIcon(chevron, expanded ? 'chevron-down' : 'chevron-right');
       header.addEventListener('click', () => {
         if (expanded) this.expandedCards.delete(id);
@@ -129,7 +131,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
 
       if (expanded) {
-        const bodyEl = card.createDiv({ cls: 'tc-settings-card-body' });
+        const bodyEl = card.createDiv({ cls: 'abyss-settings-card-body' });
         opts.body(bodyEl, idx);
       }
     });
@@ -146,7 +148,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const { containerEl } = this;
 
     const openIndices = new Set<number>();
-    containerEl.querySelectorAll('.tc-settings-section').forEach((el, i) => {
+    containerEl.querySelectorAll('.abyss-settings-section').forEach((el, i) => {
       if (el.classList.contains('is-open')) openIndices.add(i);
     });
 
@@ -170,7 +172,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       this.renderTaskStatusesSettings(body),
     );
 
-    containerEl.querySelectorAll('.tc-settings-section').forEach((el, i) => {
+    containerEl.querySelectorAll('.abyss-settings-section').forEach((el, i) => {
       if (openIndices.has(i)) el.classList.add('is-open');
     });
   }
@@ -181,19 +183,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
     icon: string,
     renderFn: (bodyEl: HTMLElement) => void,
   ): void {
-    const section = containerEl.createDiv({ cls: 'tc-settings-section' });
+    const section = containerEl.createDiv({ cls: 'abyss-settings-section' });
 
-    const header = section.createDiv({ cls: 'tc-settings-section-header' });
+    const header = section.createDiv({ cls: 'abyss-settings-section-header' });
 
-    const iconEl = header.createDiv({ cls: 'tc-settings-section-icon' });
+    const iconEl = header.createDiv({ cls: 'abyss-settings-section-icon' });
     setIcon(iconEl, icon);
 
-    header.createSpan({ cls: 'tc-settings-section-label', text: title });
+    header.createSpan({ cls: 'abyss-settings-section-label', text: title });
 
-    const chevronEl = header.createDiv({ cls: 'tc-settings-section-chevron' });
+    const chevronEl = header.createDiv({ cls: 'abyss-settings-section-chevron' });
     setIcon(chevronEl, 'chevron-right');
 
-    const body = section.createDiv({ cls: 'tc-settings-section-body' });
+    const body = section.createDiv({ cls: 'abyss-settings-section-body' });
     renderFn(body);
 
     header.addEventListener('click', () => {
@@ -925,8 +927,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }));
 
     for (const { type, label } of groupDefs) {
-      const groupEl = containerEl.createDiv({ cls: 'tc-status-type-group' });
-      groupEl.createDiv({ cls: 'tc-status-type-group-label', text: label });
+      const groupEl = containerEl.createDiv({ cls: 'abyss-status-type-group' });
+      groupEl.createDiv({ cls: 'abyss-status-type-group-label', text: label });
       const items = statuses.filter((s) => s.type === type);
 
       // Group-level drop zone catches drops on empty space (not over any card),
@@ -951,7 +953,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         title: (s) => s.name,
         badge: (s) => s.symbol,
         preview: (headerEl, s) => {
-          const previewEl = headerEl.createSpan({ cls: 'tc-status-header-preview' });
+          const previewEl = headerEl.createSpan({ cls: 'abyss-status-header-preview' });
           this.statusHeaderPreviewEls.set(s.id, previewEl);
           this.renderStatusHeaderPreview(s.id);
         },
@@ -1030,19 +1032,19 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const symbolSetting = new Setting(bodyEl).setName('Symbol');
     let symbolErrorEl: HTMLElement | null = null;
     if (def.core) {
-      const lockEl = symbolSetting.nameEl.createSpan({ cls: 'tc-status-symbol-lock' });
+      const lockEl = symbolSetting.nameEl.createSpan({ cls: 'abyss-status-symbol-lock' });
       setIcon(lockEl, 'lock');
       symbolSetting.setTooltip('Core status — symbol is fixed');
     }
     symbolSetting.addText((t) => {
       t.setValue(def.symbol).setDisabled(def.core);
-      if (def.core) t.inputEl.addClass('tc-status-symbol-locked');
+      if (def.core) t.inputEl.addClass('abyss-status-symbol-locked');
       t.onChange(async (v) => {
         if (def.core) return;
         const err = validateStatusSymbol(v, statuses, def.id);
         if (err) {
           if (!symbolErrorEl) {
-            symbolErrorEl = symbolSetting.descEl.createDiv({ cls: 'tc-status-symbol-error' });
+            symbolErrorEl = symbolSetting.descEl.createDiv({ cls: 'abyss-status-symbol-error' });
           }
           symbolErrorEl.setText(err);
           return;
@@ -1063,20 +1065,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
     // custom (non-core) statuses get the searchable Lucide picker.
     if (def.core) {
       const iconSetting = new Setting(bodyEl).setName('Icon');
-      const lockEl = iconSetting.nameEl.createSpan({ cls: 'tc-status-icon-lock' });
+      const lockEl = iconSetting.nameEl.createSpan({ cls: 'abyss-status-icon-lock' });
       setIcon(lockEl, 'lock');
       iconSetting.setTooltip('Core status — icon is fixed');
       const lockedPreview = iconSetting.controlEl.createDiv({
-        cls: 'tc-status-icon-locked-preview',
+        cls: 'abyss-status-icon-locked-preview',
       });
       if (def.icon) {
         setIcon(lockedPreview, def.icon);
       } else {
-        lockedPreview.createSpan({ cls: 'tc-status-icon-result-icon', text: '—' });
+        lockedPreview.createSpan({ cls: 'abyss-status-icon-result-icon', text: '—' });
       }
     } else {
-      const iconWrap = bodyEl.createDiv({ cls: 'tc-status-icon-field' });
-      const iconInputHost = iconWrap.createDiv({ cls: 'tc-status-icon-input-host' });
+      const iconWrap = bodyEl.createDiv({ cls: 'abyss-status-icon-field' });
+      const iconInputHost = iconWrap.createDiv({ cls: 'abyss-status-icon-input-host' });
 
       // getIconIds() returns ids prefixed with "lucide-" (e.g. "lucide-alert-triangle"),
       // but stored status icons use the short form (e.g. "alert-triangle") that setIcon
@@ -1102,7 +1104,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .onChange((v) => renderResults(v)),
       );
 
-      const resultsEl = iconInputHost.createDiv({ cls: 'tc-status-icon-results' });
+      const resultsEl = iconInputHost.createDiv({ cls: 'abyss-status-icon-results' });
       renderResults = (query: string, focusIcon?: string) => {
         resultsEl.empty();
 
@@ -1117,7 +1119,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         // "No icon" is always the first cell — the only way to clear a
         // previously-set icon back to the empty (plain to-do-style) chip.
         const clearCell = resultsEl.createEl('button', {
-          cls: `tc-status-icon-result tc-status-icon-clear${def.icon === '' ? ' is-selected' : ''}`,
+          cls: `abyss-status-icon-result abyss-status-icon-clear${def.icon === '' ? ' is-selected' : ''}`,
           attr: {
             type: 'button',
             title: 'No icon',
@@ -1126,7 +1128,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             'aria-pressed': String(def.icon === ''),
           },
         });
-        clearCell.createSpan({ cls: 'tc-status-icon-result-icon', text: '—' });
+        clearCell.createSpan({ cls: 'abyss-status-icon-result-icon', text: '—' });
         clearCell.addEventListener('click', () => selectIcon(''));
 
         const q = query.trim().toLowerCase();
@@ -1134,11 +1136,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
           .filter((iconId) => !q || iconId.toLowerCase().includes(q))
           .slice(0, 48);
         if (ids.length === 0) {
-          resultsEl.createDiv({ cls: 'tc-status-icon-empty', text: 'No icons found' });
+          resultsEl.createDiv({ cls: 'abyss-status-icon-empty', text: 'No icons found' });
         } else {
           for (const iconId of ids) {
             const cell = resultsEl.createEl('button', {
-              cls: `tc-status-icon-result${iconId === def.icon ? ' is-selected' : ''}`,
+              cls: `abyss-status-icon-result${iconId === def.icon ? ' is-selected' : ''}`,
               attr: {
                 type: 'button',
                 title: iconId,
@@ -1147,7 +1149,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
                 'aria-pressed': String(iconId === def.icon),
               },
             });
-            const iconPreview = cell.createSpan({ cls: 'tc-status-icon-result-icon' });
+            const iconPreview = cell.createSpan({ cls: 'abyss-status-icon-result-icon' });
             setIcon(iconPreview, iconId);
             cell.addEventListener('click', () => selectIcon(iconId));
           }
@@ -1155,7 +1157,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
         if (focusIcon !== undefined) {
           const cell = Array.from(
-            resultsEl.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+            resultsEl.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
           ).find((button) => button.dataset['icon'] === focusIcon);
           cell?.focus({ preventScroll: true });
         }
@@ -1164,7 +1166,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }
 
     const previewSetting = new Setting(bodyEl).setName('Preview');
-    const previewHost = previewSetting.controlEl.createDiv({ cls: 'tc-status-preview' });
+    const previewHost = previewSetting.controlEl.createDiv({ cls: 'abyss-status-preview' });
     updatePreview = () => {
       previewHost.empty();
       const registry = new StatusRegistry(statuses);
@@ -1175,7 +1177,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
         onLeftClick: () => {},
         onContextMenu: () => {},
       });
-      previewHost.createSpan({ cls: 'tc-status-preview-title', text: def.name || 'Sample task' });
+      previewHost.createSpan({
+        cls: 'abyss-status-preview-title',
+        text: def.name || 'Sample task',
+      });
     };
     updatePreview();
 

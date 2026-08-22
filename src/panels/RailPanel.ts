@@ -51,10 +51,10 @@ export class RailPanel {
     this.el.empty();
     const mode = this.state.get('mode');
 
-    const topGroup = this.el.createDiv({ cls: 'tc-rail-top' });
+    const topGroup = this.el.createDiv({ cls: 'abyss-rail-top' });
     for (const item of ITEMS) {
       const btn = topGroup.createEl('button', {
-        cls: `tc-rail-btn${mode === item.mode ? ' is-active' : ''}`,
+        cls: `abyss-rail-btn${mode === item.mode ? ' is-active' : ''}`,
         attr: { 'aria-label': item.label, title: item.label },
       });
       setIcon(btn, item.icon);
@@ -64,9 +64,9 @@ export class RailPanel {
     }
 
     // Settings at bottom
-    const bottomGroup = this.el.createDiv({ cls: 'tc-rail-bottom' });
+    const bottomGroup = this.el.createDiv({ cls: 'abyss-rail-bottom' });
     const settingsBtn = bottomGroup.createEl('button', {
-      cls: 'tc-rail-btn',
+      cls: 'abyss-rail-btn',
       attr: { 'aria-label': 'Settings', title: 'Settings' },
     });
     setIcon(settingsBtn, 'settings');

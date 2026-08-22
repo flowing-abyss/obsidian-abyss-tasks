@@ -51,32 +51,32 @@ describe('shouldShowSourceNote', () => {
 });
 
 describe('renderSourceNoteChip', () => {
-  it('appends .tc-task-source-note to container', () => {
+  it('appends .abyss-task-source-note to container', () => {
     const container = freshContainer();
     const t = task({ source: { filePath: 'Projects/alpha.md' } });
     renderSourceNoteChip(container, t);
-    expect(container.querySelector('.tc-task-source-note')).not.toBeNull();
+    expect(container.querySelector('.abyss-task-source-note')).not.toBeNull();
   });
 
-  it('chip contains .tc-task-source-note-icon element', () => {
+  it('chip contains .abyss-task-source-note-icon element', () => {
     const container = freshContainer();
     renderSourceNoteChip(container, task({ source: { filePath: 'Projects/alpha.md' } }));
-    expect(container.querySelector('.tc-task-source-note-icon')).not.toBeNull();
+    expect(container.querySelector('.abyss-task-source-note-icon')).not.toBeNull();
   });
 
   it('chip text contains filename without path or extension', () => {
     const container = freshContainer();
     renderSourceNoteChip(container, task({ source: { filePath: 'a/b/deep-note.md' } }));
-    const chip = container.querySelector('.tc-task-source-note');
+    const chip = container.querySelector('.abyss-task-source-note');
     expect(chip?.textContent).toContain('deep-note');
     expect(chip?.textContent).not.toContain('/');
     expect(chip?.textContent).not.toContain('.md');
   });
 
-  it('chip has .tc-task-source-note-name span with note name', () => {
+  it('chip has .abyss-task-source-note-name span with note name', () => {
     const container = freshContainer();
     renderSourceNoteChip(container, task({ source: { filePath: 'Note.md' } }));
-    const name = container.querySelector('.tc-task-source-note-name');
+    const name = container.querySelector('.abyss-task-source-note-name');
     expect(name?.textContent).toBe('Note');
   });
 
@@ -85,7 +85,7 @@ describe('renderSourceNoteChip', () => {
     const t = task({ source: { filePath: 'notes/2026-06-26.md' } });
     const cb = vi.fn();
     renderSourceNoteChip(container, t, cb);
-    const chip = container.querySelector('.tc-task-source-note') as HTMLElement;
+    const chip = container.querySelector('.abyss-task-source-note') as HTMLElement;
     chip.click();
     expect(cb).toHaveBeenCalledWith('notes/2026-06-26.md');
   });

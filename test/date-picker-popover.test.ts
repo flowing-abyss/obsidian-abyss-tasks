@@ -5,7 +5,9 @@ import { showDatePickerPopover } from '../src/ui/DatePickerPopover';
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
-  activeDocument.querySelectorAll('.tc-date-picker-popover').forEach((element) => element.remove());
+  activeDocument
+    .querySelectorAll('.abyss-date-picker-popover')
+    .forEach((element) => element.remove());
 });
 
 function host(ownerDocument: Document = activeDocument): {
@@ -29,7 +31,7 @@ function mockPopoverRect(width: number, height: number): void {
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
     this: HTMLElement,
   ) {
-    if (this.classList.contains('tc-date-picker-popover')) return rect(0, 0, width, height);
+    if (this.classList.contains('abyss-date-picker-popover')) return rect(0, 0, width, height);
     return real.call(this);
   });
 }
@@ -60,7 +62,7 @@ describe('showDatePickerPopover', () => {
     expect(onPick).toHaveBeenCalledOnce();
     expect(onPick).toHaveBeenCalledWith('2026-08-02');
     expect(onClose).toHaveBeenCalledOnce();
-    expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(anchor);
     owner.remove();
   });
@@ -80,7 +82,7 @@ describe('showDatePickerPopover', () => {
     expect(onPick).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledOnce();
     expect(event.defaultPrevented).toBe(true);
-    expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(anchor);
     owner.remove();
   });
@@ -94,7 +96,7 @@ describe('showDatePickerPopover', () => {
     input.dispatchEvent(new FocusEvent('blur'));
     vi.runAllTimers();
     expect(blurClose).toHaveBeenCalledOnce();
-    expect(blurHost.owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(blurHost.owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     blurHost.owner.remove();
 
     const outsideHost = host();
@@ -106,7 +108,7 @@ describe('showDatePickerPopover', () => {
       new MouseEvent('mousedown', { bubbles: true }),
     );
     expect(outsideClose).toHaveBeenCalledOnce();
-    expect(outsideHost.owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(outsideHost.owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(outsideHost.owner.ownerDocument.activeElement).toBe(outsideHost.anchor);
     outsideHost.owner.remove();
   });
@@ -124,7 +126,7 @@ describe('showDatePickerPopover', () => {
     next.focus();
     vi.advanceTimersByTime(201);
 
-    expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(next);
     owner.remove();
   });
@@ -144,7 +146,7 @@ describe('showDatePickerPopover', () => {
     expect(input.ownerDocument).toBe(ownerDocument);
     expect(focus).toHaveBeenCalledOnce();
     expect(onClose).not.toHaveBeenCalled();
-    expect(owner.querySelector('.tc-date-picker-popover')).not.toBeNull();
+    expect(owner.querySelector('.abyss-date-picker-popover')).not.toBeNull();
     owner.remove();
   });
 
@@ -163,9 +165,9 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.tc-date-picker-popover')!;
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('40px');
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('44px');
+    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('40px');
+    expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('44px');
     expect(popover.dataset['side']).toBe('below');
     owner.remove();
   });
@@ -190,9 +192,9 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.tc-date-picker-popover')!;
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('48px');
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('52px');
+    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('48px');
+    expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('52px');
     owner.remove();
   });
 
@@ -240,9 +242,9 @@ describe('showDatePickerPopover', () => {
 
     showDatePickerPopover({ owner, anchor, boundary, onPick: vi.fn() });
 
-    const popover = owner.querySelector<HTMLElement>('.tc-date-picker-popover')!;
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe(expected.left);
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe(expected.top);
+    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe(expected.left);
+    expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe(expected.top);
     expect(popover.dataset['side']).toBe(expected.side);
     owner.remove();
   });
@@ -269,12 +271,12 @@ describe('showDatePickerPopover', () => {
       boundary,
       onPick: vi.fn(),
     });
-    const popover = owner.querySelector<HTMLElement>('.tc-date-picker-popover')!;
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('40px');
+    const popover = owner.querySelector<HTMLElement>('.abyss-date-picker-popover')!;
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('40px');
 
     anchorRect = rect(280, 20, 20, 20);
     ownerWindow.dispatchEvent(new Event('resize'));
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('172px');
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('172px');
 
     cleanup();
     expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
@@ -332,7 +334,7 @@ describe('showDatePickerPopover', () => {
     owner.ownerDocument.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
 
     expect(onClose).toHaveBeenCalledOnce();
-    expect(owner.querySelector('.tc-date-picker-popover')).toBeNull();
+    expect(owner.querySelector('.abyss-date-picker-popover')).toBeNull();
     expect(owner.ownerDocument.activeElement).toBe(anchor);
     owner.remove();
   });

@@ -26,80 +26,78 @@ function declarationsForRuleContaining(...selectors: string[]): string {
 
 describe('renderHourGrid', () => {
   it('defines the shared light/dark calendar scale and committed fill tokens', () => {
-    const light = declarationsFor('.tc-panel-view');
-    const dark = declarationsFor('.theme-dark .tc-panel-view');
-    expect(light).toMatch(/--tc-calendar-item-font-size\s*:\s*0\.8em/u);
-    expect(light).toMatch(/--tc-calendar-track-height\s*:\s*1\.65em/u);
-    expect(light).toMatch(/--tc-calendar-item-radius\s*:\s*6px/u);
-    expect(light).toMatch(/--tc-calendar-item-pad-inline\s*:\s*6px/u);
-    expect(light).toMatch(/--tc-calendar-item-rail\s*:\s*3px/u);
-    expect(light).toMatch(/--tc-calendar-ghost-rail\s*:\s*var\(--tc-calendar-item-rail\)/u);
-    expect(light).toMatch(/--tc-event-fill-strength\s*:\s*11%/u);
-    expect(light).toMatch(/--tc-event-outline-strength\s*:\s*24%/u);
-    expect(light).toMatch(/--tc-event-focus-tag-strength\s*:\s*55%/u);
-    expect(dark).toMatch(/--tc-event-fill-strength\s*:\s*14%/u);
-    expect(dark).toMatch(/--tc-event-outline-strength\s*:\s*32%/u);
+    const light = declarationsFor('.abyss-panel-view');
+    const dark = declarationsFor('.theme-dark .abyss-panel-view');
+    expect(light).toMatch(/--abyss-calendar-item-font-size\s*:\s*0\.8em/u);
+    expect(light).toMatch(/--abyss-calendar-track-height\s*:\s*1\.65em/u);
+    expect(light).toMatch(/--abyss-calendar-item-radius\s*:\s*6px/u);
+    expect(light).toMatch(/--abyss-calendar-item-pad-inline\s*:\s*6px/u);
+    expect(light).toMatch(/--abyss-calendar-item-rail\s*:\s*3px/u);
+    expect(light).toMatch(/--abyss-calendar-ghost-rail\s*:\s*var\(--abyss-calendar-item-rail\)/u);
+    expect(light).toMatch(/--abyss-event-fill-strength\s*:\s*11%/u);
+    expect(light).toMatch(/--abyss-event-outline-strength\s*:\s*24%/u);
+    expect(light).toMatch(/--abyss-event-focus-tag-strength\s*:\s*55%/u);
+    expect(dark).toMatch(/--abyss-event-fill-strength\s*:\s*14%/u);
+    expect(dark).toMatch(/--abyss-event-outline-strength\s*:\s*32%/u);
   });
 
   it('keeps timed event fills opaque and preserves them through hover, selection, and drag', () => {
     const fills = declarationsForRuleContaining(
-      '.tc-tg-block',
-      '.tc-tg-span',
-      '.tc-tg-plain',
-      '.tc-mg-block-dot',
-      '.tc-mg-span-segment',
-      '.tc-mg-plain',
+      '.abyss-tg-block',
+      '.abyss-tg-span',
+      '.abyss-tg-plain',
+      '.abyss-mg-block-dot',
+      '.abyss-mg-span-segment',
+      '.abyss-mg-plain',
     );
-    const itemTokens = declarationsFor('.tc-calendar-item');
-    expect(fills).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
-    expect(fills).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
+    const itemTokens = declarationsFor('.abyss-calendar-item');
+    expect(fills).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
+    expect(fills).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--abyss-calendar-border\)/u);
     expect(fills).not.toMatch(/transparent/u);
     expect(fills).toMatch(/border-inline-start\s*:/u);
     expect(itemTokens).toMatch(
-      /--tc-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
+      /--abyss-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--abyss-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
     );
 
     const hover = declarationsForRuleContaining(
-      '.tc-tg-block:hover',
-      '.tc-tg-span-continuation:hover',
-      '.tc-mg-plain:hover',
+      '.abyss-tg-block:hover',
+      '.abyss-tg-span-continuation:hover',
+      '.abyss-mg-plain:hover',
     );
     expect(hover).not.toMatch(/background(?:-color)?\s*:/u);
     expect(hover).toMatch(/box-shadow\s*:.*var\(--background-modifier-hover\)/u);
 
-    const selected = declarationsFor('.tc-tg-block.is-selected');
+    const selected = declarationsFor('.abyss-tg-block.is-selected');
     const resting = fills;
     expect(selected).not.toMatch(/background(?:-color)?\s*:/u);
     expect(resting).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
     expect(selected).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
-    expect(selected).toMatch(/--tc-event-focus-tag-strength/u);
+    expect(selected).toMatch(/--abyss-event-focus-tag-strength/u);
     expect(selected).toMatch(/--text-normal/u);
 
     const dragging = declarationsForRuleContaining(
-      '.tc-tg-block.is-dragging',
-      '.tc-tg-body.is-dragging',
-      '.tc-mg-block-dot.is-dragging',
-      '.tc-mg-plain.is-dragging',
+      '.abyss-tg-block.is-dragging',
+      '.abyss-tg-body.is-dragging',
+      '.abyss-mg-block-dot.is-dragging',
+      '.abyss-mg-plain.is-dragging',
     );
     expect(dragging).not.toMatch(/opacity\s*:/u);
     expect(dragging).not.toMatch(/background(?:-color)?\s*:/u);
     expect(css).not.toMatch(/(?:^|\n)\.is-dragging\s*\{[^}]*opacity\s*:/u);
     expect(
-      declarationsFor(
-        '.is-dragging:not(.tc-tg-block):not(.tc-tg-body):not(.tc-mg-block-dot):not(.tc-mg-plain)',
-      ),
+      declarationsForRuleContaining('.is-dragging:not(.abyss-tg-block)', '.abyss-mg-plain'),
     ).toMatch(/opacity\s*:\s*0\.4/u);
   });
 
   it('provides full 10px vertical and horizontal resize hit targets', () => {
-    expect(declarationsFor('.tc-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
-    expect(declarationsFor('.tc-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
+    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+    expect(declarationsFor('.abyss-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
   });
 
   it('renders a day-header cell per date with weekday + day number', () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10', '2026-07-11']);
-    const headers = container.querySelectorAll('.tc-tg-header-cell');
+    const headers = container.querySelectorAll('.abyss-tg-header-cell');
     expect(headers).toHaveLength(2);
     expect(headers[0]?.textContent).toContain('Fri');
     expect(headers[0]?.textContent).toContain('10');
@@ -112,7 +110,7 @@ describe('renderHourGrid', () => {
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
     renderHourGrid(container, [today, other]);
-    const headers = Array.from(container.querySelectorAll('.tc-tg-header-cell'));
+    const headers = Array.from(container.querySelectorAll('.abyss-tg-header-cell'));
     expect(headers[0]?.hasClass('is-today')).toBe(true);
     expect(headers[1]?.hasClass('is-today')).toBe(false);
   });
@@ -126,7 +124,7 @@ describe('renderHourGrid', () => {
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
     renderHourGrid(container, [today, other]);
-    const columns = Array.from(container.querySelectorAll('.tc-tg-day-column'));
+    const columns = Array.from(container.querySelectorAll('.abyss-tg-day-column'));
     expect(columns[0]?.hasClass('is-today')).toBe(false);
     expect(columns[1]?.hasClass('is-today')).toBe(false);
   });
@@ -135,16 +133,16 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     renderHourGrid(container, [today]);
-    const columns = Array.from(container.querySelectorAll('.tc-tg-day-column'));
+    const columns = Array.from(container.querySelectorAll('.abyss-tg-day-column'));
     expect(columns.every((c) => !c.hasClass('is-today'))).toBe(true);
   });
 
   it("splits the header cell's date into an independently-selectable weekday span and day-number span", () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10']);
-    const header = container.querySelector('.tc-tg-header-cell') as HTMLElement;
-    const weekday = header.querySelector('.tc-tg-header-weekday');
-    const dayNumber = header.querySelector('.tc-tg-header-day-number');
+    const header = container.querySelector('.abyss-tg-header-cell') as HTMLElement;
+    const weekday = header.querySelector('.abyss-tg-header-weekday');
+    const dayNumber = header.querySelector('.abyss-tg-header-day-number');
     expect(weekday?.textContent).toBe('Fri');
     expect(dayNumber?.textContent).toBe('10');
   });
@@ -154,9 +152,9 @@ describe('renderHourGrid', () => {
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
     renderHourGrid(container, [today, other]);
-    const headers = Array.from(container.querySelectorAll('.tc-tg-header-cell'));
+    const headers = Array.from(container.querySelectorAll('.abyss-tg-header-cell'));
     expect(headers[0]?.hasClass('is-today')).toBe(true);
-    expect(headers[0]?.querySelector('.tc-tg-header-day-number')).not.toBeNull();
+    expect(headers[0]?.querySelector('.abyss-tg-header-day-number')).not.toBeNull();
     expect(headers[1]?.hasClass('is-today')).toBe(false);
   });
 
@@ -165,7 +163,7 @@ describe('renderHourGrid', () => {
     const handles = renderHourGrid(container, ['2026-07-10']);
     expect(handles.days).toHaveLength(1);
     expect(handles.days[0]?.date).toBe('2026-07-10');
-    expect(container.querySelectorAll('.tc-tg-hour-row')).toHaveLength(24);
+    expect(container.querySelectorAll('.abyss-tg-hour-row')).toHaveLength(24);
   });
 
   it('renders 7 day columns for a week of dates', () => {
@@ -182,13 +180,13 @@ describe('renderHourGrid', () => {
     const handles = renderHourGrid(container, dates);
     expect(handles.days).toHaveLength(7);
     expect(handles.days.map((d) => d.date)).toEqual(dates);
-    expect(container.querySelectorAll('.tc-tg-day-column')).toHaveLength(7);
+    expect(container.querySelectorAll('.abyss-tg-day-column')).toHaveLength(7);
   });
 
   it('labels the all-day gutter "No-time" so its purpose is clear', () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10']);
-    const gutter = container.querySelector('.tc-tg-allday-gutter') as HTMLElement;
+    const gutter = container.querySelector('.abyss-tg-allday-gutter') as HTMLElement;
     expect(gutter.textContent).toBe('No-time');
   });
 
@@ -196,20 +194,20 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const handles = renderHourGrid(container, ['2026-07-10', '2026-07-11']);
     expect(handles.days[0]?.allDayCellEl).not.toBe(handles.days[1]?.allDayCellEl);
-    expect(container.querySelectorAll('.tc-tg-allday-cell')).toHaveLength(2);
+    expect(container.querySelectorAll('.abyss-tg-allday-cell')).toHaveLength(2);
   });
 
   it('hourColumnEl is positioned relative (so absolutely-positioned blocks anchor to it)', () => {
     const container = freshContainer();
     const handles = renderHourGrid(container, ['2026-07-10']);
-    expect(handles.days[0]?.hourColumnEl.hasClass('tc-tg-hour-column')).toBe(true);
+    expect(handles.days[0]?.hourColumnEl.hasClass('abyss-tg-hour-column')).toBe(true);
   });
 
   it('re-rendering into the same container clears prior content', () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10']);
     renderHourGrid(container, ['2026-07-11']);
-    expect(container.querySelectorAll('.tc-tg-day-column')).toHaveLength(1);
+    expect(container.querySelectorAll('.abyss-tg-day-column')).toHaveLength(1);
   });
 
   it('renders the now-line across the full time grid, positioned by current time', () => {
@@ -217,13 +215,13 @@ describe('renderHourGrid', () => {
     const today = window.moment().format('YYYY-MM-DD');
     const other = window.moment().add(1, 'day').format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today, other]);
-    const nowLines = container.querySelectorAll('.tc-tg-now-line');
+    const nowLines = container.querySelectorAll('.abyss-tg-now-line');
     expect(nowLines).toHaveLength(1);
     const nowLine = nowLines[0] as HTMLElement;
     expect(nowLine.parentElement).toBe(handles.gridRowEl);
-    expect(nowLine.closest('.tc-tg-day-column')).toBeNull();
-    expect(handles.days[0]?.hourColumnEl.querySelector('.tc-tg-now-line')).toBeNull();
-    expect(handles.days[1]?.hourColumnEl.querySelector('.tc-tg-now-line')).toBeNull();
+    expect(nowLine.closest('.abyss-tg-day-column')).toBeNull();
+    expect(handles.days[0]?.hourColumnEl.querySelector('.abyss-tg-now-line')).toBeNull();
+    expect(handles.days[1]?.hourColumnEl.querySelector('.abyss-tg-now-line')).toBeNull();
     const top = parseFloat(nowLine.style.top);
     expect(top).toBeGreaterThanOrEqual(0);
   });
@@ -234,7 +232,7 @@ describe('renderHourGrid', () => {
     const yesterday = window.moment().subtract(1, 'day').format('YYYY-MM-DD');
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [yesterday, today, tomorrow]);
-    const dot = handles.nowLineEl?.querySelector('.tc-tg-now-line-dot') as HTMLElement;
+    const dot = handles.nowLineEl?.querySelector('.abyss-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
     expect(dot.style.left).toBe('50%');
   });
@@ -243,24 +241,24 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const today = window.moment().format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today]);
-    const dot = handles.nowLineEl?.querySelector('.tc-tg-now-line-dot') as HTMLElement;
+    const dot = handles.nowLineEl?.querySelector('.abyss-tg-now-line-dot') as HTMLElement;
     expect(dot).not.toBeNull();
     expect(dot.style.left).toBe('50%');
   });
 
   it('keeps the full-width now-line beneath timed task blocks', () => {
-    const nowLine = declarationsFor('.tc-tg-now-line');
-    const calendarTokens = declarationsFor('.tc-panel-view');
-    const taskBlock = declarationsFor('.tc-tg-block');
-    const continuation = declarationsFor('.tc-tg-block-continuation');
+    const nowLine = declarationsFor('.abyss-tg-now-line');
+    const calendarTokens = declarationsFor('.abyss-panel-view');
+    const taskBlock = declarationsFor('.abyss-tg-block');
+    const continuation = declarationsFor('.abyss-tg-block-continuation');
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
     expect(nowLine).toMatch(/height\s*:\s*1px/u);
     expect(nowLine).toMatch(/z-index\s*:\s*0/u);
-    expect(nowLine).toMatch(/background\s*:\s*var\(--tc-calendar-now\)/u);
+    expect(nowLine).toMatch(/background\s*:\s*var\(--abyss-calendar-now\)/u);
     expect(nowLine).not.toMatch(/opacity\s*:/u);
     expect(calendarTokens).toMatch(
-      /--tc-calendar-now\s*:\s*color-mix\(in srgb, var\(--text-error\) 48%, transparent\)/u,
+      /--abyss-calendar-now\s*:\s*color-mix\(in srgb, var\(--text-error\) 48%, transparent\)/u,
     );
     expect(taskBlock).toMatch(/z-index\s*:\s*2/u);
     expect(continuation).toMatch(/z-index\s*:\s*2/u);
@@ -268,29 +266,29 @@ describe('renderHourGrid', () => {
 
   it('gives ghost span pieces the same track-fitting surface geometry as committed calendar items', () => {
     const sharedSurface = declarationsForRuleContaining(
-      '.tc-tg-span',
-      '.tc-tg-span-continuation',
-      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
-      '.tc-mg-span-continuation',
+      '.abyss-tg-span',
+      '.abyss-tg-span-continuation',
+      '.abyss-mg-span-segment:not(.abyss-mg-span-continuation)',
+      '.abyss-mg-span-continuation',
     );
-    const allDayBody = declarationsFor('.tc-tg-body');
-    const ghostTimegrid = declarationsFor('.tc-tg-span-continuation');
-    const ghostMonth = declarationsFor('.tc-mg-span-continuation');
+    const allDayBody = declarationsFor('.abyss-tg-body');
+    const ghostTimegrid = declarationsFor('.abyss-tg-span-continuation');
+    const ghostMonth = declarationsFor('.abyss-mg-span-continuation');
 
     expect(sharedSurface).toMatch(/box-sizing\s*:\s*border-box/u);
     expect(sharedSurface).toMatch(
-      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid/u,
+      /border-inline-start\s*:\s*var\(--abyss-calendar-item-rail\) solid/u,
     );
     expect(sharedSurface).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px/u);
     expect(allDayBody).toMatch(/box-sizing\s*:\s*border-box/u);
     expect(allDayBody).not.toMatch(/block-size\s*:\s*100%/u);
     expect(allDayBody).toMatch(/min-block-size\s*:\s*0/u);
-    expect(allDayBody).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
-    expect(allDayBody).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+    expect(allDayBody).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
+    expect(allDayBody).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
     expect(allDayBody).toMatch(/align-items\s*:\s*center/u);
     expect(allDayBody).toMatch(/line-height\s*:\s*1\.4/u);
     for (const ghost of [ghostTimegrid, ghostMonth]) {
-      expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u);
+      expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed/u);
     }
   });
 
@@ -298,8 +296,8 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const other = window.moment().add(5, 'days').format('YYYY-MM-DD');
     renderHourGrid(container, [other]);
-    expect(container.querySelectorAll('.tc-tg-now-line')).toHaveLength(0);
-    expect(container.querySelector('.tc-tg-now-line-dot')).toBeNull();
+    expect(container.querySelectorAll('.abyss-tg-now-line')).toHaveLength(0);
+    expect(container.querySelector('.abyss-tg-now-line-dot')).toBeNull();
   });
 
   it('exposes the now-line element via handles so callers can reposition it later (periodic refresh)', () => {
@@ -307,14 +305,14 @@ describe('renderHourGrid', () => {
     const today = window.moment().format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [today]);
     expect(handles.nowLineEl).not.toBeNull();
-    expect(handles.nowLineEl?.hasClass('tc-tg-now-line')).toBe(true);
+    expect(handles.nowLineEl?.hasClass('abyss-tg-now-line')).toBe(true);
   });
 
   it('nowLineEl is null when today is not among the rendered dates', () => {
     const container = freshContainer();
     const other = window.moment().add(5, 'days').format('YYYY-MM-DD');
     const handles = renderHourGrid(container, [other]);
-    expect(container.querySelectorAll('.tc-tg-now-line')).toHaveLength(0);
+    expect(container.querySelectorAll('.abyss-tg-now-line')).toHaveLength(0);
     expect(handles.nowLineEl).toBeNull();
   });
 
@@ -332,7 +330,7 @@ describe('renderHourGrid', () => {
   it('exposes the scrollable grid-row container so callers can scroll to now', () => {
     const container = freshContainer();
     const handles = renderHourGrid(container, ['2026-07-10']);
-    expect(handles.gridRowEl.hasClass('tc-tg-grid-row')).toBe(true);
+    expect(handles.gridRowEl.hasClass('abyss-tg-grid-row')).toBe(true);
   });
 
   it('dropping onto a day column computes the time from the drop Y-position', () => {
@@ -371,7 +369,7 @@ describe('renderHourGrid', () => {
     const onCreateAtTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], undefined, onCreateAtTime);
     const hourColumnEl = handles.days[0]!.hourColumnEl;
-    const block = hourColumnEl.createDiv({ cls: 'tc-tg-block' });
+    const block = hourColumnEl.createDiv({ cls: 'abyss-tg-block' });
     block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onCreateAtTime).not.toHaveBeenCalled();
   });
@@ -381,7 +379,7 @@ describe('renderHourGrid', () => {
     const onCreateAtTime = vi.fn();
     const handles = renderHourGrid(container, ['2026-07-10'], undefined, onCreateAtTime);
     const hourColumnEl = handles.days[0]!.hourColumnEl;
-    const continuation = hourColumnEl.createDiv({ cls: 'tc-tg-block-continuation' });
+    const continuation = hourColumnEl.createDiv({ cls: 'abyss-tg-block-continuation' });
     continuation.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onCreateAtTime).not.toHaveBeenCalled();
   });
@@ -405,7 +403,7 @@ describe('renderHourGrid', () => {
       undefined,
       onDayHeaderClick,
     );
-    const headers = Array.from(container.querySelectorAll('.tc-tg-header-cell'));
+    const headers = Array.from(container.querySelectorAll('.abyss-tg-header-cell'));
     (headers[1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onDayHeaderClick).toHaveBeenCalledWith('2026-07-11');
     expect(handles.days).toHaveLength(2); // sanity: handles still line up with dates
@@ -416,7 +414,7 @@ describe('renderHourGrid', () => {
   it('does not wire a header click listener when onDayHeaderClick is not provided (no throw on click), and does not advertise clickability', () => {
     const container = freshContainer();
     renderHourGrid(container, ['2026-07-10']);
-    const header = container.querySelector('.tc-tg-header-cell') as HTMLElement;
+    const header = container.querySelector('.abyss-tg-header-cell') as HTMLElement;
     expect(() => header.dispatchEvent(new MouseEvent('click', { bubbles: true }))).not.toThrow();
     // No handler → no false pointer-cursor/hover affordance (Day/Today view's single header).
     expect(header.classList.contains('is-clickable')).toBe(false);
@@ -426,7 +424,7 @@ describe('renderHourGrid', () => {
     const container = freshContainer();
     const onDayHeaderClick = vi.fn();
     renderHourGrid(container, ['2026-07-10'], undefined, undefined, onDayHeaderClick);
-    const alldayCell = container.querySelector('.tc-tg-allday-cell') as HTMLElement;
+    const alldayCell = container.querySelector('.abyss-tg-allday-cell') as HTMLElement;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onDayHeaderClick).not.toHaveBeenCalled();
   });
@@ -448,19 +446,21 @@ describe('renderHourGrid', () => {
 });
 
 describe('is-today styling (Round 3: no column border anywhere, header day-number accent only)', () => {
-  it('.tc-tg-day-column.is-today no longer declares a box-shadow border', () => {
-    expect(css).not.toMatch(/\.tc-tg-day-column\.is-today\s*\{[^}]*box-shadow/u);
+  it('.abyss-tg-day-column.is-today no longer declares a box-shadow border', () => {
+    expect(css).not.toMatch(/\.abyss-tg-day-column\.is-today\s*\{[^}]*box-shadow/u);
   });
 
-  it('.tc-tg-header-cell.is-today no longer colors the whole header cell text', () => {
-    const declarations = declarationsFor('.tc-tg-header-cell.is-today');
+  it('.abyss-tg-header-cell.is-today no longer colors the whole header cell text', () => {
+    const declarations = declarationsFor('.abyss-tg-header-cell.is-today');
     // The old rule set `color` directly on the header cell; that's been replaced by a
     // more specific rule targeting only the day-number span (checked below).
     expect(declarations).toBe('');
   });
 
   it('accents the day-number span red/bold when its header cell is is-today', () => {
-    const declarations = declarationsFor('.tc-tg-header-cell.is-today .tc-tg-header-day-number');
+    const declarations = declarationsFor(
+      '.abyss-tg-header-cell.is-today .abyss-tg-header-day-number',
+    );
     expect(declarations).toContain('var(--text-error)');
     expect(declarations).toMatch(/font-weight:\s*700/u);
   });
@@ -469,68 +469,68 @@ describe('is-today styling (Round 3: no column border anywhere, header day-numbe
 describe('tag-fill background (Round 3 Task 24: solid, not washed-out/gridline-bleeding)', () => {
   it('shares one background rule across timed blocks, all-day spans/plain, and Month compact items', () => {
     const declarations = declarationsForRuleContaining(
-      '.tc-tg-block',
-      '.tc-tg-span',
-      '.tc-tg-plain',
-      '.tc-mg-block-dot',
-      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
-      '.tc-mg-plain',
+      '.abyss-tg-block',
+      '.abyss-tg-span',
+      '.abyss-tg-plain',
+      '.abyss-mg-block-dot',
+      '.abyss-mg-span-segment:not(.abyss-mg-span-continuation)',
+      '.abyss-mg-plain',
     );
     expect(declarations).toContain('background:');
   });
 
   it('mixes the tag color against a solid background (not `transparent`), so the fill is fully opaque and can never let the hour-gridline (or anything else behind it) show through — regardless of the mix percentage', () => {
     const declarations = declarationsForRuleContaining(
-      '.tc-tg-block',
-      '.tc-tg-span',
-      '.tc-tg-plain',
-      '.tc-mg-block-dot',
-      '.tc-mg-span-segment:not(.tc-mg-span-continuation)',
-      '.tc-mg-plain',
+      '.abyss-tg-block',
+      '.abyss-tg-span',
+      '.abyss-tg-plain',
+      '.abyss-mg-block-dot',
+      '.abyss-mg-span-segment:not(.abyss-mg-span-continuation)',
+      '.abyss-mg-plain',
     );
-    const itemTokens = declarationsFor('.tc-calendar-item');
-    expect(declarations).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    const itemTokens = declarationsFor('.abyss-calendar-item');
+    expect(declarations).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
     expect(itemTokens).toMatch(
-      /--tc-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--tc-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
+      /--abyss-calendar-surface\s*:\s*color-mix\(\s*in srgb,\s*var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)\s+var\(--abyss-event-fill-strength,\s*11%\),\s*var\(--background-primary\)\s*\)/u,
     );
-    expect(itemTokens).not.toMatch(/--tc-calendar-surface\s*:\s*color-mix\([^;]*transparent/u);
+    expect(itemTokens).not.toMatch(/--abyss-calendar-surface\s*:\s*color-mix\([^;]*transparent/u);
   });
 });
 
-describe(".tc-tg-allday-gutter styling (Round 3 Task 25: match the hour-label's muted look)", () => {
-  it('uses the same muted color variable and font-size as .tc-tg-hour-label, on its nested label (not the gutter box itself)', () => {
-    // Task 47: font-size/color moved off .tc-tg-allday-gutter itself onto a nested
-    // .tc-tg-allday-gutter-label span — see that selector's styles.css doc comment for why:
+describe(".abyss-tg-allday-gutter styling (Round 3 Task 25: match the hour-label's muted look)", () => {
+  it('uses the same muted color variable and font-size as .abyss-tg-hour-label, on its nested label (not the gutter box itself)', () => {
+    // Task 47: font-size/color moved off .abyss-tg-allday-gutter itself onto a nested
+    // .abyss-tg-allday-gutter-label span — see that selector's styles.css doc comment for why:
     // font-size directly on the gutter box made its own `width: 3.5em` resolve against its own
-    // (smaller) font-size instead of the ambient one .tc-tg-header-gutter/.tc-tg-hour-gutter use,
+    // (smaller) font-size instead of the ambient one .abyss-tg-header-gutter/.abyss-tg-hour-gutter use,
     // silently narrowing this one gutter and offsetting the whole all-day band from the hour-grid
     // below it.
-    const label = declarationsFor('.tc-tg-allday-gutter-label');
-    const hourLabel = declarationsFor('.tc-tg-hour-label');
+    const label = declarationsFor('.abyss-tg-allday-gutter-label');
+    const hourLabel = declarationsFor('.abyss-tg-hour-label');
     expect(label).toContain('color: var(--text-faint)');
     expect(hourLabel).toContain('color: var(--text-faint)');
     expect(label).toContain('font-size: 0.75em');
     expect(hourLabel).toContain('font-size: 0.75em');
-    const gutter = declarationsFor('.tc-tg-allday-gutter');
+    const gutter = declarationsFor('.abyss-tg-allday-gutter');
     expect(gutter).toContain('text-align: right');
   });
 
-  it('.tc-tg-allday-gutter itself sets no font-size override, so its width: 3.5em resolves against the same ambient font-size as .tc-tg-header-gutter/.tc-tg-hour-gutter', () => {
-    const gutter = declarationsFor('.tc-tg-allday-gutter');
+  it('.abyss-tg-allday-gutter itself sets no font-size override, so its width: 3.5em resolves against the same ambient font-size as .abyss-tg-header-gutter/.abyss-tg-hour-gutter', () => {
+    const gutter = declarationsFor('.abyss-tg-allday-gutter');
     expect(gutter).not.toMatch(/font-size/u);
   });
 });
 
 describe('Task 47: all-day band day-cells share the hour-grid day-columns’ exact layout mechanism', () => {
-  it('.tc-tg-allday-cell sets min-width: 0, so a long title cannot force the cell wider than its flex-computed share (which also misaligns it against the day-column below)', () => {
-    const cell = declarationsFor('.tc-tg-allday-cell');
+  it('.abyss-tg-allday-cell sets min-width: 0, so a long title cannot force the cell wider than its flex-computed share (which also misaligns it against the day-column below)', () => {
+    const cell = declarationsFor('.abyss-tg-allday-cell');
     expect(cell).toMatch(/min-width:\s*0/u);
   });
 
-  it('.tc-tg-header-row and .tc-tg-allday-row reserve the identical scrollbar-gutter space that .tc-tg-grid-row (which actually scrolls) reserves, so their flex day-cells divide up the same usable width', () => {
-    const gridRow = declarationsFor('.tc-tg-grid-row');
-    const headerRow = declarationsFor('.tc-tg-header-row');
-    const alldayRow = declarationsFor('.tc-tg-allday-row');
+  it('.abyss-tg-header-row and .abyss-tg-allday-row reserve the identical scrollbar-gutter space that .abyss-tg-grid-row (which actually scrolls) reserves, so their flex day-cells divide up the same usable width', () => {
+    const gridRow = declarationsFor('.abyss-tg-grid-row');
+    const headerRow = declarationsFor('.abyss-tg-header-row');
+    const alldayRow = declarationsFor('.abyss-tg-allday-row');
     expect(gridRow).toContain('scrollbar-gutter: stable');
     expect(headerRow).toContain('scrollbar-gutter: stable');
     expect(alldayRow).toContain('scrollbar-gutter: stable');
@@ -539,18 +539,18 @@ describe('Task 47: all-day band day-cells share the hour-grid day-columns’ exa
   });
 });
 
-describe('.tc-tg-grid-row layout (regression: today-column outline / click-drop hit-test truncation)', () => {
+describe('.abyss-tg-grid-row layout (regression: today-column outline / click-drop hit-test truncation)', () => {
   it('does not stretch day-columns to the scroll container height', () => {
-    // Regression test: .tc-tg-grid-row is a flex row whose children (the hour-gutter and each
+    // Regression test: .abyss-tg-grid-row is a flex row whose children (the hour-gutter and each
     // day-column) hold 24 hour-rows of real content (1152px), but the row itself is a shorter,
     // scrollable viewport. Without `align-items: flex-start`, the default `stretch` sizes every
     // day-column's own box to the *visible* container height instead of its 1152px content —
-    // which in turn truncates .tc-tg-hour-column (positioned `inset: 0` to its day-column parent)
+    // which in turn truncates .abyss-tg-hour-column (positioned `inset: 0` to its day-column parent)
     // to that same short height, silently clipping click-to-create/drag-drop hit-testing and the
     // is-today red outline partway down the column (confirmed live: the outline stopped around
     // 17:00 in a viewport tall enough to show ~16.5 hours, while hour-row gridlines kept
     // rendering past that point as unclipped normal-flow overflow).
-    const gridRow = declarationsFor('.tc-tg-grid-row');
+    const gridRow = declarationsFor('.abyss-tg-grid-row');
     expect(gridRow).toContain('align-items: flex-start');
   });
 });

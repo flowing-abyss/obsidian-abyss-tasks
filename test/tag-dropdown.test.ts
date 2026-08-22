@@ -28,9 +28,9 @@ describe('inline tag dropdown', () => {
 
     try {
       showTagDropdown(container, app, () => undefined, vi.fn());
-      const input = container.querySelector<HTMLInputElement>('.tc-tag-input')!;
-      const listbox = container.querySelector<HTMLElement>('.tc-tag-dropdown')!;
-      const options = listbox.querySelectorAll<HTMLElement>('.tc-tag-dropdown-opt');
+      const input = container.querySelector<HTMLInputElement>('.abyss-tag-input')!;
+      const listbox = container.querySelector<HTMLElement>('.abyss-tag-dropdown')!;
+      const options = listbox.querySelectorAll<HTMLElement>('.abyss-tag-dropdown-opt');
 
       expect(ownerDocument.activeElement).toBe(input);
       expect(input.getAttribute('role')).toBe('combobox');
@@ -63,17 +63,21 @@ describe('inline tag dropdown', () => {
 
     try {
       showTagDropdown(container, app, () => undefined, commit);
-      const input = container.querySelector<HTMLInputElement>('.tc-tag-input')!;
+      const input = container.querySelector<HTMLInputElement>('.abyss-tag-input')!;
       key(input, 'ArrowDown');
       key(input, 'ArrowDown');
-      const activeBefore = container.querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active')!;
+      const activeBefore = container.querySelector<HTMLElement>(
+        '.abyss-tag-dropdown-opt.is-active',
+      )!;
       expect(activeBefore.textContent).toBe('#beta');
       expect(activeBefore.getAttribute('aria-selected')).toBe('true');
       expect(input.getAttribute('aria-activedescendant')).toBe(activeBefore.id);
 
       input.value = 'be';
       input.dispatchEvent(new Event('input', { bubbles: true }));
-      const activeAfter = container.querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active')!;
+      const activeAfter = container.querySelector<HTMLElement>(
+        '.abyss-tag-dropdown-opt.is-active',
+      )!;
       expect(ownerDocument.activeElement).toBe(input);
       expect(activeAfter.textContent).toBe('#beta');
       expect(activeAfter.id).toBe(activeBefore.id);
@@ -84,7 +88,7 @@ describe('inline tag dropdown', () => {
       expect(enter.defaultPrevented).toBe(true);
       expect(commit).toHaveBeenCalledOnce();
       expect(commit).toHaveBeenCalledWith('#beta');
-      expect(container.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(container.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
     } finally {
       frame.remove();
     }

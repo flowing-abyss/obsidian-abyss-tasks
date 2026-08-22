@@ -112,8 +112,8 @@ function makeTab(opts: { withCustomStatus?: boolean } = {}): {
 
 /** The "Custom statuses" section body — opened via its header click. */
 function openStatusesSection(tab: CalendarSettingsTab): HTMLElement {
-  const headers = tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header');
-  const labels = tab.containerEl.querySelectorAll('.tc-settings-section-label');
+  const headers = tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header');
+  const labels = tab.containerEl.querySelectorAll('.abyss-settings-section-label');
   let idx = -1;
   labels.forEach((l, i) => {
     if (l.textContent === 'Custom statuses') idx = i;
@@ -121,33 +121,33 @@ function openStatusesSection(tab: CalendarSettingsTab): HTMLElement {
   expect(idx).toBeGreaterThanOrEqual(0);
   headers[idx]!.click();
   return tab.containerEl
-    .querySelectorAll<HTMLElement>('.tc-settings-section')
-    [idx]!.querySelector('.tc-settings-section-body')!;
+    .querySelectorAll<HTMLElement>('.abyss-settings-section')
+    [idx]!.querySelector('.abyss-settings-section-body')!;
 }
 
 describe('CalendarSettingsTab — custom statuses section', () => {
   it('renders a card for each default status, grouped by type', () => {
     const { tab } = makeTab();
     const body = openStatusesSection(tab);
-    const groups = body.querySelectorAll('.tc-status-type-group');
+    const groups = body.querySelectorAll('.abyss-status-type-group');
     expect(groups.length).toBeGreaterThan(0);
-    const cards = body.querySelectorAll('.tc-settings-card');
+    const cards = body.querySelectorAll('.abyss-settings-card');
     expect(cards).toHaveLength(4); // the 4 locked core statuses, no defaults beyond that
   });
 
   it('shows a marker preview chip and monospace symbol badge per card', () => {
     const { tab } = makeTab();
     const body = openStatusesSection(tab);
-    expect(body.querySelectorAll('.tc-status-header-preview')).toHaveLength(4);
-    expect(body.querySelectorAll('.tc-settings-card-badge')).toHaveLength(4);
+    expect(body.querySelectorAll('.abyss-status-header-preview')).toHaveLength(4);
+    expect(body.querySelectorAll('.abyss-settings-card-badge')).toHaveLength(4);
   });
 
   it('keeps both header and editable-card marker previews inert', () => {
     const { tab } = makeTab();
     const body = openStatusesSection(tab);
     const markers = [
-      body.querySelector<HTMLElement>('.tc-status-header-preview .tc-status-marker'),
-      body.querySelector<HTMLElement>('.tc-status-preview .tc-status-marker'),
+      body.querySelector<HTMLElement>('.abyss-status-header-preview .abyss-status-marker'),
+      body.querySelector<HTMLElement>('.abyss-status-preview .abyss-status-marker'),
     ];
 
     for (const marker of markers) {
@@ -156,7 +156,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       marker!.dispatchEvent(click);
       expect(marker!.hasAttribute('role')).toBe(false);
       expect(marker!.hasAttribute('tabindex')).toBe(false);
-      expect(marker!.classList.contains('tc-status-marker--inert')).toBe(true);
+      expect(marker!.classList.contains('abyss-status-marker--inert')).toBe(true);
       expect(click.defaultPrevented).toBe(false);
     }
   });
@@ -233,12 +233,12 @@ describe('CalendarSettingsTab — custom statuses section', () => {
   it('core statuses show a lock cue and a disabled symbol input; non-core does not', () => {
     const { tab } = makeTab({ withCustomStatus: true });
     const body = openStatusesSection(tab);
-    const cards = body.querySelectorAll('.tc-settings-card');
+    const cards = body.querySelectorAll('.abyss-settings-card');
     let sawLockedCore = false;
     let sawUnlockedNonCore = false;
     cards.forEach((card) => {
-      const lock = card.querySelector('.tc-status-symbol-lock');
-      const lockedInput = card.querySelector<HTMLInputElement>('.tc-status-symbol-locked');
+      const lock = card.querySelector('.abyss-status-symbol-lock');
+      const lockedInput = card.querySelector<HTMLInputElement>('.abyss-status-symbol-locked');
       if (lock) {
         expect(lockedInput).not.toBeNull();
         sawLockedCore = true;
@@ -253,13 +253,13 @@ describe('CalendarSettingsTab — custom statuses section', () => {
   it('core statuses show a locked, read-only icon; non-core gets the full picker', () => {
     const { tab } = makeTab({ withCustomStatus: true });
     const body = openStatusesSection(tab);
-    const cards = body.querySelectorAll('.tc-settings-card');
+    const cards = body.querySelectorAll('.abyss-settings-card');
     let sawLockedCoreIcon = false;
     let sawEditableNonCoreIcon = false;
     cards.forEach((card) => {
-      const iconLock = card.querySelector('.tc-status-icon-lock');
-      const lockedPreview = card.querySelector('.tc-status-icon-locked-preview');
-      const searchInput = card.querySelector('.tc-status-icon-input-host');
+      const iconLock = card.querySelector('.abyss-status-icon-lock');
+      const lockedPreview = card.querySelector('.abyss-status-icon-locked-preview');
+      const searchInput = card.querySelector('.abyss-status-icon-input-host');
       if (iconLock) {
         expect(lockedPreview).not.toBeNull();
         expect(searchInput).toBeNull(); // no Lucide search picker for locked core icons
@@ -295,7 +295,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const originalSymbol = coreStatus.symbol;
 
     const coreSymbolInput = captured.find((c) =>
-      c.el.classList.contains('tc-status-symbol-locked'),
+      c.el.classList.contains('abyss-status-symbol-locked'),
     );
     expect(coreSymbolInput).toBeDefined();
 
@@ -311,11 +311,11 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     const body = openStatusesSection(tab);
     const status = plugin.settings.taskStatuses.find((s) => !s.core && s.icon !== '')!;
     expect(status).toBeDefined();
-    const card = Array.from(body.querySelectorAll('.tc-settings-card')).find((c) =>
+    const card = Array.from(body.querySelectorAll('.abyss-settings-card')).find((c) =>
       c.textContent?.includes(status.name),
     )!;
     expect(card).toBeDefined();
-    const clearCell = card.querySelector<HTMLElement>('.tc-status-icon-clear');
+    const clearCell = card.querySelector<HTMLElement>('.abyss-status-icon-clear');
     expect(clearCell).not.toBeNull();
     clearCell!.click();
     await Promise.resolve();
@@ -332,7 +332,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
     const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
-    const card = Array.from(body.querySelectorAll<HTMLElement>('.tc-settings-card')).find(
+    const card = Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
       (candidate) => candidate.textContent?.includes(status.name),
     )!;
     const search = captured.find(
@@ -341,7 +341,9 @@ describe('CalendarSettingsTab — custom statuses section', () => {
 
     search.invokeChange('alert-triangle');
 
-    const results = Array.from(card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'));
+    const results = Array.from(
+      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
+    );
     const clear = results.find((result) => result.title === 'No icon')!;
     const selected = results.find((result) => result.title === 'alert-triangle')!;
     expect(clear).toBeInstanceOf(HTMLButtonElement);
@@ -355,20 +357,20 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     clear.click();
 
     const cleared = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
     ).find((result) => result.title === 'No icon')!;
     expect(status.icon).toBe('');
     expect(cleared.getAttribute('aria-pressed')).toBe('true');
     expect(activeDocument.activeElement).toBe(cleared);
 
     const icon = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
     ).find((result) => result.title === 'alert-triangle')!;
     icon.focus();
     icon.click();
 
     const reselected = Array.from(
-      card.querySelectorAll<HTMLButtonElement>('.tc-status-icon-result'),
+      card.querySelectorAll<HTMLButtonElement>('.abyss-status-icon-result'),
     ).find((result) => result.title === 'alert-triangle')!;
     expect(status.icon).toBe('alert-triangle');
     expect(reselected.getAttribute('aria-pressed')).toBe('true');
@@ -386,7 +388,7 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     activeDocument.body.append(tab.containerEl);
     const body = openStatusesSection(tab);
     const status = plugin.settings.taskStatuses.find((s) => !s.core)!;
-    const card = Array.from(body.querySelectorAll<HTMLElement>('.tc-settings-card')).find(
+    const card = Array.from(body.querySelectorAll<HTMLElement>('.abyss-settings-card')).find(
       (candidate) => candidate.textContent?.includes(status.name),
     )!;
     const search = captured.find(
@@ -394,12 +396,12 @@ describe('CalendarSettingsTab — custom statuses section', () => {
     )!;
 
     search.invokeChange('no-matching-icon');
-    const clear = card.querySelector<HTMLButtonElement>('.tc-status-icon-clear')!;
-    expect(card.querySelector('.tc-status-icon-empty')).not.toBeNull();
+    const clear = card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear')!;
+    expect(card.querySelector('.abyss-status-icon-empty')).not.toBeNull();
     clear.focus();
     clear.click();
 
-    const replacement = card.querySelector<HTMLButtonElement>('.tc-status-icon-clear')!;
+    const replacement = card.querySelector<HTMLButtonElement>('.abyss-status-icon-clear')!;
     expect(status.icon).toBe('');
     expect(activeDocument.activeElement).toBe(replacement);
     tab.containerEl.remove();

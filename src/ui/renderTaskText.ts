@@ -23,7 +23,7 @@ export function renderTaskText(
     el.setText(markdownText);
     return;
   }
-  const holder = el.createSpan({ cls: 'tc-md' });
+  const holder = el.createSpan({ cls: 'abyss-md' });
   void MarkdownRenderer.render(opts.app, markdownText, holder, opts.sourcePath, opts.component);
   // Unwrap the single wrapping <p> MarkdownRenderer emits so titles stay inline.
   window.setTimeout(() => {

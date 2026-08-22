@@ -122,9 +122,9 @@ function supplementalTopPaddingPx(selector: string): number {
 
 describe('Panel shell top rhythm', () => {
   it('defines one responsive inset and one subtle theme-derived root edge', () => {
-    const panel = declarationsFor('.tc-panel-view');
+    const panel = declarationsFor('.abyss-panel-view');
 
-    expect(panel).toContain('--tc-shell-top-inset: clamp(3px, 0.4vw, 5px)');
+    expect(panel).toContain('--abyss-shell-top-inset: clamp(3px, 0.4vw, 5px)');
     expect(panel).toContain('border-top: 1px solid var(--background-modifier-border)');
     expect(withoutWhitespace(panel)).toContain(
       'border-top-color:color-mix(insrgb,var(--background-modifier-border)60%,transparent)',
@@ -137,19 +137,19 @@ describe('Panel shell top rhythm', () => {
   });
 
   it.each([
-    ['.tc-layout > .tc-rail', '8px'],
-    ['.tc-layout > .tc-left > .tc-left-section:first-child', '12px'],
+    ['.abyss-layout > .abyss-rail', '8px'],
+    ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', '12px'],
     [
-      '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
+      '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
       '12px',
     ],
-    ['.tc-layout--calendar > .tc-center > .tc-cal-nav', '8px'],
-    ['.tc-layout--projects > .tc-center .tc-projects-toolbar', '12px'],
-    ['.tc-layout > .tc-right > .tc-right-header:first-child', '12px'],
-    ['.tc-layout > .tc-right > .tc-breadcrumb:first-child', '18px'],
+    ['.abyss-layout--calendar > .abyss-center > .abyss-cal-nav', '8px'],
+    ['.abyss-layout--projects > .abyss-center .abyss-projects-toolbar', '12px'],
+    ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', '12px'],
+    ['.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child', '18px'],
   ])('adds the inset to the approved top-level surface %s', (selector, existingTopPadding) => {
     expect(declarationsFor(selector)).toContain(
-      `padding-top: calc(${existingTopPadding} + var(--tc-shell-top-inset))`,
+      `padding-top: calc(${existingTopPadding} + var(--abyss-shell-top-inset))`,
     );
   });
 
@@ -157,10 +157,13 @@ describe('Panel shell top rhythm', () => {
     // Existing geometry after each supplemental top padding:
     // rail half-button 18; left row margin 1 + padding 5 + half-icon 8; filter half-height 14.
     const centerlines = [
-      supplementalTopPaddingPx('.tc-layout > .tc-rail') + 18,
-      supplementalTopPaddingPx('.tc-layout > .tc-left > .tc-left-section:first-child') + 1 + 5 + 8,
+      supplementalTopPaddingPx('.abyss-layout > .abyss-rail') + 18,
+      supplementalTopPaddingPx('.abyss-layout > .abyss-left > .abyss-left-section:first-child') +
+        1 +
+        5 +
+        8,
       supplementalTopPaddingPx(
-        '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
+        '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
       ) + 14,
     ];
 
@@ -169,37 +172,37 @@ describe('Panel shell top rhythm', () => {
 
   it('does not add the inset to content, grid, empty, section, or modal surfaces', () => {
     const insetSelectors = rules
-      .filter((rule) => rule.body.includes('var(--tc-shell-top-inset)'))
+      .filter((rule) => rule.body.includes('var(--abyss-shell-top-inset)'))
       .map((rule) => rule.selector);
 
     expect(insetSelectors).toEqual([
-      '.tc-layout > .tc-rail',
-      '.tc-layout > .tc-left > .tc-left-section:first-child',
-      '.tc-layout--tasks > .tc-center > .tc-center-header, .tc-layout--search > .tc-center > .tc-center-header',
-      '.tc-layout--calendar > .tc-center > .tc-cal-nav',
-      '.tc-layout--projects > .tc-center .tc-projects-toolbar',
-      '.tc-layout > .tc-right > .tc-right-header:first-child',
-      '.tc-layout > .tc-right > .tc-breadcrumb:first-child',
+      '.abyss-layout > .abyss-rail',
+      '.abyss-layout > .abyss-left > .abyss-left-section:first-child',
+      '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
+      '.abyss-layout--calendar > .abyss-center > .abyss-cal-nav',
+      '.abyss-layout--projects > .abyss-center .abyss-projects-toolbar',
+      '.abyss-layout > .abyss-right > .abyss-right-header:first-child',
+      '.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child',
     ]);
 
     for (const selector of [
-      '.tc-center-scroll',
-      '.tc-cal-body',
-      '.tc-right-section',
-      '.tc-center-empty',
-      '.tc-modal-body',
-      '.tc-modal .tc-right-header',
-      '.tc-layout > .tc-right > .tc-right-header',
+      '.abyss-center-scroll',
+      '.abyss-cal-body',
+      '.abyss-right-section',
+      '.abyss-center-empty',
+      '.abyss-modal-body',
+      '.abyss-modal .abyss-right-header',
+      '.abyss-layout > .abyss-right > .abyss-right-header',
     ]) {
-      expect(declarationsFor(selector)).not.toContain('var(--tc-shell-top-inset)');
+      expect(declarationsFor(selector)).not.toContain('var(--abyss-shell-top-inset)');
     }
   });
 });
 
 describe('Global search field geometry', () => {
   it('keeps the global search field flexible and bounded without width animation', () => {
-    const globalSearch = declarationsFor('.tc-search-global');
-    const focusedGlobalSearch = declarationsFor('.tc-search-global:focus');
+    const globalSearch = declarationsFor('.abyss-search-global');
+    const focusedGlobalSearch = declarationsFor('.abyss-search-global:focus');
 
     expect(globalSearch).toContain('flex: 1');
     expect(globalSearch).toContain('min-width: 0');

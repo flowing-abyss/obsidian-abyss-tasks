@@ -30,32 +30,32 @@ export function requestTaskCompletion(
 
   return new Promise<void>((resolve, reject) => {
     dismissActiveCompletionConfirmation?.();
-    activeDocument.querySelector('.tc-recurrence-delete-confirm')?.remove();
+    activeDocument.querySelector('.abyss-recurrence-delete-confirm')?.remove();
     const previousFocus = activeDocument.activeElement;
     const surface = activeDocument.body.createDiv({
-      cls: 'tc-recurrence-delete-confirm',
+      cls: 'abyss-recurrence-delete-confirm',
       attr: {
         role: 'alertdialog',
         'aria-modal': 'true',
-        'aria-labelledby': 'tc-recurrence-delete-confirm-title',
-        'aria-describedby': 'tc-recurrence-delete-confirm-description',
+        'aria-labelledby': 'abyss-recurrence-delete-confirm-title',
+        'aria-describedby': 'abyss-recurrence-delete-confirm-description',
       },
     });
-    const dialog = surface.createDiv({ cls: 'tc-recurrence-delete-confirm-dialog' });
+    const dialog = surface.createDiv({ cls: 'abyss-recurrence-delete-confirm-dialog' });
     dialog.createEl('h3', {
-      cls: 'tc-recurrence-delete-confirm-title',
+      cls: 'abyss-recurrence-delete-confirm-title',
       text: 'Delete completed task?',
-      attr: { id: 'tc-recurrence-delete-confirm-title' },
+      attr: { id: 'abyss-recurrence-delete-confirm-title' },
     });
     dialog.createEl('p', {
-      cls: 'tc-recurrence-delete-confirm-description',
+      cls: 'abyss-recurrence-delete-confirm-description',
       text: 'The complete task and its sub-tasks will be deleted. No next occurrence will be created.',
-      attr: { id: 'tc-recurrence-delete-confirm-description' },
+      attr: { id: 'abyss-recurrence-delete-confirm-description' },
     });
-    const actions = dialog.createDiv({ cls: 'tc-recurrence-delete-confirm-actions' });
+    const actions = dialog.createDiv({ cls: 'abyss-recurrence-delete-confirm-actions' });
     const cancel = actions.createEl('button', { text: 'Cancel', attr: { type: 'button' } });
     const confirm = actions.createEl('button', {
-      cls: 'mod-warning tc-recurrence-delete-confirm-button',
+      cls: 'mod-warning abyss-recurrence-delete-confirm-button',
       text: 'Delete completed task',
       attr: { type: 'button' },
     });

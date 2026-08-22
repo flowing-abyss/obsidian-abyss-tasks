@@ -23,7 +23,7 @@ export interface CalendarPreviewContent {
   readonly phase: 'ghost' | 'terminal';
 }
 
-const COPIED_COLOR_PROPERTIES = ['--tc-tag-color', '--tc-tag-text-color'] as const;
+const COPIED_COLOR_PROPERTIES = ['--abyss-tag-color', '--abyss-tag-text-color'] as const;
 
 function appendElement<K extends keyof HTMLElementTagNameMap>(
   parent: HTMLElement,
@@ -48,15 +48,15 @@ export function renderTimedContent(
   content: CalendarTimedContent,
   hooks: CalendarTimedRenderHooks = {},
 ): void {
-  const topRow = appendElement(container, 'div', 'tc-tg-block-toprow');
-  appendElement(topRow, 'div', 'tc-tg-block-subtitle', content.timeLabel);
+  const topRow = appendElement(container, 'div', 'abyss-tg-block-toprow');
+  appendElement(topRow, 'div', 'abyss-tg-block-subtitle', content.timeLabel);
   if (content.countLabel) {
-    const counts = appendElement(topRow, 'div', 'tc-tg-block-badges');
+    const counts = appendElement(topRow, 'div', 'abyss-tg-block-badges');
     if (hooks.renderCounts) hooks.renderCounts(counts);
     else appendElement(counts, 'span', '', content.countLabel);
   }
 
-  const head = appendElement(container, 'div', 'tc-tg-block-head');
+  const head = appendElement(container, 'div', 'abyss-tg-block-head');
   renderCalendarLeadingSlots(
     head,
     content.recurrence,
@@ -68,7 +68,7 @@ export function renderTimedContent(
     appendElement(
       head,
       'span',
-      'tc-tg-block-title tc-calendar-title tc-calendar-preview-title',
+      'abyss-tg-block-title abyss-calendar-title abyss-calendar-preview-title',
       content.title,
     );
   }
@@ -82,7 +82,7 @@ function stripPreviewInteractivity(root: HTMLElement): void {
     element.removeAttribute('aria-label');
     element.removeAttribute('draggable');
   }
-  root.classList.add('tc-status-marker--inert');
+  root.classList.add('abyss-status-marker--inert');
 }
 
 function renderPreviewTimedContent(
@@ -90,11 +90,15 @@ function renderPreviewTimedContent(
   source: HTMLElement,
   content: CalendarTimedContent,
 ): void {
-  const sourceMarker = source.querySelector<HTMLElement>('.tc-tg-block-head .tc-status-marker');
-  const sourceCounts = source.querySelector<HTMLElement>('.tc-tg-block-toprow .tc-tg-block-badges');
+  const sourceMarker = source.querySelector<HTMLElement>(
+    '.abyss-tg-block-head .abyss-status-marker',
+  );
+  const sourceCounts = source.querySelector<HTMLElement>(
+    '.abyss-tg-block-toprow .abyss-tg-block-badges',
+  );
   const forecast =
     source.dataset['occurrenceState'] === 'forecast' ||
-    source.querySelector('.tc-recurrence-badge[data-recurrence-forecast="true"]') !== null;
+    source.querySelector('.abyss-recurrence-badge[data-recurrence-forecast="true"]') !== null;
   renderTimedContent(shell, content, {
     forecast,
     ...(sourceMarker && content.actionable
@@ -123,18 +127,19 @@ function updateStableTimedContent(
   source: HTMLElement,
   content: CalendarTimedContent,
 ): boolean {
-  const topRow = shell.querySelector<HTMLElement>(':scope > .tc-tg-block-toprow');
-  const head = shell.querySelector<HTMLElement>(':scope > .tc-tg-block-head');
+  const topRow = shell.querySelector<HTMLElement>(':scope > .abyss-tg-block-toprow');
+  const head = shell.querySelector<HTMLElement>(':scope > .abyss-tg-block-head');
   if (!topRow || !head) return false;
-  const markerPresent = head.querySelector('.tc-status-marker') !== null;
+  const markerPresent = head.querySelector('.abyss-status-marker') !== null;
   const sourceMarkerPresent =
-    source.querySelector('.tc-tg-block-head .tc-status-marker') !== null && content.actionable;
-  const recurrencePresent = head.querySelector('.tc-recurrence-badge') !== null;
+    source.querySelector('.abyss-tg-block-head .abyss-status-marker') !== null &&
+    content.actionable;
+  const recurrencePresent = head.querySelector('.abyss-recurrence-badge') !== null;
   if (markerPresent !== sourceMarkerPresent || recurrencePresent !== Boolean(content.recurrence)) {
     return false;
   }
-  const subtitle = topRow.querySelector<HTMLElement>('.tc-tg-block-subtitle');
-  const title = head.querySelector<HTMLElement>('.tc-calendar-title');
+  const subtitle = topRow.querySelector<HTMLElement>('.abyss-tg-block-subtitle');
+  const title = head.querySelector<HTMLElement>('.abyss-calendar-title');
   if (!subtitle || !title) return false;
   subtitle.textContent = content.timeLabel;
   title.textContent = content.title;
@@ -146,7 +151,7 @@ export function populateCalendarPreview(
   source: HTMLElement,
   content: CalendarPreviewContent,
 ): void {
-  preview.classList.add('tc-calendar-preview');
+  preview.classList.add('abyss-calendar-preview');
   preview.setAttribute('aria-hidden', 'true');
   preview.removeAttribute('tabindex');
   preview.removeAttribute('draggable');
@@ -161,7 +166,9 @@ export function populateCalendarPreview(
     else preview.style.removeProperty(property);
   }
 
-  const existingShell = preview.querySelector<HTMLElement>(':scope > .tc-calendar-preview-shell');
+  const existingShell = preview.querySelector<HTMLElement>(
+    ':scope > .abyss-calendar-preview-shell',
+  );
   if (
     content.timed &&
     existingShell &&
@@ -172,11 +179,11 @@ export function populateCalendarPreview(
 
   preview.replaceChildren();
   const targetOutline = preview.ownerDocument.createElement('div');
-  targetOutline.className = 'tc-calendar-preview-target-outline';
+  targetOutline.className = 'abyss-calendar-preview-target-outline';
   preview.appendChild(targetOutline);
 
   const shell = preview.ownerDocument.createElement('div');
-  shell.className = 'tc-calendar-preview-shell';
+  shell.className = 'abyss-calendar-preview-shell';
   preview.appendChild(shell);
 
   if (content.timed) {
@@ -185,13 +192,13 @@ export function populateCalendarPreview(
   }
 
   const title = preview.ownerDocument.createElement('span');
-  title.className = 'tc-calendar-preview-title';
+  title.className = 'abyss-calendar-preview-title';
   title.textContent = content.title;
   shell.appendChild(title);
 
   if (content.subtitle) {
     const subtitle = preview.ownerDocument.createElement('span');
-    subtitle.className = 'tc-calendar-preview-subtitle';
+    subtitle.className = 'abyss-calendar-preview-subtitle';
     subtitle.textContent = content.subtitle;
     shell.appendChild(subtitle);
   }

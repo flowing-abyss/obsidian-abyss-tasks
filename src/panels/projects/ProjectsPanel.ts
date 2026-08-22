@@ -62,7 +62,7 @@ export class ProjectsPanel {
 
   private render(): void {
     this.el.empty();
-    this.el.addClass('tc-projects-panel');
+    this.el.addClass('abyss-projects-panel');
     const view = this.state.get('projectsPanel');
 
     if (view.view === 'dashboard') {

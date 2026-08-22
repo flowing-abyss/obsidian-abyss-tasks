@@ -19,15 +19,15 @@ const columns = [
 function expectInertPreview(preview: HTMLElement, title: string): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
   expect(preview.textContent).toContain(title);
-  expect(preview.classList.contains('tc-calendar-preview')).toBe(true);
-  expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')?.textContent).toBe(
-    '',
-  );
+  expect(preview.classList.contains('abyss-calendar-preview')).toBe(true);
   expect(
-    preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+    preview.querySelector(':scope > .abyss-calendar-preview-target-outline')?.textContent,
+  ).toBe('');
+  expect(
+    preview.querySelector(':scope > .abyss-calendar-preview-shell .abyss-calendar-preview-title')
       ?.textContent,
   ).toBe(title);
-  expect(preview.querySelector('.tc-status-marker')).toBeNull();
+  expect(preview.querySelector('.abyss-status-marker')).toBeNull();
   expect(preview.querySelector('a')).toBeNull();
   expect(preview.getAttribute('tabindex')).toBeNull();
 }
@@ -80,12 +80,12 @@ describe('span interaction geometry', () => {
 
   it('uses the source document window for a single active create-span session', () => {
     const root = document.createElement('div');
-    root.className = 'tc-tg-root';
-    const row = root.createDiv({ cls: 'tc-tg-allday-days' });
-    const layer = row.createDiv({ cls: 'tc-tg-span-layer' });
-    const first = row.createDiv({ cls: 'tc-tg-allday-cell' });
+    root.className = 'abyss-tg-root';
+    const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
+    const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
+    const first = row.createDiv({ cls: 'abyss-tg-allday-cell' });
     first.dataset['tgDate'] = '2026-07-06';
-    const second = row.createDiv({ cls: 'tc-tg-allday-cell' });
+    const second = row.createDiv({ cls: 'abyss-tg-allday-cell' });
     second.dataset['tgDate'] = '2026-07-07';
     document.body.appendChild(root);
     const source = layer.createDiv();
@@ -134,7 +134,7 @@ describe('span interaction geometry', () => {
 
   it('computes one prospective layout per multi-row Month pointer update', () => {
     const root = document.createElement('div');
-    root.className = 'tc-mg-grid';
+    root.className = 'abyss-mg-grid';
     const dates = [
       '2026-07-06',
       '2026-07-07',
@@ -152,11 +152,11 @@ describe('span interaction geometry', () => {
       '2026-07-19',
     ];
     const layers = Array.from({ length: 2 }, (_, rowIndex) => {
-      const row = root.createDiv({ cls: 'tc-mg-row' });
-      const layer = row.createDiv({ cls: 'tc-mg-span-layer' });
+      const row = root.createDiv({ cls: 'abyss-mg-row' });
+      const layer = row.createDiv({ cls: 'abyss-mg-span-layer' });
       for (let columnIndex = 0; columnIndex < 7; columnIndex++) {
         const dateIndex = rowIndex * 7 + columnIndex;
-        const cell = row.createDiv({ cls: 'tc-mg-cell' });
+        const cell = row.createDiv({ cls: 'abyss-mg-cell' });
         cell.dataset['mgDate'] = dates[dateIndex];
         vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
           new DOMRect(columnIndex * 100, rowIndex * 100, 100, 100),
@@ -207,11 +207,13 @@ describe('span interaction geometry', () => {
       );
 
       expect(
-        Array.from(root.querySelectorAll<HTMLElement>('.tc-span-move-preview')).map((preview) => ({
-          column: preview.style.gridColumn,
-          row: preview.style.gridRow,
-          target: JSON.parse(preview.dataset['target']!),
-        })),
+        Array.from(root.querySelectorAll<HTMLElement>('.abyss-span-move-preview')).map(
+          (preview) => ({
+            column: preview.style.gridColumn,
+            row: preview.style.gridRow,
+            target: JSON.parse(preview.dataset['target']!),
+          }),
+        ),
       ).toEqual([
         {
           column: '6 / 7',
@@ -244,12 +246,12 @@ describe('span interaction geometry', () => {
           target: { grabbedDate: '2026-07-10', targetDate: '2026-07-11', days: 1 },
         },
       ]);
-      for (const preview of root.querySelectorAll<HTMLElement>('.tc-span-move-preview')) {
+      for (const preview of root.querySelectorAll<HTMLElement>('.abyss-span-move-preview')) {
         expectInertPreview(preview, snapshot.title);
       }
       expect(layoutComputations).toBe(1);
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
-      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
+      expect(root.querySelectorAll('.abyss-span-move-preview')).toHaveLength(0);
     } finally {
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 3 }));
       root.remove();
@@ -258,11 +260,11 @@ describe('span interaction geometry', () => {
 
   it('clears a boundary preview once when returning to its unchanged date', () => {
     const root = document.createElement('div');
-    root.className = 'tc-tg-root';
-    const row = root.createDiv({ cls: 'tc-tg-allday-days' });
-    const layer = row.createDiv({ cls: 'tc-tg-span-layer' });
+    root.className = 'abyss-tg-root';
+    const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
+    const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
     for (const [index, date] of ['2026-07-06', '2026-07-07', '2026-07-08'].entries()) {
-      const cell = row.createDiv({ cls: 'tc-tg-allday-cell' });
+      const cell = row.createDiv({ cls: 'abyss-tg-allday-cell' });
       cell.dataset['tgDate'] = date;
       vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
         new DOMRect(index * 100, 0, 100, 100),
@@ -306,13 +308,13 @@ describe('span interaction geometry', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 4 }),
       );
-      const firstPreview = root.querySelector<HTMLElement>('.tc-span-boundary-preview')!;
+      const firstPreview = root.querySelector<HTMLElement>('.abyss-span-boundary-preview')!;
       const remove = vi.spyOn(firstPreview, 'remove');
 
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 150, clientY: 50, pointerId: 4 }),
       );
-      expect(root.querySelectorAll('.tc-span-boundary-preview')).toHaveLength(0);
+      expect(root.querySelectorAll('.abyss-span-boundary-preview')).toHaveLength(0);
       expect(remove).toHaveBeenCalledTimes(1);
       expect(layoutComputations).toBe(1);
 
@@ -325,7 +327,7 @@ describe('span interaction geometry', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 4 }),
       );
-      expect(root.querySelectorAll('.tc-span-boundary-preview')).toHaveLength(3);
+      expect(root.querySelectorAll('.abyss-span-boundary-preview')).toHaveLength(3);
       expect(layoutComputations).toBe(2);
     } finally {
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 4 }));
@@ -335,11 +337,11 @@ describe('span interaction geometry', () => {
 
   it('does not cache a move target when its preview cannot be built', () => {
     const root = document.createElement('div');
-    root.className = 'tc-tg-root';
-    const row = root.createDiv({ cls: 'tc-tg-allday-days' });
-    const layer = row.createDiv({ cls: 'tc-tg-span-layer' });
+    root.className = 'abyss-tg-root';
+    const row = root.createDiv({ cls: 'abyss-tg-allday-days' });
+    const layer = row.createDiv({ cls: 'abyss-tg-span-layer' });
     for (const [index, date] of ['2026-07-06', '2026-07-07', '2026-07-08'].entries()) {
-      const cell = row.createDiv({ cls: 'tc-tg-allday-cell' });
+      const cell = row.createDiv({ cls: 'abyss-tg-allday-cell' });
       cell.dataset['tgDate'] = date;
       vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
         new DOMRect(index * 100, 0, 100, 100),
@@ -382,7 +384,7 @@ describe('span interaction geometry', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 50, clientY: 50, pointerId: 5 }),
       );
-      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
+      expect(root.querySelectorAll('.abyss-span-move-preview')).toHaveLength(0);
       expect(layoutComputations).toBe(0);
 
       const mutablePlanning = snapshot.planning as { start?: string; due?: string };
@@ -391,7 +393,7 @@ describe('span interaction geometry', () => {
       window.dispatchEvent(
         new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 5 }),
       );
-      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(0);
+      expect(root.querySelectorAll('.abyss-span-move-preview')).toHaveLength(0);
       expect(layoutComputations).toBe(1);
 
       mutablePlanning.start = '2026-07-07';
@@ -400,7 +402,7 @@ describe('span interaction geometry', () => {
         new PointerEvent('pointermove', { clientX: 75, clientY: 50, pointerId: 5 }),
       );
 
-      expect(root.querySelectorAll('.tc-span-move-preview')).toHaveLength(2);
+      expect(root.querySelectorAll('.abyss-span-move-preview')).toHaveLength(2);
       expect(layoutComputations).toBe(2);
     } finally {
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 5 }));

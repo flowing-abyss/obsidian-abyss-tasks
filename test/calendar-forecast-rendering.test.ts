@@ -166,7 +166,7 @@ function winningDeclaration(
 
 function installCalendarStyles(): HTMLStyleElement {
   const style = activeDocument.createElement('style');
-  style.dataset['tcCalendarContract'] = 'true';
+  style.dataset['abyssCalendarContract'] = 'true';
   style.textContent = css;
   activeDocument.head.appendChild(style);
   return style;
@@ -384,7 +384,7 @@ function renderLegacyVisualFixture(view: 'week' | 'month'): LegacyVisualFixture 
   const forecast = forecasts(forecastSource, visibleDate, visibleDate)[0]!.task;
   const root = freshContainer();
   root.className = 'tasksCalendar';
-  root.dataset['tcLegacyVisualFixture'] = 'true';
+  root.dataset['abyssLegacyVisualFixture'] = 'true';
   root.setAttribute('view', view);
   activeDocument.body.appendChild(root);
   const style = installCalendarStyles();
@@ -419,50 +419,54 @@ function expectLegacyVisualContract(fixture: LegacyVisualFixture): void {
   const { root, style, ordinary, recurring, forecast } = fixture;
   const host = getComputedStyle(root);
   for (const token of [
-    '--tc-calendar-surface',
-    '--tc-calendar-surface-forecast',
-    '--tc-calendar-border',
-    '--tc-calendar-border-forecast',
-    '--tc-calendar-foreground',
-    '--tc-calendar-now',
-    '--tc-calendar-border-width',
+    '--abyss-calendar-surface',
+    '--abyss-calendar-surface-forecast',
+    '--abyss-calendar-border',
+    '--abyss-calendar-border-forecast',
+    '--abyss-calendar-foreground',
+    '--abyss-calendar-now',
+    '--abyss-calendar-border-width',
   ]) {
     expect(host.getPropertyValue(token).trim(), `${token} on legacy host`).not.toBe('');
   }
 
   expect(forecast.style.getPropertyValue('--task-color')).toBe('#336699');
   const forecastStyle = getComputedStyle(forecast);
-  expect(forecastStyle.getPropertyValue('--tc-tag-color')).toContain('--task-color');
-  expect(forecastStyle.getPropertyValue('--tc-calendar-surface-forecast')).toContain('color-mix');
+  expect(forecastStyle.getPropertyValue('--abyss-tag-color')).toContain('--task-color');
+  expect(forecastStyle.getPropertyValue('--abyss-calendar-surface-forecast')).toContain(
+    'color-mix',
+  );
   expect(winningDeclaration(style, forecast, 'border-inline-start')?.value).toContain(
-    '--tc-tag-color',
+    '--abyss-tag-color',
   );
 
   expect(forecast.dataset['controlSlot']).toBe('reserved');
-  expect(forecast.querySelector('.tc-status-marker')).toBeNull();
+  expect(forecast.querySelector('.abyss-status-marker')).toBeNull();
   expect(forecast.querySelector('input[type="checkbox"]')).toBeNull();
-  expect(forecast.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+  expect(forecast.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
   const forecastInner = forecast.querySelector<HTMLElement>(':scope > .inner')!;
   expect(winningDeclaration(style, forecastInner, 'content', 'before')).toBeUndefined();
 
   for (const materialized of [ordinary, recurring]) {
     expect(materialized.dataset['controlSlot']).toBe('occupied');
-    expect(materialized.querySelectorAll('.tc-status-marker')).toHaveLength(1);
+    expect(materialized.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
     const inner = materialized.querySelector<HTMLElement>(':scope > .inner')!;
     expect(winningDeclaration(style, inner, 'content', 'before')).toBeUndefined();
   }
-  expect(recurring.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+  expect(recurring.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
 
   const forecastBackground = winningDeclaration(style, forecast, 'background');
   expect(forecastBackground).toMatchObject({
-    selector: ".tc-calendar-item[data-occurrence-state='forecast']",
-    value: 'var(--tc-calendar-surface-forecast)',
+    selector: ".abyss-calendar-item[data-occurrence-state='forecast']",
+    value: 'var(--abyss-calendar-surface-forecast)',
     specificity: [0, 2, 0],
   });
   expect(winningDeclaration(style, forecast, 'background', 'hover')).toEqual(forecastBackground);
-  expect(winningDeclaration(style, forecast, 'color')?.value).toBe('var(--tc-calendar-foreground)');
+  expect(winningDeclaration(style, forecast, 'color')?.value).toBe(
+    'var(--abyss-calendar-foreground)',
+  );
   expect(winningDeclaration(style, forecast, 'outline')?.value).toBe(
-    'var(--tc-calendar-border-width) dotted var(--tc-calendar-border-forecast)',
+    'var(--abyss-calendar-border-width) dotted var(--abyss-calendar-border-forecast)',
   );
   expect(winningDeclaration(style, forecast, 'opacity')).toBeUndefined();
   expect(forecastStyle.opacity).not.toBe('0.8');
@@ -488,7 +492,7 @@ function expectAxes(
 }
 
 function expectForecastInert(element: HTMLElement): void {
-  expect(element.querySelector('.tc-status-marker')).toBeNull();
+  expect(element.querySelector('.abyss-status-marker')).toBeNull();
   expect(element.querySelector('[data-resize-edge]')).toBeNull();
   expect(element.getAttribute('draggable')).toBeNull();
   expect(element.getAttribute('tabindex')).toBeNull();
@@ -498,10 +502,10 @@ afterEach(() => {
   vi.restoreAllMocks();
   forecastMenuOwners.splice(0).forEach((owner) => owner.dismiss({ restoreFocus: false }));
   activeDocument
-    .querySelectorAll('.tc-forecast-context-menu')
+    .querySelectorAll('.abyss-forecast-context-menu')
     .forEach((element) => element.remove());
   activeDocument
-    .querySelectorAll('[data-tc-calendar-contract], [data-tc-legacy-visual-fixture]')
+    .querySelectorAll('[data-abyss-calendar-contract], [data-abyss-legacy-visual-fixture]')
     .forEach((element) => element.remove());
 });
 
@@ -533,7 +537,7 @@ describe('forecast rendering contract', () => {
       [firstContainer, first!],
       [secondContainer, second!],
     ] as const) {
-      const block = container.querySelector<HTMLElement>('.tc-tg-block')!;
+      const block = container.querySelector<HTMLElement>('.abyss-tg-block')!;
       expect(block.textContent).toContain('Daily standup');
       expect(block.querySelector('[data-recurrence-forecast="true"]')).not.toBeNull();
       expectAxes(block, 'forecast', 'single', 'true');
@@ -655,7 +659,7 @@ describe('forecast rendering contract', () => {
     for (const root of [week, month]) {
       const pieces = Array.from(
         root.querySelectorAll<HTMLElement>(
-          '.tc-mg-span-segment, .tc-span-piece.tc-tg-span, .tc-span-piece.tc-tg-span-continuation',
+          '.abyss-mg-span-segment, .abyss-span-piece.abyss-tg-span, .abyss-span-piece.abyss-tg-span-continuation',
         ),
       );
       expect(pieces).toHaveLength(3);
@@ -676,7 +680,7 @@ describe('forecast rendering contract', () => {
         expectAxes(
           piece,
           'forecast',
-          piece.classList.contains('tc-tg-span-continuation') ? 'continuation' : 'terminal',
+          piece.classList.contains('abyss-tg-span-continuation') ? 'continuation' : 'terminal',
           'true',
         );
         expect(piece.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
@@ -710,7 +714,7 @@ describe('forecast rendering contract', () => {
     );
 
     const blocks = Array.from(
-      container.querySelectorAll<HTMLElement>('.tc-tg-block[data-occurrence-state="forecast"]'),
+      container.querySelectorAll<HTMLElement>('.abyss-tg-block[data-occurrence-state="forecast"]'),
     ).sort((left, right) =>
       left.dataset['tgSegmentDate']!.localeCompare(right.dataset['tgSegmentDate']!),
     );
@@ -736,11 +740,11 @@ describe('forecast rendering contract', () => {
         `${forecast!.occurrence.key}:${block.dataset['spanRole']}`,
       );
       expectForecastInert(block);
-      expect(block.classList.contains('tc-calendar-item')).toBe(true);
-      const head = block.querySelector<HTMLElement>('.tc-calendar-leading-row')!;
+      expect(block.classList.contains('abyss-calendar-item')).toBe(true);
+      const head = block.querySelector<HTMLElement>('.abyss-calendar-leading-row')!;
       expect(head.dataset['controlSlot']).toBe('reserved');
       expect(head.dataset['recurrenceSlot']).toBe('occupied');
-      expect(head.querySelector('.tc-status-marker')).toBeNull();
+      expect(head.querySelector('.abyss-status-marker')).toBeNull();
     }
   });
 
@@ -763,9 +767,11 @@ describe('forecast rendering contract', () => {
       false,
     );
 
-    const body = container.querySelector<HTMLElement>('[data-tg-date="2026-08-10"] .tc-tg-plain')!;
+    const body = container.querySelector<HTMLElement>(
+      '[data-tg-date="2026-08-10"] .abyss-tg-plain',
+    )!;
     const deadline = container.querySelector<HTMLElement>(
-      '[data-tg-date="2026-08-12"] .tc-tg-deadline-marker',
+      '[data-tg-date="2026-08-12"] .abyss-tg-deadline-marker',
     )!;
     expect(body.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
     expect(deadline.getAttribute('data-occurrence-key')).toBe(forecast!.occurrence.key);
@@ -778,10 +784,10 @@ describe('forecast rendering contract', () => {
       `${forecast!.occurrence.key}:due-deadline`,
     );
     for (const item of [body, deadline]) {
-      expect(item.classList.contains('tc-calendar-leading-row')).toBe(true);
+      expect(item.classList.contains('abyss-calendar-leading-row')).toBe(true);
       expect(item.dataset['controlSlot']).toBe('reserved');
       expect(item.dataset['recurrenceSlot']).toBe('occupied');
-      expect(item.querySelector('.tc-status-marker')).toBeNull();
+      expect(item.querySelector('.abyss-status-marker')).toBeNull();
     }
   });
 });
@@ -828,12 +834,12 @@ describe('forecast visual system', () => {
     );
 
     const items = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-mg-date="2026-08-09"] .tc-mg-plain'),
+      container.querySelectorAll<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain'),
     );
     expect(items).toHaveLength(3);
     for (const item of items) {
-      expect(item.classList.contains('tc-calendar-item')).toBe(true);
-      expect(item.classList.contains('tc-calendar-leading-row')).toBe(true);
+      expect(item.classList.contains('abyss-calendar-item')).toBe(true);
+      expect(item.classList.contains('abyss-calendar-leading-row')).toBe(true);
       expect(item.dataset['controlSlot']).toMatch(/^(?:occupied|reserved)$/u);
       expect(item.dataset['recurrenceSlot']).toMatch(/^(?:occupied|reserved)$/u);
     }
@@ -846,39 +852,39 @@ describe('forecast visual system', () => {
     const style = installCalendarStyles();
     expect(ordinaryItem.dataset['controlSlot']).toBe('occupied');
     expect(ordinaryItem.dataset['recurrenceSlot']).toBe('reserved');
-    expect(ordinaryItem.querySelector('.tc-status-marker')).not.toBeNull();
-    expect(ordinaryItem.querySelector('.tc-recurrence-badge')).toBeNull();
+    expect(ordinaryItem.querySelector('.abyss-status-marker')).not.toBeNull();
+    expect(ordinaryItem.querySelector('.abyss-recurrence-badge')).toBeNull();
     expect(
       winningDeclaration(
         style,
-        ordinaryItem.querySelector<HTMLElement>('.tc-status-marker')!,
+        ordinaryItem.querySelector<HTMLElement>('.abyss-status-marker')!,
         'margin-inline-end',
       ),
     ).toBeUndefined();
     expect(materializedItem.dataset['controlSlot']).toBe('occupied');
     expect(materializedItem.dataset['recurrenceSlot']).toBe('occupied');
-    expect(materializedItem.querySelector('.tc-status-marker')).not.toBeNull();
-    expect(materializedItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(materializedItem.querySelector('.abyss-status-marker')).not.toBeNull();
+    expect(materializedItem.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(forecastItem.dataset['controlSlot']).toBe('reserved');
     expect(forecastItem.dataset['recurrenceSlot']).toBe('occupied');
-    expect(forecastItem.querySelector('.tc-status-marker')).toBeNull();
-    expect(forecastItem.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(forecastItem.querySelector('.abyss-status-marker')).toBeNull();
+    expect(forecastItem.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
   });
 
   it('keeps reserved leading-slot diagnostics out of layout and hit geometry', () => {
     const style = installCalendarStyles();
 
     for (const surface of [
-      'tc-tg-block-head',
-      'tc-tg-body',
-      'tc-tg-deadline-marker',
-      'tc-mg-plain',
-      'tc-mg-block-dot',
-      'tc-mg-span-segment',
-      'tc-mg-deadline-marker',
+      'abyss-tg-block-head',
+      'abyss-tg-body',
+      'abyss-tg-deadline-marker',
+      'abyss-mg-plain',
+      'abyss-mg-block-dot',
+      'abyss-mg-span-segment',
+      'abyss-mg-deadline-marker',
     ]) {
       const ghost = activeDocument.createElement('div');
-      ghost.className = `tc-calendar-leading-row ${surface}`;
+      ghost.className = `abyss-calendar-leading-row ${surface}`;
       ghost.setAttribute('data-control-slot', 'reserved');
       ghost.setAttribute('data-recurrence-slot', 'reserved');
 
@@ -931,7 +937,7 @@ describe('forecast visual system', () => {
 
     const augustNinth = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-mg-date="2026-08-09"] .tc-mg-block-dot, [data-mg-date="2026-08-09"] .tc-mg-plain',
+        '[data-mg-date="2026-08-09"] .abyss-mg-block-dot, [data-mg-date="2026-08-09"] .abyss-mg-plain',
       ),
     ).sort((left, right) => Number(left.style.gridRow) - Number(right.style.gridRow));
     expect(augustNinth.slice(0, 2).map((item) => item.textContent)).toEqual([
@@ -939,72 +945,72 @@ describe('forecast visual system', () => {
       expect.stringContaining('Untimed forecast'),
     ]);
     const dailyItems = Array.from(
-      container.querySelectorAll<HTMLElement>('.tc-mg-plain[data-occurrence-state="forecast"]'),
+      container.querySelectorAll<HTMLElement>('.abyss-mg-plain[data-occurrence-state="forecast"]'),
     ).filter((item) => item.textContent?.includes('Independent daily'));
     expect(dailyItems).toHaveLength(3);
     expect(new Set(dailyItems.map((item) => item.dataset['occurrenceKey'])).size).toBe(3);
     expect(
-      container.querySelectorAll('.tc-mg-span-segment[data-occurrence-state="forecast"]'),
+      container.querySelectorAll('.abyss-mg-span-segment[data-occurrence-state="forecast"]'),
     ).toHaveLength(0);
   });
 
   it('derives forecast surfaces and current time from theme tokens without fading task text', () => {
-    const lightTokens = declarationsFor('.tc-panel-view');
-    const darkTokens = declarationsFor('.theme-dark .tc-panel-view');
+    const lightTokens = declarationsFor('.abyss-panel-view');
+    const darkTokens = declarationsFor('.theme-dark .abyss-panel-view');
     for (const token of [
-      '--tc-calendar-surface',
-      '--tc-calendar-surface-forecast',
-      '--tc-calendar-border',
-      '--tc-calendar-border-forecast',
-      '--tc-calendar-foreground',
-      '--tc-calendar-now',
+      '--abyss-calendar-surface',
+      '--abyss-calendar-surface-forecast',
+      '--abyss-calendar-border',
+      '--abyss-calendar-border-forecast',
+      '--abyss-calendar-foreground',
+      '--abyss-calendar-now',
     ]) {
       expect(lightTokens).toContain(token);
     }
-    expect(darkTokens).toContain('--tc-calendar-forecast-fill-strength');
-    const itemTokens = declarationsFor('.tc-calendar-item');
+    expect(darkTokens).toContain('--abyss-calendar-forecast-fill-strength');
+    const itemTokens = declarationsFor('.abyss-calendar-item');
     expect(itemTokens).toMatch(
-      /--tc-calendar-surface\s*:\s*color-mix\([\s\S]*var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+      /--abyss-calendar-surface\s*:\s*color-mix\([\s\S]*var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
     expect(itemTokens).toMatch(
-      /--tc-calendar-surface-forecast\s*:\s*color-mix\([\s\S]*--tc-calendar-forecast-fill-strength/u,
+      /--abyss-calendar-surface-forecast\s*:\s*color-mix\([\s\S]*--abyss-calendar-forecast-fill-strength/u,
     );
-    expect(itemTokens).toContain('--tc-calendar-foreground: var(--tc-tag-text-color');
+    expect(itemTokens).toContain('--abyss-calendar-foreground: var(--abyss-tag-text-color');
 
     const forecastAxis = declarationsForRuleContaining(
-      ".tc-calendar-item[data-occurrence-state='forecast']",
+      ".abyss-calendar-item[data-occurrence-state='forecast']",
     );
-    expect(forecastAxis).toMatch(/background\s*:\s*var\(--tc-calendar-surface-forecast\)/u);
+    expect(forecastAxis).toMatch(/background\s*:\s*var\(--abyss-calendar-surface-forecast\)/u);
     expect(forecastAxis).toMatch(
-      /outline\s*:\s*var\(--tc-calendar-border-width\) dotted var\(--tc-calendar-border-forecast\)/u,
+      /outline\s*:\s*var\(--abyss-calendar-border-width\) dotted var\(--abyss-calendar-border-forecast\)/u,
     );
     expect(forecastAxis).not.toMatch(/opacity\s*:/u);
 
     const geometry = declarationsForRuleContaining(
-      '.tc-tg-block.tc-calendar-item',
-      '.tc-tg-body.tc-calendar-item',
-      '.tc-mg-plain.tc-calendar-item',
+      '.abyss-tg-block.abyss-calendar-item',
+      '.abyss-tg-body.abyss-calendar-item',
+      '.abyss-mg-plain.abyss-calendar-item',
     );
-    expect(geometry).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
-    expect(geometry).toMatch(/padding\s*:\s*2px var\(--tc-calendar-item-pad-inline\)/u);
-    expect(geometry).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
+    expect(geometry).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
+    expect(geometry).toMatch(/padding\s*:\s*2px var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(geometry).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
     const materializedSurface = declarationsForRuleContaining(
-      '.tc-tg-block',
-      '.tc-tg-span-continuation',
-      '.tc-mg-plain',
+      '.abyss-tg-block',
+      '.abyss-tg-span-continuation',
+      '.abyss-mg-plain',
     );
-    expect(materializedSurface).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+    expect(materializedSurface).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
     expect(materializedSurface).toMatch(
-      /box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u,
+      /box-shadow\s*:\s*inset 0 0 0 1px var\(--abyss-calendar-border\)/u,
     );
-    const nowLine = declarationsFor('.tc-tg-now-line');
+    const nowLine = declarationsFor('.abyss-tg-now-line');
     expect(nowLine).toMatch(/left\s*:\s*3\.5em/u);
     expect(nowLine).toMatch(/right\s*:\s*0/u);
-    expect(nowLine).toMatch(/background\s*:\s*var\(--tc-calendar-now\)/u);
+    expect(nowLine).toMatch(/background\s*:\s*var\(--abyss-calendar-now\)/u);
     expect(nowLine).toMatch(/z-index\s*:\s*0/u);
     expect(nowLine).not.toMatch(/opacity\s*:/u);
-    expect(declarationsFor('.tc-tg-now-line-dot')).toMatch(
-      /background\s*:\s*var\(--tc-calendar-now\)/u,
+    expect(declarationsFor('.abyss-tg-now-line-dot')).toMatch(
+      /background\s*:\s*var\(--abyss-calendar-now\)/u,
     );
   });
 
@@ -1045,7 +1051,7 @@ describe('forecast visual system', () => {
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
     state.set('mode', 'calendar');
 
-    const diagnostics = root.querySelectorAll<HTMLElement>('.tc-calendar-projection-diagnostic');
+    const diagnostics = root.querySelectorAll<HTMLElement>('.abyss-calendar-projection-diagnostic');
     expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]?.textContent).toBe('More repeating occurrences are not shown');
     expect(diagnostics[0]?.getAttribute('aria-live')).toBe('polite');
@@ -1087,33 +1093,33 @@ describe('forecast visual system', () => {
     panel.mount(root);
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('1400-08-01');
     state.set('mode', 'calendar');
-    const diagnostic = root.querySelector<HTMLElement>('.tc-calendar-projection-diagnostic')!;
+    const diagnostic = root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic')!;
     const announcements: MutationRecord[] = [];
     const observer = new MutationObserver((records) => announcements.push(...records));
     observer.observe(diagnostic, { childList: true, characterData: true, subtree: true });
 
     notify?.({ type: 'changed', files: ['Stable.md'] });
     await Promise.resolve();
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
     expect(announcements).toHaveLength(0);
 
     sources = [];
     notify?.({ type: 'changed', files: ['Stable.md'] });
     await Promise.resolve();
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
     expect(diagnostic.textContent).toBe('');
 
     sources = [limitSource];
     notify?.({ type: 'changed', files: ['Stable.md'] });
     await Promise.resolve();
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
     expect(diagnostic.textContent).toBe('More repeating occurrences are not shown');
     expect(announcements).toHaveLength(2);
 
     observer.disconnect();
     panel.destroy();
     expect(diagnostic.isConnected).toBe(false);
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBeNull();
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBeNull();
   });
 
   it('keeps the CalendarRenderer live region stable across query patches and tears it down', () => {
@@ -1144,14 +1150,14 @@ describe('forecast visual system', () => {
       registry,
     );
     renderer.mount();
-    const diagnostic = root.querySelector<HTMLElement>('.tc-calendar-projection-diagnostic')!;
+    const diagnostic = root.querySelector<HTMLElement>('.abyss-calendar-projection-diagnostic')!;
 
     notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
 
     sources = [];
     notify?.({ type: 'changed', files: ['Legacy-stable.md'] });
-    expect(root.querySelector('.tc-calendar-projection-diagnostic')).toBe(diagnostic);
+    expect(root.querySelector('.abyss-calendar-projection-diagnostic')).toBe(diagnostic);
     expect(diagnostic.textContent).toBe('');
 
     renderer.destroy();
@@ -1271,7 +1277,7 @@ describe('forecast interaction contract', () => {
       false,
     );
 
-    const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+    const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
     expect(blocks).toHaveLength(3);
     blocks[0]!.focus();
     blocks[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
@@ -1297,7 +1303,7 @@ describe('forecast interaction contract', () => {
       resolvedConfig({ startPosition: '2026-08-09' }),
       false,
     );
-    container.querySelector<HTMLElement>('.tc-tg-plain')!.click();
+    container.querySelector<HTMLElement>('.abyss-tg-plain')!.click();
 
     expect(opened).toHaveBeenCalledWith(source.root, 'Forecast for 2026-08-09');
     expect(callbacks.onTaskClick).not.toHaveBeenCalled();
@@ -1315,22 +1321,22 @@ describe('forecast interaction contract', () => {
       resolvedConfig({ startPosition: '2026-08' }),
     );
     container
-      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .tc-mg-plain')!
+      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
-    const menu = activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu')!;
+    const menu = activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
     const items = Array.from(menu.querySelectorAll<HTMLElement>('button'));
     expect(items.map((item) => item.textContent)).toEqual(['Edit repeat…', 'Open source task']);
-    expect(menu.querySelector('.tc-status-marker')).toBeNull();
+    expect(menu.querySelector('.abyss-status-marker')).toBeNull();
 
     items[0]!.click();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(source, localDate('2026-08-09'));
     expect(callbacks.onForecastContextMenu.mock.calls[0]?.[0].target).toEqual(source.target);
 
     container
-      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .tc-mg-plain')!
+      .querySelector<HTMLElement>('[data-mg-date="2026-08-09"] .abyss-mg-plain')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelectorAll<HTMLElement>('.tc-forecast-context-menu button')[1]!.click();
+    activeDocument.querySelectorAll<HTMLElement>('.abyss-forecast-context-menu button')[1]!.click();
     expect(callbacks.onForecastClick).toHaveBeenCalledWith(source, localDate('2026-08-09'));
     expect(callbacks.onToggle).not.toHaveBeenCalled();
     expect(callbacks.onSetStatus).not.toHaveBeenCalled();
@@ -1350,7 +1356,7 @@ describe('forecast interaction contract', () => {
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: HTMLElement,
     ) {
-      if (this.classList.contains('tc-forecast-context-menu')) return rect(0, 0, 120, 80);
+      if (this.classList.contains('abyss-forecast-context-menu')) return rect(0, 0, 120, 80);
       return realRect.call(this);
     });
     const source = rootSource({
@@ -1370,7 +1376,7 @@ describe('forecast interaction contract', () => {
       {},
     );
 
-    const menu = activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu')!;
+    const menu = activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
     const left = Number.parseFloat(menu.style.left);
     const top = Number.parseFloat(menu.style.top);
     expect(left).toBeGreaterThanOrEqual(8);
@@ -1383,7 +1389,7 @@ describe('forecast interaction contract', () => {
   it('lets the forecast menu shrink and wrap inside owner viewports narrower than 12rem', () => {
     const style = installCalendarStyles();
     const menu = activeDocument.body.createDiv({
-      cls: 'tc-status-popover tc-forecast-context-menu',
+      cls: 'abyss-status-popover abyss-forecast-context-menu',
     });
     const item = menu.createEl('button', { text: 'Open source task with a long label' });
 
@@ -1426,7 +1432,7 @@ describe('forecast interaction contract', () => {
     const createOwnerDiv = ownerDocument.body.createDiv.bind(ownerDocument.body);
     const createMeasuredDiv = ((...args: Parameters<typeof createOwnerDiv>) => {
       const element = createOwnerDiv(...args);
-      if (element.classList.contains('tc-forecast-context-menu')) {
+      if (element.classList.contains('abyss-forecast-context-menu')) {
         Object.defineProperty(element, 'getBoundingClientRect', {
           configurable: true,
           value: () => rect(0, 0, 120, 80),
@@ -1459,7 +1465,7 @@ describe('forecast interaction contract', () => {
         forecast.occurrence,
         {},
       );
-      const menu = ownerDocument.querySelector<HTMLElement>('.tc-forecast-context-menu')!;
+      const menu = ownerDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu')!;
       expect(menu.ownerDocument).toBe(ownerDocument);
       expect(menu.style.left).toBe('32px');
       expect(menu.style.top).toBe('30px');
@@ -1480,7 +1486,7 @@ describe('forecast interaction contract', () => {
         }),
       );
 
-      expect(ownerDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+      expect(ownerDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
       expect(ownerDocument.activeElement).toBe(anchor);
       for (const registration of registrations)
         expect(remove.mock.calls).toContainEqual(registration);
@@ -1516,35 +1522,35 @@ describe('forecast interaction contract', () => {
     );
     const items = Array.from(
       container.querySelectorAll<HTMLElement>(
-        '[data-mg-date="2026-08-09"] .tc-mg-plain[data-occurrence-state="forecast"]',
+        '[data-mg-date="2026-08-09"] .abyss-mg-plain[data-occurrence-state="forecast"]',
       ),
     );
 
     items[0]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const staleEdit = activeDocument.querySelector<HTMLButtonElement>(
-      '.tc-forecast-context-menu-edit-repeat',
+      '.abyss-forecast-context-menu-edit-repeat',
     )!;
     items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(activeDocument.querySelectorAll('.tc-forecast-context-menu')).toHaveLength(1);
+    expect(activeDocument.querySelectorAll('.abyss-forecast-context-menu')).toHaveLength(1);
 
     staleEdit.click();
     expect(callbacks.onForecastContextMenu).not.toHaveBeenCalled();
     activeDocument.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
     );
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(activeDocument.activeElement).toBe(trigger);
 
     items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     activeDocument.body.dispatchEvent(
       new MouseEvent('mousedown', { bubbles: true, cancelable: true }),
     );
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(activeDocument.activeElement).toBe(trigger);
 
     items[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!.click();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledOnce();
     expect(callbacks.onForecastContextMenu).toHaveBeenCalledWith(
       secondSource,
@@ -1589,13 +1595,13 @@ describe('forecast interaction contract', () => {
     };
 
     openMenu();
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).not.toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).not.toBeNull();
     notify?.({ type: 'changed', files: ['Legacy.md'] });
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
 
     openMenu();
     renderer.destroy();
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
   });
 
   it('CenterPanel patches and destroy close its owned forecast menu', () => {
@@ -1640,13 +1646,13 @@ describe('forecast interaction contract', () => {
     };
 
     openMenu();
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).not.toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).not.toBeNull();
     notify?.({ type: 'changed', files: ['Modern.md'] });
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
 
     openMenu();
     panel.destroy();
-    expect(activeDocument.querySelector('.tc-forecast-context-menu')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu')).toBeNull();
   });
 
   it.each(['month', 'week'] as const)(
@@ -1685,20 +1691,22 @@ describe('forecast interaction contract', () => {
       )!;
 
       forecast.click();
-      const sourceModal = activeDocument.querySelector<HTMLElement>('.tc-modal');
+      const sourceModal = activeDocument.querySelector<HTMLElement>('.abyss-modal');
       expect(sourceModal?.textContent).toContain('Daily source');
-      expect(sourceModal?.querySelector('.tc-forecast-source-context')?.textContent).toBe(
+      expect(sourceModal?.querySelector('.abyss-forecast-source-context')?.textContent).toBe(
         'Forecast for 2026-08-02',
       );
 
       forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
-      expect(activeDocument.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+      activeDocument
+        .querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!
+        .click();
+      expect(activeDocument.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
         'every day',
       );
 
       renderer.destroy();
-      activeDocument.querySelector<HTMLElement>('.tc-modal-close-btn')?.click();
+      activeDocument.querySelector<HTMLElement>('.abyss-modal-close-btn')?.click();
     },
   );
 
@@ -1735,19 +1743,19 @@ describe('forecast interaction contract', () => {
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
     state.set('mode', 'calendar');
     const forecast = root.querySelector<HTMLElement>(
-      '[data-mg-date="2026-08-09"] .tc-mg-plain[data-occurrence-state="forecast"]',
+      '[data-mg-date="2026-08-09"] .abyss-mg-plain[data-occurrence-state="forecast"]',
     )!;
 
     forecast.click();
     expect(openModal).toHaveBeenCalledWith(sourceRoot);
-    expect(activeDocument.querySelector('.tc-forecast-source-context')?.textContent).toBe(
+    expect(activeDocument.querySelector('.abyss-forecast-source-context')?.textContent).toBe(
       'Forecast for 2026-08-09',
     );
 
     forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(activeDocument.querySelector('.tc-forecast-context-menu-edit-repeat')).not.toBeNull();
-    activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
-    expect(activeDocument.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+    expect(activeDocument.querySelector('.abyss-forecast-context-menu-edit-repeat')).not.toBeNull();
+    activeDocument.querySelector<HTMLElement>('.abyss-forecast-context-menu-edit-repeat')!.click();
+    expect(activeDocument.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
       'every day',
     );
 

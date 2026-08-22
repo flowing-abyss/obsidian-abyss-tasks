@@ -17,7 +17,7 @@ useRealMoment();
 
 afterEach(() => {
   activeDocument
-    .querySelectorAll('.tc-test-center-attached')
+    .querySelectorAll('.abyss-test-center-attached')
     .forEach((element) => element.remove());
 });
 
@@ -38,7 +38,7 @@ function makeCenter(tasks: TaskSnapshot[]): {
 }
 
 function cards(el: HTMLElement): HTMLElement[] {
-  return Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card'));
+  return Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card'));
 }
 
 function click(card: HTMLElement, init: MouseEventInit = {}): void {
@@ -57,13 +57,13 @@ function key(target: HTMLElement, value: string, init: KeyboardEventInit = {}): 
 }
 
 function selectedLines(el: HTMLElement): string[] {
-  return Array.from(el.querySelectorAll<HTMLElement>('.tc-task-card.tc-multi-selected')).map(
+  return Array.from(el.querySelectorAll<HTMLElement>('.abyss-task-card.abyss-multi-selected')).map(
     (card) => card.dataset['line'] ?? '',
   );
 }
 
 function attach(el: HTMLElement): void {
-  el.addClass('tc-test-center-attached');
+  el.addClass('abyss-test-center-attached');
   activeDocument.body.append(el);
 }
 
@@ -99,76 +99,76 @@ describe('CenterPanel multi-selection', () => {
     },
   });
 
-  it('plain click selects only one card (no tc-multi-selected)', () => {
+  it('plain click selects only one card (no abyss-multi-selected)', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(false);
-    expect(cards[1]!.classList.contains('tc-multi-selected')).toBe(false);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
+    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('Ctrl+Click adds card to multi-selection', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(true);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it('Ctrl+Click two cards selects both', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(true);
-    expect(cards[1]!.classList.contains('tc-multi-selected')).toBe(true);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it('Ctrl+Click already-selected card deselects it', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(false);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('shows selection badge when 2+ tasks selected', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    const badge = el.querySelector('.tc-selection-badge');
+    const badge = el.querySelector('.abyss-selection-badge');
     expect(badge).not.toBeNull();
     expect(badge?.textContent).toContain('2');
   });
 
   it('badge is removed when selection drops below 2', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     // Deselect one
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    expect(el.querySelector('.tc-selection-badge')).toBeNull();
+    expect(el.querySelector('.abyss-selection-badge')).toBeNull();
   });
 
   it('Escape key clears selection', () => {
     const { el } = makeCenter([t1, t2]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(false);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
   });
 
   it('Shift+Click selects range', () => {
     const { el } = makeCenter([t1, t2, t3]);
-    const cards = el.querySelectorAll<HTMLElement>('.tc-task-card');
+    const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     // Ctrl+Click first to set anchor
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     // Shift+Click last
     cards[2]!.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }));
-    expect(cards[0]!.classList.contains('tc-multi-selected')).toBe(true);
-    expect(cards[1]!.classList.contains('tc-multi-selected')).toBe(true);
-    expect(cards[2]!.classList.contains('tc-multi-selected')).toBe(true);
+    expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(true);
+    expect(cards[2]!.classList.contains('abyss-multi-selected')).toBe(true);
   });
 
   it.each([
@@ -310,7 +310,7 @@ describe('CenterPanel multi-selection', () => {
     const visibleCards = cards(el);
     click(visibleCards.find((card) => card.dataset['line'] === '0')!, { ctrlKey: true });
     click(visibleCards.find((card) => card.dataset['line'] === '1')!, { ctrlKey: true });
-    expect(el.querySelector('.tc-selection-badge')).not.toBeNull();
+    expect(el.querySelector('.abyss-selection-badge')).not.toBeNull();
 
     tasks.splice(
       tasks.findIndex((candidate) => candidate.source.line === 0),
@@ -319,7 +319,7 @@ describe('CenterPanel multi-selection', () => {
     panel.refresh();
 
     expect(selectedLines(el)).toEqual(['1']);
-    expect(el.querySelector('.tc-selection-badge')).toBeNull();
+    expect(el.querySelector('.abyss-selection-badge')).toBeNull();
 
     tasks.splice(0);
     panel.refresh();
@@ -374,8 +374,8 @@ describe('CenterPanel multi-selection', () => {
       host.createEl('button'),
       host.createEl('a'),
       host.createDiv({ attr: { contenteditable: 'true' } }),
-      host.createDiv({ cls: 'tc-status-marker' }),
-      el.createDiv({ cls: 'tc-popover' }),
+      host.createDiv({ cls: 'abyss-status-marker' }),
+      el.createDiv({ cls: 'abyss-popover' }),
     ];
 
     for (const target of targets) {

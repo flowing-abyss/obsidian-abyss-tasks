@@ -161,8 +161,8 @@ function withTerminalWhenDone(raw: string, whenDone: boolean): string {
 
 export function mountRecurrenceEditor(options: RecurrenceEditorOptions): RecurrenceEditorHandle {
   const instanceId = ++nextEditorInstance;
-  const titleId = `tc-recurrence-title-${instanceId}`;
-  const diagnosticId = `tc-recurrence-diagnostic-${instanceId}`;
+  const titleId = `abyss-recurrence-title-${instanceId}`;
+  const diagnosticId = `abyss-recurrence-diagnostic-${instanceId}`;
   const task = selectedTask(options.source);
   const reference = referenceDate(options.source, options.policy);
   const previousFocus = options.container.ownerDocument.activeElement;
@@ -259,7 +259,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.whenDone = parsed.whenDone;
     }
     const message = validationMessage(parsed);
-    const preview = options.container.querySelector<HTMLElement>('.tc-recurrence-preview-rule');
+    const preview = options.container.querySelector<HTMLElement>('.abyss-recurrence-preview-rule');
     if (preview) {
       let previewText = '—';
       if (parsed.type === 'valid') {
@@ -268,12 +268,14 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       }
       preview.textContent = previewText;
     }
-    const status = options.container.querySelector<HTMLElement>('.tc-recurrence-status');
+    const status = options.container.querySelector<HTMLElement>('.abyss-recurrence-status');
     if (status) {
       status.textContent = message;
       status.hidden = message.length === 0;
     }
-    const warning = options.container.querySelector<HTMLElement>('.tc-recurrence-delete-warning');
+    const warning = options.container.querySelector<HTMLElement>(
+      '.abyss-recurrence-delete-warning',
+    );
     if (warning) {
       warning.textContent =
         state.onCompletion === 'delete'
@@ -282,16 +284,16 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       warning.hidden = state.onCompletion !== 'delete';
     }
     const whenDoneControl = options.container.querySelector<HTMLInputElement>(
-      '.tc-recurrence-when-done',
+      '.abyss-recurrence-when-done',
     );
     if (whenDoneControl && state.mode === 'custom' && parsed.type === 'valid') {
       whenDoneControl.checked = parsed.whenDone;
     }
-    const save = options.container.querySelector<HTMLButtonElement>('.tc-recurrence-save');
+    const save = options.container.querySelector<HTMLButtonElement>('.abyss-recurrence-save');
     if (save) save.disabled = state.submitting || message.length > 0 || parsed.type === 'invalid';
     const pressedPreset = canonicalPreset();
     for (const button of options.container.querySelectorAll<HTMLButtonElement>(
-      '.tc-recurrence-presets button',
+      '.abyss-recurrence-presets button',
     )) {
       const preset = button.dataset['recurrencePreset'] as Preset | undefined;
       const custom = button.dataset['recurrenceMode'] === 'custom';
@@ -315,16 +317,16 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.yearly.type === 'date' &&
       (!Number.isSafeInteger(state.yearly.day) || state.yearly.day < 1 || state.yearly.day > 31);
     options.container
-      .querySelector<HTMLElement>('.tc-recurrence-interval')
+      .querySelector<HTMLElement>('.abyss-recurrence-interval')
       ?.setAttribute('aria-invalid', String(invalidInterval));
     options.container
-      .querySelector<HTMLElement>('.tc-recurrence-month-day')
+      .querySelector<HTMLElement>('.abyss-recurrence-month-day')
       ?.setAttribute('aria-invalid', String(invalidMonthDay));
     options.container
-      .querySelector<HTMLElement>('.tc-recurrence-yearly-day')
+      .querySelector<HTMLElement>('.abyss-recurrence-yearly-day')
       ?.setAttribute('aria-invalid', String(invalidYearlyDay));
     options.container
-      .querySelector<HTMLElement>('.tc-recurrence-raw')
+      .querySelector<HTMLElement>('.abyss-recurrence-raw')
       ?.setAttribute('aria-invalid', String(state.mode === 'custom' && parsed.type === 'invalid'));
   };
 
@@ -401,10 +403,10 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
   const renderAdaptiveControls = (parent: HTMLElement): void => {
     if (state.preset === 'weekdays') return;
-    const cadence = parent.createDiv({ cls: 'tc-recurrence-cadence' });
-    cadence.createEl('span', { cls: 'tc-recurrence-inline-label', text: 'Every' });
+    const cadence = parent.createDiv({ cls: 'abyss-recurrence-cadence' });
+    cadence.createEl('span', { cls: 'abyss-recurrence-inline-label', text: 'Every' });
     const interval = cadence.createEl('input', {
-      cls: 'tc-recurrence-interval',
+      cls: 'abyss-recurrence-interval',
       attr: {
         type: 'text',
         inputmode: 'numeric',
@@ -443,11 +445,11 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 
     if (state.unit === 'weeks') {
       const days = parent.createDiv({
-        cls: 'tc-recurrence-weekdays',
+        cls: 'abyss-recurrence-weekdays',
         attr: { role: 'group', 'aria-label': 'Repeat weekdays' },
       });
       for (const weekday of WEEKDAYS) {
-        const label = days.createEl('label', { cls: 'tc-recurrence-weekday' });
+        const label = days.createEl('label', { cls: 'abyss-recurrence-weekday' });
         const checkbox = label.createEl('input', {
           attr: {
             type: 'checkbox',
@@ -474,7 +476,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const renderMonthlyControls = (parent: HTMLElement): void => {
-    const row = parent.createDiv({ cls: 'tc-recurrence-detail-row' });
+    const row = parent.createDiv({ cls: 'abyss-recurrence-detail-row' });
     const pattern = row.createEl('select', {
       attr: {
         'aria-label': 'Monthly pattern',
@@ -502,7 +504,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     });
     if (state.monthly.type === 'day') {
       const day = row.createEl('input', {
-        cls: 'tc-recurrence-month-day',
+        cls: 'abyss-recurrence-month-day',
         attr: {
           type: 'number',
           min: '1',
@@ -565,7 +567,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
   };
 
   const renderYearlyControls = (parent: HTMLElement): void => {
-    const row = parent.createDiv({ cls: 'tc-recurrence-detail-row' });
+    const row = parent.createDiv({ cls: 'abyss-recurrence-detail-row' });
     const pattern = row.createEl('select', {
       attr: {
         'aria-label': 'Yearly pattern',
@@ -597,7 +599,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       );
     });
     const day = row.createEl('input', {
-      cls: 'tc-recurrence-yearly-day',
+      cls: 'abyss-recurrence-yearly-day',
       attr: {
         type: 'number',
         min: '1',
@@ -627,17 +629,17 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     const focusedControl = controlKey(options.container.ownerDocument.activeElement);
     options.container.empty();
     const editor = options.container.createDiv({
-      cls: 'tc-recurrence-editor',
+      cls: 'abyss-recurrence-editor',
       attr: { role: 'region', 'aria-labelledby': titleId },
     });
-    const heading = editor.createDiv({ cls: 'tc-recurrence-heading' });
+    const heading = editor.createDiv({ cls: 'abyss-recurrence-heading' });
     heading.createEl('span', {
-      cls: 'tc-recurrence-title',
+      cls: 'abyss-recurrence-title',
       text: 'Repeat',
       attr: { id: titleId },
     });
     const presets = editor.createDiv({
-      cls: 'tc-recurrence-presets',
+      cls: 'abyss-recurrence-presets',
       attr: { role: 'group', 'aria-label': 'Repeat pattern' },
     });
     for (const [preset, label] of [
@@ -676,10 +678,10 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       render();
     });
 
-    const controls = editor.createDiv({ cls: 'tc-recurrence-controls' });
+    const controls = editor.createDiv({ cls: 'abyss-recurrence-controls' });
     if (state.mode === 'custom') {
       const raw = controls.createEl('input', {
-        cls: 'tc-recurrence-raw',
+        cls: 'abyss-recurrence-raw',
         attr: {
           type: 'text',
           value: state.customDraft,
@@ -700,9 +702,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       renderAdaptiveControls(controls);
     }
 
-    const whenDone = editor.createEl('label', { cls: 'tc-recurrence-check-row' });
+    const whenDone = editor.createEl('label', { cls: 'abyss-recurrence-check-row' });
     const whenDoneInput = whenDone.createEl('input', {
-      cls: 'tc-recurrence-when-done',
+      cls: 'abyss-recurrence-when-done',
       attr: { type: 'checkbox', 'data-recurrence-focus-key': 'when-done' },
     });
     whenDoneInput.checked = state.whenDone;
@@ -711,7 +713,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       state.whenDone = whenDoneInput.checked;
       if (state.mode === 'custom') {
         state.customDraft = withTerminalWhenDone(state.customDraft, state.whenDone);
-        const raw = options.container.querySelector<HTMLInputElement>('.tc-recurrence-raw');
+        const raw = options.container.querySelector<HTMLInputElement>('.abyss-recurrence-raw');
         if (raw) raw.value = state.customDraft;
       }
       state.submissionError = undefined;
@@ -719,7 +721,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       refresh();
     });
 
-    const completedRow = editor.createEl('label', { cls: 'tc-recurrence-completed-row' });
+    const completedRow = editor.createEl('label', { cls: 'abyss-recurrence-completed-row' });
     completedRow.createSpan({ text: 'Completed task' });
     const completed = completedRow.createEl('select', {
       attr: {
@@ -735,25 +737,25 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
       refresh();
     });
 
-    editor.createDiv({ cls: 'tc-recurrence-delete-warning', attr: { role: 'note' } });
-    const preview = editor.createDiv({ cls: 'tc-recurrence-preview' });
-    preview.createSpan({ cls: 'tc-recurrence-preview-label', text: 'Rule' });
-    preview.createSpan({ cls: 'tc-recurrence-preview-rule' });
+    editor.createDiv({ cls: 'abyss-recurrence-delete-warning', attr: { role: 'note' } });
+    const preview = editor.createDiv({ cls: 'abyss-recurrence-preview' });
+    preview.createSpan({ cls: 'abyss-recurrence-preview-label', text: 'Rule' });
+    preview.createSpan({ cls: 'abyss-recurrence-preview-rule' });
     editor.createDiv({
-      cls: 'tc-recurrence-status',
+      cls: 'abyss-recurrence-status',
       attr: { id: diagnosticId, 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
 
-    const actions = editor.createDiv({ cls: 'tc-recurrence-actions' });
+    const actions = editor.createDiv({ cls: 'abyss-recurrence-actions' });
     if (existing !== undefined || task?.onCompletionExplicit) {
       const clearButton = actions.createEl('button', {
-        cls: 'tc-recurrence-clear',
+        cls: 'abyss-recurrence-clear',
         text: 'Clear repeat',
         attr: { type: 'button', 'data-recurrence-focus-key': 'clear' },
       });
       clearButton.addEventListener('click', () => void clear());
     }
-    const spacer = actions.createSpan({ cls: 'tc-recurrence-actions-spacer' });
+    const spacer = actions.createSpan({ cls: 'abyss-recurrence-actions-spacer' });
     spacer.setAttribute('aria-hidden', 'true');
     const cancel = actions.createEl('button', {
       text: 'Cancel',
@@ -761,7 +763,7 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
     });
     cancel.addEventListener('click', dismiss);
     const save = actions.createEl('button', {
-      cls: 'mod-cta tc-recurrence-save',
+      cls: 'mod-cta abyss-recurrence-save',
       text: 'Save repeat',
       attr: { type: 'button', 'data-recurrence-focus-key': 'save' },
     });
@@ -890,7 +892,7 @@ export function mountAnchoredRecurrenceEditor(
   const ownerDocument = options.anchor.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
   const popover = ownerDocument.body.createDiv({
-    cls: 'tc-popover tc-recurrence-popover tc-popover-anchored tc-recurrence-popover-floating',
+    cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored abyss-recurrence-popover-floating',
     attr: { role: 'dialog', 'aria-modal': 'false' },
   });
   let destroyed = false;
@@ -939,7 +941,7 @@ export function mountAnchoredRecurrenceEditor(
     dismissalFocus: options.anchor,
     onClose: destroy,
   });
-  const title = popover.querySelector<HTMLElement>('.tc-recurrence-title');
+  const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
   if (title?.id) popover.setAttribute('aria-labelledby', title.id);
   position();
   ownerDocument.addEventListener('scroll', position, true);

@@ -208,13 +208,13 @@ describe('CalendarRenderer', () => {
       r.destroy();
     });
 
-    it('switchView("list") → .tc-list-view present', () => {
+    it('switchView("list") → .abyss-list-view present', () => {
       const store = new StubStore();
       const root = freshContainer();
       const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
       r.mount();
       (root.querySelector('.listView') as HTMLButtonElement).click();
-      expect(root.querySelector('.tc-list-view')).not.toBeNull();
+      expect(root.querySelector('.abyss-list-view')).not.toBeNull();
       r.destroy();
     });
 
@@ -238,8 +238,8 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       expect(projection).not.toHaveBeenCalled();
-      expect(root.querySelectorAll('.tc-list-task')).toHaveLength(1);
-      expect(root.querySelector('.tc-list-date-count')?.textContent).toBe('1');
+      expect(root.querySelectorAll('.abyss-list-task')).toHaveLength(1);
+      expect(root.querySelector('.abyss-list-date-count')?.textContent).toBe('1');
       expect(root.querySelector("[data-recurrence-forecast='true']")).toBeNull();
       r.destroy();
     });
@@ -463,7 +463,7 @@ describe('CalendarRenderer', () => {
       store.setTasks([t]);
       store.emit();
       // click the status marker inside the task card
-      const marker = root.querySelector('.task .tc-status-marker') as HTMLElement;
+      const marker = root.querySelector('.task .abyss-status-marker') as HTMLElement;
       marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(store.execute).toHaveBeenCalledWith({
         type: 'toggle-completion',
@@ -501,7 +501,7 @@ describe('CalendarRenderer', () => {
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
       forecastCard
-        ?.querySelector<HTMLElement>('.tc-status-marker')
+        ?.querySelector<HTMLElement>('.abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(store.execute).not.toHaveBeenCalled();
       expect(
@@ -593,7 +593,7 @@ describe('CalendarRenderer', () => {
         );
         expect(materializedCard).toBeDefined();
         materializedCard
-          ?.querySelector<HTMLElement>('.tc-status-marker')
+          ?.querySelector<HTMLElement>('.abyss-status-marker')
           ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
         await flushMicrotasks(30);
 
@@ -739,23 +739,23 @@ describe('CalendarRenderer', () => {
 
       r.mount();
 
-      const overdueSection = root.querySelector('.tc-list-overdue-header')?.parentElement;
+      const overdueSection = root.querySelector('.abyss-list-overdue-header')?.parentElement;
       expect(
-        overdueSection?.querySelector('.tc-list-date-count')?.textContent,
+        overdueSection?.querySelector('.abyss-list-date-count')?.textContent,
         'the ordinary root retains legacy overdue rendering',
       ).toBe('1');
-      expect(overdueSection?.querySelector('.tc-task-time')?.textContent).toBe('06:11');
-      const todaySection = Array.from(root.querySelectorAll<HTMLElement>('.tc-list-section')).find(
-        (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
-      );
+      expect(overdueSection?.querySelector('.abyss-task-time')?.textContent).toBe('06:11');
+      const todaySection = Array.from(
+        root.querySelectorAll<HTMLElement>('.abyss-list-section'),
+      ).find((section) => section.querySelector('.abyss-list-date-label')?.textContent === 'Today');
       const persistedRow = Array.from(
-        todaySection?.querySelectorAll<HTMLElement>('.tc-list-task') ?? [],
-      ).find((row) => row.querySelector('.tc-task-progress')?.textContent === '0/1');
+        todaySection?.querySelectorAll<HTMLElement>('.abyss-list-task') ?? [],
+      ).find((row) => row.querySelector('.abyss-task-progress')?.textContent === '0/1');
       expect(persistedRow, 'the persisted root represents its nested owner').toBeDefined();
-      expect(persistedRow?.querySelector('.tc-task-time')).toBeNull();
+      expect(persistedRow?.querySelector('.abyss-task-time')).toBeNull();
       expect(root.textContent).not.toContain('07:31');
       persistedRow
-        ?.querySelector<HTMLElement>('.tc-status-marker')
+        ?.querySelector<HTMLElement>('.abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(execute).toHaveBeenCalledWith({
         type: 'toggle-completion',
@@ -777,20 +777,20 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       const body = root.querySelector<HTMLElement>('.task .inner-link')!;
-      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+      const marker = root.querySelector<HTMLElement>('.task .abyss-status-marker')!;
 
       body.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      const recurrence = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
-      expect(recurrence?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
+      const recurrence = activeDocument.querySelector<HTMLElement>('.abyss-recurrence-popover');
+      expect(recurrence?.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
         'every week',
       );
       recurrence
-        ?.querySelector<HTMLElement>('.tc-recurrence-editor')
+        ?.querySelector<HTMLElement>('.abyss-recurrence-editor')
         ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      expect(activeDocument.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
       r.destroy();
     });
 
@@ -807,39 +807,39 @@ describe('CalendarRenderer', () => {
 
       try {
         root
-          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .querySelector<HTMLElement>('.task .abyss-status-marker')!
           .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         vi.runOnlyPendingTimers();
-        expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+        expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
         expect(owned.statusMenuCleanup).not.toBeNull();
 
-        activeDocument.querySelector<HTMLButtonElement>('.tc-status-popover-flag')!.click();
-        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+        activeDocument.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+        expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
         expect(owned.statusMenuCleanup).toBeNull();
 
         root
-          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .querySelector<HTMLElement>('.task .abyss-status-marker')!
           .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         vi.runOnlyPendingTimers();
 
         store.setTasks([task({ title: 'After patch', planning: { due: todayStr } })]);
         store.emit();
-        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+        expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
 
         root
-          .querySelector<HTMLElement>('.task .tc-status-marker')!
+          .querySelector<HTMLElement>('.task .abyss-status-marker')!
           .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         vi.runOnlyPendingTimers();
-        expect(activeDocument.querySelector('.tc-status-popover')).not.toBeNull();
+        expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
 
         r.destroy();
-        expect(activeDocument.querySelector('.tc-status-popover')).toBeNull();
+        expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
         expect(remove.mock.calls.some(([type]) => type === 'keydown')).toBe(true);
         expect(remove.mock.calls.some(([type]) => type === 'mousedown')).toBe(true);
       } finally {
         r.destroy();
         activeDocument
-          .querySelectorAll('.tc-status-popover')
+          .querySelectorAll('.abyss-status-popover')
           .forEach((element) => element.remove());
         remove.mockRestore();
         vi.clearAllTimers();
@@ -851,7 +851,7 @@ describe('CalendarRenderer', () => {
       const closeNotifications: Array<() => void> = [];
       const handles: Array<{ element: HTMLElement; close: () => void }> = [];
       const show = vi.spyOn(statusMenu, 'showStatusMenuAt').mockImplementation((_event, opts) => {
-        const element = activeDocument.body.createDiv({ cls: 'tc-status-popover' });
+        const element = activeDocument.body.createDiv({ cls: 'abyss-status-popover' });
         const { onClose } = opts;
         let closed = false;
         const handle = {
@@ -880,7 +880,7 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       try {
-        const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
+        const marker = root.querySelector<HTMLElement>('.task .abyss-status-marker')!;
         marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
         expect(owned.statusMenuCleanup).not.toBeNull();
 
@@ -921,11 +921,11 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       root
-        .querySelector<HTMLElement>('.task .tc-status-marker')!
+        .querySelector<HTMLElement>('.task .abyss-status-marker')!
         .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
       const confirmation = activeDocument.querySelector<HTMLElement>(
-        '.tc-recurrence-delete-confirm',
+        '.abyss-recurrence-delete-confirm',
       );
       expect(confirmation?.getAttribute('role')).toBe('alertdialog');
       expect(confirmation?.textContent).toContain(
@@ -934,7 +934,7 @@ describe('CalendarRenderer', () => {
       expect(configured.tasks.queries.list()).toHaveLength(1);
 
       confirmation
-        ?.querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm-button')
+        ?.querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm-button')
         ?.click();
       await flushMicrotasks();
 
@@ -963,17 +963,17 @@ describe('CalendarRenderer', () => {
       r.mount();
 
       root
-        .querySelector<HTMLElement>('.task .tc-status-marker')!
+        .querySelector<HTMLElement>('.task .abyss-status-marker')!
         .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       const confirmation = activeDocument.querySelector<HTMLElement>(
-        '.tc-recurrence-delete-confirm',
+        '.abyss-recurrence-delete-confirm',
       )!;
       Array.from(confirmation.querySelectorAll<HTMLButtonElement>('button'))
         .find((candidate) => candidate.textContent === 'Cancel')
         ?.click();
       await flushMicrotasks();
 
-      expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
       expect(configured.tasks.queries.list()).toHaveLength(1);
       expect(configured.tasks.queries.list()[0]?.subtasks).toHaveLength(1);
       r.destroy();

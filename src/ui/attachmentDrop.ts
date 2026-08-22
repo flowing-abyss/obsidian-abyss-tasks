@@ -48,11 +48,11 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
     if (!hasFiles && !hasDraggableFiles(opts.app)) return;
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-    el.addClass('tc-drop-active');
+    el.addClass('abyss-drop-active');
   };
 
   const onDragLeave = (e: DragEvent): void => {
-    if (!el.contains(e.relatedTarget as Node)) el.removeClass('tc-drop-active');
+    if (!el.contains(e.relatedTarget as Node)) el.removeClass('abyss-drop-active');
   };
 
   const onDrop = (e: DragEvent): void => {
@@ -61,12 +61,12 @@ export function enableAttachmentDrop(el: HTMLElement, opts: AttachmentDropOption
       (opts.app as unknown as AppWithDragManager).dragManager,
     );
     if (externalFiles.length === 0 && vaultFiles.length === 0) {
-      el.removeClass('tc-drop-active');
+      el.removeClass('abyss-drop-active');
       return;
     }
     e.preventDefault();
     e.stopPropagation();
-    el.removeClass('tc-drop-active');
+    el.removeClass('abyss-drop-active');
     void handleDrop(opts, externalFiles, vaultFiles);
   };
 

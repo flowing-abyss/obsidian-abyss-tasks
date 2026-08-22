@@ -16,7 +16,7 @@ export class TagPickerModal extends Modal {
     private readonly onCommit: (toAdd: string[], toRemove: string[]) => void,
   ) {
     super(app);
-    this.modalEl.addClass('tc-tag-picker-modal');
+    this.modalEl.addClass('abyss-tag-picker-modal');
     this.setTitle('Select tags');
   }
 
@@ -37,12 +37,12 @@ export class TagPickerModal extends Modal {
     contentEl.empty();
 
     this.searchEl = contentEl.createEl('input', {
-      cls: 'tc-tag-picker-search',
+      cls: 'abyss-tag-picker-search',
       attr: { type: 'text', placeholder: 'Search tags…' },
     });
     this.searchEl.addEventListener('input', () => this.renderList(this.searchEl.value));
 
-    this.listEl = contentEl.createDiv({ cls: 'tc-tag-picker-list' });
+    this.listEl = contentEl.createDiv({ cls: 'abyss-tag-picker-list' });
     this.renderList('');
     window.setTimeout(() => this.searchEl.focus(), 10);
   }
@@ -88,7 +88,7 @@ export class TagPickerModal extends Modal {
     }
 
     if (filtered.length === 0) {
-      this.listEl.createDiv({ cls: 'tc-tag-picker-empty', text: 'No tags found' });
+      this.listEl.createDiv({ cls: 'abyss-tag-picker-empty', text: 'No tags found' });
     }
 
     if (focusTag) {
@@ -105,18 +105,18 @@ export class TagPickerModal extends Modal {
     if (state === 'partial') pressed = 'mixed';
     else if (state === 'checked') pressed = 'true';
     const item = this.listEl.createEl('button', {
-      cls: `tc-tag-picker-item tc-tag-picker-item--${state}`,
+      cls: `abyss-tag-picker-item abyss-tag-picker-item--${state}`,
       attr: { type: 'button', 'data-tag': tag, 'aria-pressed': pressed },
     });
 
-    const iconEl = item.createSpan({ cls: 'tc-tag-picker-icon' });
+    const iconEl = item.createSpan({ cls: 'abyss-tag-picker-icon' });
     if (state === 'checked') setIcon(iconEl, 'check');
     else if (state === 'partial') setIcon(iconEl, 'minus');
     else if (state === 'removing') setIcon(iconEl, 'x');
 
-    const labelEl = item.createSpan({ cls: 'tc-tag-picker-label', text: tag });
+    const labelEl = item.createSpan({ cls: 'abyss-tag-picker-label', text: tag });
     const color = this.getTagColor(tag);
-    if (color) labelEl.setCssProps({ '--tc-tag-picker-color': color });
+    if (color) labelEl.setCssProps({ '--abyss-tag-picker-color': color });
 
     item.addEventListener('click', () => this.toggle(tag));
   }

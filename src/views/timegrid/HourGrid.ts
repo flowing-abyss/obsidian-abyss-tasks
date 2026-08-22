@@ -35,27 +35,30 @@ export function renderHourGrid(
   onDayHeaderClick?: (date: string) => void,
 ): HourGridHandles {
   container.empty();
-  const root = container.createDiv({ cls: 'tc-tg-root' });
+  const root = container.createDiv({ cls: 'abyss-tg-root' });
 
   // Day headers: weekday + day number per date, so multi-column views (Week)
   // can be read without cross-referencing the nav bar's week number.
   const today = window.moment().format('YYYY-MM-DD');
-  const headerRow = root.createDiv({ cls: 'tc-tg-header-row' });
-  headerRow.createDiv({ cls: 'tc-tg-header-gutter' });
+  const headerRow = root.createDiv({ cls: 'abyss-tg-header-row' });
+  headerRow.createDiv({ cls: 'abyss-tg-header-gutter' });
   for (const date of dates) {
     // is-clickable gates the pointer-cursor/hover affordance (CSS) so it only appears when a
     // click actually does something — e.g. Day/Today view wires no onDayHeaderClick for its
     // single header cell, so that cell must not falsely advertise itself as clickable.
     const headerCell = headerRow.createDiv({
-      cls: `tc-tg-header-cell${date === today ? ' is-today' : ''}${onDayHeaderClick ? ' is-clickable' : ''}`,
+      cls: `abyss-tg-header-cell${date === today ? ' is-today' : ''}${onDayHeaderClick ? ' is-clickable' : ''}`,
     });
     // Two separate spans (not one text node) so the day number can be styled independently of
     // the weekday abbreviation — today's accent (red, bold) applies only to the number, not the
     // whole "ddd D" string, per the Round 3 request to tone down Week's full-column red border
     // into a smaller, header-scoped accent.
-    headerCell.createSpan({ cls: 'tc-tg-header-weekday', text: window.moment(date).format('ddd') });
     headerCell.createSpan({
-      cls: 'tc-tg-header-day-number',
+      cls: 'abyss-tg-header-weekday',
+      text: window.moment(date).format('ddd'),
+    });
+    headerCell.createSpan({
+      cls: 'abyss-tg-header-day-number',
       text: window.moment(date).format('D'),
     });
     // Drill into the Day (Today) view for this specific date — same behavior as clicking a
@@ -69,25 +72,25 @@ export function renderHourGrid(
   }
 
   // All-day band: one cell per date
-  const alldayRow = root.createDiv({ cls: 'tc-tg-allday-row' });
-  const alldayGutter = alldayRow.createDiv({ cls: 'tc-tg-allday-gutter' });
+  const alldayRow = root.createDiv({ cls: 'abyss-tg-allday-row' });
+  const alldayGutter = alldayRow.createDiv({ cls: 'abyss-tg-allday-gutter' });
   // Task 47: nested label (not textContent directly on the gutter) so its smaller font-size
-  // doesn't also warp the gutter's own `width: 3.5em` — see .tc-tg-allday-gutter-label's CSS
+  // doesn't also warp the gutter's own `width: 3.5em` — see .abyss-tg-allday-gutter-label's CSS
   // doc comment (styles.css) for the alignment bug this fixes.
-  alldayGutter.createSpan({ cls: 'tc-tg-allday-gutter-label', text: 'No-time' });
-  const allDayDaysEl = alldayRow.createDiv({ cls: 'tc-tg-allday-days' });
+  alldayGutter.createSpan({ cls: 'abyss-tg-allday-gutter-label', text: 'No-time' });
+  const allDayDaysEl = alldayRow.createDiv({ cls: 'abyss-tg-allday-days' });
   const alldayCells: HTMLElement[] = dates.map((date) => {
-    const cell = allDayDaysEl.createDiv({ cls: 'tc-tg-allday-cell' });
+    const cell = allDayDaysEl.createDiv({ cls: 'abyss-tg-allday-cell' });
     cell.setAttribute('data-tg-date', date);
     return cell;
   });
-  const allDaySpanLayerEl = allDayDaysEl.createDiv({ cls: 'tc-tg-span-layer' });
+  const allDaySpanLayerEl = allDayDaysEl.createDiv({ cls: 'abyss-tg-span-layer' });
 
   // Hour grid: a gutter with hour labels, plus one column per date
-  const gridRow = root.createDiv({ cls: 'tc-tg-grid-row' });
-  const gutter = gridRow.createDiv({ cls: 'tc-tg-hour-gutter' });
+  const gridRow = root.createDiv({ cls: 'abyss-tg-grid-row' });
+  const gutter = gridRow.createDiv({ cls: 'abyss-tg-hour-gutter' });
   for (let h = 0; h < 24; h++) {
-    const label = gutter.createDiv({ cls: 'tc-tg-hour-label' });
+    const label = gutter.createDiv({ cls: 'abyss-tg-hour-label' });
     label.textContent = `${h.toString().padStart(2, '0')}:00`;
   }
 
@@ -99,14 +102,14 @@ export function renderHourGrid(
     // aggressive in Day view, where it boxed in the entire single-column view redundantly; too
     // noisy in Week, where it outlined one of 7 columns). "Today" is now conveyed only via the
     // header's accented day-number span above, so this column never needs the class.
-    const dayColumn = gridRow.createDiv({ cls: 'tc-tg-day-column' });
+    const dayColumn = gridRow.createDiv({ cls: 'abyss-tg-day-column' });
     // Lets CenterPanel locate a specific day's column from outside this module (e.g. to
     // anchor the click-to-create quick-add popover — see onCreateAtTime below).
     dayColumn.setAttribute('data-tg-date', date);
     for (let h = 0; h < 24; h++) {
-      dayColumn.createDiv({ cls: 'tc-tg-hour-row' });
+      dayColumn.createDiv({ cls: 'abyss-tg-hour-row' });
     }
-    const hourColumnEl = dayColumn.createDiv({ cls: 'tc-tg-hour-column' });
+    const hourColumnEl = dayColumn.createDiv({ cls: 'abyss-tg-hour-column' });
 
     if (onDropTime) {
       hourColumnEl.addEventListener('dragover', (e) => {
@@ -130,7 +133,7 @@ export function renderHourGrid(
       hourColumnEl.addEventListener('click', (e) => {
         if (
           (e.target as HTMLElement).closest(
-            '.tc-tg-block, .tc-tg-block-continuation, .tc-tg-quick-add',
+            '.abyss-tg-block, .abyss-tg-block-continuation, .abyss-tg-quick-add',
           )
         )
           return;
@@ -148,9 +151,9 @@ export function renderHourGrid(
   // The dot is positioned at today's column center rather than at a grid boundary, and the CSS
   // layer stays underneath each day column's interactive task layer.
   if (todayIndex !== -1) {
-    nowLineEl = gridRow.createDiv({ cls: 'tc-tg-now-line' });
-    nowLineEl.createDiv({ cls: 'tc-tg-now-line-dot' });
-    const dot = nowLineEl.querySelector<HTMLElement>('.tc-tg-now-line-dot');
+    nowLineEl = gridRow.createDiv({ cls: 'abyss-tg-now-line' });
+    nowLineEl.createDiv({ cls: 'abyss-tg-now-line-dot' });
+    const dot = nowLineEl.querySelector<HTMLElement>('.abyss-tg-now-line-dot');
     if (dot) dot.style.left = `${((todayIndex + 0.5) / dates.length) * 100}%`;
     repositionNowLine(nowLineEl);
   }

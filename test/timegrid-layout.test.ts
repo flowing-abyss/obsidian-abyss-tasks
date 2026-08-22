@@ -107,7 +107,7 @@ describe('packOverlaps', () => {
   });
 });
 
-// Task 36: a min-height CSS rule on `.tc-tg-block` guarantees a short-duration block's
+// Task 36: a min-height CSS rule on `.abyss-tg-block` guarantees a short-duration block's
 // checkbox+title row stays legible, but that rule can only grow a block past its
 // duration-derived height — so a short block scheduled immediately before another block in the
 // same column could visually grow into it. `capMinHeightsPx` computes, per block, the maximum

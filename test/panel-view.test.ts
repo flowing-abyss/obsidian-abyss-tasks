@@ -62,28 +62,28 @@ describe('PanelView', () => {
       taskApplication.index.destroy();
     });
 
-    it('adds tc-panel-view class to contentEl', () => {
-      expect(view.contentEl.classList.contains('tc-panel-view')).toBe(true);
+    it('adds abyss-panel-view class to contentEl', () => {
+      expect(view.contentEl.classList.contains('abyss-panel-view')).toBe(true);
     });
 
-    it('creates tc-layout with 4 zones', () => {
-      const layout = view.contentEl.querySelector('.tc-layout');
+    it('creates abyss-layout with 4 zones', () => {
+      const layout = view.contentEl.querySelector('.abyss-layout');
       expect(layout).not.toBeNull();
-      expect(layout?.querySelector('.tc-rail')).not.toBeNull();
-      expect(layout?.querySelector('.tc-left')).not.toBeNull();
-      expect(layout?.querySelector('.tc-center')).not.toBeNull();
-      expect(layout?.querySelector('.tc-right')).not.toBeNull();
+      expect(layout?.querySelector('.abyss-rail')).not.toBeNull();
+      expect(layout?.querySelector('.abyss-left')).not.toBeNull();
+      expect(layout?.querySelector('.abyss-center')).not.toBeNull();
+      expect(layout?.querySelector('.abyss-right')).not.toBeNull();
     });
 
-    it('tc-rail has 4 rail buttons (tasks/projects/calendar/search) + 1 settings button', () => {
-      const railBtns = view.contentEl.querySelectorAll('.tc-rail .tc-rail-btn');
+    it('abyss-rail has 4 rail buttons (tasks/projects/calendar/search) + 1 settings button', () => {
+      const railBtns = view.contentEl.querySelectorAll('.abyss-rail .abyss-rail-btn');
       expect(railBtns).toHaveLength(5);
     });
 
-    it('tc-left shows Inbox / Today / Upcoming smart lists', () => {
-      const labels = Array.from(view.contentEl.querySelectorAll('.tc-left .tc-left-label')).map(
-        (l) => l.textContent,
-      );
+    it('abyss-left shows Inbox / Today / Upcoming smart lists', () => {
+      const labels = Array.from(
+        view.contentEl.querySelectorAll('.abyss-left .abyss-left-label'),
+      ).map((l) => l.textContent);
       expect(labels).toContain('Inbox');
       expect(labels).toContain('Today');
       expect(labels).toContain('Upcoming');
@@ -91,11 +91,11 @@ describe('PanelView', () => {
 
     it('mode change to calendar updates layout class', () => {
       const state = (view as unknown as { state: AppState }).state;
-      const layout = view.contentEl.querySelector('.tc-layout') as HTMLElement;
+      const layout = view.contentEl.querySelector('.abyss-layout') as HTMLElement;
       const before = layout.className;
       state.set('mode', 'calendar');
       expect(layout.className).not.toBe(before);
-      expect(layout.className).toContain('tc-layout--calendar');
+      expect(layout.className).toContain('abyss-layout--calendar');
     });
 
     it.each([
@@ -204,7 +204,7 @@ describe('PanelView', () => {
 
     it('onClose unsubs mode listener (different mode value does not mutate layout)', async () => {
       const state = (view as unknown as { state: AppState }).state;
-      const layout = view.contentEl.querySelector('.tc-layout') as HTMLElement;
+      const layout = view.contentEl.querySelector('.abyss-layout') as HTMLElement;
       const before = layout.className;
       await view.onClose();
       state.set('mode', 'search'); // different value
@@ -295,7 +295,7 @@ describe('PanelView', () => {
       const state = (view as unknown as { state: AppState }).state;
       const root = taskApplication.index.list()[0]!;
       state.set('taskStack', [root]);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       comment.value = 'rename-safe panel draft';
       comment.focus();
       const file = app.vault.getAbstractFileByPath(root.source.filePath);
@@ -309,9 +309,9 @@ describe('PanelView', () => {
         ref: { filePath: 'renamed.md' },
         source: { filePath: 'renamed.md' },
       });
-      const restored = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const restored = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       expect(restored.value).toBe('rename-safe panel draft');
-      expect(view.contentEl.querySelector('.tc-detached-draft')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-detached-draft')).toBeNull();
     });
 
     it('consumes an actual submitted comment across the service/index early event', async () => {
@@ -324,7 +324,7 @@ describe('PanelView', () => {
           observedResolutions.push(taskApplication.index.resolve(root.ref));
         }
       });
-      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       input.value = 'actual interleaving comment';
 
       input.dispatchEvent(
@@ -343,11 +343,11 @@ describe('PanelView', () => {
         type: 'rebased',
         evidence: 'authority-transition',
       });
-      expect(view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value).toBe(
+      expect(view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')?.value).toBe(
         '',
       );
-      expect(view.contentEl.querySelector('.tc-detached-draft')).toBeNull();
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-detached-draft')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
       off();
     });
 
@@ -364,7 +364,7 @@ describe('PanelView', () => {
         await flushMicrotasks();
         throw new Error('simulated process rollback');
       });
-      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const input = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       input.value = 'rollback actual comment';
 
       input.dispatchEvent(
@@ -377,10 +377,10 @@ describe('PanelView', () => {
       expect(await app.vault.read(file)).toBe(original);
       expect(taskApplication.index.list()[0]?.comments).toHaveLength(0);
       const live =
-        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')?.value ?? '';
-      const detached = view.contentEl.querySelector('.tc-detached-draft')?.textContent ?? '';
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')?.value ?? '';
+      const detached = view.contentEl.querySelector('.abyss-detached-draft')?.textContent ?? '';
       expect(`${live}${detached}`.match(/rollback actual comment/gu)).toHaveLength(1);
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('clears owned-write acknowledgement when deletion/switch changes the selected root', () => {
@@ -403,7 +403,7 @@ describe('PanelView', () => {
         }
       ).applyResolution({ type: 'uncertain', ref: otherRoot.ref });
       expect(state.get('taskStack')).toEqual([]);
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('rejects a late write acknowledgement after selection switched away from its root', () => {
@@ -427,7 +427,7 @@ describe('PanelView', () => {
         }
       ).applyResolution({ type: 'uncertain', ref: first.ref });
       expect(state.get('taskStack')).toEqual([]);
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('converges a selected Center or Left command immediately and accepts the next index event', () => {
@@ -458,7 +458,7 @@ describe('PanelView', () => {
           applyResolution(resolution: { type: 'exact'; task: typeof updated }): void;
         }
       ).applyResolution({ type: 'exact', task: updated });
-      expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-stale')).toBeNull();
     });
 
     it('preserves the full RightPanel DOM draft bundle while a no-op Center command converges', async () => {
@@ -466,13 +466,13 @@ describe('PanelView', () => {
       const observed = taskApplication.index.list()[0]!;
       state.set('taskStack', [observed]);
       activeDocument.body.append(view.contentEl);
-      view.contentEl.querySelector<HTMLElement>('.tc-right-title-view')!.click();
+      view.contentEl.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
       await flushMicrotasks();
-      const title = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+      const title = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
       title.value = 'unsaved title';
       title.focus();
       title.setSelectionRange(1, 6);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       comment.value = 'unsaved comment';
       comment.setSelectionRange(2, 9);
       const execute = vi.spyOn(taskApplication.tasks, 'execute');
@@ -489,9 +489,9 @@ describe('PanelView', () => {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
 
       const restoredTitle =
-        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
       const restoredComment =
-        view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+        view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       expect(restoredTitle.value).toBe('unsaved title');
       expect(restoredTitle.selectionStart).toBe(1);
       expect(restoredTitle.selectionEnd).toBe(6);
@@ -516,7 +516,7 @@ describe('PanelView', () => {
           applyResolution(resolution: { type: 'uncertain'; ref: TaskRef }): void;
         }
       ).applyResolution({ type: 'uncertain', ref: observed.ref });
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
 
       (
         view as unknown as {
@@ -529,7 +529,7 @@ describe('PanelView', () => {
       });
 
       expect(state.get('taskStack')).toEqual([]);
-      expect(view.contentEl.querySelector('.tc-task-selection-stale')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-stale')).toBeNull();
     });
 
     it('renders a fresh visual candidate and detaches the stale draft without a message', () => {
@@ -542,7 +542,7 @@ describe('PanelView', () => {
         markdownTitle: 'Visual current',
       };
       state.set('taskStack', [observed]);
-      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.tc-comment-input')!;
+      const comment = view.contentEl.querySelector<HTMLTextAreaElement>('.abyss-comment-input')!;
       comment.value = 'stale local draft';
 
       (
@@ -565,10 +565,10 @@ describe('PanelView', () => {
         title: 'Visual current',
         ref: current.ref,
       });
-      expect(view.contentEl.querySelector('.tc-detached-draft')?.textContent).toContain(
+      expect(view.contentEl.querySelector('.abyss-detached-draft')?.textContent).toContain(
         'stale local draft',
       );
-      expect(view.contentEl.querySelector('.tc-task-selection-message')).toBeNull();
+      expect(view.contentEl.querySelector('.abyss-task-selection-message')).toBeNull();
     });
 
     it('does not let a late Center or Left result replace a different selection', () => {
@@ -602,20 +602,20 @@ describe('PanelView', () => {
 
     it('refresh updates left panel count badges after index change (DOM assertion)', async () => {
       // Initial: one open task due today → Today count badge = "1"
-      const left = view.contentEl.querySelector('.tc-left') as HTMLElement;
-      const todayItem = Array.from(left.querySelectorAll('.tc-left-item')).find(
-        (el) => el.querySelector('.tc-left-label')?.textContent === 'Today',
+      const left = view.contentEl.querySelector('.abyss-left') as HTMLElement;
+      const todayItem = Array.from(left.querySelectorAll('.abyss-left-item')).find(
+        (el) => el.querySelector('.abyss-left-label')?.textContent === 'Today',
       ) as HTMLElement | undefined;
-      expect(todayItem?.querySelector('.tc-left-count')?.textContent).toBe('1');
+      expect(todayItem?.querySelector('.abyss-left-count')?.textContent).toBe('1');
       // Toggle the task done via file mutation (simulates an external vault edit).
       const file = app.vault.getMarkdownFiles()[0]!;
       await app.vault.process(file, (data) => data.replace('- [ ]', '- [x]'));
       await flushMicrotasks();
       // After refresh: no open tasks due today → Today count badge absent (count 0 → not rendered)
-      const todayItemAfter = Array.from(left.querySelectorAll('.tc-left-item')).find(
-        (el) => el.querySelector('.tc-left-label')?.textContent === 'Today',
+      const todayItemAfter = Array.from(left.querySelectorAll('.abyss-left-item')).find(
+        (el) => el.querySelector('.abyss-left-label')?.textContent === 'Today',
       ) as HTMLElement | undefined;
-      expect(todayItemAfter?.querySelector('.tc-left-count')?.textContent ?? '0').toBe('0');
+      expect(todayItemAfter?.querySelector('.abyss-left-count')?.textContent ?? '0').toBe('0');
     });
   });
 

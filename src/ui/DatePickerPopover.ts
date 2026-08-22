@@ -18,12 +18,13 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
   const ownerDocument = options.owner.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
   const popover = ownerDocument.createElement('div');
-  popover.className = 'tc-popover tc-date-popover tc-date-picker-popover tc-popover-anchored';
+  popover.className =
+    'abyss-popover abyss-date-popover abyss-date-picker-popover abyss-popover-anchored';
 
   const row = ownerDocument.createElement('div');
-  row.className = 'tc-popover-input-row';
+  row.className = 'abyss-popover-input-row';
   const input = ownerDocument.createElement('input');
-  input.className = 'tc-date-input';
+  input.className = 'abyss-date-input';
   input.type = 'date';
   input.setAttribute('aria-label', 'Set date');
   input.value = options.initialValue ?? '';
@@ -47,11 +48,11 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
       preferred: 'below-start',
     });
     popover.style.setProperty(
-      '--tc-pop-top',
+      '--abyss-pop-top',
       `${placement.top - owner.top - options.owner.clientTop + options.owner.scrollTop}px`,
     );
     popover.style.setProperty(
-      '--tc-pop-left',
+      '--abyss-pop-left',
       `${placement.left - owner.left - options.owner.clientLeft + options.owner.scrollLeft}px`,
     );
     popover.dataset['side'] = placement.side;

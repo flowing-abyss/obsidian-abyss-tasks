@@ -45,12 +45,12 @@ function makeView(
 
 describe('ListView', () => {
   describe('render contract', () => {
-    it('empty tasks → only .tc-list-view, no sections', () => {
+    it('empty tasks → only .abyss-list-view, no sections', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [], resolvedConfig());
-      expect(c.querySelector('.tc-list-view')).not.toBeNull();
-      expect(c.querySelectorAll('.tc-list-section')).toHaveLength(0);
+      expect(c.querySelector('.abyss-list-view')).not.toBeNull();
+      expect(c.querySelectorAll('.abyss-list-section')).toHaveLength(0);
     });
 
     it('overdue task → one overdue section with count + one task row', () => {
@@ -58,10 +58,10 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: yesterday() } });
       view.render(c, [t], resolvedConfig());
-      const header = c.querySelector('.tc-list-overdue-header');
+      const header = c.querySelector('.abyss-list-overdue-header');
       expect(header).not.toBeNull();
-      expect(header?.querySelector('.tc-list-date-count')?.textContent).toBe('1');
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
+      expect(header?.querySelector('.abyss-list-date-count')?.textContent).toBe('1');
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(1);
     });
 
     it('overdue count span equals overdueTasks.length', () => {
@@ -72,28 +72,30 @@ describe('ListView', () => {
         task({ title: 'b', status: 'open', planning: { due: '2020-01-02' } }),
       ];
       view.render(c, tasks, resolvedConfig());
-      expect(c.querySelector('.tc-list-overdue-header .tc-list-date-count')?.textContent).toBe('2');
+      expect(
+        c.querySelector('.abyss-list-overdue-header .abyss-list-date-count')?.textContent,
+      ).toBe('2');
     });
 
     it('done task with due today → NOT shown (only open tasks)', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [task({ status: 'done', planning: { due: today() } })], resolvedConfig());
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(0);
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(0);
     });
 
     it('cancelled task → NOT shown', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [task({ status: 'cancelled', planning: { due: today() } })], resolvedConfig());
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(0);
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(0);
     });
 
     it('task due today → date label "Today"', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [task({ status: 'open', planning: { due: today() } })], resolvedConfig());
-      const labels = c.querySelectorAll('.tc-list-date-label');
+      const labels = c.querySelectorAll('.abyss-list-date-label');
       const hasToday = Array.from(labels).some((l) => l.textContent === 'Today');
       expect(hasToday).toBe(true);
     });
@@ -104,9 +106,9 @@ describe('ListView', () => {
       view.render(c, [task({ status: 'open', planning: { due: yesterday() } })], resolvedConfig());
       // yesterday is overdue, so it goes to overdue section, not day section
       // CURRENT BEHAVIOR: overdue tasks are in "Overdue" section, not "Yesterday"
-      expect(c.querySelector('.tc-list-overdue-header .tc-list-date-label')?.textContent).toBe(
-        'Overdue',
-      );
+      expect(
+        c.querySelector('.abyss-list-overdue-header .abyss-list-date-label')?.textContent,
+      ).toBe('Overdue');
     });
 
     it('other date → label formatted ddd, D MMM', () => {
@@ -122,7 +124,7 @@ describe('ListView', () => {
         if (m.format('YYYY-MM-DD') === today()) m.add(1, 'day');
         const d = m.format('YYYY-MM-DD');
         view.render(c, [task({ status: 'open', planning: { due: d } })], resolvedConfig());
-        const labels = c.querySelectorAll('.tc-list-date-label');
+        const labels = c.querySelectorAll('.abyss-list-date-label');
         const label = Array.from(labels).find((l) => l.textContent !== 'Overdue');
         expect(label?.textContent ?? '').toMatch(/^[A-Z][a-z]{2}, \d{1,2} [A-Z][a-z]{2}$/);
       } finally {
@@ -137,7 +139,7 @@ describe('ListView', () => {
       // due AND scheduled on same day → appears in both groups, deduped to one row
       const t = task({ status: 'open', planning: { due: d, scheduled: d } });
       view.render(c, [t], resolvedConfig());
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(1);
     });
 
     it('keeps persisted-list counts independent from the calendar forecast projection', () => {
@@ -164,8 +166,8 @@ describe('ListView', () => {
       view.render(c, [persisted], resolvedConfig());
 
       expect(projection.occurrences).toHaveLength(3);
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
-      expect(c.querySelector('.tc-list-date-count')?.textContent).toBe('1');
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(1);
+      expect(c.querySelector('.abyss-list-date-count')?.textContent).toBe('1');
       expect(c.querySelector("[data-recurrence-forecast='true']")).toBeNull();
     });
 
@@ -205,12 +207,12 @@ describe('ListView', () => {
 
       view.render(c, [root], resolvedConfig());
 
-      const todaySection = Array.from(c.querySelectorAll<HTMLElement>('.tc-list-section')).find(
-        (section) => section.querySelector('.tc-list-date-label')?.textContent === 'Today',
+      const todaySection = Array.from(c.querySelectorAll<HTMLElement>('.abyss-list-section')).find(
+        (section) => section.querySelector('.abyss-list-date-label')?.textContent === 'Today',
       );
-      expect(todaySection?.querySelectorAll('.tc-list-task')).toHaveLength(1);
-      expect(todaySection?.querySelector('.tc-task-progress')?.textContent).toBe('0/2');
-      expect(todaySection?.querySelectorAll('.tc-task-time')).toHaveLength(0);
+      expect(todaySection?.querySelectorAll('.abyss-list-task')).toHaveLength(1);
+      expect(todaySection?.querySelector('.abyss-task-progress')?.textContent).toBe('0/2');
+      expect(todaySection?.querySelectorAll('.abyss-task-time')).toHaveLength(0);
       expect(todaySection?.querySelector("[data-recurrence-forecast='true']")).toBeNull();
     });
 
@@ -245,7 +247,7 @@ describe('ListView', () => {
         }),
       ];
       view.render(c, tasks, resolvedConfig());
-      const times = Array.from(c.querySelectorAll('.tc-task-time')).map((el) => el.textContent);
+      const times = Array.from(c.querySelectorAll('.abyss-task-time')).map((el) => el.textContent);
       expect(times).toEqual(['09:00', '10:00', '23:00']);
     });
 
@@ -258,12 +260,12 @@ describe('ListView', () => {
         resolvedConfig(),
       );
 
-      const badge = c.querySelector<HTMLElement>('.tc-recurrence-badge');
+      const badge = c.querySelector<HTMLElement>('.abyss-recurrence-badge');
       expect(badge?.dataset['recurrenceValidity']).toBe('invalid');
       expect(badge?.getAttribute('title')).toBe(
         'Invalid repeat rule: Start the rule with “every”.',
       );
-      expect(c.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
+      expect(c.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
     });
   });
 
@@ -273,7 +275,7 @@ describe('ListView', () => {
       const c = freshContainer();
       const d = today();
       view.render(c, [task({ status: 'open', planning: { due: d } })], resolvedConfig());
-      const header = c.querySelector('.tc-list-date-header') as HTMLElement;
+      const header = c.querySelector('.abyss-list-date-header') as HTMLElement;
       header.click();
       expect(spies.onDateClick).toHaveBeenCalledWith(d);
     });
@@ -283,7 +285,7 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const row = c.querySelector('.tc-list-task') as HTMLElement;
+      const row = c.querySelector('.abyss-list-task') as HTMLElement;
       row.click();
       expect(spies.onTaskClick).toHaveBeenCalledWith(t);
     });
@@ -293,7 +295,7 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const marker = c.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = c.querySelector('.abyss-status-marker') as HTMLElement;
       marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(spies.onToggle).toHaveBeenCalledWith(t);
       expect(spies.onTaskClick).not.toHaveBeenCalled();
@@ -315,7 +317,7 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', statusSymbol: ' ', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const marker = c.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = c.querySelector('.abyss-status-marker') as HTMLElement;
       const svg = marker.querySelector('svg') as unknown as HTMLElement;
       expect(svg).not.toBeNull();
       svg.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -328,7 +330,7 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const marker = c.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = c.querySelector('.abyss-status-marker') as HTMLElement;
       const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
       marker.dispatchEvent(ev);
       expect(spies.onContextMenu).toHaveBeenCalledWith(ev, t);
@@ -339,8 +341,8 @@ describe('ListView', () => {
       const c = freshContainer();
       const t = task({ status: 'open', planning: { due: today() } });
       view.render(c, [t], resolvedConfig());
-      const row = c.querySelector<HTMLElement>('.tc-list-task')!;
-      const marker = row.querySelector<HTMLElement>('.tc-status-marker')!;
+      const row = c.querySelector<HTMLElement>('.abyss-list-task')!;
+      const marker = row.querySelector<HTMLElement>('.abyss-status-marker')!;
       const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
       row.dispatchEvent(event);
@@ -356,7 +358,7 @@ describe('ListView', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [task({ status: 'open', planning: { due: today() } })], resolvedConfig());
-      const marker = c.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = c.querySelector('.abyss-status-marker') as HTMLElement;
       expect(marker.getAttribute('data-status-type')).toBe('todo');
     });
 
@@ -369,7 +371,7 @@ describe('ListView', () => {
       expect(c.querySelectorAll('.is-done')).toHaveLength(0);
     });
 
-    it('meta: tc-task-time span shows task.time when present', () => {
+    it('meta: abyss-task-time span shows task.time when present', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(
@@ -377,17 +379,17 @@ describe('ListView', () => {
         [task({ status: 'open', planning: { due: today(), time: '14:30' } })],
         resolvedConfig(),
       );
-      expect(c.querySelector('.tc-task-time')?.textContent).toBe('14:30');
+      expect(c.querySelector('.abyss-task-time')?.textContent).toBe('14:30');
     });
 
-    it('meta: no tc-task-time span when time absent', () => {
+    it('meta: no abyss-task-time span when time absent', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(c, [task({ status: 'open', planning: { due: today() } })], resolvedConfig());
-      expect(c.querySelector('.tc-task-time')).toBeNull();
+      expect(c.querySelector('.abyss-task-time')).toBeNull();
     });
 
-    it('meta: first tag shown as tc-task-tag', () => {
+    it('meta: first tag shown as abyss-task-tag', () => {
       const { view } = makeView();
       const c = freshContainer();
       view.render(
@@ -405,7 +407,7 @@ describe('ListView', () => {
         ],
         resolvedConfig(),
       );
-      expect(c.querySelector('.tc-task-tag')?.textContent).toBe('#work');
+      expect(c.querySelector('.abyss-task-tag')?.textContent).toBe('#work');
     });
 
     it('meta: only first tag (slice 0,1)', () => {
@@ -426,7 +428,7 @@ describe('ListView', () => {
         ],
         resolvedConfig(),
       );
-      expect(c.querySelectorAll('.tc-task-tag')).toHaveLength(1);
+      expect(c.querySelectorAll('.abyss-task-tag')).toHaveLength(1);
     });
 
     it('meta: subtask progress shown as done/total', () => {
@@ -451,7 +453,7 @@ describe('ListView', () => {
         ],
         resolvedConfig(),
       );
-      expect(c.querySelector('.tc-task-progress')?.textContent).toBe('1/2');
+      expect(c.querySelector('.abyss-task-progress')?.textContent).toBe('1/2');
     });
 
     it('destroy is a no-op (no throw)', () => {
@@ -471,7 +473,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: undefined },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'never' }));
-      expect(c.querySelector('.tc-task-source-note')).toBeNull();
+      expect(c.querySelector('.abyss-task-source-note')).toBeNull();
     });
 
     it('sourceNoteDisplay always → chip shows filename without extension', () => {
@@ -484,7 +486,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: undefined },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
-      const chip = c.querySelector('.tc-task-source-note');
+      const chip = c.querySelector('.abyss-task-source-note');
       expect(chip).not.toBeNull();
       expect(chip?.textContent).toContain('alpha');
     });
@@ -499,7 +501,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: '2026-06-25' },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
-      expect(c.querySelector('.tc-task-source-note')).not.toBeNull();
+      expect(c.querySelector('.abyss-task-source-note')).not.toBeNull();
     });
 
     it('sourceNoteDisplay non-default → no chip for daily note task', () => {
@@ -512,7 +514,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: '2026-06-25' },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'non-default' }));
-      expect(c.querySelector('.tc-task-source-note')).toBeNull();
+      expect(c.querySelector('.abyss-task-source-note')).toBeNull();
     });
 
     it('sourceNoteDisplay non-default → no chip when filePath matches customFilePath', () => {
@@ -529,7 +531,7 @@ describe('ListView', () => {
         [t],
         resolvedConfig({ sourceNoteDisplay: 'non-default', customFilePath: 'Inbox/tasks.md' }),
       );
-      expect(c.querySelector('.tc-task-source-note')).toBeNull();
+      expect(c.querySelector('.abyss-task-source-note')).toBeNull();
     });
 
     it('sourceNoteDisplay non-default → chip shown for non-default file', () => {
@@ -542,7 +544,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: undefined },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'non-default', customFilePath: '' }));
-      const chip = c.querySelector('.tc-task-source-note');
+      const chip = c.querySelector('.abyss-task-source-note');
       expect(chip).not.toBeNull();
       expect(chip?.textContent).toContain('beta');
     });
@@ -557,7 +559,7 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: undefined },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
-      const chip = c.querySelector('.tc-task-source-note');
+      const chip = c.querySelector('.abyss-task-source-note');
       expect(chip?.textContent).not.toContain('/');
       expect(chip?.textContent).not.toContain('.md');
       expect(chip?.textContent).toContain('deep-note');
@@ -578,11 +580,11 @@ describe('ListView', () => {
         presentation: { dailyNoteDate: undefined },
       });
       view.render(c, [t], resolvedConfig({ sourceNoteDisplay: 'always' }));
-      const meta = c.querySelector('.tc-list-task-meta');
+      const meta = c.querySelector('.abyss-list-task-meta');
       expect(meta).not.toBeNull();
       const children = Array.from(meta!.children);
-      const noteIdx = children.findIndex((el) => el.classList.contains('tc-task-source-note'));
-      const tagIdx = children.findIndex((el) => el.classList.contains('tc-task-tag'));
+      const noteIdx = children.findIndex((el) => el.classList.contains('abyss-task-source-note'));
+      const tagIdx = children.findIndex((el) => el.classList.contains('abyss-task-tag'));
       expect(noteIdx).toBeGreaterThanOrEqual(0);
       expect(tagIdx).toBeGreaterThan(noteIdx);
     });
@@ -601,7 +603,7 @@ describe('ListView', () => {
         resolvedConfig({ startPosition: nextMonth }),
       );
       // today is not in next month → no day sections (overdue section may appear if due<today, but today is not <today)
-      expect(c.querySelectorAll('.tc-list-section')).toHaveLength(0);
+      expect(c.querySelectorAll('.abyss-list-section')).toHaveLength(0);
     });
 
     it('past-due task in rendered month appears in overdue section only (not duplicated)', () => {
@@ -611,8 +613,8 @@ describe('ListView', () => {
       const pastDate = window.moment().subtract(5, 'days').format('YYYY-MM-DD');
       const t = task({ status: 'open', planning: { due: pastDate } });
       view.render(c, [t], resolvedConfig());
-      expect(c.querySelectorAll('.tc-list-task')).toHaveLength(1);
-      expect(c.querySelector('.tc-list-overdue-header')).not.toBeNull();
+      expect(c.querySelectorAll('.abyss-list-task')).toHaveLength(1);
+      expect(c.querySelector('.abyss-list-overdue-header')).not.toBeNull();
     });
   });
 });

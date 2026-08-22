@@ -109,25 +109,25 @@ describe('createTaskCard', () => {
         task({ status: 'open', statusSymbol: ' ' }),
         'due',
         baseOptions(),
-      ).querySelector<HTMLElement>('.tc-status-marker');
+      ).querySelector<HTMLElement>('.abyss-status-marker');
       expect(openMarker?.getAttribute('data-status-type')).toBe('todo');
       const doneMarker = createTaskCard(
         task({ status: 'done', statusSymbol: 'x' }),
         'due',
         baseOptions(),
-      ).querySelector<HTMLElement>('.tc-status-marker');
+      ).querySelector<HTMLElement>('.abyss-status-marker');
       expect(doneMarker?.getAttribute('data-status-type')).toBe('done');
     });
 
     it('omits the status marker in timeblock mode', () => {
       const el = createTaskCard(task(), 'due', baseOptions({ mode: 'timeblock' }));
-      expect(el.querySelector('.tc-status-marker')).toBeNull();
+      expect(el.querySelector('.abyss-status-marker')).toBeNull();
     });
 
     it('invokes onToggle once on click', () => {
       const onToggle = vi.fn();
       const el = createTaskCard(task({ title: 'x' }), 'due', baseOptions({ onToggle }));
-      const marker = el.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = el.querySelector('.abyss-status-marker') as HTMLElement;
       marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       expect(onToggle).toHaveBeenCalledTimes(1);
       expect((onToggle.mock.calls[0]?.[0] as Task).title).toBe('x');
@@ -137,7 +137,7 @@ describe('createTaskCard', () => {
       const onContextMenu = vi.fn();
       const t = task({ title: 'y' });
       const el = createTaskCard(t, 'due', baseOptions({ onContextMenu }));
-      const marker = el.querySelector('.tc-status-marker') as HTMLElement;
+      const marker = el.querySelector('.abyss-status-marker') as HTMLElement;
       const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
       marker.dispatchEvent(ev);
       expect(onContextMenu).toHaveBeenCalledWith(ev, t);
@@ -167,7 +167,7 @@ describe('createTaskCard', () => {
       const t = task({ source: { filePath: 'notes/x.md' } });
       const el = createTaskCard(t, 'due', baseOptions({ onTaskBodyContextMenu }));
       const body = el.querySelector<HTMLElement>('.inner-link')!;
-      const marker = el.querySelector<HTMLElement>('.tc-status-marker')!;
+      const marker = el.querySelector<HTMLElement>('.abyss-status-marker')!;
       const bodyEvent = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
 
       body.dispatchEvent(bodyEvent);
@@ -206,11 +206,11 @@ describe('createTaskCard', () => {
     it('uses the shared recurrence badge instead of a repeat emoji for a recurring task', () => {
       const el = createTaskCard(task({ recurrence: 'every week' }), 'recurrence', baseOptions());
 
-      const badge = el.querySelector<HTMLElement>('.tc-recurrence-badge');
+      const badge = el.querySelector<HTMLElement>('.abyss-recurrence-badge');
       expect(badge?.dataset['recurrenceValidity']).toBe('valid');
       expect(badge?.getAttribute('aria-label')).toBe('Repeats: every week');
       expect(el.textContent).not.toContain('🔁');
-      expect(el.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
+      expect(el.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
     });
 
     it('uses empty string for an unknown taskClass', () => {

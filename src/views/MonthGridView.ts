@@ -34,9 +34,9 @@ import {
 } from './timegrid/renderTaskMeta';
 
 function monthCompactClass(kind: MonthCompactKind): string {
-  if (kind === 'timed') return 'tc-mg-block-dot';
-  if (kind === 'plain') return 'tc-mg-plain';
-  return 'tc-mg-deadline-marker';
+  if (kind === 'timed') return 'abyss-mg-block-dot';
+  if (kind === 'plain') return 'abyss-mg-plain';
+  return 'abyss-mg-deadline-marker';
 }
 
 function monthCompactSpanRole(task: TaskSnapshot, kind: MonthCompactKind): string {
@@ -90,13 +90,13 @@ export class MonthGridView extends BaseView {
     const firstDayOfMonth = parseInt(window.moment(month).format('d'), 10);
     this.skeletonKey = this.buildSkeletonKey(month.format('YYYY-MM'), config);
 
-    const grid = container.createDiv({ cls: 'tc-mg-grid' });
-    const headRow = grid.createDiv({ cls: 'tc-mg-head-row' });
-    headRow.createDiv({ cls: 'tc-mg-week-head' }); // empty corner, aligns with the week-number column
+    const grid = container.createDiv({ cls: 'abyss-mg-grid' });
+    const headRow = grid.createDiv({ cls: 'abyss-mg-head-row' });
+    headRow.createDiv({ cls: 'abyss-mg-week-head' }); // empty corner, aligns with the week-number column
     const monthOffset = weekStartOffset(firstDayOfMonth, config.firstDayOfWeek);
     for (let h = monthOffset; h < monthOffset + 7; h++) {
       headRow.createDiv({
-        cls: 'tc-mg-head',
+        cls: 'abyss-mg-head',
         text: window.moment(month).add(h, 'days').format('ddd'),
       });
     }
@@ -114,7 +114,7 @@ export class MonthGridView extends BaseView {
 
     let starts = monthOffset;
     for (let w = 0; w < 6; w++) {
-      const row = grid.createDiv({ cls: 'tc-mg-row' });
+      const row = grid.createDiv({ cls: 'abyss-mg-row' });
       const rowDates = visibleDates.slice(w * 7, w * 7 + 7);
       const monthRow: MonthVisibleRow = monthRows[w]!;
       const spanRow = monthRow.spanRow;
@@ -123,7 +123,7 @@ export class MonthGridView extends BaseView {
       // (mirrors legacy MonthView.ts's wrapperButton pattern exactly).
       const weekNr = window.moment(month).add(starts, 'days').format('w');
       const yearNr = window.moment(month).add(starts, 'days').format('YYYY');
-      const weekBtn = row.createDiv({ cls: 'tc-mg-week-btn', text: weekNr });
+      const weekBtn = row.createDiv({ cls: 'abyss-mg-week-btn', text: weekNr });
       weekBtn.setAttribute('data-week', weekNr);
       weekBtn.setAttribute('data-year', yearNr);
       weekBtn.addEventListener('click', (e) => {
@@ -136,7 +136,7 @@ export class MonthGridView extends BaseView {
         const inCurrentMonth =
           window.moment(month).format('MM') === window.moment(month).add(i, 'days').format('MM');
         const cell = row.createDiv({
-          cls: `tc-mg-cell${currentDate === today ? ' is-today' : ''}${inCurrentMonth ? '' : ' is-outside-month'}`,
+          cls: `abyss-mg-cell${currentDate === today ? ' is-today' : ''}${inCurrentMonth ? '' : ' is-outside-month'}`,
         });
         cell.setAttribute('data-mg-date', currentDate);
 
@@ -146,7 +146,7 @@ export class MonthGridView extends BaseView {
           ? `${config.dailyNoteFolder}/${currentDate}`
           : currentDate;
         const dayLink = cell.createEl('a', {
-          cls: 'internal-link tc-mg-day-label',
+          cls: 'internal-link abyss-mg-day-label',
           href: dailyNotePath,
           text: window.moment(month).add(i, 'days').format('D'),
         });
@@ -155,7 +155,7 @@ export class MonthGridView extends BaseView {
         // may have no empty space left for the cell's own click handler below to catch, so
         // this doesn't route through that handler's item-exclusion guard at all.
         // stopPropagation avoids the cell handler also evaluating the same click (harmless
-        // since it already excludes .tc-mg-day-label, but keeps the intent explicit).
+        // since it already excludes .abyss-mg-day-label, but keeps the intent explicit).
         dayLink.addEventListener('click', (e) => {
           e.stopPropagation();
           this.callbacks.onDayClick(currentDate);
@@ -166,7 +166,7 @@ export class MonthGridView extends BaseView {
         // behavior below, so it gets its own small button instead (stops propagation so
         // it never also fires onDayClick).
         const addBtn = cell.createEl('button', {
-          cls: 'tc-mg-add-btn',
+          cls: 'abyss-mg-add-btn',
           attr: { type: 'button', 'aria-label': 'Add task', title: 'Add task' },
           text: '+',
         });
@@ -175,15 +175,15 @@ export class MonthGridView extends BaseView {
           this.callbacks.onCreateAtDate(currentDate);
         });
 
-        const items = cell.createDiv({ cls: 'tc-mg-cell-items' });
+        const items = cell.createDiv({ cls: 'abyss-mg-cell-items' });
         this.renderCompactCell(items, monthRow.compactByDate.get(currentDate) ?? [], occurrenceFor);
-        cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
+        cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
 
         if (inCurrentMonth) {
           cell.addEventListener('click', (e) => {
             if (
               (e.target as HTMLElement).closest(
-                '.tc-mg-plain, .tc-mg-block-dot, .tc-mg-span-segment, .tc-mg-deadline-marker, .tc-mg-day-label, .tc-mg-add-btn, .tc-mg-quick-add',
+                '.abyss-mg-plain, .abyss-mg-block-dot, .abyss-mg-span-segment, .abyss-mg-deadline-marker, .abyss-mg-day-label, .abyss-mg-add-btn, .abyss-mg-quick-add',
               )
             )
               return;
@@ -200,7 +200,7 @@ export class MonthGridView extends BaseView {
           if (dragData) this.callbacks.onDrop(dragData, currentDate);
         });
       }
-      const layer = row.createDiv({ cls: 'tc-mg-span-layer' });
+      const layer = row.createDiv({ cls: 'abyss-mg-span-layer' });
       renderAllDaySpanLayer(
         layer,
         spanRow,
@@ -235,21 +235,21 @@ export class MonthGridView extends BaseView {
     const occurrenceFor = calendarOccurrenceLookup(tasks);
     const monthRows = layoutVisibleMonth(tasks, this.visibleDates).rows;
     const spanCallbacks = this.buildSpanCallbacks(tasks, occurrenceFor);
-    const rows = Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-row'));
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('.abyss-mg-row'));
     for (const [rowIndex, row] of rows.entries()) {
       const monthRow: MonthVisibleRow | undefined = monthRows[rowIndex];
       if (!monthRow) continue;
       const spanRow = monthRow.spanRow;
       const rowDates = this.visibleDates.slice(rowIndex * 7, rowIndex * 7 + 7);
       for (const date of rowDates) {
-        const cell = row.querySelector<HTMLElement>(`.tc-mg-cell[data-mg-date="${date}"]`);
-        const items = cell?.querySelector<HTMLElement>(':scope > .tc-mg-cell-items');
+        const cell = row.querySelector<HTMLElement>(`.abyss-mg-cell[data-mg-date="${date}"]`);
+        const items = cell?.querySelector<HTMLElement>(':scope > .abyss-mg-cell-items');
         if (!cell || !items) continue;
         items.empty();
         this.renderCompactCell(items, monthRow.compactByDate.get(date) ?? [], occurrenceFor);
-        cell.style.setProperty('--tc-span-lane-count', String(monthRow.slotCount));
+        cell.style.setProperty('--abyss-span-lane-count', String(monthRow.slotCount));
       }
-      const layer = row.querySelector<HTMLElement>(':scope > .tc-mg-span-layer');
+      const layer = row.querySelector<HTMLElement>(':scope > .abyss-mg-span-layer');
       if (!layer) continue;
       renderAllDaySpanLayer(
         layer,
@@ -344,7 +344,7 @@ export class MonthGridView extends BaseView {
         occurrence.kind === 'materialized' ? (slot) => this.renderMarker(slot, t) : undefined,
       );
       if (kind === 'timed')
-        item.createSpan({ cls: 'tc-mg-item-time', text: `${t.planning.time} ` });
+        item.createSpan({ cls: 'abyss-mg-item-time', text: `${t.planning.time} ` });
       if (kind === 'deadline') item.createSpan({ text: '📅 ' });
       this.renderTitle(item, t, occurrence.kind === 'forecast');
       bindMaterializedInteractions(occurrence, () => {
@@ -361,11 +361,11 @@ export class MonthGridView extends BaseView {
 
   /**
    * Renders the task's markdown/wiki-link-aware title text as a trailing inline span.
-   * `.tc-mg-item-title` (Task 21) makes it the flex child that truncates independently —
-   * the container (.tc-mg-plain/-block-dot/-span-segment/-deadline-marker) is a flex row
+   * `.abyss-mg-item-title` (Task 21) makes it the flex child that truncates independently —
+   * the container (.abyss-mg-plain/-block-dot/-span-segment/-deadline-marker) is a flex row
    * (marker + [time] + title) instead of block-stacking, matching renderTimedBlocks.ts's
-   * `.tc-tg-block-head` pattern. Task 32 removed the trailing tag-chip/count-badge meta
-   * row (`.tc-mg-item-meta`) that Round 3 Task 13 added here — Month cells are small
+   * `.abyss-tg-block-head` pattern. Task 32 removed the trailing tag-chip/count-badge meta
+   * row (`.abyss-mg-item-meta`) that Round 3 Task 13 added here — Month cells are small
    * enough that it made them feel cluttered; that meta row is kept on Day/Week's timed
    * blocks (renderTaskMeta.ts) and all-day items, just not on Month's compact items.
    *
@@ -376,7 +376,9 @@ export class MonthGridView extends BaseView {
    * covers all of them.
    */
   private renderTitle(container: HTMLElement, t: TaskSnapshot, forecast: boolean): void {
-    const titleEl = container.createSpan({ cls: `tc-mg-item-title${statusTitleClass(t.status)}` });
+    const titleEl = container.createSpan({
+      cls: `abyss-mg-item-title${statusTitleClass(t.status)}`,
+    });
     if (forecast) {
       titleEl.setText(t.title);
       return;
@@ -435,12 +437,12 @@ export class MonthGridView extends BaseView {
   private applyTagFill(el: HTMLElement, t: TaskSnapshot, tagGroups: TagGroup[]): void {
     const tagColor = tagColorFor(t.tags, tagGroups);
     if (tagColor) {
-      el.setCssProps({ '--tc-tag-color': tagColor });
+      el.setCssProps({ '--abyss-tag-color': tagColor });
       // Task 40 (Round 4): see tagFillContrast.ts's own doc comment — a fixed text color loses
       // contrast against a bright/pale or very dark/desaturated tag fill; only overridden when a
       // variant was actually computed, otherwise the CSS rule's var(--text-normal) fallback holds.
       const textColorVar = tagFillTextColorVar(el, tagColor);
-      if (textColorVar) el.setCssProps({ '--tc-tag-text-color': textColorVar });
+      if (textColorVar) el.setCssProps({ '--abyss-tag-text-color': textColorVar });
     }
   }
 

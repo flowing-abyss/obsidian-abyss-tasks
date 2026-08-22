@@ -1,116 +1,116 @@
 /* ============================================================
-   Task Calendar — CSS custom properties
+   Abyss Tasks — CSS custom properties
    ============================================================ */
-.tc-panel-view {
-  --tc-shell-top-inset: clamp(3px, 0.4vw, 5px);
-  --tc-priority-a: var(--color-red);
-  --tc-priority-b: var(--color-orange);
-  --tc-priority-c: var(--color-yellow);
-  --tc-priority-e: var(--color-blue);
-  --tc-priority-f: var(--color-purple);
-  --tc-date-overdue: var(--color-red);
-  --tc-date-tomorrow: var(--color-orange);
-  --tc-calendar-item-font-size: 0.8em;
-  --tc-calendar-track-height: 1.65em;
-  --tc-calendar-item-radius: 6px;
-  --tc-calendar-item-pad-inline: 6px;
-  --tc-calendar-item-rail: 3px;
-  --tc-calendar-ghost-rail: var(--tc-calendar-item-rail);
-  --tc-calendar-border-width: 1px;
-  --tc-calendar-forecast-fill-strength: 6%;
-  --tc-event-fill-strength: 11%;
-  --tc-event-outline-strength: 24%;
-  --tc-event-focus-tag-strength: 55%;
-  --tc-preview-fill-strength: 7%;
+.abyss-panel-view {
+  --abyss-shell-top-inset: clamp(3px, 0.4vw, 5px);
+  --abyss-priority-a: var(--color-red);
+  --abyss-priority-b: var(--color-orange);
+  --abyss-priority-c: var(--color-yellow);
+  --abyss-priority-e: var(--color-blue);
+  --abyss-priority-f: var(--color-purple);
+  --abyss-date-overdue: var(--color-red);
+  --abyss-date-tomorrow: var(--color-orange);
+  --abyss-calendar-item-font-size: 0.8em;
+  --abyss-calendar-track-height: 1.65em;
+  --abyss-calendar-item-radius: 6px;
+  --abyss-calendar-item-pad-inline: 6px;
+  --abyss-calendar-item-rail: 3px;
+  --abyss-calendar-ghost-rail: var(--abyss-calendar-item-rail);
+  --abyss-calendar-border-width: 1px;
+  --abyss-calendar-forecast-fill-strength: 6%;
+  --abyss-event-fill-strength: 11%;
+  --abyss-event-outline-strength: 24%;
+  --abyss-event-focus-tag-strength: 55%;
+  --abyss-preview-fill-strength: 7%;
   /* Preview outlines mix toward the theme's text color. Pale tags need a stronger text share on
      light backgrounds, while dark tags need more of their own hue to stay recognizable in dark. */
-  --tc-preview-border-tag-strength: 35%;
-  --tc-calendar-surface: color-mix(
+  --abyss-preview-border-tag-strength: 35%;
+  --abyss-calendar-surface: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-fill-strength),
     var(--background-primary)
   );
-  --tc-calendar-surface-forecast: color-mix(
+  --abyss-calendar-surface-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-calendar-forecast-fill-strength),
     var(--background-primary)
   );
-  --tc-calendar-border: color-mix(
+  --abyss-calendar-border: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-outline-strength),
     var(--background-primary)
   );
-  --tc-calendar-border-forecast: color-mix(
+  --abyss-calendar-border-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--abyss-tag-color, var(--interactive-accent)) 45%,
     var(--background-modifier-border)
   );
-  --tc-calendar-foreground: var(--tc-tag-text-color, var(--text-normal));
-  --tc-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
-  /* Task 40 (Round 4): fixed contrast anchors consumed by --tc-tag-text-color (set per-element,
+  --abyss-calendar-foreground: var(--abyss-tag-text-color, var(--text-normal));
+  --abyss-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
+  /* Task 40 (Round 4): fixed contrast anchors consumed by --abyss-tag-text-color (set per-element,
      in JS, by tagFillContrast.ts's tagFillTextColorVar — see that module's own doc comment for
      the full reasoning). Deliberately NOT theme-variable tokens like --text-normal: their whole
      purpose is to stay a reliable, near-maximum-contrast anchor against a tag-fill background
      whose luminance was just computed from the user's own arbitrary tag color, independent of
      whatever the ambient theme's own text color happens to be. Softened slightly off pure
      black/white so they don't look harsh next to the softer surrounding UI text. */
-  --tc-tag-text-light: #f5f5f5;
-  --tc-tag-text-dark: #161616;
+  --abyss-tag-text-light: #f5f5f5;
+  --abyss-tag-text-dark: #161616;
 }
 
-.theme-dark .tc-panel-view {
-  --tc-calendar-forecast-fill-strength: 9%;
-  --tc-event-fill-strength: 14%;
-  --tc-event-outline-strength: 32%;
-  --tc-preview-fill-strength: 10%;
-  --tc-preview-border-tag-strength: 55%;
+.theme-dark .abyss-panel-view {
+  --abyss-calendar-forecast-fill-strength: 9%;
+  --abyss-event-fill-strength: 14%;
+  --abyss-event-outline-strength: 32%;
+  --abyss-preview-fill-strength: 10%;
+  --abyss-preview-border-tag-strength: 55%;
 }
 
-/* Embedded/legacy calendar renderers are not always nested under `.tc-panel-view`, but they share
+/* Embedded/legacy calendar renderers are not always nested under `.abyss-panel-view`, but they share
    the same occurrence DOM axis. Give that host the semantic recurrence tokens without imposing a
    palette or typography outside the active Obsidian theme. */
 .tasksCalendar {
-  --tc-calendar-item-rail: 3px;
-  --tc-calendar-slot-gap: 4px;
-  --tc-calendar-border-width: 1px;
-  --tc-calendar-forecast-fill-strength: 6%;
-  --tc-event-fill-strength: 11%;
-  --tc-event-outline-strength: 24%;
-  --tc-calendar-surface: color-mix(
+  --abyss-calendar-item-rail: 3px;
+  --abyss-calendar-slot-gap: 4px;
+  --abyss-calendar-border-width: 1px;
+  --abyss-calendar-forecast-fill-strength: 6%;
+  --abyss-event-fill-strength: 11%;
+  --abyss-event-outline-strength: 24%;
+  --abyss-calendar-surface: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength, 11%),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-fill-strength, 11%),
     var(--background-primary)
   );
-  --tc-calendar-surface-forecast: color-mix(
+  --abyss-calendar-surface-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-calendar-forecast-fill-strength),
     var(--background-primary)
   );
-  --tc-calendar-border: color-mix(
+  --abyss-calendar-border: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength, 24%),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-outline-strength, 24%),
     var(--background-primary)
   );
-  --tc-calendar-border-forecast: color-mix(
+  --abyss-calendar-border-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--abyss-tag-color, var(--interactive-accent)) 45%,
     var(--background-modifier-border)
   );
-  --tc-calendar-foreground: var(--text-normal);
-  --tc-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
+  --abyss-calendar-foreground: var(--text-normal);
+  --abyss-calendar-now: color-mix(in srgb, var(--text-error) 48%, transparent);
 }
 
 .theme-dark .tasksCalendar {
-  --tc-calendar-forecast-fill-strength: 9%;
-  --tc-event-fill-strength: 14%;
-  --tc-event-outline-strength: 32%;
+  --abyss-calendar-forecast-fill-strength: 9%;
+  --abyss-event-fill-strength: 14%;
+  --abyss-event-outline-strength: 32%;
 }
 
 /* ============================================================
-   Task Calendar — Three-Panel Layout
+   Abyss Tasks — Three-Panel Layout
    ============================================================ */
 
-.tc-panel-view {
+.abyss-panel-view {
   padding: 0 !important;
   overflow: hidden !important;
   display: flex;
@@ -120,7 +120,7 @@
   border-top-color: color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
 }
 
-.tc-layout {
+.abyss-layout {
   display: flex;
   height: 100%;
   overflow: hidden;
@@ -129,17 +129,17 @@
 }
 
 /* Layout mode modifiers — hide panels depending on active mode */
-.tc-layout--calendar .tc-left,
-.tc-layout--calendar .tc-right,
-.tc-layout--search .tc-left,
-.tc-layout--search .tc-right,
-.tc-layout--projects .tc-left,
-.tc-layout--projects .tc-right {
+.abyss-layout--calendar .abyss-left,
+.abyss-layout--calendar .abyss-right,
+.abyss-layout--search .abyss-left,
+.abyss-layout--search .abyss-right,
+.abyss-layout--projects .abyss-left,
+.abyss-layout--projects .abyss-right {
   display: none;
 }
 
 /* Rail */
-.tc-rail {
+.abyss-rail {
   width: 48px;
   flex-shrink: 0;
   display: flex;
@@ -153,7 +153,7 @@
 }
 
 /* Left panel */
-.tc-left {
+.abyss-left {
   width: 240px;
   flex-shrink: 0;
   display: flex;
@@ -165,11 +165,11 @@
 }
 
 /* Center panel */
-.tc-center {
+.abyss-center {
   flex: 1;
   min-width: 0;
   container-type: inline-size;
-  container-name: tc-task-list;
+  container-name: abyss-task-list;
   display: flex;
   flex-direction: column;
   background: var(--background-primary);
@@ -178,7 +178,7 @@
 }
 
 /* Right panel */
-.tc-right {
+.abyss-right {
   width: 320px;
   flex-shrink: 0;
   background: var(--background-secondary-alt, var(--background-primary));
@@ -476,16 +476,16 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   opacity: 1;
 }
 .tasksCalendar .task {
-  --tc-tag-color: var(--task-color, var(--interactive-accent));
+  --abyss-tag-color: var(--task-color, var(--interactive-accent));
   display: flex;
   align-items: baseline;
   gap: 4px;
   box-sizing: border-box;
   padding: 2px 4px;
-  background: var(--tc-calendar-surface);
-  border-inline-start: var(--tc-calendar-item-rail) solid var(--tc-tag-color);
+  background: var(--abyss-calendar-surface);
+  border-inline-start: var(--abyss-calendar-item-rail) solid var(--abyss-tag-color);
   border-radius: 3px;
-  box-shadow: inset 0 0 0 var(--tc-calendar-border-width) var(--tc-calendar-border);
+  box-shadow: inset 0 0 0 var(--abyss-calendar-border-width) var(--abyss-calendar-border);
   margin: 1px 1px 2px 1px;
   font-size: var(--font-smallest, 11px);
   line-height: 1.4;
@@ -502,7 +502,7 @@ body:not(.is-mobile) .tasksCalendar .cellName:hover {
   color: var(--text-muted);
 }
 body:not(.is-mobile) .tasksCalendar .task:hover {
-  box-shadow: inset 0 0 0 var(--tc-calendar-border-width) var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 var(--abyss-calendar-border-width) var(--background-modifier-hover);
 }
 .tasksCalendar .task[draggable='true'] {
   cursor: grab;
@@ -527,9 +527,9 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   border-radius: 3px;
   overflow: hidden;
 }
-.tasksCalendar .task.tc-calendar-item > .inner > .tc-status-marker {
+.tasksCalendar .task.abyss-calendar-item > .inner > .abyss-status-marker {
   display: inline-grid;
-  margin-inline-end: var(--tc-calendar-slot-gap);
+  margin-inline-end: var(--abyss-calendar-slot-gap);
   vertical-align: middle;
 }
 .tasksCalendar a {
@@ -572,7 +572,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 .tasksCalendar .task.overdue .description:before {
   color: var(--text-on-accent);
-  background: var(--tc-priority-b);
+  background: var(--abyss-priority-b);
 }
 .tasksCalendar .task:not(.overdue) .description:before {
   display: none;
@@ -1258,26 +1258,26 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: none !important;
 }
 
-/* ===== Calendar redesign: Today/Week/Month timegrid (tc-tg-*) ===== */
+/* ===== Calendar redesign: Today/Week/Month timegrid (abyss-tg-*) ===== */
 
-.tc-tg-root {
+.abyss-tg-root {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
-/* Task 47: `overflow-y: auto` + `scrollbar-gutter: stable` here mirror .tc-tg-grid-row's own
+/* Task 47: `overflow-y: auto` + `scrollbar-gutter: stable` here mirror .abyss-tg-grid-row's own
    scrolling setup below, even though this row's own content never actually overflows/scrolls.
-   Reason: .tc-tg-grid-row DOES scroll (24 hours of content) and its `scrollbar-gutter: stable`
+   Reason: .abyss-tg-grid-row DOES scroll (24 hours of content) and its `scrollbar-gutter: stable`
    permanently reserves a scrollbar-width strip of space on its right edge, shrinking the *usable*
    width its flex day-columns divide up. Without the identical reservation here, this row's day
    cells divide up the FULL row width (no strip withheld) — a few pixels wider each, compounding
    linearly across columns (day 1 barely off, day 7 visibly off) — which is exactly the "grid
    doesn't line up with the row below" misalignment reported. Reserving the same never-used strip
-   here keeps every day-column's actual available width identical to .tc-tg-grid-row's, so nothing
+   here keeps every day-column's actual available width identical to .abyss-tg-grid-row's, so nothing
    can drift again regardless of how many columns are rendered (Day's 1 vs Week's 7). */
-.tc-tg-header-row {
+.abyss-tg-header-row {
   display: flex;
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
@@ -1285,12 +1285,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   scrollbar-gutter: stable;
 }
 
-.tc-tg-header-gutter {
+.abyss-tg-header-gutter {
   width: 3.5em;
   flex-shrink: 0;
 }
 
-.tc-tg-header-cell {
+.abyss-tg-header-cell {
   flex: 1;
   text-align: center;
   padding: 6px 0;
@@ -1303,31 +1303,31 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Only headers that actually drill into a day (Week's header cells — see HourGrid.ts's
    onDayHeaderClick) advertise clickability. Day/Today view's single header wires no handler,
    so it must not show a pointer-cursor/hover it can't honor. */
-.tc-tg-header-cell.is-clickable {
+.abyss-tg-header-cell.is-clickable {
   cursor: pointer;
 }
 
-.tc-tg-header-cell.is-clickable:hover {
+.abyss-tg-header-cell.is-clickable:hover {
   background-color: var(--background-modifier-hover);
 }
 
-.tc-tg-header-weekday {
+.abyss-tg-header-weekday {
   margin-right: 0.3em;
 }
 
 /* Round 3: today used to be conveyed by a full-column red border (too aggressive in Day view,
    too noisy in Week). Now only the day-number span is accented, keeping the weekday abbreviation
    in its existing muted style. */
-.tc-tg-header-cell.is-today .tc-tg-header-day-number {
+.abyss-tg-header-cell.is-today .abyss-tg-header-day-number {
   color: var(--text-error);
   font-weight: 700;
 }
 
-/* Task 47: see .tc-tg-header-row's comment just above for why `overflow-y: auto` +
+/* Task 47: see .abyss-tg-header-row's comment just above for why `overflow-y: auto` +
    `scrollbar-gutter: stable` are applied here despite this row never actually scrolling — this
-   row's day cells must reserve the identical scrollbar-width strip .tc-tg-grid-row's own
+   row's day cells must reserve the identical scrollbar-width strip .abyss-tg-grid-row's own
    day-columns reserve, or the two rows' flex-computed column widths diverge. */
-.tc-tg-allday-row {
+.abyss-tg-allday-row {
   display: flex;
   border-bottom: 1px solid var(--background-modifier-border);
   flex-shrink: 0;
@@ -1336,7 +1336,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   scrollbar-gutter: stable;
 }
 
-.tc-tg-allday-gutter {
+.abyss-tg-allday-gutter {
   width: 3.5em;
   flex-shrink: 0;
   text-align: right;
@@ -1344,36 +1344,36 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 }
 
 /* Task 47: the "No-time" text's smaller/muted styling lives on this nested label, not on
-   .tc-tg-allday-gutter itself. Putting `font-size` directly on the gutter element used to make
+   .abyss-tg-allday-gutter itself. Putting `font-size` directly on the gutter element used to make
    its own `width: 3.5em` resolve against ITS OWN (smaller, self-overridden) font-size instead of
-   the row's ambient one — unlike .tc-tg-header-gutter/.tc-tg-hour-gutter, which set no font-size
+   the row's ambient one — unlike .abyss-tg-header-gutter/.abyss-tg-hour-gutter, which set no font-size
    override and so compute that same `3.5em` against the ambient size. That silently made this
    gutter ~13px narrower than the other two (confirmed live: 39.375px vs 52.5px at a 15px ambient
    font-size), which is exactly the constant left-edge offset between the all-day band and the
    hour-grid reported as "grid doesn't line up." Scoping font-size to this inner label instead
    keeps the gutter's own box (and therefore its width: 3.5em) sized identically to its siblings. */
-.tc-tg-allday-gutter-label {
+.abyss-tg-allday-gutter-label {
   font-size: 0.75em;
   color: var(--text-faint);
 }
 
-.tc-tg-allday-days {
+.abyss-tg-allday-days {
   position: relative;
   display: flex;
   flex: 1;
   min-width: 0;
 }
 
-.tc-tg-allday-cell {
+.abyss-tg-allday-cell {
   flex: 1;
   /* Task 47: without this, a flex item's default `min-width: auto` lets its own content's
-     intrinsic minimum size (here, a long `.tc-tg-body-title`'s nowrap text) override its
+     intrinsic minimum size (here, a long `.abyss-tg-body-title`'s nowrap text) override its
      flex-computed share of the row — the cell grows to fit the text instead of the text
      truncating inside a fixed-width cell. That both broke this cell's alignment with the
      hour-grid day-column below it (confirmed live: cells grew increasingly wider, up to
      1000+px, instead of each being an equal ~1/7th share) AND was the actual cause of the
      "span title overflows its own segment" symptom — the box itself was overflowing, so the
-     .tc-tg-body-title ellipsis/overflow:hidden rules (already shared with plain items, Task 44)
+     .abyss-tg-body-title ellipsis/overflow:hidden rules (already shared with plain items, Task 44)
      never got a chance to engage. */
   min-width: 0;
   position: relative;
@@ -1384,29 +1384,29 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   gap: 2px;
 }
 
-.tc-tg-cell-items {
+.abyss-tg-cell-items {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+  margin-top: calc(var(--abyss-span-lane-count, 0) * var(--abyss-calendar-track-height));
 }
 
-.tc-tg-root--week .tc-tg-cell-items {
+.abyss-tg-root--week .abyss-tg-cell-items {
   display: grid;
-  grid-auto-rows: var(--tc-calendar-track-height);
+  grid-auto-rows: var(--abyss-calendar-track-height);
   gap: 0;
-  margin-top: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+  margin-top: calc(var(--abyss-span-lane-count, 0) * var(--abyss-calendar-track-height));
 }
 
 /* Week compact items share the span track's one-pixel block inset. The horizontal position
    remains the all-day cell's 1px border + 4px padding, matching the Week span segment below. */
-.tc-tg-root--week .tc-tg-cell-items > .tc-tg-body,
-.tc-tg-root--week .tc-tg-cell-items > .tc-tg-deadline-marker {
+.abyss-tg-root--week .abyss-tg-cell-items > .abyss-tg-body,
+.abyss-tg-root--week .abyss-tg-cell-items > .abyss-tg-deadline-marker {
   margin-block: 1px;
 }
 
-.tc-tg-root--week .tc-tg-cell-items > .tc-tg-deadline-marker {
-  /* Unlike .tc-tg-body, this inline-flex grid item's intrinsic title width would otherwise
+.abyss-tg-root--week .abyss-tg-cell-items > .abyss-tg-deadline-marker {
+  /* Unlike .abyss-tg-body, this inline-flex grid item's intrinsic title width would otherwise
      become the Week track minimum and overflow the all-day day cell. */
   min-width: 0;
   width: 100%;
@@ -1414,26 +1414,26 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   box-sizing: border-box;
 }
 
-.tc-tg-span-layer,
-.tc-mg-span-layer {
+.abyss-tg-span-layer,
+.abyss-mg-span-layer {
   position: absolute;
   z-index: 4;
   display: grid;
-  grid-template-columns: repeat(var(--tc-span-track-count), minmax(0, 1fr));
-  grid-auto-rows: var(--tc-calendar-track-height);
+  grid-template-columns: repeat(var(--abyss-span-track-count), minmax(0, 1fr));
+  grid-auto-rows: var(--abyss-calendar-track-height);
   gap: 0;
   pointer-events: none;
 }
 
-.tc-tg-span-layer {
+.abyss-tg-span-layer {
   inset: 2px 4px auto;
 }
 
-.tc-tg-root--week .tc-tg-span-layer {
+.abyss-tg-root--week .abyss-tg-span-layer {
   inset: 2px 0 auto;
 }
 
-.tc-span-piece {
+.abyss-span-piece {
   box-sizing: border-box;
   height: calc(100% - 2px);
   margin: 1px 2px;
@@ -1445,44 +1445,44 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Week layers start at the cell border: 5px reaches the plain item's border-start
    (1px cell border + 4px padding), while 4px reaches its border-end. Keep Month's
    shared two-pixel margins unchanged. */
-.tc-tg-root--week .tc-tg-span-layer .tc-span-piece,
-.tc-tg-root--week .tc-tg-span-layer > .tc-span-move-preview,
-.tc-tg-root--week .tc-tg-span-layer > .tc-span-boundary-preview {
+.abyss-tg-root--week .abyss-tg-span-layer .abyss-span-piece,
+.abyss-tg-root--week .abyss-tg-span-layer > .abyss-span-move-preview,
+.abyss-tg-root--week .abyss-tg-span-layer > .abyss-span-boundary-preview {
   margin-block: 1px;
   margin-inline: 5px 4px;
 }
 
-.tc-span-piece:focus-visible {
+.abyss-span-piece:focus-visible {
   box-shadow: inset 0 0 0 1px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-focus-tag-strength),
       var(--text-normal)
     );
 }
 
-.tc-span-piece.is-picked-up {
+.abyss-span-piece.is-picked-up {
   box-shadow: var(--shadow-s);
 }
 
-.tc-span-move-preview,
-.tc-span-boundary-preview {
+.abyss-span-move-preview,
+.abyss-span-boundary-preview {
   z-index: 8;
   position: relative;
   box-sizing: border-box;
   pointer-events: none;
 }
 
-.tc-tg-grid-row {
+.abyss-tg-grid-row {
   display: flex;
   /* flex-start, not the stretch default: without it, flex items (the hour-gutter and each
      day-column) are stretched to this scroll container's *visible* cross-size (its clientHeight)
      rather than sized to their own 24-hour content (1152px). That silently truncated every
-     day-column's own box to ~viewport height, which in turn truncated .tc-tg-hour-column
+     day-column's own box to ~viewport height, which in turn truncated .abyss-tg-hour-column
      (positioned `inset: 0` to its day-column parent) to the same short height — clipping
      click-to-create/drag-drop hit-testing and the is-today red outline partway down the column
      (visually: gridlines kept rendering past that point as unclipped overflow from the plain,
-     non-positioned .tc-tg-hour-row siblings, while interactivity and the outline silently
+     non-positioned .abyss-tg-hour-row siblings, while interactivity and the outline silently
      stopped there instead). */
   align-items: flex-start;
   flex: 1;
@@ -1491,12 +1491,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   scrollbar-gutter: stable;
 }
 
-.tc-tg-hour-gutter {
+.abyss-tg-hour-gutter {
   width: 3.5em;
   flex-shrink: 0;
 }
 
-.tc-tg-hour-label {
+.abyss-tg-hour-label {
   height: 48px;
   font-size: 0.75em;
   color: var(--text-faint);
@@ -1505,22 +1505,22 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   transform: translateY(-0.5em);
 }
 
-.tc-tg-day-column {
+.abyss-tg-day-column {
   flex: 1;
   position: relative;
   border-left: 1px solid var(--background-modifier-border);
 }
 
-.tc-tg-hour-row {
+.abyss-tg-hour-row {
   height: 48px;
   border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
-.tc-tg-hour-column {
+.abyss-tg-hour-column {
   position: absolute;
   inset: 0;
   /* Explicit, deliberate stacking (not DOM-order accident): sits above the hour-grid
-     lines painted by the day-column's plain (non-positioned) .tc-tg-hour-row siblings. */
+     lines painted by the day-column's plain (non-positioned) .abyss-tg-hour-row siblings. */
   z-index: 1;
   /* Auto (not none): empty space now has a meaning of its own (click-to-create — see
      onCreateAtTime), so this layer needs to receive the click. Blocks/the quick-add popover
@@ -1528,97 +1528,98 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   pointer-events: auto;
 }
 
-.tc-tg-now-line {
+.abyss-tg-now-line {
   /* A one-pixel track across all rendered day columns, behind their interactive task layers. */
   position: absolute;
   left: 3.5em;
   right: 0;
   height: 1px;
-  background: var(--tc-calendar-now);
+  background: var(--abyss-calendar-now);
   z-index: 0;
   pointer-events: none;
 }
 
-.tc-tg-now-line-dot {
+.abyss-tg-now-line-dot {
   /* Marks today's column on the otherwise full-width track. */
   position: absolute;
   top: 50%;
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--tc-calendar-now);
+  background: var(--abyss-calendar-now);
   transform: translate(-50%, -50%);
 }
 
 /* Rebase tag-dependent tokens on the task root itself. Custom properties declared only on the
-   panel resolve against panel values; declaring these here lets each item's own `--tc-tag-color`
-   and contrast-selected `--tc-tag-text-color` participate in the semantic surface. */
-.tc-calendar-item {
-  --tc-calendar-surface: color-mix(
+   panel resolve against panel values; declaring these here lets each item's own `--abyss-tag-color`
+   and contrast-selected `--abyss-tag-text-color` participate in the semantic surface. */
+.abyss-calendar-item {
+  --abyss-calendar-surface: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength, 11%),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-fill-strength, 11%),
     var(--background-primary)
   );
-  --tc-calendar-surface-forecast: color-mix(
+  --abyss-calendar-surface-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-calendar-forecast-fill-strength, 6%),
+    var(--abyss-tag-color, var(--interactive-accent))
+      var(--abyss-calendar-forecast-fill-strength, 6%),
     var(--background-primary)
   );
-  --tc-calendar-border: color-mix(
+  --abyss-calendar-border: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength, 24%),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-outline-strength, 24%),
     var(--background-primary)
   );
-  --tc-calendar-border-forecast: color-mix(
+  --abyss-calendar-border-forecast: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) 45%,
+    var(--abyss-tag-color, var(--interactive-accent)) 45%,
     var(--background-modifier-border)
   );
-  --tc-calendar-foreground: var(--tc-tag-text-color, var(--text-normal));
+  --abyss-calendar-foreground: var(--abyss-tag-text-color, var(--text-normal));
 }
 
 /* Occurrence, continuity, and recurrence are visual axes on one calendar-item silhouette. The
    semantic class is applied with those data attributes at the renderer boundary, so no state is
    allowed to introduce its own padding/radius/type geometry. */
-.tc-tg-block.tc-calendar-item,
-.tc-tg-block-continuation.tc-calendar-item,
-.tc-tg-body.tc-calendar-item,
-.tc-tg-deadline-marker.tc-calendar-item,
-.tc-mg-plain.tc-calendar-item,
-.tc-mg-block-dot.tc-calendar-item,
-.tc-mg-span-segment.tc-calendar-item,
-.tc-mg-deadline-marker.tc-calendar-item {
-  border-radius: var(--tc-calendar-item-radius);
-  padding: 2px var(--tc-calendar-item-pad-inline);
-  font-size: var(--tc-calendar-item-font-size);
+.abyss-tg-block.abyss-calendar-item,
+.abyss-tg-block-continuation.abyss-calendar-item,
+.abyss-tg-body.abyss-calendar-item,
+.abyss-tg-deadline-marker.abyss-calendar-item,
+.abyss-mg-plain.abyss-calendar-item,
+.abyss-mg-block-dot.abyss-calendar-item,
+.abyss-mg-span-segment.abyss-calendar-item,
+.abyss-mg-deadline-marker.abyss-calendar-item {
+  border-radius: var(--abyss-calendar-item-radius);
+  padding: 2px var(--abyss-calendar-item-pad-inline);
+  font-size: var(--abyss-calendar-item-font-size);
 }
 
-.tc-calendar-item[data-occurrence-state='forecast'] {
-  background: var(--tc-calendar-surface-forecast);
-  color: var(--tc-calendar-foreground);
-  outline: var(--tc-calendar-border-width) dotted var(--tc-calendar-border-forecast);
+.abyss-calendar-item[data-occurrence-state='forecast'] {
+  background: var(--abyss-calendar-surface-forecast);
+  color: var(--abyss-calendar-foreground);
+  outline: var(--abyss-calendar-border-width) dotted var(--abyss-calendar-border-forecast);
   outline-offset: -1px;
 }
 
-.tc-calendar-leading-row.tc-tg-block-head,
-.tc-calendar-leading-row.tc-tg-body,
-.tc-calendar-leading-row.tc-tg-deadline-marker,
-.tc-calendar-leading-row.tc-mg-plain,
-.tc-calendar-leading-row.tc-mg-block-dot,
-.tc-calendar-leading-row.tc-mg-span-segment,
-.tc-calendar-leading-row.tc-mg-deadline-marker {
+.abyss-calendar-leading-row.abyss-tg-block-head,
+.abyss-calendar-leading-row.abyss-tg-body,
+.abyss-calendar-leading-row.abyss-tg-deadline-marker,
+.abyss-calendar-leading-row.abyss-mg-plain,
+.abyss-calendar-leading-row.abyss-mg-block-dot,
+.abyss-calendar-leading-row.abyss-mg-span-segment,
+.abyss-calendar-leading-row.abyss-mg-deadline-marker {
   gap: 0.35em;
 }
 
-.tc-tg-block {
+.abyss-tg-block {
   position: absolute;
   /* Explicit, deliberate stacking (not DOM-order accident): above the hour-grid lines
      and the now-line track, so task content remains legible. */
   z-index: 2;
   pointer-events: auto;
-  border-radius: var(--tc-calendar-item-radius);
-  padding: 2px var(--tc-calendar-item-pad-inline);
-  font-size: var(--tc-calendar-item-font-size);
+  border-radius: var(--abyss-calendar-item-radius);
+  padding: 2px var(--abyss-calendar-item-pad-inline);
+  font-size: var(--abyss-calendar-item-font-size);
   overflow: hidden;
   cursor: grab;
   display: flex;
@@ -1627,8 +1628,8 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   /* Task 36: a very short-duration task (e.g. 5-15min) previously rendered a block shorter than
      one legible line of text, effectively clipping/hiding its title. Floor derived from this
      rule's own box model, not guessed: `padding: 2px 6px` above contributes 2px top + 2px bottom
-     (4px), and the tallest row inside — `.tc-tg-block-head`, whose checkbox scales to `1.6em` of
-     this block's own `font-size: 0.8em` (see `.tc-tg-block-head .tc-status-marker` below) — needs
+     (4px), and the tallest row inside — `.abyss-tg-block-head`, whose checkbox scales to `1.6em` of
+     this block's own `font-size: 0.8em` (see `.abyss-tg-block-head .abyss-status-marker` below) — needs
      `1.6em` of height. `renderTimedBlocks.ts`'s `capMinHeightsPx`/`MIN_BLOCK_HEIGHT_PX` mirror
      this same figure numerically so a min-height-inflated block can't be grown into visually
      overlapping the very next block scheduled in its own day-column (see that function's doc
@@ -1640,110 +1641,110 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Checkbox + title share one row (not stacked): the marker is an inline span but the
    title is block-level, so without this row wrapper the title used to force a line
    break after the checkbox. */
-.tc-tg-block-head {
+.abyss-tg-block-head {
   display: flex;
   align-items: center;
   gap: 0.4em;
   min-width: 0;
-  /* Task 36: `.tc-tg-block`'s flex-column layout has exactly two in-flow rows — this one and
-     `.tc-tg-block-toprow` above it — so when the block is squeezed down toward its own
+  /* Task 36: `.abyss-tg-block`'s flex-column layout has exactly two in-flow rows — this one and
+     `.abyss-tg-block-toprow` above it — so when the block is squeezed down toward its own
      min-height (a short-duration task), something has to give. `flex-shrink: 0` here paired with
-     `.tc-tg-block-toprow`'s `flex-shrink: 1` below means the browser shrinks (and, past
-     `.tc-tg-block-toprow`'s own `min-height: 0`, fully collapses) the subtitle/badges row first,
+     `.abyss-tg-block-toprow`'s `flex-shrink: 1` below means the browser shrinks (and, past
+     `.abyss-tg-block-toprow`'s own `min-height: 0`, fully collapses) the subtitle/badges row first,
      leaving this checkbox+title row — the one thing a block must always show — untouched. */
   flex-shrink: 0;
 }
 
 /* Scale the checkbox with the block's own font-size (0.8em) instead of the fixed 19px
    used everywhere else (RightPanel/TaskCard's card-sized marker) — `font-size: 1em`
-   makes the marker inherit .tc-tg-block-head's computed size, and its width/height
+   makes the marker inherit .abyss-tg-block-head's computed size, and its width/height
    follow proportionally, mirroring the original ~19px-for-12px-font ratio. */
-.tc-tg-block-head .tc-status-marker {
+.abyss-tg-block-head .abyss-status-marker {
   font-size: 1em;
   width: 1.6em;
   height: 1.6em;
   min-width: 1.6em;
   flex: 0 0 1.6em;
 }
-.tc-tg-block-head .tc-status-marker svg {
+.abyss-tg-block-head .abyss-status-marker svg {
   width: 0.85em;
   height: 0.85em;
 }
 
-.tc-tg-block-title {
+.abyss-tg-block-title {
   font-weight: 600;
   line-height: 1.4;
-  /* Task 40 (Round 4): --tc-tag-text-color is set per-block in JS (tagFillContrast.ts) from the
+  /* Task 40 (Round 4): --abyss-tag-text-color is set per-block in JS (tagFillContrast.ts) from the
      ACTUAL contrast-winning variant against this block's own tag-colored fill — falls back to
      the pre-existing var(--text-normal) when the block has no tag color at all (nothing was set)
      or the tag/background didn't parse. See tagFillContrast.ts's own doc comment for why a single
      fixed color here lost contrast against a bright/pale or very dark/desaturated tag color. */
-  color: var(--tc-tag-text-color, var(--text-normal));
+  color: var(--abyss-tag-text-color, var(--text-normal));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
 
-/* Task 38: same strikethrough convention as .tc-list-task-title.is-done/.is-cancelled — a
+/* Task 38: same strikethrough convention as .abyss-list-task-title.is-done/.is-cancelled — a
    completed/cancelled timed task stays a full, visible block; this is what communicates its
    completion instead of the task disappearing from the grid. */
-.tc-tg-block-title.is-done,
-.tc-tg-block-continuation-title.is-done {
+.abyss-tg-block-title.is-done,
+.abyss-tg-block-continuation-title.is-done {
   text-decoration: line-through;
   color: var(--text-muted);
 }
-.tc-tg-block-title.is-cancelled,
-.tc-tg-block-continuation-title.is-cancelled {
+.abyss-tg-block-title.is-cancelled,
+.abyss-tg-block-continuation-title.is-cancelled {
   text-decoration: line-through;
   color: var(--text-faint);
 }
 
 /* Task 38 follow-up (Round 4 review): the SAME strikethrough convention as
-   .tc-tg-block-title.is-done/.is-cancelled above, extended to the calendar item types that
-   were missed when Task 38 first added it — all-day span/plain items (.tc-tg-body-title),
-   deadline markers (.tc-tg-deadline-title), and Month-grid compact items (.tc-mg-item-title,
+   .abyss-tg-block-title.is-done/.is-cancelled above, extended to the calendar item types that
+   were missed when Task 38 first added it — all-day span/plain items (.abyss-tg-body-title),
+   deadline markers (.abyss-tg-deadline-title), and Month-grid compact items (.abyss-mg-item-title,
    shared by timed/span/timedSpan/plain/deadline items there). Without these, a completed task
    showed strikethrough in Week/Day's timed view but a plain, untouched title everywhere else. */
-.tc-tg-body-title.is-done,
-.tc-tg-deadline-title.is-done,
-.tc-mg-item-title.is-done {
+.abyss-tg-body-title.is-done,
+.abyss-tg-deadline-title.is-done,
+.abyss-mg-item-title.is-done {
   text-decoration: line-through;
   color: var(--text-muted);
 }
-.tc-tg-body-title.is-cancelled,
-.tc-tg-deadline-title.is-cancelled,
-.tc-mg-item-title.is-cancelled {
+.abyss-tg-body-title.is-cancelled,
+.abyss-tg-deadline-title.is-cancelled,
+.abyss-mg-item-title.is-cancelled {
   text-decoration: line-through;
   color: var(--text-faint);
 }
 
-/* Task 21: was 0.85em, which nests inside .tc-tg-block's own 0.8em — an em value
+/* Task 21: was 0.85em, which nests inside .abyss-tg-block's own 0.8em — an em value
    compounds against its *parent's computed* size, not the root, so 0.85em here
    actually rendered at 0.85 * 0.8 = 0.68em of the real interface font-size (visibly
-   smaller than intended, and smaller than .tc-tg-block-title's 0.8em despite reading
+   smaller than intended, and smaller than .abyss-tg-block-title's 0.8em despite reading
    as "only slightly smaller than the title" in the source). 0.95em keeps the same
    *relative-to-the-block* convention (so it still scales correctly if the block's own
    0.8em ever changes) while landing close to the title's actual rendered size instead
    of compounding down to two-thirds of it. */
-.tc-tg-block-subtitle {
+.abyss-tg-block-subtitle {
   font-size: 0.95em;
-  /* Task 40 (Round 4): same --tc-tag-text-color fallback pattern as .tc-tg-block-title above.
+  /* Task 40 (Round 4): same --abyss-tag-text-color fallback pattern as .abyss-tg-block-title above.
      Deliberately the SAME full-strength color as the title rather than a dimmer mix of it:
-     --tc-tag-text-color is already a near-maximum-contrast anchor (plain near-black/near-white,
-     see .tc-panel-view's own comment) with no natural "muted" variant to blend toward without
+     --abyss-tag-text-color is already a near-maximum-contrast anchor (plain near-black/near-white,
+     see .abyss-panel-view's own comment) with no natural "muted" variant to blend toward without
      re-introducing the exact contrast risk this task fixes — the title/subtitle's existing
      visual hierarchy (font-weight, size, layout position) still reads clearly without it.
      Untagged blocks are untouched: they keep the pre-existing var(--text-muted). */
-  color: var(--tc-tag-text-color, var(--text-muted));
+  color: var(--abyss-tag-text-color, var(--text-muted));
 }
 
-/* Tag chips + count badges row (Task 13): reuses .tc-task-count-badge/.tc-task-tag's own
+/* Tag chips + count badges row (Task 13): reuses .abyss-task-count-badge/.abyss-task-tag's own
    sizing (both already set an explicit font-size), so only layout is added here. All-day items
-   only now — Task 32 removed this meta row from Month's compact items (`.tc-mg-item-meta`) as
+   only now — Task 32 removed this meta row from Month's compact items (`.abyss-mg-item-meta`) as
    it made small Month cells feel cluttered, and Task 35 removed it from Week/Day's timed
-   blocks/continuation segments entirely in favor of `.tc-tg-block-badges` below. */
-.tc-tg-body-meta {
+   blocks/continuation segments entirely in favor of `.abyss-tg-block-badges` below. */
+.abyss-tg-body-meta {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1755,10 +1756,10 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Task 35: the block's first-row container — pairs the time/duration subtitle with the
    count-badges group on the same line, `justify-content: space-between` pushing the badges to
    the block's top-right corner. A real flex layout rather than an absolute-position overlay:
-   an earlier attempt at absolutely positioning `.tc-tg-block-badges` directly inside
-   `.tc-tg-block` covered the subtitle text on narrower (overlapping-column) blocks, since
+   an earlier attempt at absolutely positioning `.abyss-tg-block-badges` directly inside
+   `.abyss-tg-block` covered the subtitle text on narrower (overlapping-column) blocks, since
    nothing then reserved space for it. */
-.tc-tg-block-toprow {
+.abyss-tg-block-toprow {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1766,13 +1767,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 0;
   /* Task 36: the LEAST important row — collapses first (down to 0 height, `overflow: hidden`
      clipping its content away cleanly rather than letting it spill) under the pressure of a
-     short block squeezed toward `.tc-tg-block`'s min-height, so the title in the sibling
-     `.tc-tg-block-head` row (flex-shrink: 0) always stays visible instead. */
+     short block squeezed toward `.abyss-tg-block`'s min-height, so the title in the sibling
+     `.abyss-tg-block-head` row (flex-shrink: 0) always stays visible instead. */
   flex-shrink: 1;
   min-height: 0;
   overflow: hidden;
 }
-.tc-tg-block-toprow .tc-tg-block-subtitle {
+.abyss-tg-block-toprow .abyss-tg-block-subtitle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1782,31 +1783,31 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 /* Count-badges-only group for Week/Day's timed blocks (`renderTimedBlocksForDay`) and their
    multi-day continuation segments (`renderTimedSpanContinuation`) — no tag chips here (the
-   block's own tag-colored fill already conveys the tag). Sits inside `.tc-tg-block-toprow`
+   block's own tag-colored fill already conveys the tag). Sits inside `.abyss-tg-block-toprow`
    above; never shrinks, so a long subtitle ellipsizes before ever crowding the badges out. */
-.tc-tg-block-badges {
+.abyss-tg-block-badges {
   display: flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
 }
 
-/* Task 40 follow-up (Round 4 review): `.tc-task-count-badge` (shared with the main task list,
-   TaskCard.ts's `.tc-task-title-row`) was hard-coded to `var(--text-muted)`, so it never
+/* Task 40 follow-up (Round 4 review): `.abyss-task-count-badge` (shared with the main task list,
+   TaskCard.ts's `.abyss-task-title-row`) was hard-coded to `var(--text-muted)`, so it never
    participated in Task 40's luminance-based contrast switching — a badge inside a bright/dark
    tag-filled timed block or continuation segment could wash out against that fill exactly like
-   the title/subtitle used to. Scoped to `.tc-tg-block-badges` (only ever rendered inside a timed
+   the title/subtitle used to. Scoped to `.abyss-tg-block-badges` (only ever rendered inside a timed
    block/continuation segment, see renderTimedBlocks.ts) so the main task list's badges — a
-   different container with `--tc-tag-text-color` never set in scope — are completely unaffected;
+   different container with `--abyss-tag-text-color` never set in scope — are completely unaffected;
    `var(x, var(--text-muted))` falls back to the exact same untagged color either way. */
-.tc-tg-block-badges .tc-task-count-badge {
-  color: var(--tc-tag-text-color, var(--text-muted));
+.abyss-tg-block-badges .abyss-task-count-badge {
+  color: var(--abyss-tag-text-color, var(--text-muted));
 }
 
-/* Task 33: .tc-tg-block clips its content (overflow: hidden, for the tag-fill background), so
+/* Task 33: .abyss-tg-block clips its content (overflow: hidden, for the tag-fill background), so
    the resize target sits fully inside the block and exposes its complete 10px hit area rather
    than straddling the edge and losing half of the target to clipping. */
-.tc-tg-resize-handle {
+.abyss-tg-resize-handle {
   position: absolute;
   left: 25%;
   right: 25%;
@@ -1815,15 +1816,15 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   cursor: ns-resize;
 }
 
-.tc-tg-resize-handle--start-time {
+.abyss-tg-resize-handle--start-time {
   top: 0;
 }
 
-.tc-tg-resize-handle--duration {
+.abyss-tg-resize-handle--duration {
   bottom: 0;
 }
 
-.tc-tg-resize-handle::after {
+.abyss-tg-resize-handle::after {
   content: '';
   position: absolute;
   left: 0;
@@ -1831,31 +1832,31 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   top: 4px;
   height: 2px;
   border-radius: 1px;
-  background: var(--tc-tag-text-color, var(--text-normal));
+  background: var(--abyss-tag-text-color, var(--text-normal));
   opacity: 0;
   pointer-events: none;
 }
 
-.tc-tg-resize-handle:hover::after,
-.tc-tg-span-edge:hover::after,
-.tc-tg-resize-handle:active::after,
-.tc-tg-span-edge:active::after,
+.abyss-tg-resize-handle:hover::after,
+.abyss-tg-span-edge:hover::after,
+.abyss-tg-resize-handle:active::after,
+.abyss-tg-span-edge:active::after,
 [data-active-resize='true']::after {
   opacity: 1;
 }
 
 /* Task 21: checkbox + title share one flex row so they render on the same line
-   instead of stacking — same root cause and fix as .tc-tg-block-head (Task 12):
-   the status marker is a `<span>` but `.tc-status-marker` sets `display: grid` on
+   instead of stacking — same root cause and fix as .abyss-tg-block-head (Task 12):
+   the status marker is a `<span>` but `.abyss-status-marker` sets `display: grid` on
    itself, which makes it a block-level box even though its tag is inline, so
    without a flex (or grid) parent the title that follows always wrapped onto its
    own line below it. */
-.tc-tg-body {
+.abyss-tg-body {
   box-sizing: border-box;
   min-block-size: 0;
-  border-radius: var(--tc-calendar-item-radius);
-  padding: 2px var(--tc-calendar-item-pad-inline);
-  font-size: var(--tc-calendar-item-font-size);
+  border-radius: var(--abyss-calendar-item-radius);
+  padding: 2px var(--abyss-calendar-item-pad-inline);
+  font-size: var(--abyss-calendar-item-font-size);
   line-height: 1.4;
   cursor: grab;
   position: relative;
@@ -1865,17 +1866,17 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 0;
 }
 
-.tc-tg-body-title {
+.abyss-tg-body-title {
   flex: 1;
   min-width: 0;
-  /* Task 44: matches .tc-tg-block-title's overflow/text-overflow/white-space treatment exactly
+  /* Task 44: matches .abyss-tg-block-title's overflow/text-overflow/white-space treatment exactly
      (asserted in test/timegrid-allday.test.ts) so a long all-day title truncates/ellipsizes
      identically to a timed block's, instead of the two rows following visually different rules. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  /* Task 44: bold weight to match .tc-tg-block-title — previously unset here (inheriting
-     normal weight from .tc-tg-body), so an all-day item's title read visibly lighter/thinner
+  /* Task 44: bold weight to match .abyss-tg-block-title — previously unset here (inheriting
+     normal weight from .abyss-tg-body), so an all-day item's title read visibly lighter/thinner
      than a timed block's title directly below it in the same day column. */
   font-weight: 600;
   line-height: 1.4;
@@ -1884,67 +1885,67 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
      this had no explicit color at all and simply inherited Obsidian's own body text color, which
      has the identical fixed-color contrast risk against a bright/pale or very dark tag fill. See
      tagFillContrast.ts's own doc comment. */
-  color: var(--tc-tag-text-color, var(--text-normal));
+  color: var(--abyss-tag-text-color, var(--text-normal));
 }
 
-.tc-tg-root--week .tc-tg-deadline-title {
+.abyss-tg-root--week .abyss-tg-deadline-title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tc-tg-span-continuation {
+.abyss-tg-span-continuation {
   cursor: grab;
-  border-inline-start: var(--tc-calendar-ghost-rail) dashed
-    var(--tc-tag-color, var(--interactive-accent));
+  border-inline-start: var(--abyss-calendar-ghost-rail) dashed
+    var(--abyss-tag-color, var(--interactive-accent));
 }
 
-.tc-tg-plain {
+.abyss-tg-plain {
   border: 1px solid var(--background-modifier-border);
 }
 
 /* Event bodies use one restrained, opaque theme-aware tint. Their single full-strength tag cue
    is the inline-start rail; priority stays exclusively on the crisp status marker. */
-.tc-tg-block,
-.tc-tg-span,
-.tc-tg-span-continuation,
-.tc-tg-plain,
-.tc-mg-block-dot,
-.tc-mg-span-segment:not(.tc-mg-span-continuation),
-.tc-mg-span-continuation,
-.tc-mg-plain,
-.tc-mg-deadline-marker {
+.abyss-tg-block,
+.abyss-tg-span,
+.abyss-tg-span-continuation,
+.abyss-tg-plain,
+.abyss-mg-block-dot,
+.abyss-mg-span-segment:not(.abyss-mg-span-continuation),
+.abyss-mg-span-continuation,
+.abyss-mg-plain,
+.abyss-mg-deadline-marker {
   box-sizing: border-box;
-  background: var(--tc-calendar-surface);
-  border-inline-start: var(--tc-calendar-item-rail) solid
-    var(--tc-tag-color, var(--interactive-accent));
-  box-shadow: inset 0 0 0 1px var(--tc-calendar-border);
+  background: var(--abyss-calendar-surface);
+  border-inline-start: var(--abyss-calendar-item-rail) solid
+    var(--abyss-tag-color, var(--interactive-accent));
+  box-shadow: inset 0 0 0 1px var(--abyss-calendar-border);
 }
 
-.tc-tg-block:hover,
-.tc-tg-span:hover,
-.tc-tg-plain:hover,
-.tc-tg-block-continuation:hover,
-.tc-tg-span-continuation:hover,
-.tc-mg-block-dot:hover,
-.tc-mg-span-segment:hover,
-.tc-mg-plain:hover,
-.tc-mg-deadline-marker:hover {
+.abyss-tg-block:hover,
+.abyss-tg-span:hover,
+.abyss-tg-plain:hover,
+.abyss-tg-block-continuation:hover,
+.abyss-tg-span-continuation:hover,
+.abyss-mg-block-dot:hover,
+.abyss-mg-span-segment:hover,
+.abyss-mg-plain:hover,
+.abyss-mg-deadline-marker:hover {
   box-shadow: inset 0 0 0 1px var(--background-modifier-hover);
 }
 
-.tc-span-piece:focus-visible,
-.tc-span-piece:focus-visible:hover {
+.abyss-span-piece:focus-visible,
+.abyss-span-piece:focus-visible:hover {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-focus-tag-strength),
       var(--text-normal)
     );
 }
 
-.tc-tg-span-edge {
+.abyss-tg-span-edge {
   position: absolute;
   top: 0;
   bottom: 0;
@@ -1954,7 +1955,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   width: 10px;
   cursor: ew-resize;
 }
-.tc-tg-span-edge::after {
+.abyss-tg-span-edge::after {
   content: '';
   position: absolute;
   top: 25%;
@@ -1962,118 +1963,118 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   inset-inline-start: 4px;
   width: 2px;
   border-radius: 1px;
-  background: var(--tc-tag-text-color, var(--text-normal));
+  background: var(--abyss-tag-text-color, var(--text-normal));
   opacity: 0;
   pointer-events: none;
 }
-.tc-tg-span-edge--proxy {
+.abyss-tg-span-edge--proxy {
   width: 16px;
 }
-.tc-tg-span-edge--proxy::after {
+.abyss-tg-span-edge--proxy::after {
   inset-inline-start: calc(50% - 1px);
 }
-.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left {
-  inset-inline-start: calc(-1 * var(--tc-calendar-ghost-rail));
+.abyss-tg-span-continuation > .abyss-tg-span-edge--proxy.abyss-tg-span-edge--left {
+  inset-inline-start: calc(-1 * var(--abyss-calendar-ghost-rail));
   inset-inline-end: auto;
 }
-.tc-tg-span-edge--left {
+.abyss-tg-span-edge--left {
   inset-inline-start: -5px;
   inset-inline-end: auto;
 }
-.tc-tg-span-edge--right {
+.abyss-tg-span-edge--right {
   inset-inline-start: auto;
   inset-inline-end: -5px;
 }
 /* Clipping roots keep the complete 10px target inside their box. */
-.tc-tg-block > .tc-tg-span-edge--right {
+.abyss-tg-block > .abyss-tg-span-edge--right {
   inset-inline-start: auto;
   inset-inline-end: 0;
 }
 /* Task 34: left edge gets the same overflow-hidden-clipping fix as the right edge above. */
-.tc-tg-block > .tc-tg-span-edge--left {
+.abyss-tg-block > .abyss-tg-span-edge--left {
   inset-inline-start: 0;
   inset-inline-end: auto;
 }
-.tc-tg-body > .tc-tg-span-edge--right {
+.abyss-tg-body > .abyss-tg-span-edge--right {
   inset-inline-start: auto;
   inset-inline-end: 0;
 }
-.tc-tg-body > .tc-tg-span-edge--left {
+.abyss-tg-body > .abyss-tg-span-edge--left {
   inset-inline-start: 0;
   inset-inline-end: auto;
 }
 
 /* Status controls remain above ordinary content; exact boundary targets intentionally use z-index
    5 so the left edge is reachable without first focusing the task. */
-.tc-tg-body > .tc-status-marker {
+.abyss-tg-body > .abyss-status-marker {
   position: relative;
   z-index: 4;
 }
 
-/* A pre-due timed continuation keeps the common .tc-tg-block root and full-opacity text. Its
+/* A pre-due timed continuation keeps the common .abyss-tg-block root and full-opacity text. Its
    dashed rail communicates continuity without making the segment look disabled; interaction,
    focus, identity, and resize behavior remain identical to the terminal root. */
-.tc-tg-block-continuation {
+.abyss-tg-block-continuation {
   box-sizing: border-box;
   position: absolute;
   z-index: 2;
   left: 4px;
   right: 4px;
   pointer-events: auto;
-  border-radius: var(--tc-calendar-item-radius);
-  border-inline-start: var(--tc-calendar-ghost-rail) dashed
-    var(--tc-tag-color, var(--interactive-accent));
-  padding: 2px var(--tc-calendar-item-pad-inline);
-  font-size: var(--tc-calendar-item-font-size);
+  border-radius: var(--abyss-calendar-item-radius);
+  border-inline-start: var(--abyss-calendar-ghost-rail) dashed
+    var(--abyss-tag-color, var(--interactive-accent));
+  padding: 2px var(--abyss-calendar-item-pad-inline);
+  font-size: var(--abyss-calendar-item-font-size);
   overflow: hidden;
-  background: var(--tc-calendar-surface);
-  /* Task 36: same flex-column layout as `.tc-tg-block` (see its own comment) so this segment's
-     two in-flow rows — `.tc-tg-block-toprow` (subtitle+badges) and the title below — can
+  background: var(--abyss-calendar-surface);
+  /* Task 36: same flex-column layout as `.abyss-tg-block` (see its own comment) so this segment's
+     two in-flow rows — `.abyss-tg-block-toprow` (subtitle+badges) and the title below — can
      participate in the same "collapse the subtitle first" shrink behavior at a short min-height,
-     via `.tc-tg-block-continuation-title`'s `flex-shrink: 0` below. */
+     via `.abyss-tg-block-continuation-title`'s `flex-shrink: 0` below. */
   display: flex;
   flex-direction: column;
   gap: 1px;
-  /* Same derivation as `.tc-tg-block`'s min-height, minus the marker (this segment has none):
+  /* Same derivation as `.abyss-tg-block`'s min-height, minus the marker (this segment has none):
      2*2px padding plus one legible line of the title's
      own font-size (this rule's `font-size: 0.8em`) at a generous 1.4 line-height. */
   min-height: calc(1.6em + 4px);
 }
 
-.tc-tg-drag-preview {
+.abyss-tg-drag-preview {
   position: absolute;
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
 }
 
-.tc-tg-boundary-preview {
+.abyss-tg-boundary-preview {
   position: absolute;
   z-index: 8;
   box-sizing: border-box;
   pointer-events: none;
 }
 
-.tc-calendar-preview {
+.abyss-calendar-preview {
   overflow: visible;
 }
 
-.tc-calendar-preview-target-outline {
+.abyss-calendar-preview-target-outline {
   position: absolute;
   z-index: 2;
   inset: 0;
-  border-radius: var(--tc-calendar-item-radius);
+  border-radius: var(--abyss-calendar-item-radius);
   outline: 2px dashed
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-preview-border-tag-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-preview-border-tag-strength),
       var(--text-normal)
     );
   outline-offset: 1px;
   pointer-events: none;
 }
 
-.tc-calendar-preview[data-density='regular'] > .tc-calendar-preview-shell {
+.abyss-calendar-preview[data-density='regular'] > .abyss-calendar-preview-shell {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
@@ -2084,69 +2085,69 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  border-radius: var(--tc-calendar-item-radius);
-  padding: 2px var(--tc-calendar-item-pad-inline);
-  font-size: var(--tc-calendar-item-font-size);
+  border-radius: var(--abyss-calendar-item-radius);
+  padding: 2px var(--abyss-calendar-item-pad-inline);
+  font-size: var(--abyss-calendar-item-font-size);
   background: color-mix(
     in srgb,
-    var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-fill-strength),
+    var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-fill-strength),
     var(--background-primary)
   );
   box-shadow: inset 0 0 0 1px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-outline-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-outline-strength),
       var(--background-primary)
     );
 }
 
-.tc-calendar-preview[data-phase='terminal'] > .tc-calendar-preview-shell {
-  border-inline-start: var(--tc-calendar-item-rail) solid
-    var(--tc-tag-color, var(--interactive-accent));
+.abyss-calendar-preview[data-phase='terminal'] > .abyss-calendar-preview-shell {
+  border-inline-start: var(--abyss-calendar-item-rail) solid
+    var(--abyss-tag-color, var(--interactive-accent));
 }
 
-.tc-calendar-preview[data-phase='ghost'] > .tc-calendar-preview-shell {
-  border-inline-start: var(--tc-calendar-ghost-rail) dashed
-    var(--tc-tag-color, var(--interactive-accent));
+.abyss-calendar-preview[data-phase='ghost'] > .abyss-calendar-preview-shell {
+  border-inline-start: var(--abyss-calendar-ghost-rail) dashed
+    var(--abyss-tag-color, var(--interactive-accent));
 }
 
-.tc-calendar-preview-title,
-.tc-calendar-preview-subtitle,
-.tc-calendar-preview-time {
+.abyss-calendar-preview-title,
+.abyss-calendar-preview-subtitle,
+.abyss-calendar-preview-time {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--tc-tag-text-color, var(--text-normal));
+  color: var(--abyss-tag-text-color, var(--text-normal));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tc-calendar-preview-title {
+.abyss-calendar-preview-title {
   font-size: inherit;
   font-weight: 600;
 }
 
-.tc-calendar-preview-subtitle,
-.tc-calendar-preview-time {
+.abyss-calendar-preview-subtitle,
+.abyss-calendar-preview-time {
   font-size: 0.9em;
-  color: var(--tc-tag-text-color, var(--text-muted));
+  color: var(--abyss-tag-text-color, var(--text-muted));
 }
 
-.tc-tg-drag-preview.is-all-day {
+.abyss-tg-drag-preview.is-all-day {
   position: relative;
   min-height: 1.6em;
   width: 100%;
 }
-.tc-tg-block-continuation-title {
-  /* Same --tc-tag-text-color fallback pattern as .tc-tg-block-title, resolved against this
+.abyss-tg-block-continuation-title {
+  /* Same --abyss-tag-text-color fallback pattern as .abyss-tg-block-title, resolved against this
      continuation segment's shared committed fill. */
-  color: var(--tc-tag-text-color, var(--text-muted));
+  color: var(--abyss-tag-text-color, var(--text-muted));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   display: block;
   line-height: 1.4;
-  /* Task 36: never shrinks — see `.tc-tg-block-continuation`'s own comment on this segment's
+  /* Task 36: never shrinks — see `.abyss-tg-block-continuation`'s own comment on this segment's
      flex-column "collapse the subtitle row first" behavior. */
   flex-shrink: 0;
 }
@@ -2154,7 +2155,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 /* Deadline markers: shape (small non-draggable pill, no fill/body) is what signals
    "deadline" now, not color — color follows the plugin-wide color=priority convention
    instead of a hardcoded red. Neutral/muted when no priority is set. */
-.tc-tg-deadline-marker {
+.abyss-tg-deadline-marker {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -2165,37 +2166,37 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-muted);
   cursor: pointer;
 }
-.tc-tg-deadline-marker[data-priority='A'] {
-  border-color: var(--tc-priority-a);
-  color: var(--tc-priority-a);
+.abyss-tg-deadline-marker[data-priority='A'] {
+  border-color: var(--abyss-priority-a);
+  color: var(--abyss-priority-a);
 }
-.tc-tg-deadline-marker[data-priority='B'] {
-  border-color: var(--tc-priority-b);
-  color: var(--tc-priority-b);
+.abyss-tg-deadline-marker[data-priority='B'] {
+  border-color: var(--abyss-priority-b);
+  color: var(--abyss-priority-b);
 }
-.tc-tg-deadline-marker[data-priority='C'] {
-  border-color: var(--tc-priority-c);
-  color: var(--tc-priority-c);
+.abyss-tg-deadline-marker[data-priority='C'] {
+  border-color: var(--abyss-priority-c);
+  color: var(--abyss-priority-c);
 }
-.tc-tg-deadline-marker[data-priority='E'] {
-  border-color: var(--tc-priority-e);
-  color: var(--tc-priority-e);
+.abyss-tg-deadline-marker[data-priority='E'] {
+  border-color: var(--abyss-priority-e);
+  color: var(--abyss-priority-e);
 }
-.tc-tg-deadline-marker[data-priority='F'] {
-  border-color: var(--tc-priority-f);
-  color: var(--tc-priority-f);
+.abyss-tg-deadline-marker[data-priority='F'] {
+  border-color: var(--abyss-priority-f);
+  color: var(--abyss-priority-f);
 }
 
-/* Task 21: same checkbox-scaling override as .tc-tg-block-head (Task 12), extended to
+/* Task 21: same checkbox-scaling override as .abyss-tg-block-head (Task 12), extended to
    every other flex row that carries a status marker next to its title — without this,
-   the marker stays at .tc-status-marker's own fixed 19px (sized for TaskCard's larger
+   the marker stays at .abyss-status-marker's own fixed 19px (sized for TaskCard's larger
    text) and looks oversized against these items' much smaller 0.72–0.8em text. */
-.tc-tg-body .tc-status-marker,
-.tc-tg-deadline-marker .tc-status-marker,
-.tc-mg-block-dot .tc-status-marker,
-.tc-mg-span-segment .tc-status-marker,
-.tc-mg-plain .tc-status-marker,
-.tc-mg-deadline-marker .tc-status-marker {
+.abyss-tg-body .abyss-status-marker,
+.abyss-tg-deadline-marker .abyss-status-marker,
+.abyss-mg-block-dot .abyss-status-marker,
+.abyss-mg-span-segment .abyss-status-marker,
+.abyss-mg-plain .abyss-status-marker,
+.abyss-mg-deadline-marker .abyss-status-marker {
   font-size: 1em;
   width: 1.6em;
   height: 1.6em;
@@ -2205,69 +2206,69 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 /* A panel-background halo keeps the checkbox/status shape crisp over arbitrary user tag colors
    without changing the marker's priority border or icon color. */
-.tc-tg-block-head .tc-status-marker,
-.tc-tg-body .tc-status-marker,
-.tc-mg-block-dot .tc-status-marker,
-.tc-mg-span-segment .tc-status-marker,
-.tc-mg-plain .tc-status-marker {
+.abyss-tg-block-head .abyss-status-marker,
+.abyss-tg-body .abyss-status-marker,
+.abyss-mg-block-dot .abyss-status-marker,
+.abyss-mg-span-segment .abyss-status-marker,
+.abyss-mg-plain .abyss-status-marker {
   background: var(--background-primary);
   box-shadow: 0 0 0 1px var(--background-primary);
 }
-.tc-tg-body .tc-status-marker svg,
-.tc-tg-deadline-marker .tc-status-marker svg,
-.tc-mg-block-dot .tc-status-marker svg,
-.tc-mg-span-segment .tc-status-marker svg,
-.tc-mg-plain .tc-status-marker svg,
-.tc-mg-deadline-marker .tc-status-marker svg {
+.abyss-tg-body .abyss-status-marker svg,
+.abyss-tg-deadline-marker .abyss-status-marker svg,
+.abyss-mg-block-dot .abyss-status-marker svg,
+.abyss-mg-span-segment .abyss-status-marker svg,
+.abyss-mg-plain .abyss-status-marker svg,
+.abyss-mg-deadline-marker .abyss-status-marker svg {
   width: 0.85em;
   height: 0.85em;
 }
 
-.tc-tg-block.is-dragging,
-.tc-tg-body.is-dragging,
-.tc-mg-block-dot.is-dragging,
-.tc-mg-plain.is-dragging {
+.abyss-tg-block.is-dragging,
+.abyss-tg-body.is-dragging,
+.abyss-mg-block-dot.is-dragging,
+.abyss-mg-plain.is-dragging {
   box-shadow: inset 0 0 0 1px var(--background-modifier-active-hover);
   cursor: grabbing;
 }
 
 /* The source stays geometrically fixed while its inert overlay moves. */
-.tc-tg-block.is-picked-up {
+.abyss-tg-block.is-picked-up {
   cursor: grabbing;
   z-index: 5;
 }
 
 /* Keyboard focus and click selection both need a visibly stronger tag-aware inset than the
    resting terminal outline, without replacing the committed fill. */
-.tc-tg-block:focus-visible {
+.abyss-tg-block:focus-visible {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-focus-tag-strength),
       var(--text-normal)
     );
 }
 
-.tc-tg-block.is-selected {
+.abyss-tg-block.is-selected {
   box-shadow: inset 0 0 0 2px
     color-mix(
       in srgb,
-      var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength),
+      var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-focus-tag-strength),
       var(--text-normal)
     );
 }
 
 /* Retained only for the legacy no-owner all-day seam. View-owned interactions use
    data-active-resize so the matching two-pixel edge grip identifies the exact boundary. */
-.tc-tg-body.is-edge-resizing {
-  outline: 2px dashed var(--tc-tag-color, var(--interactive-accent));
+.abyss-tg-body.is-edge-resizing {
+  outline: 2px dashed var(--abyss-tag-color, var(--interactive-accent));
   outline-offset: 1px;
 }
 
-/* Click-to-create quick-add: positioned exactly like a .tc-tg-block (absolute child of the
+/* Click-to-create quick-add: positioned exactly like a .abyss-tg-block (absolute child of the
    same hourColumnEl, anchored via inline `top`) at the clicked time, instead of a block
    spanning a duration. */
-.tc-tg-quick-add {
+.abyss-tg-quick-add {
   position: absolute;
   left: 4px;
   right: 4px;
@@ -2278,7 +2279,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   padding: 2px 6px;
 }
 
-.tc-tg-quick-add-input {
+.abyss-tg-quick-add-input {
   width: 100%;
   border: none;
   background: transparent;
@@ -2287,13 +2288,13 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-normal);
 }
 
-.tc-tg-allday-cell.is-drag-over {
+.abyss-tg-allday-cell.is-drag-over {
   background: var(--background-modifier-hover);
 }
 
 /* Click-to-create quick-add for the all-day/"no-time" row: fills the cell (inset matches the
-   cell's own padding), same technique as .tc-mg-quick-add (Month day cell). */
-.tc-tg-allday-quick-add {
+   cell's own padding), same technique as .abyss-mg-quick-add (Month day cell). */
+.abyss-tg-allday-quick-add {
   position: absolute;
   inset: 2px 4px;
   z-index: 20;
@@ -2305,7 +2306,7 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   padding: 0 4px;
 }
 
-.tc-tg-allday-quick-add-input {
+.abyss-tg-allday-quick-add-input {
   width: 100%;
   border: none;
   background: transparent;
@@ -2314,34 +2315,34 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   color: var(--text-normal);
 }
 
-/* ===== Calendar redesign: Month overview (tc-mg-*) ===== */
+/* ===== Calendar redesign: Month overview (abyss-mg-*) ===== */
 
-.tc-mg-grid {
+.abyss-mg-grid {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow-y: auto;
 }
 
-.tc-mg-head-row {
+.abyss-mg-head-row {
   display: flex;
   flex-shrink: 0;
 }
 
-.tc-mg-row {
+.abyss-mg-row {
   position: relative;
   display: flex;
   flex: 0 0 auto;
-  min-height: calc(var(--tc-calendar-track-height) * 4);
+  min-height: calc(var(--abyss-calendar-track-height) * 4);
 }
 
-.tc-mg-span-layer {
+.abyss-mg-span-layer {
   top: calc(3px + 0.75lh);
   right: 0;
   left: 22px;
 }
 
-.tc-mg-head {
+.abyss-mg-head {
   flex: 1;
   text-align: center;
   font-size: 0.75em;
@@ -2351,12 +2352,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
 
 /* Empty corner cell above the week-number column, keeps day-of-week headers aligned
    with the 7 day columns below (mirrors legacy MonthView.ts's empty gridHead corner). */
-.tc-mg-week-head {
+.abyss-mg-week-head {
   flex: 0 0 22px;
   width: 22px;
 }
 
-.tc-mg-week-btn {
+.abyss-mg-week-btn {
   flex: 0 0 22px;
   width: 22px;
   display: flex;
@@ -2369,12 +2370,12 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   cursor: pointer;
 }
 
-.tc-mg-week-btn:hover {
+.abyss-mg-week-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.tc-mg-cell {
+.abyss-mg-cell {
   position: relative;
   flex: 1;
   border: 1px solid var(--background-modifier-border);
@@ -2386,17 +2387,17 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   gap: 1px;
 }
 
-.tc-mg-cell-items {
+.abyss-mg-cell-items {
   display: grid;
-  grid-auto-rows: var(--tc-calendar-track-height);
+  grid-auto-rows: var(--abyss-calendar-track-height);
   gap: 0;
   margin-top: 0;
-  min-height: calc(var(--tc-span-lane-count, 0) * var(--tc-calendar-track-height));
+  min-height: calc(var(--abyss-span-lane-count, 0) * var(--abyss-calendar-track-height));
 }
 
 /* Hover-visible "+" affordance for click-to-create (kept off plain click, which already
    drills into Week — see MonthGridView's onDayClick/onCreateAtDate split). */
-.tc-mg-add-btn {
+.abyss-mg-add-btn {
   position: absolute;
   top: 2px;
   right: 2px;
@@ -2417,18 +2418,18 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   transition: opacity 0.1s;
 }
 
-.tc-mg-cell:hover .tc-mg-add-btn {
+.abyss-mg-cell:hover .abyss-mg-add-btn {
   opacity: 1;
 }
 
-.tc-mg-add-btn:hover {
+.abyss-mg-add-btn:hover {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
 /* Inline quick-add: fills the cell (inset matches the cell's own padding) rather than
    floating outside it, so it's never clipped by the cell's `overflow: hidden`. */
-.tc-mg-quick-add {
+.abyss-mg-quick-add {
   position: absolute;
   inset: 2px 4px;
   z-index: 20;
@@ -2440,43 +2441,43 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   padding: 0 4px;
 }
 
-.tc-mg-quick-add-input {
+.abyss-mg-quick-add-input {
   width: 100%;
   border: none;
   background: transparent;
   outline: none;
-  font-size: var(--tc-calendar-item-font-size);
+  font-size: var(--abyss-calendar-item-font-size);
   color: var(--text-normal);
 }
 
 /* Round 3: dropped the pre-existing background-color tint that used to sit alongside this
    border — the user found the border alone sufficient and asked for the tint's removal. */
-.tc-mg-cell.is-today {
+.abyss-mg-cell.is-today {
   box-shadow: inset 0 0 0 2px var(--text-error);
 }
 
-.tc-mg-cell.is-outside-month {
+.abyss-mg-cell.is-outside-month {
   opacity: 0.4;
 }
 
-.tc-mg-day-label {
+.abyss-mg-day-label {
   font-size: 0.75em;
   color: var(--text-muted);
 }
 
 /* Task 21: checkbox + title share one flex row (same root cause/fix as
-   .tc-tg-block-head — Task 12 — and .tc-tg-body above): .tc-status-marker sets its own
+   .abyss-tg-block-head — Task 12 — and .abyss-tg-body above): .abyss-status-marker sets its own
    `display: grid`, making it a block-level box despite being a `<span>`, so without a
    flex parent the title after it always wrapped onto a new line. Text truncation moves
    from this container (which can no longer usefully own text-overflow once it's a flex
-   row of several children) onto .tc-mg-item-title specifically, below. */
-.tc-mg-plain,
-.tc-mg-block-dot,
-.tc-mg-span-segment,
-.tc-mg-deadline-marker {
-  font-size: var(--tc-calendar-item-font-size);
-  border-radius: var(--tc-calendar-item-radius);
-  padding: 2px var(--tc-calendar-item-pad-inline);
+   row of several children) onto .abyss-mg-item-title specifically, below. */
+.abyss-mg-plain,
+.abyss-mg-block-dot,
+.abyss-mg-span-segment,
+.abyss-mg-deadline-marker {
+  font-size: var(--abyss-calendar-item-font-size);
+  border-radius: var(--abyss-calendar-item-radius);
+  padding: 2px var(--abyss-calendar-item-pad-inline);
   overflow: hidden;
   cursor: pointer;
   display: flex;
@@ -2485,18 +2486,18 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   min-width: 0;
 }
 
-.tc-mg-span-segment {
+.abyss-mg-span-segment {
   margin-inline: 5px;
 }
 
-.tc-mg-cell-items > .tc-mg-plain,
-.tc-mg-cell-items > .tc-mg-block-dot,
-.tc-mg-cell-items > .tc-mg-deadline-marker {
+.abyss-mg-cell-items > .abyss-mg-plain,
+.abyss-mg-cell-items > .abyss-mg-block-dot,
+.abyss-mg-cell-items > .abyss-mg-deadline-marker {
   block-size: calc(100% - 2px);
   margin-block: 1px;
 }
 
-.tc-mg-item-title {
+.abyss-mg-item-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2506,21 +2507,21 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   /* Task 40 (Round 4): Month view's compact items share the same tag-colored fill
      (MonthGridView.ts's applyTagFill), so their title needs the same contrast-driven override —
      see tagFillContrast.ts's own doc comment. */
-  color: var(--tc-tag-text-color, var(--text-normal));
+  color: var(--abyss-tag-text-color, var(--text-normal));
 }
 
-.tc-mg-item-time {
+.abyss-mg-item-time {
   flex-shrink: 0;
 }
 
-.tc-tg-span-continuation,
-.tc-mg-span-continuation {
+.abyss-tg-span-continuation,
+.abyss-mg-span-continuation {
   cursor: grab;
-  border-inline-start: var(--tc-calendar-ghost-rail) dashed
-    var(--tc-tag-color, var(--interactive-accent));
+  border-inline-start: var(--abyss-calendar-ghost-rail) dashed
+    var(--abyss-tag-color, var(--interactive-accent));
 }
 
-.tc-span-piece-host {
+.abyss-span-piece-host {
   height: 100%;
   min-height: 0;
 }
@@ -2529,11 +2530,11 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
    rule above. Priority remains confined to each task's internal status marker. */
 
 /* ===== Calendar redesign: Planning chips =====
-   Value-bearing only — an unset Start/Plan chip carries .tc-chip-empty instead (same
+   Value-bearing only — an unset Start/Plan chip carries .abyss-chip-empty instead (same
    dashed, untinted placeholder look as the unset Date/Priority chips), so the accent
    tint here signals "this has a value" and doesn't apply to the placeholder state. */
-.tc-chip-scheduled:not(.tc-chip-empty),
-.tc-chip-start:not(.tc-chip-empty) {
+.abyss-chip-scheduled:not(.abyss-chip-empty),
+.abyss-chip-start:not(.abyss-chip-empty) {
   background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
 }
 
@@ -2626,20 +2627,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* ---- Rail ---- */
-.tc-rail-top {
+.abyss-rail-top {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
   flex: 1;
 }
-.tc-rail-bottom {
+.abyss-rail-bottom {
   display: flex;
   flex-direction: column;
   align-items: center;
   padding-bottom: 4px;
 }
-.tc-rail-btn {
+.abyss-rail-btn {
   width: 36px;
   height: 36px;
   display: flex;
@@ -2655,23 +2656,23 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
-.tc-rail-btn:hover {
+.abyss-rail-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--icon-color-active);
 }
-.tc-rail-btn.is-active {
+.abyss-rail-btn.is-active {
   /* Use the theme accent (like the calendar view switcher's active button) so
      the selected rail item tracks the theme instead of reading as a flat grey. */
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-.tc-rail-btn svg {
+.abyss-rail-btn svg {
   width: 18px;
   height: 18px;
 }
 
 /* ---- Left Panel ---- */
-.tc-left-section-header {
+.abyss-left-section-header {
   padding: 12px 16px 4px;
   font-size: 10px;
   font-weight: 600;
@@ -2680,10 +2681,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-faint);
   user-select: none;
 }
-.tc-left-section {
+.abyss-left-section {
   padding: 4px 0;
 }
-.tc-left-item {
+.abyss-left-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2696,27 +2697,27 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--nav-item-color);
   font-size: var(--font-ui-small);
 }
-.tc-left-item:hover {
+.abyss-left-item:hover {
   background: var(--nav-item-background-hover);
   color: var(--nav-item-color-hover);
 }
-.tc-left-item.is-active {
+.abyss-left-item.is-active {
   background: var(--nav-item-background-active);
   color: var(--nav-item-color-active);
   font-weight: 500;
 }
-.tc-left-item-left {
+.abyss-left-item-left {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.tc-left-label {
+.abyss-left-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tc-left-icon {
+.abyss-left-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -2725,11 +2726,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
-.tc-left-icon svg {
+.abyss-left-icon svg {
   width: 15px;
   height: 15px;
 }
-.tc-left-count {
+.abyss-left-count {
   font-size: 11px;
   color: var(--text-muted);
   opacity: 0.6;
@@ -2738,10 +2739,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Tag groups */
-.tc-tag-group {
+.abyss-tag-group {
   margin: 1px 6px;
 }
-.tc-tag-group-header {
+.abyss-tag-group-header {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2754,29 +2755,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-small);
   font-weight: 500;
 }
-.tc-tag-group-header .tc-left-label {
+.abyss-tag-group-header .abyss-left-label {
   /* Don't grow: keep the label natural-width so a trailing custom dot hugs the
      text instead of being pushed right toward the count (which uses margin-left:auto).
      Shrink + min-width:0 still allows ellipsis on long names. */
   flex: 0 1 auto;
   min-width: 0;
 }
-.tc-tag-group-header .tc-left-count {
+.abyss-tag-group-header .abyss-left-count {
   margin-left: auto;
 }
-.tc-tag-group-header:hover {
+.abyss-tag-group-header:hover {
   background: var(--nav-item-background-hover);
 }
-.tc-tag-group-header.is-active {
+.abyss-tag-group-header.is-active {
   background: var(--nav-item-background-active);
   font-weight: 600;
 }
-.tc-group-arrow {
+.abyss-group-arrow {
   font-size: 10px;
   opacity: 0.5;
   transition: transform 0.15s;
 }
-.tc-group-dot {
+.abyss-group-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
@@ -2785,7 +2786,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Project colour indicator. Deliberately a diamond (rotated square) rather than
    the round tag dot, so project vs. tag reads at a glance. Colour comes from the
    project's status; a faint default keeps the shape visible when none is set. */
-.tc-project-dot {
+.abyss-project-dot {
   width: 7px;
   height: 7px;
   flex-shrink: 0;
@@ -2796,7 +2797,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Marks a left-panel container whose view state (group/sort/show or filters)
    differs from defaults. Sits after the label, before the count badge; the
    fixed size + flex-shrink:0 keep it from resizing or eliding the label. */
-.tc-left-custom-dot {
+.abyss-left-custom-dot {
   flex-shrink: 0;
   width: 5px;
   height: 5px;
@@ -2812,15 +2813,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--color-accent);
   opacity: 0.9;
 }
-.tc-tag-group-children {
+.abyss-tag-group-children {
   padding-left: 8px;
 }
-.tc-tag-child {
+.abyss-tag-child {
   font-weight: normal;
 }
 
 /* Settings card */
-.tc-settings-group-card {
+.abyss-settings-group-card {
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   padding: 8px 12px;
@@ -2828,7 +2829,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Settings sections — collapsible accordion */
-.tc-settings-section {
+.abyss-settings-section {
   border: 1px solid var(--background-modifier-border);
   border-left: 3px solid var(--interactive-accent);
   border-radius: var(--radius-m);
@@ -2836,7 +2837,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: hidden;
 }
 
-.tc-settings-section-header {
+.abyss-settings-section-header {
   display: flex;
   align-items: center;
   padding: 12px 16px;
@@ -2846,11 +2847,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 8px;
 }
 
-.tc-settings-section-header:hover {
+.abyss-settings-section-header:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-settings-section-icon {
+.abyss-settings-section-icon {
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -2859,18 +2860,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
 }
 
-.tc-settings-section-icon svg {
+.abyss-settings-section-icon svg {
   width: 16px;
   height: 16px;
 }
 
-.tc-settings-section-label {
+.abyss-settings-section-label {
   flex: 1;
   font-weight: 600;
   color: var(--text-normal);
 }
 
-.tc-settings-section-chevron {
+.abyss-settings-section-chevron {
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -2880,28 +2881,28 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: transform 150ms ease;
 }
 
-.tc-settings-section-chevron svg {
+.abyss-settings-section-chevron svg {
   width: 16px;
   height: 16px;
 }
 
-.tc-settings-section.is-open .tc-settings-section-chevron {
+.abyss-settings-section.is-open .abyss-settings-section-chevron {
   transform: rotate(90deg);
 }
 
-.tc-settings-section-body {
+.abyss-settings-section-body {
   max-height: 0;
   overflow: hidden;
   transition: max-height 150ms ease;
   background: var(--background-primary);
 }
 
-.tc-settings-section.is-open .tc-settings-section-body {
+.abyss-settings-section.is-open .abyss-settings-section-body {
   max-height: 2000px;
 }
 
 /* ---- Center Panel ---- */
-.tc-center-header {
+.abyss-center-header {
   padding: 12px 16px;
   display: flex;
   align-items: center;
@@ -2909,14 +2910,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-.tc-center-title {
+.abyss-center-title {
   font-size: 16px;
   font-weight: 600;
   margin: 0;
   flex: 1;
   color: var(--text-normal);
 }
-.tc-center-search {
+.abyss-center-search {
   height: 28px;
   border-radius: 6px;
   border: 1px solid var(--background-modifier-border);
@@ -2930,32 +2931,32 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     border-color 0.15s,
     width 0.2s;
 }
-.tc-center-search:focus {
+.abyss-center-search:focus {
   border-color: var(--interactive-accent);
   width: 200px;
 }
-.tc-search-global {
+.abyss-search-global {
   flex: 1;
   width: auto;
   min-width: 0;
   max-width: 360px;
   transition: border-color 0.15s;
 }
-.tc-search-global:focus {
+.abyss-search-global:focus {
   width: auto;
 }
-.tc-center-scroll {
+.abyss-center-scroll {
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
 }
-.tc-center-empty {
+.abyss-center-empty {
   text-align: center;
   color: var(--text-muted);
   padding: 40px 20px;
   font-size: 14px;
 }
-.tc-group-header {
+.abyss-group-header {
   padding: 16px 16px 6px;
   font-size: 10px;
   font-weight: 600;
@@ -2969,16 +2970,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin-top: 2px;
   border-top: 1px solid var(--background-modifier-border);
 }
-.tc-group-header--first {
+.abyss-group-header--first {
   border-top: none;
   padding-top: 8px;
   margin-top: 0;
 }
 
 /* Task card */
-.tc-task-card {
-  --tc-task-card-marker-size: 19px;
-  --tc-task-card-primary-gap: 8px;
+.abyss-task-card {
+  --abyss-task-card-marker-size: 19px;
+  --abyss-task-card-primary-gap: 8px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -2990,34 +2991,34 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: background 0.1s;
   position: relative;
 }
-.tc-task-card-main-row {
+.abyss-task-card-main-row {
   display: flex;
   align-items: center;
-  gap: var(--tc-task-card-primary-gap);
+  gap: var(--abyss-task-card-primary-gap);
   width: 100%;
   min-width: 0;
 }
-.tc-task-card-main-row > .tc-status-marker {
-  width: var(--tc-task-card-marker-size);
-  height: var(--tc-task-card-marker-size);
-  min-width: var(--tc-task-card-marker-size);
-  flex-basis: var(--tc-task-card-marker-size);
+.abyss-task-card-main-row > .abyss-status-marker {
+  width: var(--abyss-task-card-marker-size);
+  height: var(--abyss-task-card-marker-size);
+  min-width: var(--abyss-task-card-marker-size);
+  flex-basis: var(--abyss-task-card-marker-size);
 }
-.tc-task-card:hover {
+.abyss-task-card:hover {
   background: var(--background-modifier-hover);
 }
-.tc-task-card.is-selected {
+.abyss-task-card.is-selected {
   background: var(--background-modifier-active-hover);
 }
-.tc-task-card.tc-multi-selected {
+.abyss-task-card.abyss-multi-selected {
   background: var(--background-modifier-active-hover);
   box-shadow: inset 2px 0 0 var(--interactive-accent);
 }
-.tc-task-card:focus-visible {
+.abyss-task-card:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
-.tc-selection-badge {
+.abyss-selection-badge {
   font-size: 12px;
   color: var(--text-muted);
   padding: 2px 12px 4px;
@@ -3028,7 +3029,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
    Background stays transparent (neutral empty-checkbox slot); priority
    (when set) colors the border instead of an outer box-shadow halo, so the
    chip's footprint never grows. */
-.tc-status-marker {
+.abyss-status-marker {
   width: 19px;
   height: 19px;
   min-width: 19px;
@@ -3051,20 +3052,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   line-height: 1;
   text-align: center;
 }
-.tc-status-marker--inert {
+.abyss-status-marker--inert {
   cursor: default;
 }
 /* Shape by status-group (type): in-progress is the only circular group. */
-.tc-status-marker[data-status-type='in-progress'] {
+.abyss-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
 }
-.tc-status-marker > svg {
+.abyss-status-marker > svg {
   display: block;
 }
-.tc-status-marker[data-status='other'] {
+.abyss-status-marker[data-status='other'] {
   color: var(--text-muted);
 }
-.tc-status-marker svg {
+.abyss-status-marker svg {
   width: 13px;
   height: 13px;
   color: currentColor;
@@ -3076,54 +3077,54 @@ body.is-mobile .tasksCalendar .statisticPopup li {
    rule.
 
    Falls back to the underlying global color vars (same bug/fix as
-   .tc-priority-chip above — Round 4 Task 41) because subtask rows using this
+   .abyss-priority-chip above — Round 4 Task 41) because subtask rows using this
    marker render via RightPanel, which TaskModal also mounts at document.body
-   OUTSIDE `.tc-panel-view` — there --tc-priority-* is undefined, so without a
+   OUTSIDE `.abyss-panel-view` — there --abyss-priority-* is undefined, so without a
    fallback the marker's priority border/color was lost entirely. */
-.tc-status-marker[data-priority='A'] {
-  border-color: var(--tc-priority-a, var(--color-red));
-  color: var(--tc-priority-a, var(--color-red));
+.abyss-status-marker[data-priority='A'] {
+  border-color: var(--abyss-priority-a, var(--color-red));
+  color: var(--abyss-priority-a, var(--color-red));
 }
-.tc-status-marker[data-priority='B'] {
-  border-color: var(--tc-priority-b, var(--color-orange));
-  color: var(--tc-priority-b, var(--color-orange));
+.abyss-status-marker[data-priority='B'] {
+  border-color: var(--abyss-priority-b, var(--color-orange));
+  color: var(--abyss-priority-b, var(--color-orange));
 }
-.tc-status-marker[data-priority='C'] {
-  border-color: var(--tc-priority-c, var(--color-yellow));
-  color: var(--tc-priority-c, var(--color-yellow));
+.abyss-status-marker[data-priority='C'] {
+  border-color: var(--abyss-priority-c, var(--color-yellow));
+  color: var(--abyss-priority-c, var(--color-yellow));
 }
-.tc-status-marker[data-priority='E'] {
-  border-color: var(--tc-priority-e, var(--color-blue));
-  color: var(--tc-priority-e, var(--color-blue));
+.abyss-status-marker[data-priority='E'] {
+  border-color: var(--abyss-priority-e, var(--color-blue));
+  color: var(--abyss-priority-e, var(--color-blue));
 }
-.tc-status-marker[data-priority='F'] {
-  border-color: var(--tc-priority-f, var(--color-purple));
-  color: var(--tc-priority-f, var(--color-purple));
+.abyss-status-marker[data-priority='F'] {
+  border-color: var(--abyss-priority-f, var(--color-purple));
+  color: var(--abyss-priority-f, var(--color-purple));
 }
-.tc-task-body {
+.abyss-task-body {
   flex: 1;
   min-width: 0;
 }
-.tc-task-title-row {
+.abyss-task-title-row {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
 }
-.tc-task-title {
+.abyss-task-title {
   flex: 1;
   min-width: 0;
   word-break: break-word;
   font-size: var(--font-ui-medium);
   color: var(--text-normal);
 }
-.tc-task-meta {
+.abyss-task-meta {
   display: flex;
   flex-direction: column;
   gap: 3px;
   margin-top: 2px;
 }
-.tc-task-desc {
+.abyss-task-desc {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
   margin-top: 2px;
@@ -3131,17 +3132,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tc-task-card > .tc-task-desc {
+.abyss-task-card > .abyss-task-desc {
   margin-top: 0;
-  margin-inline-start: calc(var(--tc-task-card-marker-size) + var(--tc-task-card-primary-gap));
+  margin-inline-start: calc(
+    var(--abyss-task-card-marker-size) + var(--abyss-task-card-primary-gap)
+  );
 }
-.tc-task-pills {
+.abyss-task-pills {
   display: flex;
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
 }
-.tc-task-meta-right {
+.abyss-task-meta-right {
   flex-shrink: 1;
   min-width: 0;
   display: flex;
@@ -3150,7 +3153,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.tc-task-date {
+.abyss-task-date {
   font-size: 11px;
   color: var(--text-muted);
   font-weight: 500;
@@ -3159,38 +3162,38 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 3px;
   white-space: nowrap;
 }
-.tc-task-date svg {
+.abyss-task-date svg {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
 }
-.tc-date-icon {
+.abyss-date-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   line-height: 0;
 }
-.tc-date-icon svg {
+.abyss-date-icon svg {
   width: 11px;
   height: 11px;
   display: block;
 }
-.tc-task-date.is-overdue {
-  color: var(--tc-date-overdue);
+.abyss-task-date.is-overdue {
+  color: var(--abyss-date-overdue);
 }
-.tc-task-date.is-today {
+.abyss-task-date.is-today {
   color: var(--interactive-accent);
 }
-.tc-task-date.is-tomorrow {
-  color: var(--tc-date-tomorrow);
+.abyss-task-date.is-tomorrow {
+  color: var(--abyss-date-tomorrow);
 }
-.tc-task-date.is-soon {
+.abyss-task-date.is-soon {
   color: var(--interactive-accent);
 }
-.tc-task-tag {
+.abyss-task-tag {
   font-size: 11px;
-  color: var(--tc-tag-color, var(--text-faint));
+  color: var(--abyss-tag-color, var(--text-faint));
   background: transparent;
   border: none;
   padding: 0 2px;
@@ -3200,15 +3203,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 0.88;
   cursor: pointer;
 }
-.tc-task-tag--colored {
+.abyss-task-tag--colored {
   opacity: 1;
 }
-.tc-center .tc-task-tag:hover {
+.abyss-center .abyss-task-tag:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
   opacity: 1;
 }
-.tc-task-source-note {
+.abyss-task-source-note {
   font-size: 11px;
   color: var(--text-muted);
   display: inline-flex;
@@ -3218,22 +3221,22 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: default;
   pointer-events: none;
 }
-.tc-task-source-note-icon {
+.abyss-task-source-note-icon {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
 }
-.tc-task-source-note-icon svg {
+.abyss-task-source-note-icon svg {
   width: 11px;
   height: 11px;
 }
-.tc-task-source-note-name {
+.abyss-task-source-note-name {
   text-decoration: underline;
   text-decoration-color: var(--text-faint);
   text-decoration-thickness: 1px;
   text-underline-offset: 2px;
 }
-.tc-task-progress {
+.abyss-task-progress {
   font-size: 11px;
   color: var(--text-muted);
   font-weight: 500;
@@ -3242,7 +3245,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   gap: 2px;
 }
-.tc-task-count-badge {
+.abyss-task-count-badge {
   font-size: 11px;
   color: var(--text-muted);
   display: inline-flex;
@@ -3250,14 +3253,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 2px;
   font-variant-numeric: tabular-nums;
 }
-.tc-task-count-badge svg {
+.abyss-task-count-badge svg {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
 }
 
 /* Task time badge (in title row, kept for list view compatibility) */
-.tc-task-time {
+.abyss-task-time {
   font-size: 10px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -3269,7 +3272,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Delete button on task card */
-.tc-task-delete-btn {
+.abyss-task-delete-btn {
   opacity: 0;
   background: transparent;
   border: none;
@@ -3290,15 +3293,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0;
   line-height: 1;
 }
-.tc-task-delete-btn svg {
+.abyss-task-delete-btn svg {
   display: block;
   width: 16px;
   height: 16px;
 }
-.tc-task-card:hover .tc-task-delete-btn {
+.abyss-task-card:hover .abyss-task-delete-btn {
   opacity: 1;
 }
-.tc-task-delete-btn:hover {
+.abyss-task-delete-btn:hover {
   color: var(--text-error);
   background: hsla(0, 70%, 50%, 0.1);
 }
@@ -3306,47 +3309,47 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Keep the title readable when the center pane is squeezed between both side panels. Metadata
    moves below the title instead of competing with it for the same flex track. Container sizing is
    intentional here: the center pane can become narrow inside a wide Obsidian window. */
-@container tc-task-list (max-width: 28rem) {
-  .tc-task-card-main-row {
+@container abyss-task-list (max-width: 28rem) {
+  .abyss-task-card-main-row {
     display: grid;
-    grid-template-columns: var(--tc-task-card-marker-size) minmax(0, 1fr) 24px;
-    column-gap: var(--tc-task-card-primary-gap);
+    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
+    column-gap: var(--abyss-task-card-primary-gap);
     row-gap: 2px;
   }
 
-  .tc-task-card-main-row > .tc-status-marker {
+  .abyss-task-card-main-row > .abyss-status-marker {
     grid-column: 1;
     grid-row: 1;
   }
 
-  .tc-task-body {
+  .abyss-task-body {
     grid-column: 2;
     grid-row: 1;
   }
 
-  .tc-task-delete-btn {
+  .abyss-task-delete-btn {
     grid-column: 3;
     grid-row: 1;
   }
 
-  .tc-task-meta-right {
+  .abyss-task-meta-right {
     grid-column: 2 / -1;
     grid-row: 2;
     width: 100%;
   }
 
-  .tc-task-source-note {
+  .abyss-task-source-note {
     white-space: nowrap;
   }
 }
 
 /* Add task bar */
-.tc-add-task-bar {
+.abyss-add-task-bar {
   padding: 0 8px 8px;
   flex-shrink: 0;
   border-top: 1px solid var(--background-modifier-border);
 }
-.tc-add-task-trigger {
+.abyss-add-task-trigger {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3359,20 +3362,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
-.tc-add-task-trigger:hover {
+.abyss-add-task-trigger:hover {
   color: var(--interactive-accent);
   background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.08);
 }
-.tc-add-task-plus {
+.abyss-add-task-plus {
   font-size: 16px;
   line-height: 1;
   color: var(--interactive-accent);
   font-weight: 400;
 }
-.tc-quick-capture {
+.abyss-quick-capture {
   padding: 4px 4px 6px;
 }
-.tc-quick-capture-input {
+.abyss-quick-capture-input {
   width: 100%;
   padding: 8px 12px;
   border-radius: 6px;
@@ -3384,19 +3387,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-shadow: var(--shadow-s);
   box-sizing: border-box;
 }
-.tc-quick-capture-input::placeholder {
+.abyss-quick-capture-input::placeholder {
   color: var(--text-faint);
 }
 
 /* Calendar mode */
-.tc-center--calendar {
+.abyss-center--calendar {
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 /* ── Calendar Nav ─────────────────────────────────────── */
-.tc-cal-nav {
+.abyss-cal-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3406,27 +3409,27 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-shrink: 0;
 }
 
-.tc-cal-nav-left {
+.abyss-cal-nav-left {
   display: flex;
   align-items: center;
   gap: 2px;
 }
 
-.tc-cal-nav-right {
+.abyss-cal-nav-right {
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
-.tc-cal-nav-title-group {
+.abyss-cal-nav-title-group {
   display: flex;
   align-items: center;
   gap: 4px;
   position: relative;
 }
 
-.tc-cal-nav-month,
-.tc-cal-nav-year {
+.abyss-cal-nav-month,
+.abyss-cal-nav-year {
   background: transparent;
   border: none;
   color: var(--text-normal);
@@ -3438,12 +3441,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: background 0.1s;
 }
 
-.tc-cal-nav-month:hover,
-.tc-cal-nav-year:hover {
+.abyss-cal-nav-month:hover,
+.abyss-cal-nav-year:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-cal-nav-btn {
+.abyss-cal-nav-btn {
   background: transparent;
   border: none;
   padding: 0;
@@ -3457,16 +3460,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   justify-content: center;
 }
 
-.tc-cal-nav-btn .svg-icon {
+.abyss-cal-nav-btn .svg-icon {
   width: 18px;
   height: 18px;
 }
 
-.tc-cal-nav-btn:hover {
+.abyss-cal-nav-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-cal-nav-today {
+.abyss-cal-nav-today {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
@@ -3479,12 +3482,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     color 0.1s;
 }
 
-.tc-cal-nav-today:hover {
+.abyss-cal-nav-today:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.tc-cal-view-switcher {
+.abyss-cal-view-switcher {
   display: flex;
   gap: 2px;
   background: var(--background-modifier-border);
@@ -3492,7 +3495,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 2px;
 }
 
-.tc-cal-view-btn {
+.abyss-cal-view-btn {
   padding: 4px 10px;
   border-radius: 6px;
   border: none;
@@ -3505,18 +3508,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     color 0.1s;
 }
 
-.tc-cal-view-btn:hover {
+.abyss-cal-view-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.tc-cal-view-btn.is-active {
+.abyss-cal-view-btn.is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
   font-weight: 500;
 }
 
-.tc-cal-style-btn {
+.abyss-cal-style-btn {
   padding: 4px 8px;
   border-radius: 6px;
   border: none;
@@ -3526,12 +3529,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 0.6;
   transition: opacity 0.1s;
 }
-.tc-cal-style-btn:hover {
+.abyss-cal-style-btn:hover {
   opacity: 1;
 }
 
-.tc-month-picker,
-.tc-year-picker {
+.abyss-month-picker,
+.abyss-year-picker {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 4px;
@@ -3547,13 +3550,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-shadow: var(--shadow-l);
 }
 
-.tc-year-picker {
+.abyss-year-picker {
   grid-template-columns: repeat(3, 1fr);
   min-width: 160px;
 }
 
-.tc-month-picker-btn,
-.tc-year-picker-btn {
+.abyss-month-picker-btn,
+.abyss-year-picker-btn {
   padding: 6px 4px;
   border: none;
   border-radius: 4px;
@@ -3564,18 +3567,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: background 0.1s;
 }
 
-.tc-month-picker-btn:hover,
-.tc-year-picker-btn:hover {
+.abyss-month-picker-btn:hover,
+.abyss-year-picker-btn:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-month-picker-btn.is-active,
-.tc-year-picker-btn.is-active {
+.abyss-month-picker-btn.is-active,
+.abyss-year-picker-btn.is-active {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
 
-.tc-cal-body {
+.abyss-cal-body {
   flex: 1;
   overflow: hidden;
   min-height: 0;
@@ -3583,15 +3586,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: flex;
   flex-direction: column;
 }
-.tc-cal-body .grid,
-.tc-cal-body .list {
+.abyss-cal-body .grid,
+.abyss-cal-body .list {
   flex: 1;
   height: auto;
   min-height: 0;
   overflow: hidden;
 }
 
-.tc-calendar-projection-diagnostic {
+.abyss-calendar-projection-diagnostic {
   flex: 0 0 auto;
   padding: var(--size-2-2) var(--size-4-2);
   border-block-start: 1px dotted var(--background-modifier-border);
@@ -3602,15 +3605,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* ── List View ────────────────────────────────────────── */
-.tc-list-view {
+.abyss-list-view {
   padding: 8px 0;
 }
 
-.tc-list-section {
+.abyss-list-section {
   margin-bottom: 16px;
 }
 
-.tc-list-date-header {
+.abyss-list-date-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3618,7 +3621,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: pointer;
 }
 
-.tc-list-date-label {
+.abyss-list-date-label {
   font-size: var(--font-ui-small);
   font-weight: 600;
   color: var(--text-muted);
@@ -3626,12 +3629,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   letter-spacing: 0.05em;
 }
 
-.tc-list-overdue-header .tc-list-date-label,
-.tc-list-overdue-header {
+.abyss-list-overdue-header .abyss-list-date-label,
+.abyss-list-overdue-header {
   color: var(--color-red, #e74c3c);
 }
 
-.tc-list-date-count {
+.abyss-list-date-count {
   font-size: var(--font-ui-small);
   color: var(--text-faint);
   background: var(--background-modifier-hover);
@@ -3639,7 +3642,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0 6px;
 }
 
-.tc-list-task {
+.abyss-list-task {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3648,21 +3651,21 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   transition: background 0.1s;
 }
 
-.tc-list-task:hover {
+.abyss-list-task:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-list-task-title {
+.abyss-list-task-title {
   flex: 1;
   font-size: var(--font-ui-medium);
 }
 
-.tc-list-task-title.is-done {
+.abyss-list-task-title.is-done {
   text-decoration: line-through;
   color: var(--text-muted);
 }
 
-.tc-list-task-meta {
+.abyss-list-task-meta {
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -3670,7 +3673,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* ---- Right Panel ---- */
-.tc-right-empty {
+.abyss-right-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3682,44 +3685,44 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 6px;
   user-select: none;
 }
-.tc-right-empty-icon {
+.abyss-right-empty-icon {
   width: 56px;
   height: 56px;
   opacity: 0.2;
   margin-bottom: 8px;
 }
-.tc-right-empty-icon svg {
+.abyss-right-empty-icon svg {
   width: 56px;
   height: 56px;
 }
-.tc-right-empty-title {
+.abyss-right-empty-title {
   font-size: 14px;
   font-weight: 500;
   color: var(--text-muted);
   margin: 0;
 }
-.tc-right-empty-hint {
+.abyss-right-empty-hint {
   font-size: 12px;
   color: var(--text-faint);
   margin: 0;
 }
 
 /* Comment rows */
-.tc-comment-row {
+.abyss-comment-row {
   padding: 6px 0;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-.tc-comment-row:last-child {
+.abyss-comment-row:last-child {
   border-bottom: none;
 }
-.tc-comment-date {
+.abyss-comment-date {
   font-size: 10px;
   color: var(--text-faint);
   display: block;
   margin-bottom: 2px;
   font-variant-numeric: tabular-nums;
 }
-.tc-comment-text {
+.abyss-comment-text {
   font-size: 13px;
   color: var(--text-normal);
   margin: 0;
@@ -3727,7 +3730,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Breadcrumb */
-.tc-breadcrumb {
+.abyss-breadcrumb {
   padding: 8px 16px 4px;
   font-size: 12px;
   color: var(--text-muted);
@@ -3736,24 +3739,24 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-wrap: wrap;
   gap: 0;
 }
-.tc-breadcrumb-item {
+.abyss-breadcrumb-item {
   cursor: pointer;
   color: var(--text-accent);
 }
-.tc-breadcrumb-item:hover {
+.abyss-breadcrumb-item:hover {
   text-decoration: underline;
 }
-.tc-breadcrumb-item.is-current {
+.abyss-breadcrumb-item.is-current {
   color: var(--text-muted);
   cursor: default;
   text-decoration: none;
 }
-.tc-breadcrumb-sep {
+.abyss-breadcrumb-sep {
   color: var(--text-faint);
 }
 
 /* Header */
-.tc-right-header {
+.abyss-right-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3761,7 +3764,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: relative;
   border-bottom: 1px solid var(--background-modifier-border);
 }
-.tc-right-title {
+.abyss-right-title {
   flex: 1;
   font-size: 17px;
   font-weight: 600;
@@ -3773,10 +3776,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   min-width: 0;
 }
-.tc-right-title:focus {
+.abyss-right-title:focus {
   background: var(--background-modifier-hover);
 }
-.tc-right-title-view {
+.abyss-right-title-view {
   min-height: var(--input-height, 30px);
   padding: 4px 6px;
   border-radius: var(--radius-s);
@@ -3786,29 +3789,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.tc-right-title-view:hover {
+.abyss-right-title-view:hover {
   background: var(--background-modifier-hover);
 }
-.tc-suggest-path {
+.abyss-suggest-path {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
-.tc-right-title-edit {
+.abyss-right-title-edit {
   width: 100%;
   min-height: var(--input-height, 30px);
   resize: vertical;
-  /* font-size/weight come from the shared .tc-right-title class; inherit the
+  /* font-size/weight come from the shared .abyss-right-title class; inherit the
      UI font-family so the textarea doesn't fall back to the UA monospace and
      read/edit modes match visually. */
   font-family: inherit;
   line-height: inherit;
 }
-.tc-right-header-actions {
+.abyss-right-header-actions {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
 }
-.tc-right-action-btn {
+.abyss-right-action-btn {
   width: 28px;
   height: 28px;
   border: none;
@@ -3821,18 +3824,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
-.tc-right-action-btn:hover {
+.abyss-right-action-btn:hover {
   background: var(--background-modifier-hover);
 }
 
 /* Chips */
-.tc-chips-row {
+.abyss-chips-row {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 16px 10px;
 }
-.tc-chip {
+.abyss-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3852,34 +3855,34 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-sizing: border-box;
   vertical-align: middle;
 }
-.tc-chip:hover {
+.abyss-chip:hover {
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
-.tc-chip-empty {
+.abyss-chip-empty {
   color: var(--text-muted);
   border-style: dashed;
 }
-.tc-chip-tag {
+.abyss-chip-tag {
   cursor: default;
-  color: var(--tc-chip-tag-color, var(--text-normal));
+  color: var(--abyss-chip-tag-color, var(--text-normal));
 }
-.tc-chip-tag:hover {
+.abyss-chip-tag:hover {
   background: var(--background-modifier-hover);
   border-color: var(--interactive-accent);
 }
-.tc-chip-add--hidden {
+.abyss-chip-add--hidden {
   display: none;
 }
-.tc-chip-add {
+.abyss-chip-add {
   background: transparent;
   border-style: dashed;
   color: var(--text-muted);
 }
-.tc-chip-add-date {
+.abyss-chip-add-date {
   position: relative;
 }
-.tc-chip-remove {
+.abyss-chip-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3898,13 +3901,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
-.tc-chip-remove:hover {
+.abyss-chip-remove:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
 /* Popovers */
-.tc-popover {
+.abyss-popover {
   position: absolute;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
@@ -3914,15 +3917,15 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding: 0.5rem;
   min-width: 10rem;
 }
-.tc-popover-input-row {
+.abyss-popover-input-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   height: 2rem;
 }
-.tc-date-input,
-.tc-time-input,
-.tc-duration-input {
+.abyss-date-input,
+.abyss-time-input,
+.abyss-duration-input {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -3933,7 +3936,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-normal);
   font-size: 13px;
 }
-.tc-popover-clear-icon-btn {
+.abyss-popover-clear-icon-btn {
   flex-shrink: 0;
   width: 1.5rem;
   height: 1.5rem;
@@ -3947,42 +3950,42 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   justify-content: center;
 }
-.tc-popover-clear-icon-btn:hover {
+.abyss-popover-clear-icon-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-.tc-popover-clear-icon-btn svg {
+.abyss-popover-clear-icon-btn svg {
   width: 0.75rem;
   height: 0.75rem;
 }
-.tc-date-popover,
-.tc-time-popover {
+.abyss-date-popover,
+.abyss-time-popover {
   border: 0;
   border-radius: 0.5rem;
   box-shadow: var(--shadow-s);
 }
-.tc-date-popover .tc-date-input,
-.tc-time-popover .tc-time-input {
+.abyss-date-popover .abyss-date-input,
+.abyss-time-popover .abyss-time-input {
   border: 1px solid var(--background-modifier-border);
   background: transparent;
   box-shadow: none;
 }
-.tc-date-picker-popover {
+.abyss-date-picker-popover {
   inline-size: max-content;
-  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+  max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
 }
-.tc-priority-popover {
+.abyss-priority-popover {
   display: grid;
   min-width: 0;
   inline-size: max-content;
-  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+  max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
   padding: 0;
   border-radius: 0.5rem;
   border: 0;
   overflow: hidden;
   box-shadow: var(--shadow-s);
 }
-.tc-priority-option {
+.abyss-priority-option {
   display: grid;
   grid-template-columns: 0.8em 0.9em max-content;
   align-items: center;
@@ -4002,88 +4005,88 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Shared recurrence editor: an anchored planning instrument whose strongest visual line is the
    parser-canonical rule itself. All concrete colors remain owned by the active Obsidian theme. */
-.tc-recurrence-badge {
-  --tc-recurrence-badge-height: 1rem;
-  --tc-recurrence-badge-radius: var(--radius-s);
-  --tc-recurrence-badge-padding: 0 var(--size-2-1);
-  --tc-recurrence-badge-icon-size: 0.7rem;
+.abyss-recurrence-badge {
+  --abyss-recurrence-badge-height: 1rem;
+  --abyss-recurrence-badge-radius: var(--radius-s);
+  --abyss-recurrence-badge-padding: 0 var(--size-2-1);
+  --abyss-recurrence-badge-icon-size: 0.7rem;
   box-sizing: border-box;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  height: var(--tc-recurrence-badge-height);
-  min-width: var(--tc-recurrence-badge-height);
-  padding: var(--tc-recurrence-badge-padding);
-  border-radius: var(--tc-recurrence-badge-radius);
+  height: var(--abyss-recurrence-badge-height);
+  min-width: var(--abyss-recurrence-badge-height);
+  padding: var(--abyss-recurrence-badge-padding);
+  border-radius: var(--abyss-recurrence-badge-radius);
   background: var(--background-modifier-hover);
   color: var(--text-muted);
   line-height: 1;
   vertical-align: middle;
 }
 
-.tc-recurrence-badge-icon {
+.abyss-recurrence-badge-icon {
   display: inline-flex;
-  flex: 0 0 var(--tc-recurrence-badge-icon-size);
+  flex: 0 0 var(--abyss-recurrence-badge-icon-size);
   align-items: center;
   justify-content: center;
-  width: var(--tc-recurrence-badge-icon-size);
-  height: var(--tc-recurrence-badge-icon-size);
+  width: var(--abyss-recurrence-badge-icon-size);
+  height: var(--abyss-recurrence-badge-icon-size);
 }
 
-.tc-recurrence-badge-icon svg {
+.abyss-recurrence-badge-icon svg {
   width: 100%;
   height: 100%;
 }
 
-.tc-recurrence-badge[data-recurrence-validity='invalid'] {
+.abyss-recurrence-badge[data-recurrence-validity='invalid'] {
   color: var(--text-warning, var(--color-orange));
 }
 
-.tc-recurrence-badge[data-recurrence-forecast='true'] {
+.abyss-recurrence-badge[data-recurrence-forecast='true'] {
   outline: 1px dotted var(--text-faint);
   outline-offset: 1px;
 }
 
-.tc-calendar-leading-row > .tc-recurrence-badge {
+.abyss-calendar-leading-row > .abyss-recurrence-badge {
   width: 1rem;
   min-width: 1rem;
   padding: 0;
-  color: var(--tc-calendar-foreground);
+  color: var(--abyss-calendar-foreground);
 }
 
-.tc-repeat-chip .tc-recurrence-badge,
-.tc-status-popover-edit-repeat .tc-recurrence-badge {
+.abyss-repeat-chip .abyss-recurrence-badge,
+.abyss-status-popover-edit-repeat .abyss-recurrence-badge {
   margin-inline-end: var(--size-2-1);
 }
 
-.tc-repeat-chip:not(.tc-chip-empty) {
+.abyss-repeat-chip:not(.abyss-chip-empty) {
   border-color: var(--interactive-accent);
 }
 
-.tc-repeat-chip:focus-visible,
-.tc-recurrence-editor button:focus-visible,
-.tc-recurrence-editor input:focus-visible,
-.tc-recurrence-editor select:focus-visible {
+.abyss-repeat-chip:focus-visible,
+.abyss-recurrence-editor button:focus-visible,
+.abyss-recurrence-editor input:focus-visible,
+.abyss-recurrence-editor select:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
-.tc-recurrence-popover {
+.abyss-recurrence-popover {
   box-sizing: border-box;
-  inline-size: min(22rem, calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2)));
-  min-inline-size: min(18rem, calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2)));
-  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+  inline-size: min(22rem, calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2)));
+  min-inline-size: min(18rem, calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2)));
+  max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
   padding: 0.625rem;
   background: var(--background-secondary);
 }
 
-.tc-popover-anchored.tc-recurrence-popover-floating {
+.abyss-popover-anchored.abyss-recurrence-popover-floating {
   position: fixed;
   z-index: var(--layer-menu);
 }
 
-.tc-recurrence-editor {
+.abyss-recurrence-editor {
   display: grid;
   gap: 0.5rem;
   inline-size: 100%;
@@ -4092,27 +4095,27 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: var(--font-ui-smaller);
 }
 
-.tc-recurrence-heading,
-.tc-recurrence-completed-row,
-.tc-recurrence-actions {
+.abyss-recurrence-heading,
+.abyss-recurrence-completed-row,
+.abyss-recurrence-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
 
-.tc-recurrence-title {
+.abyss-recurrence-title {
   flex: 1;
   font-size: var(--font-ui-small);
   font-weight: var(--font-semibold, 600);
 }
 
-.tc-recurrence-presets {
+.abyss-recurrence-presets {
   display: flex;
   flex-wrap: wrap;
   gap: 0.25rem;
 }
 
-.tc-recurrence-presets button {
+.abyss-recurrence-presets button {
   min-height: 1.75rem;
   padding: 0 0.55rem;
   border: 1px solid var(--background-modifier-border);
@@ -4123,36 +4126,36 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: inherit;
 }
 
-.tc-recurrence-presets button:hover {
+.abyss-recurrence-presets button:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.tc-recurrence-presets button[aria-pressed='true'] {
+.abyss-recurrence-presets button[aria-pressed='true'] {
   border-color: var(--interactive-accent);
   background: var(--background-modifier-active-hover);
   color: var(--text-normal);
   font-weight: var(--font-medium, 500);
 }
 
-.tc-recurrence-controls {
+.abyss-recurrence-controls {
   min-inline-size: 0;
 }
 
-.tc-recurrence-cadence {
+.abyss-recurrence-cadence {
   display: grid;
   grid-template-columns: auto 4.5rem minmax(0, 1fr);
   align-items: center;
   gap: 0.375rem;
 }
 
-.tc-recurrence-inline-label {
+.abyss-recurrence-inline-label {
   color: var(--text-muted);
 }
 
-.tc-recurrence-editor input[type='number'],
-.tc-recurrence-editor input[type='text'],
-.tc-recurrence-editor select {
+.abyss-recurrence-editor input[type='number'],
+.abyss-recurrence-editor input[type='text'],
+.abyss-recurrence-editor select {
   box-sizing: border-box;
   min-width: 0;
   height: var(--input-height, 30px);
@@ -4164,23 +4167,23 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-size: inherit;
 }
 
-.tc-recurrence-editor input[type='number'],
-.tc-recurrence-editor input[type='text'] {
+.abyss-recurrence-editor input[type='number'],
+.abyss-recurrence-editor input[type='text'] {
   padding-inline: 0.5rem;
 }
 
-.tc-recurrence-raw {
+.abyss-recurrence-raw {
   inline-size: 100%;
 }
 
-.tc-recurrence-weekdays {
+.abyss-recurrence-weekdays {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 0.2rem;
   margin-block-start: 0.375rem;
 }
 
-.tc-recurrence-weekday {
+.abyss-recurrence-weekday {
   display: grid;
   grid-template-rows: auto auto;
   place-items: center;
@@ -4192,23 +4195,23 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: pointer;
 }
 
-.tc-recurrence-weekday:has(input:checked) {
+.abyss-recurrence-weekday:has(input:checked) {
   background: var(--background-modifier-active-hover);
   color: var(--text-normal);
 }
 
-.tc-recurrence-weekday input {
+.abyss-recurrence-weekday input {
   margin: 0;
 }
 
-.tc-recurrence-detail-row {
+.abyss-recurrence-detail-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 4.25rem;
   gap: 0.375rem;
   margin-block-start: 0.375rem;
 }
 
-.tc-recurrence-check-row {
+.abyss-recurrence-check-row {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -4216,35 +4219,35 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   cursor: pointer;
 }
 
-.tc-recurrence-check-row input {
+.abyss-recurrence-check-row input {
   margin: 0;
 }
 
-.tc-recurrence-completed-row > span {
+.abyss-recurrence-completed-row > span {
   flex: 1;
   color: var(--text-muted);
 }
 
-.tc-recurrence-completed-row select {
+.abyss-recurrence-completed-row select {
   max-inline-size: 12rem;
 }
 
-.tc-recurrence-delete-warning,
-.tc-recurrence-status {
+.abyss-recurrence-delete-warning,
+.abyss-recurrence-status {
   font-size: var(--font-ui-smaller);
   line-height: 1.2;
 }
 
-.tc-recurrence-delete-warning[hidden],
-.tc-recurrence-status[hidden] {
+.abyss-recurrence-delete-warning[hidden],
+.abyss-recurrence-status[hidden] {
   display: none;
 }
 
-.tc-recurrence-delete-warning {
+.abyss-recurrence-delete-warning {
   color: var(--text-warning, var(--color-orange));
 }
 
-.tc-recurrence-preview {
+.abyss-recurrence-preview {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   gap: 0.5rem;
@@ -4255,7 +4258,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--background-primary);
 }
 
-.tc-recurrence-preview-label {
+.abyss-recurrence-preview-label {
   color: var(--text-faint);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-medium, 500);
@@ -4263,7 +4266,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   letter-spacing: 0.06em;
 }
 
-.tc-recurrence-preview-rule {
+.abyss-recurrence-preview-rule {
   min-width: 0;
   color: var(--text-normal);
   font-size: var(--font-ui-small);
@@ -4271,20 +4274,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow-wrap: anywhere;
 }
 
-.tc-recurrence-status {
+.abyss-recurrence-status {
   color: var(--text-error);
 }
 
-.tc-recurrence-actions-spacer {
+.abyss-recurrence-actions-spacer {
   flex: 1;
 }
 
-.tc-recurrence-actions button {
+.abyss-recurrence-actions button {
   min-height: 1.75rem;
   font-size: inherit;
 }
 
-.tc-recurrence-clear {
+.abyss-recurrence-clear {
   padding-inline: 0;
   border-color: transparent;
   background: transparent;
@@ -4292,11 +4295,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-shadow: none;
 }
 
-.tc-recurrence-clear:hover {
+.abyss-recurrence-clear:hover {
   color: var(--text-normal);
 }
 
-.tc-recurrence-delete-confirm {
+.abyss-recurrence-delete-confirm {
   position: fixed;
   inset: 0;
   z-index: 1100;
@@ -4307,7 +4310,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--modal-scrim-background);
 }
 
-.tc-recurrence-delete-confirm-dialog {
+.abyss-recurrence-delete-confirm-dialog {
   box-sizing: border-box;
   inline-size: min(26rem, 100%);
   padding: var(--size-4-5);
@@ -4318,32 +4321,32 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-normal);
 }
 
-.tc-recurrence-delete-confirm-title {
+.abyss-recurrence-delete-confirm-title {
   margin-block: 0 var(--size-4-2);
   color: var(--text-error);
   font-size: var(--font-ui-medium);
 }
 
-.tc-recurrence-delete-confirm-description {
+.abyss-recurrence-delete-confirm-description {
   margin-block: 0 var(--size-4-4);
   color: var(--text-muted);
   line-height: var(--line-height-normal);
 }
 
-.tc-recurrence-delete-confirm-actions {
+.abyss-recurrence-delete-confirm-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--size-4-2);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tc-recurrence-editor *,
-  .tc-repeat-chip {
+  .abyss-recurrence-editor *,
+  .abyss-repeat-chip {
     scroll-behavior: auto;
     transition: none !important;
   }
 }
-.tc-priority-option-flag {
+.abyss-priority-option-flag {
   width: 0.9em;
   display: inline-flex;
   align-items: center;
@@ -4354,36 +4357,36 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Filled flag: the banner path is filled with the current colour so every
    priority flag across the plugin reads the same (see the shared fill rule
    below). The Lucide `flag` pole stays a stroke. */
-.tc-priority-option-flag svg {
+.abyss-priority-option-flag svg {
   width: 0.9em;
   height: 0.9em;
   fill: currentColor;
 }
-.tc-priority-option[data-priority='A'] .tc-priority-option-flag {
-  color: var(--tc-priority-a);
+.abyss-priority-option[data-priority='A'] .abyss-priority-option-flag {
+  color: var(--abyss-priority-a);
 }
-.tc-priority-option[data-priority='B'] .tc-priority-option-flag {
-  color: var(--tc-priority-b);
+.abyss-priority-option[data-priority='B'] .abyss-priority-option-flag {
+  color: var(--abyss-priority-b);
 }
-.tc-priority-option[data-priority='C'] .tc-priority-option-flag {
-  color: var(--tc-priority-c);
+.abyss-priority-option[data-priority='C'] .abyss-priority-option-flag {
+  color: var(--abyss-priority-c);
 }
-.tc-priority-option[data-priority='E'] .tc-priority-option-flag {
-  color: var(--tc-priority-e);
+.abyss-priority-option[data-priority='E'] .abyss-priority-option-flag {
+  color: var(--abyss-priority-e);
 }
-.tc-priority-option[data-priority='F'] .tc-priority-option-flag {
-  color: var(--tc-priority-f);
+.abyss-priority-option[data-priority='F'] .abyss-priority-option-flag {
+  color: var(--abyss-priority-f);
 }
-.tc-priority-option:hover {
+.abyss-priority-option:hover {
   background: var(--background-modifier-hover);
 }
-.tc-priority-option.is-active {
+.abyss-priority-option.is-active {
   font-weight: 600;
 }
-.tc-priority-option-label {
+.abyss-priority-option-label {
   white-space: nowrap;
 }
-.tc-priority-option-check {
+.abyss-priority-option-check {
   width: 0.8em;
   height: 0.8em;
   display: inline-flex;
@@ -4391,17 +4394,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   justify-content: center;
   color: var(--color-accent);
 }
-.tc-priority-option-check svg {
+.abyss-priority-option-check svg {
   width: 0.75em;
   height: 0.75em;
 }
 
 /* Combined priority+status popover (src/ui/statusMenu.ts). Rendered at
-   document.body, OUTSIDE `.tc-panel-view`, so the panel-scoped --tc-priority-*
+   document.body, OUTSIDE `.abyss-panel-view`, so the panel-scoped --abyss-priority-*
    vars are empty here — use the global Obsidian color vars directly (same
-   underlying colors --tc-priority-* alias inside the panel). 'D' (None) is
+   underlying colors --abyss-priority-* alias inside the panel). 'D' (None) is
    intentionally left uncolored/muted, matching the priority popover. */
-.tc-status-popover {
+.abyss-status-popover {
   position: fixed;
   z-index: 1000;
   display: flex;
@@ -4420,25 +4423,25 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   line-height: var(--line-height-tight);
   color: var(--text-normal);
 }
-.tc-status-popover.tc-forecast-context-menu {
+.abyss-status-popover.abyss-forecast-context-menu {
   box-sizing: border-box;
   min-width: min(12rem, calc(100vw - 16px));
   max-width: min(16rem, calc(100vw - 16px));
 }
-.tc-status-popover.tc-forecast-context-menu > button {
+.abyss-status-popover.abyss-forecast-context-menu > button {
   min-width: 0;
   max-width: 100%;
   white-space: normal;
   overflow-wrap: anywhere;
 }
-.tc-status-popover-priority-row {
+.abyss-status-popover-priority-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--size-2-1);
   padding: var(--size-2-1) var(--size-2-1) var(--size-2-3);
 }
-.tc-status-popover-flag {
+.abyss-status-popover-flag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4451,78 +4454,78 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
   cursor: pointer;
 }
-.tc-status-popover-flag:hover {
+.abyss-status-popover-flag:hover {
   background: var(--background-modifier-hover);
 }
-.tc-status-popover-flag.is-active {
+.abyss-status-popover-flag.is-active {
   border-color: var(--color-accent);
   background: var(--background-modifier-hover);
   box-shadow: inset 0 0 0 1px var(--color-accent);
 }
-.tc-status-popover-flag svg {
+.abyss-status-popover-flag svg {
   width: 0.95rem;
   height: 0.95rem;
   /* Filled banner so this matches the right-panel priority flags. */
   fill: currentColor;
 }
-.tc-status-popover-flag[data-tc-priority='A'] {
+.abyss-status-popover-flag[data-abyss-priority='A'] {
   color: var(--color-red);
 }
-.tc-status-popover-flag[data-tc-priority='B'] {
+.abyss-status-popover-flag[data-abyss-priority='B'] {
   color: var(--color-orange);
 }
-.tc-status-popover-flag[data-tc-priority='C'] {
+.abyss-status-popover-flag[data-abyss-priority='C'] {
   color: var(--color-yellow);
 }
-.tc-status-popover-flag[data-tc-priority='E'] {
+.abyss-status-popover-flag[data-abyss-priority='E'] {
   color: var(--color-blue);
 }
-.tc-status-popover-flag[data-tc-priority='F'] {
+.abyss-status-popover-flag[data-abyss-priority='F'] {
   color: var(--color-purple);
 }
-.tc-menu-priority-flag[data-tc-priority='A'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='A'] .menu-item-icon {
   color: var(--color-red);
 }
-.tc-menu-priority-flag[data-tc-priority='B'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='B'] .menu-item-icon {
   color: var(--color-orange);
 }
-.tc-menu-priority-flag[data-tc-priority='C'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='C'] .menu-item-icon {
   color: var(--color-yellow);
 }
-.tc-menu-priority-flag[data-tc-priority='D'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='D'] .menu-item-icon {
   color: var(--text-muted);
 }
-.tc-menu-priority-flag[data-tc-priority='E'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='E'] .menu-item-icon {
   color: var(--color-blue);
 }
-.tc-menu-priority-flag[data-tc-priority='F'] .menu-item-icon {
+.abyss-menu-priority-flag[data-abyss-priority='F'] .menu-item-icon {
   color: var(--color-purple);
 }
 /* Filled banner so native-menu priority flags match the popover / right panel. */
-.tc-menu-priority-flag .menu-item-icon svg {
+.abyss-menu-priority-flag .menu-item-icon svg {
   fill: currentColor;
 }
 /* Status shape-marker injected into a native menu item's icon slot
    (buildStatusSubmenu, src/ui/statusMenu.ts) — rendered outside
-   `.tc-panel-view`, always with priority 'D' so no colored border is drawn;
+   `.abyss-panel-view`, always with priority 'D' so no colored border is drawn;
    just shrink it to fit the menu's icon slot alongside the check indicator. */
-.menu-item-icon .tc-status-marker {
+.menu-item-icon .abyss-status-marker {
   width: 15px;
   height: 15px;
   min-width: 15px;
   flex: 0 0 15px;
   cursor: default;
 }
-.menu-item-icon .tc-status-marker svg {
+.menu-item-icon .abyss-status-marker svg {
   width: 10px;
   height: 10px;
 }
-.tc-status-popover-divider {
+.abyss-status-popover-divider {
   height: 1px;
   margin: var(--size-2-2) var(--size-2-1);
   background: var(--background-modifier-border);
 }
-.tc-status-popover-list {
+.abyss-status-popover-list {
   display: flex;
   flex-direction: column;
   /* Grow to fit all statuses; only scroll when there are really many
@@ -4530,7 +4533,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   max-height: min(55vh, 32rem);
   overflow-y: auto;
 }
-.tc-status-popover-row {
+.abyss-status-popover-row {
   display: flex;
   align-items: center;
   /* Native menu-item metrics: icon gap, padding and radius from the same tokens. */
@@ -4539,12 +4542,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: var(--radius-s);
   cursor: pointer;
 }
-.tc-status-popover-row:hover {
+.abyss-status-popover-row:hover {
   background: var(--background-modifier-hover);
 }
 /* Shrink the status marker to the native menu-item icon slot (16px) so rows are
    as compact as Obsidian's own menu — the card-sized 19px marker read as chunky. */
-.tc-status-popover-row .tc-status-marker {
+.abyss-status-popover-row .abyss-status-marker {
   width: 16px;
   height: 16px;
   min-width: 16px;
@@ -4553,25 +4556,25 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   cursor: default;
 }
-.tc-status-popover-row .tc-status-marker[data-status-type='in-progress'],
-.menu-item-icon .tc-status-marker[data-status-type='in-progress'] {
+.abyss-status-popover-row .abyss-status-marker[data-status-type='in-progress'],
+.menu-item-icon .abyss-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
 }
-.tc-status-popover-row .tc-status-marker svg {
+.abyss-status-popover-row .abyss-status-marker svg {
   width: 11px;
   height: 11px;
 }
-.tc-status-popover-row.is-current {
+.abyss-status-popover-row.is-current {
   font-weight: 600;
   color: var(--text-normal);
 }
-.tc-status-popover-name {
+.abyss-status-popover-name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.tc-status-popover-check {
+.abyss-status-popover-check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4580,61 +4583,61 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   height: 0.9rem;
   color: var(--color-accent);
 }
-.tc-status-popover-check svg {
+.abyss-status-popover-check svg {
   width: 0.8rem;
   height: 0.8rem;
 }
 
 /* Priority chip in right panel. Falls back to the underlying global color vars
-   (same aliasing --tc-priority-* does inside .tc-panel-view — see the comment on
-   .tc-status-popover above) because RightPanel is also mounted by TaskModal at
-   document.body, OUTSIDE `.tc-panel-view` (see TaskModal.ts) — there the
-   panel-scoped --tc-priority-* custom properties are undefined, so without a
+   (same aliasing --abyss-priority-* does inside .abyss-panel-view — see the comment on
+   .abyss-status-popover above) because RightPanel is also mounted by TaskModal at
+   document.body, OUTSIDE `.abyss-panel-view` (see TaskModal.ts) — there the
+   panel-scoped --abyss-priority-* custom properties are undefined, so without a
    fallback the chip rendered with no color at all (Round 4 Task 41). */
-.tc-priority-chip[data-priority='A'] {
-  color: var(--tc-priority-a, var(--color-red));
+.abyss-priority-chip[data-priority='A'] {
+  color: var(--abyss-priority-a, var(--color-red));
 }
-.tc-priority-chip[data-priority='B'] {
-  color: var(--tc-priority-b, var(--color-orange));
+.abyss-priority-chip[data-priority='B'] {
+  color: var(--abyss-priority-b, var(--color-orange));
 }
-.tc-priority-chip[data-priority='C'] {
-  color: var(--tc-priority-c, var(--color-yellow));
+.abyss-priority-chip[data-priority='C'] {
+  color: var(--abyss-priority-c, var(--color-yellow));
 }
-.tc-priority-chip[data-priority='E'] {
-  color: var(--tc-priority-e, var(--color-blue));
+.abyss-priority-chip[data-priority='E'] {
+  color: var(--abyss-priority-e, var(--color-blue));
 }
-.tc-priority-chip[data-priority='F'] {
-  color: var(--tc-priority-f, var(--color-purple));
+.abyss-priority-chip[data-priority='F'] {
+  color: var(--abyss-priority-f, var(--color-purple));
 }
 
 /* Right panel body */
-.tc-right-section {
+.abyss-right-section {
   padding: 16px 16px 0;
 }
-.tc-right-section + .tc-right-section {
+.abyss-right-section + .abyss-right-section {
   margin-top: 8px;
 }
-.tc-right-section-header {
+.abyss-right-section-header {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
 }
-.tc-right-section-label {
+.abyss-right-section-label {
   font-size: var(--font-ui-smaller, 11px);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
 }
-.tc-right-section-count {
+.abyss-right-section-count {
   font-size: var(--font-ui-small);
   color: var(--text-faint);
   background: var(--background-modifier-hover);
   border-radius: 10px;
   padding: 0 6px;
 }
-.tc-right-desc {
+.abyss-right-desc {
   width: 100%;
   border: 1px solid var(--background-modifier-border);
   border-radius: 6px;
@@ -4648,29 +4651,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   box-sizing: border-box;
 }
-.tc-right-desc:focus {
+.abyss-right-desc:focus {
   border-color: var(--interactive-accent);
 }
-.tc-right-desc-view {
+.abyss-right-desc-view {
   cursor: text;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
 }
-.tc-right-desc-view:hover {
+.abyss-right-desc-view:hover {
   border-color: var(--background-modifier-border-hover);
 }
-.tc-right-desc-empty {
+.abyss-right-desc-empty {
   color: var(--text-faint);
 }
 
 /* Sub-tasks */
-.tc-subtask-list {
+.abyss-subtask-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.tc-subtask-row {
+.abyss-subtask-row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4679,13 +4682,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   position: relative;
   user-select: none;
 }
-.tc-subtask-row:active {
+.abyss-subtask-row:active {
   cursor: grabbing;
 }
-.tc-subtask-row.is-dragging {
+.abyss-subtask-row.is-dragging {
   opacity: 0.4;
 }
-.tc-subtask-row.drop-above::before {
+.abyss-subtask-row.drop-above::before {
   content: '';
   position: absolute;
   top: -2px;
@@ -4696,7 +4699,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 1px;
   pointer-events: none;
 }
-.tc-subtask-row.drop-below::after {
+.abyss-subtask-row.drop-below::after {
   content: '';
   position: absolute;
   bottom: -2px;
@@ -4707,41 +4710,41 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 1px;
   pointer-events: none;
 }
-.tc-subtask-label {
+.abyss-subtask-label {
   font-size: var(--font-ui-small);
   color: var(--text-normal);
   cursor: pointer;
   flex: 1;
 }
-.tc-subtask-label:hover {
+.abyss-subtask-label:hover {
   text-decoration: underline;
   color: var(--text-accent);
 }
-.tc-subtask-label.is-done {
+.abyss-subtask-label.is-done {
   text-decoration: line-through;
   color: var(--text-muted);
 }
-.tc-subtask-content {
+.abyss-subtask-content {
   flex: 1;
   min-width: 0;
 }
-.tc-subtask-progress {
+.abyss-subtask-progress {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
   background: var(--background-modifier-hover);
   border-radius: 8px;
   padding: 0 5px;
 }
-.tc-subtask-meta {
+.abyss-subtask-meta {
   display: flex;
   gap: 6px;
   margin-top: 2px;
 }
-.tc-subtask-comment-count {
+.abyss-subtask-comment-count {
   font-size: var(--font-smallest, 11px);
   color: var(--text-muted);
 }
-.tc-subtask-new-input {
+.abyss-subtask-new-input {
   width: 100%;
   padding: 4px 8px;
   border: 1px solid var(--interactive-accent);
@@ -4755,7 +4758,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Inline add-subtask row */
-.tc-subtask-add-row {
+.abyss-subtask-add-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -4765,28 +4768,28 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   transition: color 0.1s;
 }
-.tc-subtask-add-row:hover {
+.abyss-subtask-add-row:hover {
   color: var(--text-normal);
 }
-.tc-subtask-add-row--hidden {
+.abyss-subtask-add-row--hidden {
   display: none;
 }
-.tc-subtask-add-icon {
+.abyss-subtask-add-icon {
   font-size: 16px;
   line-height: 1;
 }
-.tc-subtask-add-label {
+.abyss-subtask-add-label {
   font-size: var(--font-ui-small);
 }
 
 /* Comments */
-.tc-comment-list {
+.abyss-comment-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-bottom: 10px;
 }
-.tc-comment-row {
+.abyss-comment-row {
   font-size: 13px;
   color: var(--text-normal);
   background: var(--background-secondary);
@@ -4796,14 +4799,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   flex-direction: column;
   gap: 2px;
 }
-.tc-comment-text {
+.abyss-comment-text {
   line-height: 1.4;
 }
-.tc-comment-date {
+.abyss-comment-date {
   font-size: 11px;
   color: var(--text-muted);
 }
-.tc-comment-input {
+.abyss-comment-input {
   width: 100%;
   min-height: 60px;
   resize: vertical;
@@ -4819,11 +4822,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   font-family: var(--font-text);
   outline: none;
 }
-.tc-comment-input:focus {
+.abyss-comment-input:focus {
   outline: none;
   border-color: var(--interactive-accent);
 }
-.tc-comment-edit-input {
+.abyss-comment-edit-input {
   width: 100%;
   border: 1px solid var(--interactive-accent);
   border-radius: 6px;
@@ -4838,7 +4841,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-sizing: border-box;
   margin-top: 4px;
 }
-.tc-tag-input {
+.abyss-tag-input {
   padding: 3px 8px;
   font-size: 12px;
   border-radius: 20px;
@@ -4848,21 +4851,21 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   width: 100px;
 }
-.tc-tag-dropdown-wrap {
+.abyss-tag-dropdown-wrap {
   position: relative;
   display: inline-flex;
   flex-direction: column;
 }
-.tc-tag-suggest-item {
-  color: var(--tc-tag-suggest-color, var(--text-normal));
+.abyss-tag-suggest-item {
+  color: var(--abyss-tag-suggest-color, var(--text-normal));
 }
 
 /* Tag picker multi-select modal */
-.tc-tag-picker-modal .modal-content {
+.abyss-tag-picker-modal .modal-content {
   padding: 0;
   overflow: hidden;
 }
-.tc-tag-picker-search {
+.abyss-tag-picker-search {
   width: 100%;
   padding: 10px 16px;
   border: none;
@@ -4872,12 +4875,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   outline: none;
   box-sizing: border-box;
 }
-.tc-tag-picker-list {
+.abyss-tag-picker-list {
   max-height: 320px;
   overflow-y: auto;
   padding: 4px 0;
 }
-.tc-tag-picker-modal button.tc-tag-picker-item {
+.abyss-tag-picker-modal button.abyss-tag-picker-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4899,56 +4902,56 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin: 1px 6px;
   user-select: none;
 }
-.tc-tag-picker-modal button.tc-tag-picker-item:hover {
+.abyss-tag-picker-modal button.abyss-tag-picker-item:hover {
   background: var(--background-modifier-hover);
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--checked {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--checked {
   background: var(--background-modifier-active-hover);
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--checked:hover {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--checked:hover {
   background: var(--background-modifier-active-hover);
 }
-.tc-tag-picker-item--partial {
+.abyss-tag-picker-item--partial {
   opacity: 0.7;
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--removing {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--removing {
   background: rgba(var(--color-red-rgb), 0.08);
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--removing:hover {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--removing:hover {
   background: rgba(var(--color-red-rgb), 0.08);
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--removing .tc-tag-picker-icon {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--removing .abyss-tag-picker-icon {
   color: var(--color-red);
 }
-.tc-tag-picker-modal button.tc-tag-picker-item--removing .tc-tag-picker-label {
+.abyss-tag-picker-modal button.abyss-tag-picker-item--removing .abyss-tag-picker-label {
   text-decoration: line-through;
   opacity: 0.7;
 }
-.tc-tag-picker-modal button.tc-tag-picker-item:focus-visible,
-.tc-status-icon-field button.tc-status-icon-result:focus-visible {
+.abyss-tag-picker-modal button.abyss-tag-picker-item:focus-visible,
+.abyss-status-icon-field button.abyss-status-icon-result:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
-.tc-tag-picker-icon {
+.abyss-tag-picker-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
   color: var(--interactive-accent);
 }
-.tc-tag-picker-item--partial .tc-tag-picker-icon {
+.abyss-tag-picker-item--partial .abyss-tag-picker-icon {
   color: var(--text-muted);
 }
-.tc-tag-picker-label {
+.abyss-tag-picker-label {
   font-size: var(--font-ui-small);
-  color: var(--tc-tag-picker-color, var(--tag-color, var(--text-normal)));
+  color: var(--abyss-tag-picker-color, var(--tag-color, var(--text-normal)));
 }
-.tc-tag-picker-empty {
+.abyss-tag-picker-empty {
   padding: 16px;
   text-align: center;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
 }
-.tc-tag-dropdown {
+.abyss-tag-dropdown {
   position: absolute;
   top: calc(100% + 4px);
   left: 0;
@@ -4962,24 +4965,24 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow-y: auto;
   padding: 4px 0;
 }
-.tc-tag-dropdown--hidden {
+.abyss-tag-dropdown--hidden {
   display: none;
 }
-.tc-tag-dropdown-opt {
+.abyss-tag-dropdown-opt {
   padding: 5px 12px;
   font-size: 12px;
-  color: var(--tc-tag-opt-color, var(--text-faint));
+  color: var(--abyss-tag-opt-color, var(--text-faint));
   cursor: pointer;
   white-space: nowrap;
 }
-.tc-tag-dropdown-opt:hover,
-.tc-tag-dropdown-opt.is-active {
+.abyss-tag-dropdown-opt:hover,
+.abyss-tag-dropdown-opt.is-active {
   background: var(--background-modifier-hover);
-  color: var(--tc-tag-opt-color, var(--text-normal));
+  color: var(--abyss-tag-opt-color, var(--text-normal));
 }
 
 /* Context menu */
-.tc-context-menu {
+.abyss-context-menu {
   position: absolute;
   top: 100%;
   right: 0;
@@ -4991,27 +4994,27 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   min-width: 140px;
   overflow: hidden;
 }
-.tc-add-date-menu--compact {
+.abyss-add-date-menu--compact {
   right: auto;
   min-width: 0;
   inline-size: max-content;
-  max-inline-size: calc(100% - (var(--tc-popover-edge-gap, 0.5rem) * 2));
+  max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
 }
-.tc-context-item {
+.abyss-context-item {
   padding: 8px 14px;
   cursor: pointer;
   font-size: 13px;
   color: var(--text-normal);
 }
-.tc-context-item:hover {
+.abyss-context-item:hover {
   background: var(--background-modifier-hover);
 }
-.tc-context-item.tc-context-danger {
+.abyss-context-item.abyss-context-danger {
   color: var(--color-red, #e74c3c);
 }
 
 /* Time popover */
-.tc-time-popover {
+.abyss-time-popover {
   position: absolute;
   top: 100%;
   left: 0;
@@ -5019,19 +5022,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Anchor-positioned popover: uses CSS custom properties set via setCssProps */
-.tc-popover-anchored {
-  --tc-popover-anchor-gap: 0.25rem;
-  --tc-popover-edge-gap: 0.5rem;
+.abyss-popover-anchored {
+  --abyss-popover-anchor-gap: 0.25rem;
+  --abyss-popover-edge-gap: 0.5rem;
   position: absolute;
-  top: var(--tc-pop-top, 100%);
-  left: var(--tc-pop-left, 0);
+  top: var(--abyss-pop-top, 100%);
+  left: var(--abyss-pop-left, 0);
   right: auto;
   z-index: 10;
 }
 
 /* ── Task Modal ──────────────────────────────────────────── */
 
-.tc-modal-backdrop {
+.abyss-modal-backdrop {
   position: fixed;
   inset: 0;
   background: var(--modal-scrim-background, rgba(0, 0, 0, 0.45));
@@ -5043,11 +5046,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* While the task-detail modal is open, lift Obsidian's hover-preview popover above
    the modal backdrop (z-index 1000) so Cmd-hover previews aren't hidden behind it. */
-body.tc-modal-open .popover.hover-popover {
+body.abyss-modal-open .popover.hover-popover {
   z-index: 1001;
 }
 
-.tc-modal {
+.abyss-modal {
   position: relative;
   background: var(--background-primary);
   border: 1px solid var(--background-modifier-border);
@@ -5058,19 +5061,21 @@ body.tc-modal-open .popover.hover-popover {
   box-shadow: var(--shadow-l);
 }
 
-.tc-modal-close-btn {
-  /* positioned inside .tc-right-header-actions flex row */
+.abyss-modal-close-btn {
+  /* positioned inside .abyss-right-header-actions flex row */
 }
 
-/* Modal body reuses tc-right panel styles — no extra CSS needed */
-.tc-modal-body {
+/* Modal body reuses abyss-right panel styles — no extra CSS needed */
+.abyss-modal-body {
   width: 100%;
   position: relative;
 }
 
 /* ── Drag-and-drop states ────────────────────────────────── */
 
-.is-dragging:not(.tc-tg-block):not(.tc-tg-body):not(.tc-mg-block-dot):not(.tc-mg-plain) {
+.is-dragging:not(.abyss-tg-block):not(.abyss-tg-body):not(.abyss-mg-block-dot):not(
+    .abyss-mg-plain
+  ) {
   opacity: 0.4;
   cursor: grabbing;
 }
@@ -5084,11 +5089,11 @@ body.tc-modal-open .popover.hover-popover {
 
 /* ── Tag management: pinned section ─────────────────────── */
 
-.tc-left-section--pinned .tc-left-section-header {
+.abyss-left-section--pinned .abyss-left-section-header {
   color: var(--color-accent, var(--interactive-accent));
 }
 
-.tc-pinned-tag {
+.abyss-pinned-tag {
   font-size: var(--font-smallest);
   color: var(--text-muted);
   white-space: nowrap;
@@ -5096,45 +5101,45 @@ body.tc-modal-open .popover.hover-popover {
   text-overflow: ellipsis;
 }
 
-.tc-pinned-tag:hover {
+.abyss-pinned-tag:hover {
   color: var(--text-normal);
 }
 
 /* ── Tag management: drag-to-tag ────────────────────────── */
 
-.tc-drop-target {
+.abyss-drop-target {
   background: var(--background-modifier-hover);
   outline: 2px dashed var(--color-accent, var(--interactive-accent));
   outline-offset: -2px;
   border-radius: 4px;
 }
 
-.tc-dragging {
+.abyss-dragging {
   opacity: 0.5;
   cursor: grabbing;
 }
 
 /* ── Tag management: rename modal ───────────────────────── */
 
-.tc-rename-input {
+.abyss-rename-input {
   width: 100%;
   margin-bottom: 12px;
 }
 
-.tc-rename-btn-row {
+.abyss-rename-btn-row {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
 }
 
 /* ── Center header controls ─────────────────────────────────── */
-.tc-center-header {
+.abyss-center-header {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.tc-center-controls {
+.abyss-center-controls {
   margin-left: auto;
   display: flex;
   align-items: center;
@@ -5143,7 +5148,7 @@ body.tc-modal-open .popover.hover-popover {
 }
 
 /* ── Property filter chips ──────────────────────────────────── */
-.tc-filter-chip {
+.abyss-filter-chip {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -5157,7 +5162,7 @@ body.tc-modal-open .popover.hover-popover {
   white-space: nowrap;
 }
 
-.tc-filter-chip-x {
+.abyss-filter-chip-x {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5173,13 +5178,13 @@ body.tc-modal-open .popover.hover-popover {
   padding: 0;
 }
 
-.tc-filter-chip-x:hover {
+.abyss-filter-chip-x:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
 /* ── View-state (sort/group) button ─────────────────────── */
-.tc-view-state-btn {
+.abyss-view-state-btn {
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -5192,16 +5197,16 @@ body.tc-modal-open .popover.hover-popover {
   color: var(--text-muted);
 }
 
-.tc-view-state-btn:hover {
+.abyss-view-state-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
-.tc-view-state-btn--active {
+.abyss-view-state-btn--active {
   color: var(--color-accent);
 }
 
-.tc-view-state-btn--active::after {
+.abyss-view-state-btn--active::after {
   content: '';
   position: absolute;
   top: 2px;
@@ -5213,7 +5218,7 @@ body.tc-modal-open .popover.hover-popover {
 }
 
 /* ── View-state popover ─────────────────────────────────────── */
-.tc-view-state-popover {
+.abyss-view-state-popover {
   position: absolute;
   top: 100%;
   right: 0;
@@ -5228,15 +5233,15 @@ body.tc-modal-open .popover.hover-popover {
   margin-top: 4px;
 }
 
-.tc-view-state-row {
+.abyss-view-state-row {
   border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
-.tc-view-state-row:last-child {
+.abyss-view-state-row:last-child {
   border-bottom: none;
 }
 
-.tc-view-state-row-main {
+.abyss-view-state-row-main {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -5244,40 +5249,40 @@ body.tc-modal-open .popover.hover-popover {
   cursor: pointer;
 }
 
-.tc-view-state-row-main:hover {
+.abyss-view-state-row-main:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-view-state-row-icon {
+.abyss-view-state-row-icon {
   display: flex;
   opacity: 0.7;
 }
 
-.tc-view-state-row-label {
+.abyss-view-state-row-label {
   flex: 1;
   font-size: 13px;
 }
 
-.tc-view-state-row-value {
+.abyss-view-state-row-value {
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.tc-view-state-row-chevron {
+.abyss-view-state-row-chevron {
   display: flex;
   color: var(--text-faint);
   transition: transform 0.15s ease;
 }
 
-.tc-view-state-row-main.is-open .tc-view-state-row-chevron {
+.abyss-view-state-row-main.is-open .abyss-view-state-row-chevron {
   transform: rotate(90deg);
 }
 
-.tc-view-state-sublist {
+.abyss-view-state-sublist {
   padding: 4px 0;
 }
 
-.tc-view-state-option {
+.abyss-view-state-option {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -5291,11 +5296,11 @@ body.tc-modal-open .popover.hover-popover {
   color: var(--text-normal);
 }
 
-.tc-view-state-option:hover {
+.abyss-view-state-option:hover {
   background: var(--background-modifier-hover);
 }
 
-.tc-view-state-option-check {
+.abyss-view-state-option-check {
   width: 14px;
   height: 14px;
   display: flex;
@@ -5305,71 +5310,71 @@ body.tc-modal-open .popover.hover-popover {
   color: var(--color-accent);
 }
 
-.tc-view-state-option-check svg {
+.abyss-view-state-option-check svg {
   width: 12px;
   height: 12px;
 }
 
-.tc-view-state-option-label {
+.abyss-view-state-option-label {
   flex: 1;
 }
 
-.tc-view-state-option-default {
+.abyss-view-state-option-default {
   font-size: 10px;
   color: var(--text-faint);
   margin-left: auto;
   padding-left: 8px;
 }
 
-.tc-view-state-sublist-divider {
+.abyss-view-state-sublist-divider {
   height: 1px;
   margin: 4px 12px;
   background: var(--background-modifier-border);
 }
 
-.tc-hidden {
+.abyss-hidden {
   display: none;
 }
 
 /* ── Source note chip — clickable variant ────────────────────── */
-.tc-task-source-note--clickable {
+.abyss-task-source-note--clickable {
   cursor: pointer;
   pointer-events: auto;
   opacity: 0.9;
 }
 
-.tc-task-source-note--clickable:hover .tc-task-source-note-name {
+.abyss-task-source-note--clickable:hover .abyss-task-source-note-name {
   text-decoration: underline;
   text-decoration-color: var(--text-muted);
 }
 
-.tc-cursor-pointer {
+.abyss-cursor-pointer {
   cursor: pointer;
 }
 
 /* ── Date / time parts — hover hint ─────────────────────────── */
-.tc-task-date-part,
-.tc-task-time-part {
+.abyss-task-date-part,
+.abyss-task-time-part {
   display: inline-flex;
   align-items: center;
   gap: 4px;
 }
 
-.tc-task-date-part:hover,
-.tc-task-time-part:hover {
+.abyss-task-date-part:hover,
+.abyss-task-time-part:hover {
   text-decoration: underline;
   opacity: 0.85;
 }
 
 /* ── View-state popover reset row ───────────────────────────── */
-.tc-view-state-reset {
+.abyss-view-state-reset {
   border-top: 1px solid var(--background-modifier-border);
   padding: 8px 14px;
   display: flex;
   justify-content: center;
 }
 
-.tc-view-state-reset-btn {
+.abyss-view-state-reset-btn {
   background: none;
   border: none;
   cursor: pointer;
@@ -5379,12 +5384,12 @@ body.tc-modal-open .popover.hover-popover {
   border-radius: 4px;
 }
 
-.tc-view-state-reset-btn:hover {
+.abyss-view-state-reset-btn:hover {
   color: var(--text-muted);
   text-decoration: underline;
 }
 
-.tc-drop-active {
+.abyss-drop-active {
   outline: 2px dashed var(--interactive-accent);
   outline-offset: -2px;
   background: var(--interactive-accent-hover);
@@ -5393,15 +5398,15 @@ body.tc-modal-open .popover.hover-popover {
 
 /* ── Projects ─────────────────────────────────────────────────────────────── */
 
-.tc-projects-host,
-.tc-projects-panel {
+.abyss-projects-host,
+.abyss-projects-panel {
   height: 100%;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
 }
-.tc-projects-panel > div {
+.abyss-projects-panel > div {
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -5409,30 +5414,30 @@ body.tc-modal-open .popover.hover-popover {
 }
 
 /* Left-panel collapsible sections + add affordance */
-.tc-left-section-header--collapsible {
+.abyss-left-section-header--collapsible {
   display: flex;
   align-items: center;
   gap: 6px;
   cursor: pointer;
   user-select: none;
 }
-.tc-left-section-chevron {
+.abyss-left-section-chevron {
   display: inline-flex;
   align-items: center;
   color: var(--text-faint);
 }
-.tc-left-section-chevron svg {
+.abyss-left-section-chevron svg {
   width: 14px;
   height: 14px;
 }
-.tc-left-section-title {
+.abyss-left-section-title {
   flex: 1;
   font-size: var(--font-ui-smaller);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
 }
-.tc-left-add {
+.abyss-left-add {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5443,61 +5448,61 @@ body.tc-modal-open .popover.hover-popover {
   opacity: 0;
   transition: opacity 0.1s ease;
 }
-.tc-left-section-header--collapsible:hover .tc-left-add {
+.abyss-left-section-header--collapsible:hover .abyss-left-add {
   opacity: 1;
 }
-.tc-left-add:hover {
+.abyss-left-add:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-.tc-left-add svg {
+.abyss-left-add svg {
   width: 14px;
   height: 14px;
 }
-.tc-left-add-input {
+.abyss-left-add-input {
   width: 100%;
   margin: 4px 0;
   font-size: var(--font-ui-small);
 }
-.tc-left-showmore {
+.abyss-left-showmore {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   cursor: pointer;
 }
-.tc-left-showmore:hover {
+.abyss-left-showmore:hover {
   color: var(--text-normal);
 }
-.tc-group-arrow svg {
+.abyss-group-arrow svg {
   width: 14px;
   height: 14px;
 }
 
 /* Progress bar (shared) */
-.tc-progress-wrap {
+.abyss-progress-wrap {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 90px;
 }
-.tc-progress {
+.abyss-progress {
   flex: 1;
   height: 5px;
   border-radius: 3px;
   background: var(--background-modifier-border);
   overflow: hidden;
 }
-.tc-progress-fill {
+.abyss-progress-fill {
   height: 100%;
   border-radius: 3px;
   background: var(--interactive-accent);
 }
-.tc-progress-label {
+.abyss-progress-label {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   white-space: nowrap;
 }
 
-.tc-status-dot {
+.abyss-status-dot {
   display: inline-block;
   width: 8px;
   height: 8px;
@@ -5507,7 +5512,7 @@ body.tc-modal-open .popover.hover-popover {
 }
 
 /* Projects list (overview) */
-.tc-projects-toolbar {
+.abyss-projects-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -5515,28 +5520,28 @@ body.tc-modal-open .popover.hover-popover {
   border-bottom: 1px solid var(--background-modifier-border);
   flex: 0 0 auto;
 }
-.tc-projects-title {
+.abyss-projects-title {
   margin: 0;
   font-size: var(--font-ui-large);
 }
-.tc-projects-new {
+.abyss-projects-new {
   cursor: pointer;
 }
-.tc-projects-scroll {
+.abyss-projects-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 8px 12px;
 }
-.tc-projects-empty {
+.abyss-projects-empty {
   color: var(--text-muted);
   text-align: center;
   padding: 24px;
 }
-.tc-projects-group {
+.abyss-projects-group {
   margin-bottom: 12px;
 }
-.tc-projects-group-header {
+.abyss-projects-group-header {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -5546,10 +5551,10 @@ body.tc-modal-open .popover.hover-popover {
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.tc-projects-group-count {
+.abyss-projects-group-count {
   margin-left: auto;
 }
-.tc-project-row {
+.abyss-project-row {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -5557,37 +5562,37 @@ body.tc-modal-open .popover.hover-popover {
   border-radius: 6px;
   cursor: pointer;
 }
-.tc-project-row:hover {
+.abyss-project-row:hover {
   background: var(--background-modifier-hover);
 }
-.tc-project-row-name {
+.abyss-project-row-name {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
-.tc-project-name {
+.abyss-project-name {
   color: var(--text-normal);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tc-project-folder {
+.abyss-project-folder {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
 }
-.tc-project-row-actions {
+.abyss-project-row-actions {
   display: flex;
   align-items: center;
   gap: 2px;
   opacity: 0;
   transition: opacity 0.1s ease;
 }
-.tc-project-row:hover .tc-project-row-actions {
+.abyss-project-row:hover .abyss-project-row-actions {
   opacity: 1;
 }
-.tc-project-status-btn,
-.tc-project-open-btn {
+.abyss-project-status-btn,
+.abyss-project-open-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5601,18 +5606,18 @@ body.tc-modal-open .popover.hover-popover {
   border-radius: 4px;
   box-shadow: none;
 }
-.tc-project-status-btn:hover,
-.tc-project-open-btn:hover {
+.abyss-project-status-btn:hover,
+.abyss-project-open-btn:hover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
 
 /* Projects dashboard (single project) */
-.tc-projects-dashboard {
+.abyss-projects-dashboard {
   padding: 12px 16px;
   overflow-y: auto;
 }
-.tc-project-back {
+.abyss-project-back {
   display: inline-flex;
   align-self: flex-start;
   width: fit-content;
@@ -5626,21 +5631,21 @@ body.tc-modal-open .popover.hover-popover {
   padding: 4px 6px;
   margin-bottom: 8px;
 }
-.tc-project-back:hover {
+.abyss-project-back:hover {
   color: var(--text-normal);
 }
-.tc-project-dashboard-header {
+.abyss-project-dashboard-header {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
 }
-.tc-project-dashboard-title {
+.abyss-project-dashboard-title {
   margin: 0;
   flex: 1;
   min-width: 0;
 }
-.tc-status-pill {
+.abyss-status-pill {
   padding: 2px 10px;
   border-radius: var(--radius-l);
   color: var(--text-on-accent);
@@ -5648,27 +5653,27 @@ body.tc-modal-open .popover.hover-popover {
   border: none;
   cursor: pointer;
 }
-.tc-project-dashboard-stats {
+.abyss-project-dashboard-stats {
   display: flex;
   align-items: center;
   gap: 16px;
   margin: 12px 0;
 }
-.tc-project-time-label {
+.abyss-project-time-label {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
 }
-.tc-project-description {
+.abyss-project-description {
   color: var(--text-muted);
   margin: 8px 0 16px;
   white-space: pre-wrap;
 }
-.tc-project-tasks {
+.abyss-project-tasks {
   border-top: 1px solid var(--background-modifier-border);
   padding-top: 8px;
 }
 
-.tc-projects-new-input {
+.abyss-projects-new-input {
   width: 100%;
   margin-bottom: 8px;
   font-size: var(--font-ui-small);
@@ -5677,19 +5682,19 @@ body.tc-modal-open .popover.hover-popover {
 /* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
 /* Cards share the filled-row look of native setting items for a consistent feel;
    grip + chevron are the only added affordances. */
-.tc-settings-card {
+.abyss-settings-card {
   border-radius: var(--radius-m);
   margin-bottom: 6px;
   background: var(--background-secondary);
 }
-.tc-settings-card.tc-dragging {
+.abyss-settings-card.abyss-dragging {
   opacity: 0.5;
 }
-.tc-settings-card.tc-drag-over {
+.abyss-settings-card.abyss-drag-over {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
-.tc-settings-card-header {
+.abyss-settings-card-header {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -5697,54 +5702,54 @@ body.tc-modal-open .popover.hover-popover {
   cursor: pointer;
   user-select: none;
 }
-.tc-settings-card-badge {
+.abyss-settings-card-badge {
   font-size: var(--font-ui-smaller);
   color: var(--text-muted);
   background: var(--background-modifier-border);
   border-radius: 6px;
   padding: 1px 7px;
 }
-.tc-settings-card-grip {
+.abyss-settings-card-grip {
   display: inline-flex;
   align-items: center;
   color: var(--text-faint);
   cursor: grab;
 }
-.tc-settings-card-grip svg {
+.abyss-settings-card-grip svg {
   width: 14px;
   height: 14px;
 }
-.tc-settings-card-title {
+.abyss-settings-card-title {
   flex: 1;
   font-weight: var(--font-semibold);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tc-settings-card-chevron {
+.abyss-settings-card-chevron {
   display: inline-flex;
   align-items: center;
   color: var(--text-muted);
 }
-.tc-settings-card-chevron svg {
+.abyss-settings-card-chevron svg {
   width: 16px;
   height: 16px;
 }
-.tc-settings-card-body {
+.abyss-settings-card-body {
   padding: 0 12px 8px;
   border-top: 1px solid var(--background-modifier-border);
 }
 
-.tc-tag-group-header.tc-reorder-target,
-.tc-tag-leaf.tc-reorder-target {
+.abyss-tag-group-header.abyss-reorder-target,
+.abyss-tag-leaf.abyss-reorder-target {
   box-shadow: inset 0 -2px 0 0 var(--interactive-accent);
 }
 
 /* ── Settings: custom statuses section ──────────────────────────────────── */
-.tc-status-type-group {
+.abyss-status-type-group {
   margin-bottom: 16px;
 }
-.tc-status-type-group-label {
+.abyss-status-type-group-label {
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
   text-transform: uppercase;
@@ -5753,25 +5758,25 @@ body.tc-modal-open .popover.hover-popover {
   margin: 0 0 6px 2px;
 }
 /* Symbol badges in this section are single characters — monospace reads clearer. */
-.tc-status-type-group .tc-settings-card-badge {
+.abyss-status-type-group .abyss-settings-card-badge {
   font-family: var(--font-monospace);
 }
-.tc-status-header-preview {
+.abyss-status-header-preview {
   display: inline-flex;
   align-items: center;
 }
-.tc-status-symbol-error {
+.abyss-status-symbol-error {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
   margin-top: 4px;
 }
-.tc-status-icon-field {
+.abyss-status-icon-field {
   margin-bottom: 12px;
 }
-.tc-status-icon-input-host {
+.abyss-status-icon-input-host {
   margin-top: 4px;
 }
-.tc-status-icon-results {
+.abyss-status-icon-results {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -5782,7 +5787,7 @@ body.tc-modal-open .popover.hover-popover {
   padding: 8px;
   margin-top: 8px;
 }
-.tc-status-icon-field button.tc-status-icon-result {
+.abyss-status-icon-field button.abyss-status-icon-result {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5799,61 +5804,63 @@ body.tc-modal-open .popover.hover-popover {
   border-radius: 4px;
   cursor: pointer;
 }
-.tc-status-icon-field button.tc-status-icon-result:hover {
+.abyss-status-icon-field button.abyss-status-icon-result:hover {
   background: var(--background-modifier-hover);
 }
-.tc-status-icon-field button.tc-status-icon-result.is-selected {
+.abyss-status-icon-field button.abyss-status-icon-result.is-selected {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-.tc-status-icon-field button.tc-status-icon-result.is-selected .tc-status-icon-result-icon {
+.abyss-status-icon-field
+  button.abyss-status-icon-result.is-selected
+  .abyss-status-icon-result-icon {
   color: var(--text-on-accent);
 }
-.tc-status-icon-result-icon {
+.abyss-status-icon-result-icon {
   display: inline-flex;
   align-items: center;
   color: var(--text-muted);
 }
-.tc-status-icon-result-icon svg {
+.abyss-status-icon-result-icon svg {
   width: 16px;
   height: 16px;
 }
-.tc-status-icon-empty {
+.abyss-status-icon-empty {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   padding: 4px 2px;
 }
-.tc-status-icon-clear .tc-status-icon-result-icon {
+.abyss-status-icon-clear .abyss-status-icon-result-icon {
   font-size: 16px;
   line-height: 1;
 }
-.tc-status-symbol-lock {
+.abyss-status-symbol-lock {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
   color: var(--text-muted);
   vertical-align: middle;
 }
-.tc-status-symbol-lock svg {
+.abyss-status-symbol-lock svg {
   width: 12px;
   height: 12px;
 }
-.tc-status-symbol-locked {
+.abyss-status-symbol-locked {
   opacity: 0.6;
   cursor: not-allowed;
 }
-.tc-status-icon-lock {
+.abyss-status-icon-lock {
   display: inline-flex;
   align-items: center;
   margin-left: 6px;
   color: var(--text-muted);
   vertical-align: middle;
 }
-.tc-status-icon-lock svg {
+.abyss-status-icon-lock svg {
   width: 12px;
   height: 12px;
 }
-.tc-status-icon-locked-preview {
+.abyss-status-icon-locked-preview {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5863,51 +5870,51 @@ body.tc-modal-open .popover.hover-popover {
   opacity: 0.6;
   color: var(--text-muted);
 }
-.tc-status-icon-locked-preview svg {
+.abyss-status-icon-locked-preview svg {
   width: 16px;
   height: 16px;
 }
-.tc-status-preview {
+.abyss-status-preview {
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.tc-status-preview-title {
+.abyss-status-preview-title {
   color: var(--text-muted);
 }
 
 /* Seat only the first navigation/control surfaces below the shell edge. */
-.tc-layout > .tc-rail {
-  padding-top: calc(8px + var(--tc-shell-top-inset));
+.abyss-layout > .abyss-rail {
+  padding-top: calc(8px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout > .tc-left > .tc-left-section:first-child {
-  padding-top: calc(12px + var(--tc-shell-top-inset));
+.abyss-layout > .abyss-left > .abyss-left-section:first-child {
+  padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout--tasks > .tc-center > .tc-center-header,
-.tc-layout--search > .tc-center > .tc-center-header {
-  padding-top: calc(12px + var(--tc-shell-top-inset));
+.abyss-layout--tasks > .abyss-center > .abyss-center-header,
+.abyss-layout--search > .abyss-center > .abyss-center-header {
+  padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout--calendar > .tc-center > .tc-cal-nav {
-  padding-top: calc(8px + var(--tc-shell-top-inset));
+.abyss-layout--calendar > .abyss-center > .abyss-cal-nav {
+  padding-top: calc(8px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout--projects > .tc-center .tc-projects-toolbar {
-  padding-top: calc(12px + var(--tc-shell-top-inset));
+.abyss-layout--projects > .abyss-center .abyss-projects-toolbar {
+  padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout > .tc-right > .tc-right-header:first-child {
-  padding-top: calc(12px + var(--tc-shell-top-inset));
+.abyss-layout > .abyss-right > .abyss-right-header:first-child {
+  padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.tc-layout > .tc-right > .tc-breadcrumb:first-child {
-  padding-top: calc(18px + var(--tc-shell-top-inset));
+.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child {
+  padding-top: calc(18px + var(--abyss-shell-top-inset));
 }
 
 /* Persistent, panel-owned recovery surface for drafts whose task identity became stale. */
-.tc-detached-drafts {
+.abyss-detached-drafts {
   display: grid;
   gap: 6px;
   margin: 8px 12px;
@@ -5918,13 +5925,13 @@ body.tc-modal-open .popover.hover-popover {
   background: var(--background-secondary);
 }
 
-.tc-detached-drafts-title {
+.abyss-detached-drafts-title {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   font-weight: var(--font-semibold);
 }
 
-.tc-detached-draft {
+.abyss-detached-draft {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 4px 6px;
@@ -5934,7 +5941,7 @@ body.tc-modal-open .popover.hover-popover {
   border-top: 1px solid var(--background-modifier-border);
 }
 
-.tc-detached-draft-label {
+.abyss-detached-draft-label {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -5943,7 +5950,7 @@ body.tc-modal-open .popover.hover-popover {
   white-space: nowrap;
 }
 
-.tc-detached-draft pre {
+.abyss-detached-draft pre {
   grid-column: 1 / -1;
   max-height: 8rem;
   margin: 0;
@@ -5957,14 +5964,14 @@ body.tc-modal-open .popover.hover-popover {
   white-space: pre-wrap;
 }
 
-.tc-detached-draft-copy,
-.tc-detached-draft-discard {
+.abyss-detached-draft-copy,
+.abyss-detached-draft-discard {
   padding: 2px 6px;
   font-size: var(--font-ui-smaller);
 }
 
-.tc-detached-draft > [aria-live='polite'],
-.tc-detached-drafts-status {
+.abyss-detached-draft > [aria-live='polite'],
+.abyss-detached-drafts-status {
   position: absolute;
   width: 1px;
   height: 1px;

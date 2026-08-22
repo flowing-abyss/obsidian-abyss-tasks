@@ -34,7 +34,7 @@ function makeTab(): CalendarSettingsTab {
 describe('CalendarSettingsTab sections', () => {
   it('renders lifecycle and recurrence setting rows in General', () => {
     const tab = makeTab();
-    tab.containerEl.querySelector<HTMLElement>('.tc-settings-section-header')!.click();
+    tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header')!.click();
     expect(tab.containerEl.textContent).toContain('Add created date');
     expect(tab.containerEl.textContent).toContain('Add completion date');
     expect(tab.containerEl.textContent).toContain('New occurrence placement');
@@ -43,39 +43,39 @@ describe('CalendarSettingsTab sections', () => {
 
   it('renders exactly 6 sections', () => {
     const tab = makeTab();
-    const sections = tab.containerEl.querySelectorAll('.tc-settings-section');
+    const sections = tab.containerEl.querySelectorAll('.abyss-settings-section');
     expect(sections).toHaveLength(7);
   });
 
   it('all sections start collapsed (no is-open)', () => {
     const tab = makeTab();
-    const open = tab.containerEl.querySelectorAll('.tc-settings-section.is-open');
+    const open = tab.containerEl.querySelectorAll('.abyss-settings-section.is-open');
     expect(open).toHaveLength(0);
   });
 
   it('clicking a header adds is-open to that section', () => {
     const tab = makeTab();
-    const header = tab.containerEl.querySelector<HTMLElement>('.tc-settings-section-header');
+    const header = tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header');
     expect(header).not.toBeNull();
     header!.click();
-    const section = header!.closest('.tc-settings-section');
+    const section = header!.closest('.abyss-settings-section');
     expect(section?.classList.contains('is-open')).toBe(true);
   });
 
   it('clicking header again removes is-open', () => {
     const tab = makeTab();
-    const header = tab.containerEl.querySelector<HTMLElement>('.tc-settings-section-header');
+    const header = tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header');
     header!.click();
     header!.click();
-    const section = header!.closest('.tc-settings-section');
+    const section = header!.closest('.abyss-settings-section');
     expect(section?.classList.contains('is-open')).toBe(false);
   });
 
   it('section labels match expected names', () => {
     const tab = makeTab();
-    const labels = Array.from(tab.containerEl.querySelectorAll('.tc-settings-section-label')).map(
-      (el) => el.textContent,
-    );
+    const labels = Array.from(
+      tab.containerEl.querySelectorAll('.abyss-settings-section-label'),
+    ).map((el) => el.textContent);
     expect(labels).toEqual([
       'General',
       'Desktop',
@@ -89,25 +89,25 @@ describe('CalendarSettingsTab sections', () => {
 
   it('each section header has an icon element', () => {
     const tab = makeTab();
-    const icons = tab.containerEl.querySelectorAll('.tc-settings-section-icon');
+    const icons = tab.containerEl.querySelectorAll('.abyss-settings-section-icon');
     expect(icons).toHaveLength(7);
   });
 
   it('each section header has a chevron element', () => {
     const tab = makeTab();
-    const chevrons = tab.containerEl.querySelectorAll('.tc-settings-section-chevron');
+    const chevrons = tab.containerEl.querySelectorAll('.abyss-settings-section-chevron');
     expect(chevrons).toHaveLength(7);
   });
 
   it('open sections stay open after display() re-render', () => {
     const tab = makeTab();
     const headers = Array.from(
-      tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header'),
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
     headers[1]!.click(); // open Desktop (index 1)
     headers[2]!.click(); // open Mobile (index 2)
     tab.display();
-    const sections = Array.from(tab.containerEl.querySelectorAll('.tc-settings-section'));
+    const sections = Array.from(tab.containerEl.querySelectorAll('.abyss-settings-section'));
     expect(sections[0]!.classList.contains('is-open')).toBe(false);
     expect(sections[1]!.classList.contains('is-open')).toBe(true);
     expect(sections[2]!.classList.contains('is-open')).toBe(true);

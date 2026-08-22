@@ -64,12 +64,12 @@ export class NoteSuggest extends AbstractInputSuggest<TFile> {
   renderSuggestion(file: TFile, el: HTMLElement): void {
     // Show the extension for non-note files (e.g. 001.png) so attachments are recognizable.
     el.createDiv({
-      cls: 'tc-suggest-title',
+      cls: 'abyss-suggest-title',
       text: file.extension === 'md' ? file.basename : file.name,
     });
     const parent = file.parent?.path;
     if (parent && parent !== '/') {
-      el.createDiv({ cls: 'tc-suggest-path', text: parent });
+      el.createDiv({ cls: 'abyss-suggest-path', text: parent });
     }
   }
 

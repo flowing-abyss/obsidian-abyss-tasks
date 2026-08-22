@@ -221,7 +221,7 @@ export class RightPanel {
       hadFocus: active === element,
       dirty: element.value !== base,
     });
-    const title = this.el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit');
+    const title = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
     if (title) {
       candidates.push({
         kind: 'title',
@@ -229,7 +229,7 @@ export class RightPanel {
         ...textDraft(title, task.markdownTitle),
       });
     }
-    const description = this.el.querySelector<HTMLTextAreaElement>('.tc-right-desc-edit');
+    const description = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
     if (description) {
       candidates.push({
         kind: 'description',
@@ -237,9 +237,9 @@ export class RightPanel {
         ...textDraft(description, task.description ?? ''),
       });
     }
-    const rows = [...this.el.querySelectorAll<HTMLElement>('.tc-comment-row')];
+    const rows = [...this.el.querySelectorAll<HTMLElement>('.abyss-comment-row')];
     for (const [index, row] of rows.entries()) {
-      const commentEdit = row.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input');
+      const commentEdit = row.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input');
       if (!commentEdit) continue;
       const comment = task.comments[index];
       if (comment) {
@@ -250,11 +250,11 @@ export class RightPanel {
         });
       }
     }
-    const newSubtask = this.el.querySelector<HTMLInputElement>('.tc-subtask-new-input');
+    const newSubtask = this.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
     if (newSubtask) {
       candidates.push({ kind: 'new-subtask', parent: target, ...textDraft(newSubtask, '') });
     }
-    const newComment = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-input');
+    const newComment = this.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
     if (newComment) {
       candidates.push({ kind: 'new-comment', parent: target, ...textDraft(newComment, '') });
     }
@@ -450,7 +450,7 @@ export class RightPanel {
       return undefined;
     }
     if (rebased.kind === 'recurrence-editor') {
-      const chip = this.el.querySelector<HTMLElement>('.tc-repeat-chip');
+      const chip = this.el.querySelector<HTMLElement>('.abyss-repeat-chip');
       if (!chip) {
         if (isDirtyDraft(rebased)) this.appendDetachedDraft(rebased, origin);
         return undefined;
@@ -464,25 +464,25 @@ export class RightPanel {
 
     let edit: HTMLInputElement | HTMLTextAreaElement | null;
     if (rebased.kind === 'title') {
-      this.el.querySelector<HTMLElement>('.tc-right-title-view')?.click();
-      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit');
+      this.el.querySelector<HTMLElement>('.abyss-right-title-view')?.click();
+      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
     } else if (rebased.kind === 'description') {
-      this.el.querySelector<HTMLElement>('.tc-right-desc-view')?.click();
-      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-right-desc-edit');
+      this.el.querySelector<HTMLElement>('.abyss-right-desc-view')?.click();
+      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-right-desc-edit');
     } else if (rebased.kind === 'existing-comment') {
       const index = task.comments.findIndex(
         (comment) =>
           comment.ref.relativeLine === rebased.target.ref.relativeLine &&
           comment.ref.originalMarkdown === rebased.target.ref.originalMarkdown,
       );
-      const row = this.el.querySelectorAll<HTMLElement>('.tc-comment-row')[index];
-      row?.querySelector<HTMLElement>('.tc-comment-text')?.click();
-      edit = row?.querySelector<HTMLTextAreaElement>('.tc-comment-edit-input') ?? null;
+      const row = this.el.querySelectorAll<HTMLElement>('.abyss-comment-row')[index];
+      row?.querySelector<HTMLElement>('.abyss-comment-text')?.click();
+      edit = row?.querySelector<HTMLTextAreaElement>('.abyss-comment-edit-input') ?? null;
     } else if (rebased.kind === 'new-subtask') {
-      this.el.querySelector<HTMLElement>('.tc-subtask-add-row')?.click();
-      edit = this.el.querySelector<HTMLInputElement>('.tc-subtask-new-input');
+      this.el.querySelector<HTMLElement>('.abyss-subtask-add-row')?.click();
+      edit = this.el.querySelector<HTMLInputElement>('.abyss-subtask-new-input');
     } else {
-      edit = this.el.querySelector<HTMLTextAreaElement>('.tc-comment-input');
+      edit = this.el.querySelector<HTMLTextAreaElement>('.abyss-comment-input');
     }
     if (!edit) {
       if (rebased.dirty) this.appendDetachedDraft(rebased, origin);
@@ -522,7 +522,7 @@ export class RightPanel {
         this.detachedFocusTimer = undefined;
         this.el
           .querySelector<HTMLButtonElement>(
-            `[data-tc-detached-draft="${id}"] .tc-detached-draft-copy`,
+            `[data-abyss-detached-draft="${id}"] .abyss-detached-draft-copy`,
           )
           ?.focus();
       }, 0);
@@ -538,33 +538,33 @@ export class RightPanel {
   }
 
   private renderDetachedDraftTray(): void {
-    this.el.querySelector('.tc-detached-drafts')?.remove();
+    this.el.querySelector('.abyss-detached-drafts')?.remove();
     if (this.detachedDrafts.length === 0) return;
-    const tray = this.el.createDiv({ cls: 'tc-detached-drafts' });
-    tray.createDiv({ cls: 'tc-detached-drafts-title', text: 'Unsaved drafts' });
+    const tray = this.el.createDiv({ cls: 'abyss-detached-drafts' });
+    tray.createDiv({ cls: 'abyss-detached-drafts-title', text: 'Unsaved drafts' });
     tray.createDiv({
-      cls: 'tc-detached-drafts-status',
+      cls: 'abyss-detached-drafts-status',
       text: this.detachedAnnouncement,
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
     for (const entry of this.detachedDrafts) {
       const label = this.detachedDraftLabel(entry.draft, entry.origin);
       const detached = tray.createDiv({
-        cls: 'tc-detached-draft',
+        cls: 'abyss-detached-draft',
         attr: {
           role: 'group',
           'aria-label': `Unsaved draft for ${label}`,
-          'data-tc-detached-draft': String(entry.id),
+          'data-abyss-detached-draft': String(entry.id),
         },
       });
       detached.createDiv({
-        cls: 'tc-detached-draft-label',
+        cls: 'abyss-detached-draft-label',
         text: label,
       });
       detached.createEl('pre', { text: draftPlainText(entry.draft) });
       const status = detached.createDiv({ attr: { 'aria-live': 'polite' } });
       const copy = detached.createEl('button', {
-        cls: 'tc-detached-draft-copy',
+        cls: 'abyss-detached-draft-copy',
         text: 'Copy',
         attr: { 'aria-label': `Copy unsaved draft for ${label}` },
       });
@@ -586,7 +586,7 @@ export class RightPanel {
         })();
       });
       const discard = detached.createEl('button', {
-        cls: 'tc-detached-draft-discard',
+        cls: 'abyss-detached-draft-discard',
         text: 'Discard',
         attr: { 'aria-label': `Discard unsaved draft for ${label}` },
       });
@@ -665,7 +665,7 @@ export class RightPanel {
 
   /** Description block: rendered markdown (clickable links) that becomes a textarea on click. */
   private renderDescriptionBlock(section: HTMLElement, task: TaskLike): void {
-    const view = section.createDiv({ cls: 'tc-right-desc tc-right-desc-view' });
+    const view = section.createDiv({ cls: 'abyss-right-desc abyss-right-desc-view' });
     enableAttachmentDrop(view, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
@@ -681,7 +681,7 @@ export class RightPanel {
     const enterEdit = (): void => {
       const start = view.offsetHeight;
       view.hide();
-      const ta = section.createEl('textarea', { cls: 'tc-right-desc tc-right-desc-edit' });
+      const ta = section.createEl('textarea', { cls: 'abyss-right-desc abyss-right-desc-edit' });
       view.insertAdjacentElement('afterend', ta);
       ta.value = task.description ?? '';
       this.enablePaste(ta, task);
@@ -717,7 +717,7 @@ export class RightPanel {
     showView = (): void => {
       const desc = task.description ?? '';
       if (desc.trim()) {
-        view.removeClass('tc-right-desc-empty');
+        view.removeClass('abyss-right-desc-empty');
         renderTaskText(view, desc, {
           app: this.app,
           sourcePath: rootTaskRef(task).filePath,
@@ -736,7 +736,7 @@ export class RightPanel {
         });
       } else {
         view.empty();
-        view.addClass('tc-right-desc-empty');
+        view.addClass('abyss-right-desc-empty');
         view.setText('Add a description…');
       }
     };
@@ -749,12 +749,12 @@ export class RightPanel {
   }
 
   private renderEmpty(): void {
-    const empty = this.el.createDiv({ cls: 'tc-right-empty' });
-    const icon = empty.createDiv({ cls: 'tc-right-empty-icon' });
+    const empty = this.el.createDiv({ cls: 'abyss-right-empty' });
+    const icon = empty.createDiv({ cls: 'abyss-right-empty-icon' });
     setIcon(icon, 'mouse-pointer-click');
-    empty.createEl('p', { cls: 'tc-right-empty-title', text: 'No task selected' });
+    empty.createEl('p', { cls: 'abyss-right-empty-title', text: 'No task selected' });
     empty.createEl('p', {
-      cls: 'tc-right-empty-hint',
+      cls: 'abyss-right-empty-hint',
       text: 'Click a task to view and edit details',
     });
   }
@@ -766,11 +766,11 @@ export class RightPanel {
   ): void {
     // Breadcrumb — shows only the parent path (current task is in the title input)
     if (stack.length > 1) {
-      const breadcrumb = this.el.createDiv({ cls: 'tc-breadcrumb' });
+      const breadcrumb = this.el.createDiv({ cls: 'abyss-breadcrumb' });
       const parents = stack.slice(0, -1);
       parents.forEach((item, idx) => {
-        if (idx > 0) breadcrumb.createEl('span', { cls: 'tc-breadcrumb-sep', text: ' › ' });
-        const crumb = breadcrumb.createEl('span', { cls: 'tc-breadcrumb-item' });
+        if (idx > 0) breadcrumb.createEl('span', { cls: 'abyss-breadcrumb-sep', text: ' › ' });
+        const crumb = breadcrumb.createEl('span', { cls: 'abyss-breadcrumb-item' });
         renderTaskText(crumb, item.markdownTitle, {
           app: this.app,
           sourcePath: rootTaskRef(item).filePath,
@@ -784,7 +784,7 @@ export class RightPanel {
     }
 
     // Header
-    const header = this.el.createDiv({ cls: 'tc-right-header' });
+    const header = this.el.createDiv({ cls: 'abyss-right-header' });
     renderStatusMarker(header, {
       task,
       registry: this.statusRegistry,
@@ -802,12 +802,12 @@ export class RightPanel {
     });
     this.renderTitleBlock(header, task);
 
-    const headerActions = header.createDiv({ cls: 'tc-right-header-actions' });
+    const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
 
     // More actions menu button
     const currentTask = task;
     const menuBtn = headerActions.createEl('button', {
-      cls: 'tc-right-action-btn',
+      cls: 'abyss-right-action-btn',
       text: '⋯',
       attr: {
         title: 'More actions',
@@ -824,7 +824,7 @@ export class RightPanel {
 
     // Metadata chips — available for both TaskSnapshot and SubtaskSnapshot
     {
-      const chips = this.el.createDiv({ cls: 'tc-chips-row' });
+      const chips = this.el.createDiv({ cls: 'abyss-chips-row' });
 
       // Date chip (due-first display; if scheduled is set, prefer showing scheduled as the
       // "when this sits on the calendar" chip, matching the due-centric anchor-priority rule)
@@ -843,7 +843,7 @@ export class RightPanel {
           : `Change time, currently ${task.planning.time}, no duration`;
       }
       const timeChip = chips.createEl('button', {
-        cls: `tc-chip tc-chip-time${task.planning.time ? '' : ' tc-chip-empty'}`,
+        cls: `abyss-chip abyss-chip-time${task.planning.time ? '' : ' abyss-chip-empty'}`,
         text: timeChipText,
         attr: {
           title: task.planning.time ? 'Change time and duration' : 'Set time and duration',
@@ -882,7 +882,7 @@ export class RightPanel {
       }
       // Add tag
       const addTagBtn = chips.createEl('button', {
-        cls: 'tc-chip tc-chip-add',
+        cls: 'abyss-chip abyss-chip-add',
         text: '+ tag',
         attr: {
           'aria-label': 'Add tag',
@@ -897,37 +897,37 @@ export class RightPanel {
     }
 
     // Description
-    const descSection = this.el.createDiv({ cls: 'tc-right-section' });
-    const descHeader = descSection.createDiv({ cls: 'tc-right-section-header' });
-    descHeader.createEl('span', { cls: 'tc-right-section-label', text: 'Description' });
+    const descSection = this.el.createDiv({ cls: 'abyss-right-section' });
+    const descHeader = descSection.createDiv({ cls: 'abyss-right-section-header' });
+    descHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Description' });
     this.renderDescriptionBlock(descSection, task);
 
     // Sub-tasks
-    const subSection = this.el.createDiv({ cls: 'tc-right-section' });
-    const subHeader = subSection.createDiv({ cls: 'tc-right-section-header' });
-    subHeader.createEl('span', { cls: 'tc-right-section-label', text: 'Sub-tasks' });
+    const subSection = this.el.createDiv({ cls: 'abyss-right-section' });
+    const subHeader = subSection.createDiv({ cls: 'abyss-right-section-header' });
+    subHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Sub-tasks' });
     const totalSubs = task.subtasks?.length ?? 0;
     if (totalSubs > 0) {
       const doneSubs = task.subtasks.filter((s) => s.status === 'done').length;
       subHeader.createEl('span', {
-        cls: 'tc-right-section-count',
+        cls: 'abyss-right-section-count',
         text: `${doneSubs}/${totalSubs}`,
       });
     }
 
-    const subList = subSection.createDiv({ cls: 'tc-subtask-list' });
+    const subList = subSection.createDiv({ cls: 'abyss-subtask-list' });
     for (const sub of task.subtasks ?? []) {
       this.renderSubTask(subList, sub, task);
     }
 
     // Inline add-subtask row at the bottom of the subtask list
-    const addSubRow = subSection.createDiv({ cls: 'tc-subtask-add-row' });
-    addSubRow.createEl('span', { cls: 'tc-subtask-add-icon', text: '+' });
-    addSubRow.createEl('span', { cls: 'tc-subtask-add-label', text: 'Add sub-task' });
+    const addSubRow = subSection.createDiv({ cls: 'abyss-subtask-add-row' });
+    addSubRow.createEl('span', { cls: 'abyss-subtask-add-icon', text: '+' });
+    addSubRow.createEl('span', { cls: 'abyss-subtask-add-label', text: 'Add sub-task' });
     addSubRow.addEventListener('click', () => {
-      addSubRow.addClass('tc-subtask-add-row--hidden');
+      addSubRow.addClass('abyss-subtask-add-row--hidden');
       const input = subSection.createEl('input', {
-        cls: 'tc-subtask-new-input',
+        cls: 'abyss-subtask-new-input',
         attr: { type: 'text', placeholder: 'New sub-task…' },
       });
       input.focus();
@@ -937,7 +937,7 @@ export class RightPanel {
         if (closed) return;
         closed = true;
         input.remove();
-        addSubRow.removeClass('tc-subtask-add-row--hidden');
+        addSubRow.removeClass('abyss-subtask-add-row--hidden');
       };
       const commit = async (): Promise<void> => {
         if (closed || saving) return;
@@ -965,25 +965,25 @@ export class RightPanel {
     });
 
     // Comments
-    const commentSection = this.el.createDiv({ cls: 'tc-right-section' });
-    const commentHeader = commentSection.createDiv({ cls: 'tc-right-section-header' });
-    commentHeader.createEl('span', { cls: 'tc-right-section-label', text: 'Comments' });
+    const commentSection = this.el.createDiv({ cls: 'abyss-right-section' });
+    const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
+    commentHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Comments' });
     const commentCount = task.comments?.length ?? 0;
     if (commentCount > 0) {
       commentHeader.createEl('span', {
-        cls: 'tc-right-section-count',
+        cls: 'abyss-right-section-count',
         text: String(commentCount),
       });
     }
 
-    const commentList = commentSection.createDiv({ cls: 'tc-comment-list' });
+    const commentList = commentSection.createDiv({ cls: 'abyss-comment-list' });
     for (const comment of task.comments ?? []) {
       this.renderComment(commentList, comment, task, commentTimeContext);
     }
 
     // Always-visible textarea — Enter submits, Shift+Enter inserts newline
     const commentInput = commentSection.createEl('textarea', {
-      cls: 'tc-comment-input',
+      cls: 'abyss-comment-input',
       attr: { placeholder: 'Write a comment…', rows: '2' },
     });
     enableAttachmentDrop(commentInput, {
@@ -1007,7 +1007,7 @@ export class RightPanel {
   }
 
   private renderTitleBlock(header: HTMLElement, task: TaskLike): void {
-    const view = header.createDiv({ cls: 'tc-right-title tc-right-title-view' });
+    const view = header.createDiv({ cls: 'abyss-right-title abyss-right-title-view' });
     enableAttachmentDrop(view, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
@@ -1039,7 +1039,7 @@ export class RightPanel {
     // Preserve the height the user stretched the read-mode block to (measure first).
     const startHeight = view.offsetHeight;
     view.hide();
-    const ta = header.createEl('textarea', { cls: 'tc-right-title tc-right-title-edit' });
+    const ta = header.createEl('textarea', { cls: 'abyss-right-title abyss-right-title-edit' });
     // Keep the textarea in the title's slot so the ⋯/× action buttons stay on the right.
     view.insertAdjacentElement('afterend', ta);
     ta.value = task.markdownTitle;
@@ -1092,7 +1092,7 @@ export class RightPanel {
   }
 
   private renderSubTask(container: HTMLElement, sub: SubtaskSnapshot, parentTask: TaskLike): void {
-    const row = container.createDiv({ cls: 'tc-subtask-row', attr: { draggable: 'true' } });
+    const row = container.createDiv({ cls: 'abyss-subtask-row', attr: { draggable: 'true' } });
 
     // ── Drag-and-drop ─────────────────────────────────────────
     row.addEventListener('dragstart', (e) => {
@@ -1159,9 +1159,9 @@ export class RightPanel {
     });
 
     // ── Content ───────────────────────────────────────────────
-    const content = row.createDiv({ cls: 'tc-subtask-content' });
+    const content = row.createDiv({ cls: 'abyss-subtask-content' });
     const label = content.createEl('span', {
-      cls: `tc-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
+      cls: `abyss-subtask-label${sub.status === 'done' ? ' is-done' : ''}`,
     });
     renderTaskText(label, sub.markdownTitle, {
       app: this.app,
@@ -1178,13 +1178,16 @@ export class RightPanel {
     const subCount = sub.subtasks?.length ?? 0;
     const commentCount = sub.comments?.length ?? 0;
     if (subCount > 0 || commentCount > 0) {
-      const subMeta = content.createDiv({ cls: 'tc-subtask-meta' });
+      const subMeta = content.createDiv({ cls: 'abyss-subtask-meta' });
       if (subCount > 0) {
         const done = sub.subtasks.filter((s) => s.status === 'done').length;
-        subMeta.createEl('span', { cls: 'tc-subtask-progress', text: `${done}/${subCount}` });
+        subMeta.createEl('span', { cls: 'abyss-subtask-progress', text: `${done}/${subCount}` });
       }
       if (commentCount > 0) {
-        subMeta.createEl('span', { cls: 'tc-subtask-comment-count', text: `💬 ${commentCount}` });
+        subMeta.createEl('span', {
+          cls: 'abyss-subtask-comment-count',
+          text: `💬 ${commentCount}`,
+        });
       }
     }
   }
@@ -1195,7 +1198,7 @@ export class RightPanel {
     task: TaskLike,
     commentTimeContext?: CommentTimeContext,
   ): void {
-    const row = container.createDiv({ cls: 'tc-comment-row' });
+    const row = container.createDiv({ cls: 'abyss-comment-row' });
     enableAttachmentDrop(row, {
       app: this.app,
       sourcePath: rootTaskRef(task).filePath,
@@ -1203,15 +1206,15 @@ export class RightPanel {
     });
     if (comment.timestamp && commentTimeContext) {
       row.createEl('span', {
-        cls: 'tc-comment-date',
+        cls: 'abyss-comment-date',
         text: formatCommentTimeLabel({ timestamp: comment.timestamp, ...commentTimeContext }),
       });
     }
     let showText: () => void = () => {};
 
     const enterEdit = (): void => {
-      row.querySelector('.tc-comment-text')?.remove();
-      const textarea = row.createEl('textarea', { cls: 'tc-comment-edit-input' });
+      row.querySelector('.abyss-comment-text')?.remove();
+      const textarea = row.createEl('textarea', { cls: 'abyss-comment-edit-input' });
       textarea.value = comment.text;
       this.enablePaste(textarea, task);
       textarea.focus();
@@ -1259,7 +1262,7 @@ export class RightPanel {
     };
 
     showText = (): void => {
-      const textEl = row.createEl('p', { cls: 'tc-comment-text' });
+      const textEl = row.createEl('p', { cls: 'abyss-comment-text' });
       renderTaskText(textEl, comment.text, {
         app: this.app,
         sourcePath: rootTaskRef(task).filePath,
@@ -1284,7 +1287,7 @@ export class RightPanel {
     let field: 'due' | 'scheduled' = 'due';
     if (!task.planning.due && task.planning.scheduled) field = 'scheduled';
     const chip = container.createEl('button', {
-      cls: `tc-chip${d ? '' : ' tc-chip-empty'}`,
+      cls: `abyss-chip${d ? '' : ' abyss-chip-empty'}`,
       text: d ? `📅 ${this.formatDate(d)}` : '📅 Date',
     });
     chip.addEventListener('click', (e) => {
@@ -1297,7 +1300,7 @@ export class RightPanel {
   private renderScheduledChip(container: HTMLElement, task: TaskLike): void {
     const value = task.planning.scheduled;
     const chip = container.createEl('button', {
-      cls: `tc-chip tc-chip-scheduled${value ? '' : ' tc-chip-empty'}`,
+      cls: `abyss-chip abyss-chip-scheduled${value ? '' : ' abyss-chip-empty'}`,
       text: value ? `⏳ ${this.formatDate(value)}` : '⏳ Plan',
       attr: { title: 'Set plan date' },
     });
@@ -1311,7 +1314,7 @@ export class RightPanel {
   private renderStartChip(container: HTMLElement, task: TaskLike): void {
     const value = task.planning.start;
     const chip = container.createEl('button', {
-      cls: `tc-chip tc-chip-start${value ? '' : ' tc-chip-empty'}`,
+      cls: `abyss-chip abyss-chip-start${value ? '' : ' abyss-chip-empty'}`,
       text: value ? `🛫 ${this.formatDate(value)}` : '🛫 Start',
       attr: { title: 'Set start date' },
     });
@@ -1334,7 +1337,7 @@ export class RightPanel {
     if (options.length === 0) return;
 
     const addBtn = container.createEl('button', {
-      cls: 'tc-chip tc-chip-add tc-chip-add-date',
+      cls: 'abyss-chip abyss-chip-add abyss-chip-add-date',
       text: '+ date',
       attr: {
         title: 'Add start or plan date',
@@ -1355,32 +1358,37 @@ export class RightPanel {
     task: TaskLike,
     options: Array<{ field: 'start' | 'scheduled'; label: string }>,
   ): void {
-    const existing = this.el.querySelector('.tc-add-date-menu');
+    const existing = this.el.querySelector('.abyss-add-date-menu');
     if (existing) {
       this.removeAnchoredSurface(existing as HTMLElement);
       return;
     }
     this.el
-      .querySelectorAll<HTMLElement>('.tc-add-date-menu')
+      .querySelectorAll<HTMLElement>('.abyss-add-date-menu')
       .forEach((element) => this.removeAnchoredSurface(element));
     this.el
-      .querySelectorAll<HTMLElement>('.tc-context-menu')
+      .querySelectorAll<HTMLElement>('.abyss-context-menu')
       .forEach((element) => this.removeAnchoredSurface(element));
 
     const menu = this.el.createDiv({
-      cls: 'tc-context-menu tc-add-date-menu tc-add-date-menu--compact tc-popover-anchored',
+      cls: 'abyss-context-menu abyss-add-date-menu abyss-add-date-menu--compact abyss-popover-anchored',
       attr: { role: 'menu', 'aria-label': 'Add date' },
     });
     for (const opt of options) {
-      this.createContextMenuItem(menu, 'tc-context-item tc-add-date-menu-item', opt.label, () => {
-        this.removeAnchoredSurface(menu);
-        this.showDatePopover(anchor, task, opt.field);
-      });
+      this.createContextMenuItem(
+        menu,
+        'abyss-context-item abyss-add-date-menu-item',
+        opt.label,
+        () => {
+          this.removeAnchoredSurface(menu);
+          this.showDatePopover(anchor, task, opt.field);
+        },
+      );
     }
 
     this.positionAnchoredSurface(menu, anchor, 'below-start');
     this.dismissMenuOnOutsideClick(menu, anchor);
-    menu.querySelector<HTMLElement>('.tc-context-item')?.focus({ preventScroll: true });
+    menu.querySelector<HTMLElement>('.abyss-context-item')?.focus({ preventScroll: true });
   }
 
   private createContextMenuItem(
@@ -1417,7 +1425,7 @@ export class RightPanel {
       F: '🚩 Lowest',
     };
     const chip = container.createEl('button', {
-      cls: `tc-chip tc-priority-chip tc-priority-chip--${task.priority ?? 'D'}${task.priority === 'D' ? ' tc-chip-empty' : ''}`,
+      cls: `abyss-chip abyss-priority-chip abyss-priority-chip--${task.priority ?? 'D'}${task.priority === 'D' ? ' abyss-chip-empty' : ''}`,
       text: labels[task.priority] ?? 'Priority',
       attr: {
         'data-priority': task.priority ?? 'D',
@@ -1437,12 +1445,12 @@ export class RightPanel {
     stack: readonly TaskLike[],
   ): void {
     const chip = container.createEl('button', {
-      cls: `tc-chip tc-repeat-chip${task.recurrence ? '' : ' tc-chip-add tc-chip-empty'}`,
+      cls: `abyss-chip abyss-repeat-chip${task.recurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
       attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
     });
     if (task.recurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(task.recurrence));
-      chip.createSpan({ cls: 'tc-repeat-chip-label', text: task.recurrence });
+      chip.createSpan({ cls: 'abyss-repeat-chip-label', text: task.recurrence });
     } else {
       chip.setText('+ repeat');
     }
@@ -1458,7 +1466,7 @@ export class RightPanel {
     stack: readonly TaskLike[],
     autofocus = true,
   ): void {
-    const existing = this.el.querySelector<HTMLElement>('.tc-recurrence-popover');
+    const existing = this.el.querySelector<HTMLElement>('.abyss-recurrence-popover');
     this.clearPopovers();
     if (existing) return;
     anchor.focus();
@@ -1467,7 +1475,7 @@ export class RightPanel {
     if (!root || !('source' in root) || !target) return;
 
     const popover = this.el.createDiv({
-      cls: 'tc-popover tc-recurrence-popover tc-popover-anchored',
+      cls: 'abyss-popover abyss-recurrence-popover abyss-popover-anchored',
       attr: { role: 'dialog', 'aria-modal': 'false' },
     });
     const handle = mountRecurrenceEditor({
@@ -1481,7 +1489,7 @@ export class RightPanel {
       onClose: () => this.removeAnchoredSurface(popover),
     });
     this.recurrenceDraftEditor = { target, handle, surface: popover };
-    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title');
+    const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title');
     if (title?.id) popover.setAttribute('aria-labelledby', title.id);
     this.positionAnchoredSurface(popover, anchor, 'below-start');
     const placementCleanup = this.anchoredSurfaceCleanups.get(popover);
@@ -1510,11 +1518,11 @@ export class RightPanel {
   }
 
   private renderTagChip(container: HTMLElement, task: TaskLike, tag: string): void {
-    const chip = container.createEl('span', { cls: 'tc-chip tc-chip-tag' });
+    const chip = container.createEl('span', { cls: 'abyss-chip abyss-chip-tag' });
     const color = this.getTagColor(tag);
-    if (color) chip.setCssProps({ '--tc-chip-tag-color': color });
+    if (color) chip.setCssProps({ '--abyss-chip-tag-color': color });
     chip.createEl('span', { text: tag });
-    const x = chip.createEl('button', { cls: 'tc-chip-remove', text: '×' });
+    const x = chip.createEl('button', { cls: 'abyss-chip-remove', text: '×' });
     x.addEventListener('click', (e) => {
       e.stopPropagation();
       void this.removeTag(task, tag);
@@ -1528,7 +1536,7 @@ export class RightPanel {
 
   private clearPopovers(): void {
     this.el
-      .querySelectorAll<HTMLElement>('.tc-popover')
+      .querySelectorAll<HTMLElement>('.abyss-popover')
       .forEach((element) => this.removeAnchoredSurface(element));
   }
 
@@ -1556,14 +1564,14 @@ export class RightPanel {
     task: TaskLike,
     field: 'due' | 'scheduled' | 'start' = 'due',
   ): void {
-    const already = this.el.querySelector('.tc-date-popover');
+    const already = this.el.querySelector('.abyss-date-popover');
     this.clearPopovers();
     if (already) return;
 
     const previousPopupRole = anchor.getAttribute('aria-haspopup');
     anchor.setAttribute('aria-haspopup', 'dialog');
     const pop = this.el.createDiv({
-      cls: 'tc-popover tc-date-popover tc-popover-anchored',
+      cls: 'abyss-popover abyss-date-popover abyss-popover-anchored',
       attr: { role: 'dialog', 'aria-label': `Set ${field === 'scheduled' ? 'plan' : field} date` },
     });
 
@@ -1572,9 +1580,9 @@ export class RightPanel {
     else if (field === 'scheduled') currentValue = task.planning.scheduled;
     else currentValue = task.planning.start;
 
-    const inputRow = pop.createDiv({ cls: 'tc-popover-input-row' });
+    const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
-      cls: 'tc-date-input',
+      cls: 'abyss-date-input',
       attr: { type: 'date', value: currentValue ?? '' },
     });
     input.addEventListener('change', () => {
@@ -1586,7 +1594,7 @@ export class RightPanel {
     this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
 
     const clearBtn = inputRow.createEl('button', {
-      cls: 'tc-popover-clear-icon-btn',
+      cls: 'abyss-popover-clear-icon-btn',
       attr: { title: 'Clear date', 'aria-label': 'Clear date' },
     });
     setIcon(clearBtn, 'x');
@@ -1608,12 +1616,12 @@ export class RightPanel {
   }
 
   private showPriorityPopover(anchor: HTMLElement, task: TaskLike): void {
-    const already = this.el.querySelector('.tc-priority-popover');
+    const already = this.el.querySelector('.abyss-priority-popover');
     this.clearPopovers();
     if (already) return;
 
     const pop = this.el.createDiv({
-      cls: 'tc-popover tc-priority-popover tc-popover-anchored',
+      cls: 'abyss-popover abyss-priority-popover abyss-popover-anchored',
       attr: { role: 'listbox', 'aria-label': 'Priority' },
     });
 
@@ -1630,7 +1638,7 @@ export class RightPanel {
     for (const opt of options) {
       const isActive = currentPriority === opt.value;
       const btn = pop.createEl('button', {
-        cls: `tc-priority-option${isActive ? ' is-active' : ''}`,
+        cls: `abyss-priority-option${isActive ? ' is-active' : ''}`,
         attr: {
           'data-priority': opt.value,
           role: 'option',
@@ -1638,11 +1646,11 @@ export class RightPanel {
         },
       });
       if (isActive) selectedOption = btn;
-      const checkEl = btn.createEl('span', { cls: 'tc-priority-option-check' });
+      const checkEl = btn.createEl('span', { cls: 'abyss-priority-option-check' });
       if (isActive) setIcon(checkEl, 'check');
-      const flagEl = btn.createEl('span', { cls: 'tc-priority-option-flag' });
+      const flagEl = btn.createEl('span', { cls: 'abyss-priority-option-flag' });
       setIcon(flagEl, 'flag');
-      btn.createEl('span', { cls: 'tc-priority-option-label', text: opt.label });
+      btn.createEl('span', { cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
         // Optimistic update on the chip
         const chipLabels: Record<string, string> = {
@@ -1655,7 +1663,7 @@ export class RightPanel {
         };
         anchor.textContent = chipLabels[opt.value] ?? 'Priority';
         anchor.setAttribute('data-priority', opt.value);
-        anchor.className = `tc-chip tc-priority-chip tc-priority-chip--${opt.value}${opt.value === 'D' ? ' tc-chip-empty' : ''}`;
+        anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
         this.removeAnchoredSurface(pop);
         anchor.focus({ preventScroll: true });
         void this.updatePriority(task, opt.value);
@@ -1683,12 +1691,12 @@ export class RightPanel {
         floatingRect.width || popover.offsetWidth || (Number.isFinite(minWidth) ? minWidth : 160);
       const floatingHeight = floatingRect.height || popover.offsetHeight;
       const edgeGap = this.cssLengthToPx(
-        computed?.getPropertyValue('--tc-popover-edge-gap') ?? '',
+        computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
         popover,
         8,
       );
       const anchorGap = this.cssLengthToPx(
-        computed?.getPropertyValue('--tc-popover-anchor-gap') ?? '',
+        computed?.getPropertyValue('--abyss-popover-anchor-gap') ?? '',
         popover,
         4,
       );
@@ -1707,11 +1715,11 @@ export class RightPanel {
       const containingBlock = popover.offsetParent ?? this.el;
       const containingRect = containingBlock.getBoundingClientRect();
       popover.style.setProperty(
-        '--tc-pop-top',
+        '--abyss-pop-top',
         `${placement.top - containingRect.top - containingBlock.clientTop + containingBlock.scrollTop}px`,
       );
       popover.style.setProperty(
-        '--tc-pop-left',
+        '--abyss-pop-left',
         `${placement.left - containingRect.left - containingBlock.clientLeft + containingBlock.scrollLeft}px`,
       );
       popover.dataset['side'] = placement.side;
@@ -1754,7 +1762,7 @@ export class RightPanel {
   }
 
   private showTagInput(container: HTMLElement, task: TaskLike, anchor: HTMLElement): void {
-    const existing = this.el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap');
+    const existing = this.el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap');
     if (existing) {
       this.removeAnchoredSurface(existing);
       return;
@@ -1767,10 +1775,10 @@ export class RightPanel {
       (tag) => void this.addTag(task, tag),
       () => this.removeAnchoredSurface(surface),
     );
-    anchor.addClass('tc-chip-add--hidden');
+    anchor.addClass('abyss-chip-add--hidden');
     this.dismissMenuOnOutsideClick(surface, anchor, () => this.removeAnchoredSurface(surface), {
       focusLeaveDelay: 200,
-      onCleanup: () => anchor.removeClass('tc-chip-add--hidden'),
+      onCleanup: () => anchor.removeClass('abyss-chip-add--hidden'),
     });
   }
 
@@ -2056,18 +2064,18 @@ export class RightPanel {
   }
 
   private showTimePopover(anchor: HTMLElement, task: TaskLike): void {
-    const already = this.el.querySelector('.tc-time-popover');
+    const already = this.el.querySelector('.abyss-time-popover');
     this.clearPopovers();
     if (already) return;
 
     const pop = this.el.createDiv({
-      cls: 'tc-popover tc-time-popover tc-popover-anchored',
+      cls: 'abyss-popover abyss-time-popover abyss-popover-anchored',
       attr: { role: 'dialog', 'aria-label': 'Set time and duration' },
     });
 
-    const inputRow = pop.createDiv({ cls: 'tc-popover-input-row' });
+    const inputRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
     const input = inputRow.createEl('input', {
-      cls: 'tc-time-input',
+      cls: 'abyss-time-input',
       attr: { type: 'time', value: task.planning.time ?? '' },
     });
     this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
@@ -2076,7 +2084,7 @@ export class RightPanel {
     });
 
     const clearBtn = inputRow.createEl('button', {
-      cls: 'tc-popover-clear-icon-btn',
+      cls: 'abyss-popover-clear-icon-btn',
       attr: { title: 'Clear time', 'aria-label': 'Clear time' },
     });
     setIcon(clearBtn, 'x');
@@ -2088,9 +2096,9 @@ export class RightPanel {
     // Duration only applies to top-level TaskSnapshot (SubtaskSnapshot has no duration field) —
     // same 'duration' in task discriminator used for the Planning section gate.
     if ('source' in task) {
-      const durationRow = pop.createDiv({ cls: 'tc-popover-input-row' });
+      const durationRow = pop.createDiv({ cls: 'abyss-popover-input-row' });
       const durationInput = durationRow.createEl('input', {
-        cls: 'tc-duration-input',
+        cls: 'abyss-duration-input',
         attr: {
           type: 'text',
           // eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -2104,7 +2112,7 @@ export class RightPanel {
         void done.then(() => this.removeAnchoredSurface(pop));
       });
       const clearDurationBtn = durationRow.createEl('button', {
-        cls: 'tc-popover-clear-icon-btn',
+        cls: 'abyss-popover-clear-icon-btn',
         attr: { title: 'Clear duration', 'aria-label': 'Clear duration' },
       });
       setIcon(clearDurationBtn, 'x');
@@ -2129,29 +2137,34 @@ export class RightPanel {
   }
 
   private renderContextMenu(task: TaskLike, anchor: HTMLElement): void {
-    const existing = this.el.querySelector<HTMLElement>('.tc-task-context-menu');
+    const existing = this.el.querySelector<HTMLElement>('.abyss-task-context-menu');
     if (existing) {
       this.removeAnchoredSurface(existing);
       return;
     }
     // Close any other open context menus
     this.el
-      .querySelectorAll<HTMLElement>('.tc-context-menu')
+      .querySelectorAll<HTMLElement>('.abyss-context-menu')
       .forEach((element) => this.removeAnchoredSurface(element));
 
     const menu = this.el.createDiv({
-      cls: 'tc-context-menu tc-task-context-menu tc-popover-anchored',
+      cls: 'abyss-context-menu abyss-task-context-menu abyss-popover-anchored',
       attr: { role: 'menu', 'aria-label': 'Task actions' },
     });
 
-    const editRepeat = this.createContextMenuItem(menu, 'tc-context-item', 'Edit repeat…', () => {
-      this.removeAnchoredSurface(menu);
-      this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task));
-    });
+    const editRepeat = this.createContextMenuItem(
+      menu,
+      'abyss-context-item',
+      'Edit repeat…',
+      () => {
+        this.removeAnchoredSurface(menu);
+        this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task));
+      },
+    );
 
     this.createContextMenuItem(
       menu,
-      'tc-context-item tc-context-danger',
+      'abyss-context-item abyss-context-danger',
       this.planningTarget(task)?.type === 'subtask' ? 'Delete sub-task' : 'Delete task',
       () => {
         this.removeAnchoredSurface(menu);
@@ -2159,7 +2172,7 @@ export class RightPanel {
       },
     );
 
-    this.createContextMenuItem(menu, 'tc-context-item', 'Open in file', () => {
+    this.createContextMenuItem(menu, 'abyss-context-item', 'Open in file', () => {
       this.removeAnchoredSurface(menu);
       const root = this.state.get('taskStack')[0];
       if (root && 'source' in root) void openInFile(this.app, root, taskNodeLine(root, task));

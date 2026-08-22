@@ -39,15 +39,15 @@ function declarationsForRuleContaining(...selectors: string[]): string {
 function expectInertPreview(preview: HTMLElement, title: string): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
   expect(preview.textContent).toContain(title);
-  expect(preview.classList.contains('tc-calendar-preview')).toBe(true);
-  expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')?.textContent).toBe(
-    '',
-  );
+  expect(preview.classList.contains('abyss-calendar-preview')).toBe(true);
   expect(
-    preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+    preview.querySelector(':scope > .abyss-calendar-preview-target-outline')?.textContent,
+  ).toBe('');
+  expect(
+    preview.querySelector(':scope > .abyss-calendar-preview-shell .abyss-calendar-preview-title')
       ?.textContent,
   ).toBe(title);
-  expect(preview.querySelector('.tc-status-marker')?.getAttribute('role') ?? null).toBeNull();
+  expect(preview.querySelector('.abyss-status-marker')?.getAttribute('role') ?? null).toBeNull();
   expect(preview.querySelector('a')).toBeNull();
   expect(preview.getAttribute('tabindex')).toBeNull();
 }
@@ -59,14 +59,16 @@ function expectInertTimedPreview(
   actionable: boolean,
 ): void {
   expect(preview.getAttribute('aria-hidden')).toBe('true');
-  const shell = preview.querySelector<HTMLElement>(':scope > .tc-calendar-preview-shell')!;
+  const shell = preview.querySelector<HTMLElement>(':scope > .abyss-calendar-preview-shell')!;
   expect(Array.from(shell.children).map((child) => child.className)).toEqual([
-    'tc-tg-block-toprow',
-    'tc-tg-block-head tc-calendar-leading-row',
+    'abyss-tg-block-toprow',
+    'abyss-tg-block-head abyss-calendar-leading-row',
   ]);
-  expect(shell.querySelector('.tc-tg-block-toprow')?.textContent).toContain(expectedTime);
-  expect(shell.querySelector('.tc-tg-block-head .tc-calendar-title')?.textContent).toContain(title);
-  const marker = shell.querySelector<HTMLElement>('.tc-status-marker');
+  expect(shell.querySelector('.abyss-tg-block-toprow')?.textContent).toContain(expectedTime);
+  expect(shell.querySelector('.abyss-tg-block-head .abyss-calendar-title')?.textContent).toContain(
+    title,
+  );
+  const marker = shell.querySelector<HTMLElement>('.abyss-status-marker');
   expect(marker !== null).toBe(actionable);
   expect(marker?.getAttribute('role')).toBeNull();
   expect(marker?.getAttribute('tabindex')).toBeNull();
@@ -111,9 +113,9 @@ function rect(left: number, top: number, width: number, height: number): DOMRect
 }
 
 function timedGestureGrid() {
-  const root = freshContainer().createDiv({ cls: 'tc-tg-root' });
-  const allDayRow = root.createDiv({ cls: 'tc-tg-allday-row' });
-  const gridRow = root.createDiv({ cls: 'tc-tg-grid-row' });
+  const root = freshContainer().createDiv({ cls: 'abyss-tg-root' });
+  const allDayRow = root.createDiv({ cls: 'abyss-tg-allday-row' });
+  const gridRow = root.createDiv({ cls: 'abyss-tg-grid-row' });
   const owner = createTimedInteractionOwner();
   const dates = ['2026-07-06', '2026-07-07', '2026-07-08'] as const;
   type GestureColumn = {
@@ -123,13 +125,13 @@ function timedGestureGrid() {
     hour: HTMLElement;
   };
   const columns = dates.map((date, index) => {
-    const allDay = allDayRow.createDiv({ cls: 'tc-tg-allday-cell' });
+    const allDay = allDayRow.createDiv({ cls: 'abyss-tg-allday-cell' });
     allDay.dataset['tgDate'] = date;
     allDay.getBoundingClientRect = () => rect(index * 100, 10, 100, 30);
-    const day = gridRow.createDiv({ cls: 'tc-tg-day-column' });
+    const day = gridRow.createDiv({ cls: 'abyss-tg-day-column' });
     day.dataset['tgDate'] = date;
     day.getBoundingClientRect = () => rect(index * 100, 100, 100, 24 * 48);
-    const hour = day.createDiv({ cls: 'tc-tg-hour-column' });
+    const hour = day.createDiv({ cls: 'abyss-tg-hour-column' });
     hour.getBoundingClientRect = () => rect(index * 100, 100, 100, 24 * 48);
     return { date, allDay, day, hour };
   }) as unknown as [GestureColumn, GestureColumn, GestureColumn];
@@ -150,11 +152,11 @@ describe('Task 2 unified timed interaction contract', () => {
       callbacks(),
     );
 
-    const head = container.querySelector<HTMLElement>('.tc-tg-block-head')!;
-    const badge = head.querySelector<HTMLElement>('.tc-recurrence-badge');
-    expect(head.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    const head = container.querySelector<HTMLElement>('.abyss-tg-block-head')!;
+    const badge = head.querySelector<HTMLElement>('.abyss-recurrence-badge');
+    expect(head.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge?.dataset['recurrenceValidity']).toBe('invalid');
-    expect(badge?.querySelector('.tc-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
+    expect(badge?.querySelector('.abyss-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
       'repeat-2',
     );
   });
@@ -182,15 +184,15 @@ describe('Task 2 unified timed interaction contract', () => {
         terminal: false,
       });
       expect(
-        (terminalContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
-          '--tc-tag-text-color',
+        (terminalContainer.querySelector('.abyss-tg-block') as HTMLElement).style.getPropertyValue(
+          '--abyss-tag-text-color',
         ),
-      ).toBe('var(--tc-tag-text-dark)');
+      ).toBe('var(--abyss-tag-text-dark)');
       expect(
-        (ghostContainer.querySelector('.tc-tg-block') as HTMLElement).style.getPropertyValue(
-          '--tc-tag-text-color',
+        (ghostContainer.querySelector('.abyss-tg-block') as HTMLElement).style.getPropertyValue(
+          '--abyss-tag-text-color',
         ),
-      ).toBe('var(--tc-tag-text-dark)');
+      ).toBe('var(--abyss-tag-text-dark)');
     } finally {
       document.body.style.setProperty('--background-primary', originalBackground);
     }
@@ -216,7 +218,7 @@ describe('Task 2 unified timed interaction contract', () => {
         [],
         { date: '2026-07-06', terminal },
       );
-      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
       const visualTop = 9 * 48 + 100;
       const bodyOffsetPx = 14;
       expect(bodyOffsetPx).toBeLessThan(MIN_BLOCK_HEIGHT_PX - 6);
@@ -237,7 +239,7 @@ describe('Task 2 unified timed interaction contract', () => {
           pointerId: 31,
         }),
       );
-      expect(root.querySelector('.tc-tg-drag-preview')).toBeNull();
+      expect(root.querySelector('.abyss-tg-drag-preview')).toBeNull();
       expect(onTimedMove).not.toHaveBeenCalled();
 
       block.dispatchEvent(
@@ -255,7 +257,7 @@ describe('Task 2 unified timed interaction contract', () => {
           pointerId: 32,
         }),
       );
-      const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      const preview = columns[0].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
       const target = JSON.parse(preview.dataset['target'] ?? '{}') as { startMinutes?: number };
       expect(target.startMinutes).toBe(600);
       expect(preview.style.top).toBe('480px');
@@ -290,8 +292,8 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-07', terminal: false },
     );
-    const ghost = columns[1].hour.querySelector('.tc-tg-block') as HTMLElement;
-    const handle = ghost.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    const ghost = columns[1].hour.querySelector('.abyss-tg-block') as HTMLElement;
+    const handle = ghost.querySelector('.abyss-tg-resize-handle') as HTMLElement;
     ghost.getBoundingClientRect = () => rect(100, 9 * 48 + 100, 100, MIN_BLOCK_HEIGHT_PX);
 
     handle.dispatchEvent(
@@ -341,7 +343,7 @@ describe('Task 2 unified timed interaction contract', () => {
         [],
         { date: '2026-07-06', terminal },
       );
-      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
       const handle = block.querySelector(selector) as HTMLElement;
       block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, MIN_BLOCK_HEIGHT_PX);
 
@@ -390,7 +392,7 @@ describe('Task 2 unified timed interaction contract', () => {
         [],
         { date: '2026-07-06', terminal },
       );
-      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
       const visualTop = 9 * 48 + 100;
       block.getBoundingClientRect = () => rect(0, visualTop, 100, MIN_BLOCK_HEIGHT_PX);
 
@@ -406,7 +408,7 @@ describe('Task 2 unified timed interaction contract', () => {
         new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 21 }),
       );
 
-      const preview = columns[1].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      const preview = columns[1].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
       expect(preview).not.toBeNull();
       expect(preview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
       window.dispatchEvent(
@@ -414,7 +416,7 @@ describe('Task 2 unified timed interaction contract', () => {
       );
       expect(onTimedMove).toHaveBeenCalledOnce();
 
-      const durationHandle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const durationHandle = block.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       durationHandle.dispatchEvent(
         new PointerEvent('pointerdown', {
           bubbles: true,
@@ -430,7 +432,9 @@ describe('Task 2 unified timed interaction contract', () => {
           pointerId: 24,
         }),
       );
-      const durationPreview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+      const durationPreview = columns[0].hour.querySelector(
+        '.abyss-tg-drag-preview',
+      ) as HTMLElement;
       expect(durationPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 24 }));
 
@@ -449,7 +453,7 @@ describe('Task 2 unified timed interaction contract', () => {
         new PointerEvent('pointermove', { clientX: 125, clientY: visualTop, pointerId: 25 }),
       );
       const boundaryPreview = columns[1].hour.querySelector(
-        '.tc-tg-boundary-preview',
+        '.abyss-tg-boundary-preview',
       ) as HTMLElement;
       expect(boundaryPreview.style.height).toBe(`${MIN_BLOCK_HEIGHT_PX}px`);
       window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 25 }));
@@ -474,7 +478,7 @@ describe('Task 2 unified timed interaction contract', () => {
       { date: '2026-07-06' },
     );
     const secondLane = columns[0].hour.querySelector<HTMLElement>(
-      '.tc-tg-block[data-tc-task-file="second.md"]',
+      '.abyss-tg-block[data-abyss-task-file="second.md"]',
     );
     if (!secondLane) throw new Error('missing overlapping second lane');
     expect(secondLane.style.left).toBe('50%');
@@ -488,10 +492,10 @@ describe('Task 2 unified timed interaction contract', () => {
       new PointerEvent('pointermove', { clientX: 125, clientY: 25, pointerId: 22 }),
     );
 
-    const preview = columns[1].allDay.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    const preview = columns[1].allDay.querySelector('.abyss-tg-drag-preview') as HTMLElement;
     expect(preview.style.left).toBe('');
     expect(preview.style.width).toBe('');
-    expect(declarationsFor('.tc-tg-drag-preview.is-all-day')).toMatch(/width\s*:\s*100%/u);
+    expect(declarationsFor('.abyss-tg-drag-preview.is-all-day')).toMatch(/width\s*:\s*100%/u);
     window.dispatchEvent(new PointerEvent('pointercancel', { pointerId: 22 }));
   });
 
@@ -503,7 +507,7 @@ describe('Task 2 unified timed interaction contract', () => {
     renderTimedBlocksForDay(columns[0].hour, [t], { ...cbs, interactionOwner: owner }, [], {
       date: '2026-07-06',
     });
-    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     block.focus();
 
@@ -530,20 +534,20 @@ describe('Task 2 unified timed interaction contract', () => {
     const foreignWindow = iframe.contentWindow;
     if (!foreignDocument || !foreignWindow) throw new Error('missing iframe realm');
     const root = foreignDocument.createElement('div');
-    root.className = 'tc-tg-root';
+    root.className = 'abyss-tg-root';
     const allDay = foreignDocument.createElement('div');
-    allDay.className = 'tc-tg-allday-cell';
+    allDay.className = 'abyss-tg-allday-cell';
     allDay.dataset['tgDate'] = '2026-07-06';
     allDay.getBoundingClientRect = () => rect(0, 10, 100, 30);
     const day = foreignDocument.createElement('div');
-    day.className = 'tc-tg-day-column';
+    day.className = 'abyss-tg-day-column';
     day.dataset['tgDate'] = '2026-07-06';
     day.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
     const hour = foreignDocument.createElement('div');
-    hour.className = 'tc-tg-hour-column';
+    hour.className = 'abyss-tg-hour-column';
     hour.getBoundingClientRect = () => rect(0, 100, 100, 24 * 48);
     const source = foreignDocument.createElement('div');
-    source.className = 'tc-tg-block';
+    source.className = 'abyss-tg-block';
     source.style.top = '432px';
     source.style.height = '48px';
     source.style.left = '0%';
@@ -578,11 +582,11 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 9 }),
     );
-    expect(foreignDocument.querySelector('.tc-tg-drag-preview')).toBeNull();
+    expect(foreignDocument.querySelector('.abyss-tg-drag-preview')).toBeNull();
     foreignWindow.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 9 }),
     );
-    expect(foreignDocument.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+    expect(foreignDocument.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
     foreignWindow.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 9 }),
     );
@@ -591,38 +595,42 @@ describe('Task 2 unified timed interaction contract', () => {
   });
 
   it('styles exact previews as a shared event shell plus a separate dashed target outline', () => {
-    for (const selector of ['.tc-tg-drag-preview', '.tc-tg-boundary-preview']) {
+    for (const selector of ['.abyss-tg-drag-preview', '.abyss-tg-boundary-preview']) {
       const declarations = declarationsFor(selector);
       expect(declarations).toMatch(/position\s*:\s*absolute/u);
       expect(declarations).toMatch(/pointer-events\s*:\s*none/u);
       expect(declarations).not.toMatch(/(?:border|background)\s*:/u);
     }
     const shell = declarationsFor(
-      ".tc-calendar-preview[data-density='regular'] > .tc-calendar-preview-shell",
+      ".abyss-calendar-preview[data-density='regular'] > .abyss-calendar-preview-shell",
     );
-    expect(shell).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
-    expect(shell).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
-    expect(shell).toMatch(/padding\s*:\s*2px var\(--tc-calendar-item-pad-inline\)/u);
-    expect(shell).toMatch(/--tc-event-fill-strength/u);
-    expect(declarationsFor('.tc-calendar-preview-title')).toMatch(/font-size\s*:\s*inherit/u);
+    expect(shell).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
+    expect(shell).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
+    expect(shell).toMatch(/padding\s*:\s*2px var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(shell).toMatch(/--abyss-event-fill-strength/u);
+    expect(declarationsFor('.abyss-calendar-preview-title')).toMatch(/font-size\s*:\s*inherit/u);
     expect(css).toMatch(
-      /(?:^|\})\s*\.tc-calendar-preview-subtitle,\s*\.tc-calendar-preview-time\s*\{[^}]*font-size\s*:\s*0\.9em/u,
+      /(?:^|\})\s*\.abyss-calendar-preview-subtitle,\s*\.abyss-calendar-preview-time\s*\{[^}]*font-size\s*:\s*0\.9em/u,
     );
     expect(
-      declarationsFor(".tc-calendar-preview[data-phase='terminal'] > .tc-calendar-preview-shell"),
+      declarationsFor(
+        ".abyss-calendar-preview[data-phase='terminal'] > .abyss-calendar-preview-shell",
+      ),
     ).toMatch(
-      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+      /border-inline-start\s*:\s*var\(--abyss-calendar-item-rail\) solid\s+var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
     expect(
-      declarationsFor(".tc-calendar-preview[data-phase='ghost'] > .tc-calendar-preview-shell"),
+      declarationsFor(
+        ".abyss-calendar-preview[data-phase='ghost'] > .abyss-calendar-preview-shell",
+      ),
     ).toMatch(
-      /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+      /border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed\s+var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
-    expect(declarationsFor('.tc-calendar-preview-target-outline')).toMatch(
-      /outline\s*:\s*2px dashed[\s\S]*--tc-preview-border-tag-strength/u,
+    expect(declarationsFor('.abyss-calendar-preview-target-outline')).toMatch(
+      /outline\s*:\s*2px dashed[\s\S]*--abyss-preview-border-tag-strength/u,
     );
-    expect(declarationsFor('.tc-tg-day-column.is-drag-over')).toBe('');
-    expect(declarationsFor('.tc-tg-block-continuation')).not.toMatch(/opacity\s*:/u);
+    expect(declarationsFor('.abyss-tg-day-column.is-drag-over')).toBe('');
+    expect(declarationsFor('.abyss-tg-block-continuation')).not.toMatch(/opacity\s*:/u);
   });
 
   it('keeps a cross-day source stationary and commits the same frozen target rendered by preview', () => {
@@ -638,7 +646,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-06', terminal: false },
     );
-    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
     const sourceIdentity = block;
     const gridRow = columns[0].day.parentElement as HTMLElement;
     gridRow.scrollTop = 137;
@@ -646,8 +654,8 @@ describe('Task 2 unified timed interaction contract', () => {
     document.body.appendChild(focusSentinel);
     focusSentinel.focus();
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
-    block.style.setProperty('--tc-tag-color', '#123456');
-    block.style.setProperty('--tc-tag-text-color', '#fefefe');
+    block.style.setProperty('--abyss-tag-color', '#123456');
+    block.style.setProperty('--abyss-tag-text-color', '#fefefe');
     const originalTop = block.style.top;
     const originalHeight = block.style.height;
 
@@ -658,11 +666,11 @@ describe('Task 2 unified timed interaction contract', () => {
       new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 1 }),
     );
 
-    const preview = columns[1].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    const preview = columns[1].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
     expect(preview).not.toBeNull();
     expectInertPreview(preview, t.title);
-    expect(preview.style.getPropertyValue('--tc-tag-color')).toBe('#123456');
-    expect(preview.style.getPropertyValue('--tc-tag-text-color')).toBe('#fefefe');
+    expect(preview.style.getPropertyValue('--abyss-tag-color')).toBe('#123456');
+    expect(preview.style.getPropertyValue('--abyss-tag-text-color')).toBe('#fefefe');
     expect(preview.style.top).toBe('480px');
     expect(preview.style.height).toBe('48px');
     expect(block.style.top).toBe(originalTop);
@@ -696,7 +704,7 @@ describe('Task 2 unified timed interaction contract', () => {
       date: '2026-07-06',
       terminal: true,
     });
-    const block = columns[0].hour.querySelector<HTMLElement>('.tc-tg-block')!;
+    const block = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-block')!;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     block.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 41 }),
@@ -704,11 +712,11 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 41 }),
     );
-    const first = columns[0].hour.querySelector<HTMLElement>('.tc-tg-drag-preview')!;
+    const first = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview')!;
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 25, clientY: 640, pointerId: 41 }),
     );
-    const second = columns[0].hour.querySelector<HTMLElement>('.tc-tg-drag-preview')!;
+    const second = columns[0].hour.querySelector<HTMLElement>('.abyss-tg-drag-preview')!;
 
     expect(second).toBe(first);
     expectInertTimedPreview(second, t.title, '11:00–12:00 (1h)', true);
@@ -728,7 +736,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-07', terminal: false },
     );
-    const ghost = columns[1].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const ghost = columns[1].hour.querySelector('.abyss-tg-block') as HTMLElement;
     ghost.getBoundingClientRect = () => rect(100, 9 * 48 + 100, 100, 48);
     ghost.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientX: 125, clientY: 544, pointerId: 2 }),
@@ -736,7 +744,7 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 225, clientY: 25, pointerId: 2 }),
     );
-    expect(columns[2].allDay.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+    expect(columns[2].allDay.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 225, clientY: 25, pointerId: 2 }),
     );
@@ -757,7 +765,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-06', terminal: true },
     );
-    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
     const handle = block.querySelector('[data-resize-edge="duration"]') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     const originalHeight = block.style.height;
@@ -767,7 +775,7 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 50, clientY: 604, pointerId: 3 }),
     );
-    const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    const preview = columns[0].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
     expect(preview.style.height).toBe('72px');
     expectInertPreview(preview, t.title);
     expectInertTimedPreview(preview, t.title, '09:00–10:30 (1h30m)', true);
@@ -801,7 +809,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-06', terminal: true },
     );
-    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
     const handle = block.querySelector('[data-resize-edge="start-time"]') as HTMLElement;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
 
@@ -814,7 +822,7 @@ describe('Task 2 unified timed interaction contract', () => {
       new PointerEvent('pointermove', { clientX: 50, clientY: 508, pointerId: 4 }),
     );
 
-    const preview = columns[0].hour.querySelector('.tc-tg-drag-preview') as HTMLElement;
+    const preview = columns[0].hour.querySelector('.abyss-tg-drag-preview') as HTMLElement;
     expectInertPreview(preview, t.title);
     expect(preview.textContent).toContain('08:30–10:00 (1h30m)');
     expect(preview.style.top).toBe('408px');
@@ -847,7 +855,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-08', terminal: true },
     );
-    const block = columns[2].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[2].hour.querySelector('.abyss-tg-block') as HTMLElement;
     const handle = block.querySelector('[data-boundary="due"]') as HTMLElement;
     block.getBoundingClientRect = () => rect(200, 9 * 48 + 100, 100, 48);
     handle.dispatchEvent(
@@ -856,7 +864,7 @@ describe('Task 2 unified timed interaction contract', () => {
     window.dispatchEvent(
       new PointerEvent('pointermove', { clientX: 150, clientY: 544, pointerId: 8 }),
     );
-    const preview = columns[1].hour.querySelector('.tc-tg-boundary-preview') as HTMLElement;
+    const preview = columns[1].hour.querySelector('.abyss-tg-boundary-preview') as HTMLElement;
     expectInertPreview(preview, t.title);
     expect(preview.style.top).toBe('432px');
     expect(preview.style.height).toBe('48px');
@@ -883,7 +891,7 @@ describe('Task 2 unified timed interaction contract', () => {
         [],
         { date: '2026-07-06', terminal: true },
       );
-      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
       block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
       block.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientX: 25, clientY: 544, pointerId: 4 }),
@@ -892,14 +900,14 @@ describe('Task 2 unified timed interaction contract', () => {
         new PointerEvent('pointermove', { clientX: 125, clientY: 592, pointerId: 4 }),
       );
       expect(
-        columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview'),
+        columns[0].day.closest('.abyss-tg-root')?.querySelector('.abyss-tg-drag-preview'),
       ).not.toBeNull();
       if (eventType === 'blur') window.dispatchEvent(new Event('blur'));
       else if (eventType === 'pointercancel') {
         window.dispatchEvent(new PointerEvent(eventType, { pointerId: 4 }));
       } else block.dispatchEvent(new PointerEvent(eventType, { bubbles: true, pointerId: 4 }));
       expect(
-        columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview'),
+        columns[0].day.closest('.abyss-tg-root')?.querySelector('.abyss-tg-drag-preview'),
       ).toBeNull();
       expect(block.classList.contains('is-picked-up')).toBe(false);
       window.dispatchEvent(
@@ -920,7 +928,7 @@ describe('Task 2 unified timed interaction contract', () => {
       [],
       { date: '2026-07-06', terminal: true },
     );
-    const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+    const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
     const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
     block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
     handle.dispatchEvent(
@@ -932,7 +940,9 @@ describe('Task 2 unified timed interaction contract', () => {
       new PointerEvent('pointermove', { clientX: 25, clientY: 592, pointerId: 5 }),
     );
     owner.disposeActive();
-    expect(columns[0].day.closest('.tc-tg-root')?.querySelector('.tc-tg-drag-preview')).toBeNull();
+    expect(
+      columns[0].day.closest('.abyss-tg-root')?.querySelector('.abyss-tg-drag-preview'),
+    ).toBeNull();
     expect(handle.dataset['activeResize']).toBeUndefined();
     window.dispatchEvent(
       new PointerEvent('pointerup', { clientX: 25, clientY: 592, pointerId: 5 }),
@@ -953,7 +963,7 @@ describe('Task 2 unified timed interaction contract', () => {
         [],
         { date: '2026-07-06', terminal: true },
       );
-      const block = columns[0].hour.querySelector('.tc-tg-block') as HTMLElement;
+      const block = columns[0].hour.querySelector('.abyss-tg-block') as HTMLElement;
       const handle = block.querySelector<HTMLElement>('[data-resize-edge="duration"]')!;
       block.getBoundingClientRect = () => rect(0, 9 * 48 + 100, 100, 48);
       handle.dispatchEvent(
@@ -962,7 +972,7 @@ describe('Task 2 unified timed interaction contract', () => {
       window.dispatchEvent(new PointerEvent('pointermove', { clientY: 628, pointerId: 6 }));
       expect(handle.dataset['activeResize']).toBe('true');
       expect(block.dataset['activeResize']).toBeUndefined();
-      expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).not.toBeNull();
+      expect(columns[0].hour.querySelector('.abyss-tg-drag-preview')).not.toBeNull();
 
       if (eventType === 'blur') window.dispatchEvent(new Event('blur'));
       else if (eventType === 'pointercancel') {
@@ -972,7 +982,7 @@ describe('Task 2 unified timed interaction contract', () => {
       }
 
       expect(handle.dataset['activeResize']).toBeUndefined();
-      expect(columns[0].hour.querySelector('.tc-tg-drag-preview')).toBeNull();
+      expect(columns[0].hour.querySelector('.abyss-tg-drag-preview')).toBeNull();
       window.dispatchEvent(new PointerEvent('pointerup', { clientY: 628, pointerId: 6 }));
       expect(onTimedDuration).not.toHaveBeenCalled();
     },
@@ -1004,30 +1014,30 @@ describe('renderTimedBlocksForDay', () => {
         .map((handle) => handle.dataset['resizeEdge'])
         .sort(),
     ).toEqual(['due-date', 'duration', 'start-date', 'start-time']);
-    expect(declarationsFor('.tc-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
-    expect(declarationsFor('.tc-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
-    expect(declarationsFor('.tc-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
-    expect(declarationsFor('.tc-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
+    expect(declarationsFor('.abyss-tg-resize-handle')).toMatch(/height\s*:\s*10px/u);
+    expect(declarationsFor('.abyss-tg-resize-handle::after')).toMatch(/height\s*:\s*2px/u);
+    expect(declarationsFor('.abyss-tg-span-edge')).toMatch(/width\s*:\s*10px/u);
+    expect(declarationsFor('.abyss-tg-span-edge::after')).toMatch(/width\s*:\s*2px/u);
   });
 
   it('reveals only the exact hovered or actively resized edge, never whole-block focus', () => {
     const revealed = declarationsForRuleContaining(
-      '.tc-tg-resize-handle:hover::after',
-      '.tc-tg-span-edge:hover::after',
-      '.tc-tg-resize-handle:active::after',
-      '.tc-tg-span-edge:active::after',
+      '.abyss-tg-resize-handle:hover::after',
+      '.abyss-tg-span-edge:hover::after',
+      '.abyss-tg-resize-handle:active::after',
+      '.abyss-tg-span-edge:active::after',
       "[data-active-resize='true']::after",
     );
 
     expect(revealed).toMatch(/opacity\s*:\s*1/u);
-    expect(css).not.toContain('.tc-tg-block:focus-within > .tc-tg-span-edge::after');
-    expect(css).not.toContain('.tc-span-piece:focus-within > .tc-tg-span-edge::after');
-    expect(css).not.toContain('.tc-span-piece:hover > .tc-tg-span-edge--proxy::after');
+    expect(css).not.toContain('.abyss-tg-block:focus-within > .abyss-tg-span-edge::after');
+    expect(css).not.toContain('.abyss-span-piece:focus-within > .abyss-tg-span-edge::after');
+    expect(css).not.toContain('.abyss-span-piece:hover > .abyss-tg-span-edge--proxy::after');
     expect(css).not.toMatch(/\[data-active-resize=(?!['"]true['"])/u);
     expect(
       declarationsForRuleContaining(
-        '.tc-tg-body[data-active-resize]',
-        '.tc-tg-block[data-active-resize]',
+        '.abyss-tg-body[data-active-resize]',
+        '.abyss-tg-block[data-active-resize]',
       ),
     ).not.toMatch(/outline\s*:/u);
   });
@@ -1050,19 +1060,19 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block.hasAttribute('data-priority')).toBe(false);
   });
 
-  it('wraps the status marker and title together in a .tc-tg-block-head row, marker first', () => {
+  it('wraps the status marker and title together in a .abyss-tg-block-head row, marker first', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
-    const head = block.querySelector('.tc-tg-block-head') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+    const head = block.querySelector('.abyss-tg-block-head') as HTMLElement;
     expect(head).not.toBeNull();
-    const marker = head.querySelector('.tc-status-marker');
-    const title = head.querySelector('.tc-tg-block-title');
+    const marker = head.querySelector('.abyss-status-marker');
+    const title = head.querySelector('.abyss-tg-block-title');
     expect(marker).not.toBeNull();
     expect(title).not.toBeNull();
     expect(head.firstElementChild).toBe(marker);
@@ -1073,11 +1083,11 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ status: 'done', statusSymbol: 'x', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block).not.toBeNull();
-    const marker = block.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = block.querySelector('.abyss-status-marker') as HTMLElement;
     expect(marker.getAttribute('data-status-type')).toBe('done');
-    const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
     expect(title.classList.contains('is-done')).toBe(true);
   });
 
@@ -1085,9 +1095,9 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ status: 'cancelled', statusSymbol: '-', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block).not.toBeNull();
-    const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
     expect(title.classList.contains('is-cancelled')).toBe(true);
   });
 
@@ -1095,13 +1105,13 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const title = container.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = container.querySelector('.abyss-tg-block-title') as HTMLElement;
     expect(title.classList.contains('is-done')).toBe(false);
     expect(title.classList.contains('is-cancelled')).toBe(false);
   });
 
-  it('Task 38: .tc-tg-block-title.is-done gets the same strikethrough convention as .tc-list-task-title.is-done', () => {
-    const rule = /\.tc-tg-block-title\.is-done[^{]*\{[^}]*\}/u.exec(css)?.[0] ?? '';
+  it('Task 38: .abyss-tg-block-title.is-done gets the same strikethrough convention as .abyss-list-task-title.is-done', () => {
+    const rule = /\.abyss-tg-block-title\.is-done[^{]*\{[^}]*\}/u.exec(css)?.[0] ?? '';
     expect(rule).toMatch(/text-decoration\s*:\s*line-through/u);
   });
 
@@ -1110,7 +1120,7 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1121,9 +1131,9 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(document.querySelector('.tc-status-popover')).not.toBeNull();
+    expect(document.querySelector('.abyss-status-popover')).not.toBeNull();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1132,10 +1142,10 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ recurrence: 'every week', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector<HTMLElement>('.tc-status-marker')!;
+    const marker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
 
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(document.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
+    expect(document.querySelector('.abyss-status-popover-edit-repeat')).toBeNull();
     expect(cbs.onEditRepeat).not.toHaveBeenCalled();
   });
 
@@ -1144,9 +1154,9 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const statusRow = document.querySelector('.tc-status-popover-row') as HTMLElement;
+    const statusRow = document.querySelector('.abyss-status-popover-row') as HTMLElement;
     expect(statusRow).not.toBeNull();
     statusRow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onSetStatus).toHaveBeenCalledWith(t, expect.any(String));
@@ -1157,10 +1167,10 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const marker = container.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const flagBtn = document.querySelector(
-      '.tc-status-popover-flag[data-tc-priority="A"]',
+      '.abyss-status-popover-flag[data-abyss-priority="A"]',
     ) as HTMLElement;
     expect(flagBtn).not.toBeNull();
     flagBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1172,10 +1182,10 @@ describe('renderTimedBlocksForDay', () => {
     const cbs = callbacks();
     const t = task({ planning: { time: '09:00', duration: 60 } });
     renderTimedBlocksForDay(container, [t], cbs);
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.setPointerCapture = () => {};
     block.releasePointerCapture = () => {};
-    const marker = container.querySelector('.tc-status-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-status-marker') as HTMLElement;
     // Real browser event order for a click on a child element: pointerdown bubbles first,
     // then pointerup, then click — reproduced here exactly, targeting the marker.
     marker.dispatchEvent(
@@ -1206,11 +1216,11 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block.hasAttribute('data-priority')).toBe(false);
   });
 
-  it('sets --tc-tag-color when the task has a tag matching a configured tag group', () => {
+  it('sets --abyss-tag-color when the task has a tag matching a configured tag group', () => {
     const container = freshContainer();
     const t = task({
       tags: ['#work'],
@@ -1237,15 +1247,15 @@ describe('renderTimedBlocksForDay', () => {
       },
       [{ id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' }],
     );
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
-    expect(block.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+    expect(block.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
   });
 
   it('shows the start–end time range with duration in parentheses in the block subtitle', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '15:00', duration: 90 } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const subtitle = container.querySelector('.tc-tg-block-subtitle') as HTMLElement;
+    const subtitle = container.querySelector('.abyss-tg-block-subtitle') as HTMLElement;
     expect(subtitle).not.toBeNull();
     expect(subtitle.textContent).toBe('15:00–16:30 (1h30m)');
   });
@@ -1254,7 +1264,7 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const subtitle = container.querySelector('.tc-tg-block-subtitle') as HTMLElement;
+    const subtitle = container.querySelector('.abyss-tg-block-subtitle') as HTMLElement;
     expect(subtitle.textContent).toBe('09:00–10:00 (1h)');
   });
 
@@ -1262,13 +1272,13 @@ describe('renderTimedBlocksForDay', () => {
     const container = freshContainer();
     const t = task({ planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
-    const subtitle = block.querySelector('.tc-tg-block-subtitle') as HTMLElement;
-    const head = block.querySelector('.tc-tg-block-head') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+    const subtitle = block.querySelector('.abyss-tg-block-subtitle') as HTMLElement;
+    const head = block.querySelector('.abyss-tg-block-head') as HTMLElement;
     expect(subtitle).not.toBeNull();
     expect(head).not.toBeNull();
-    // Task 35: the subtitle now lives inside `.tc-tg-block-toprow` (paired with the count
-    // badges) rather than as a bare direct child of `.tc-tg-block`, so DOM order is asserted
+    // Task 35: the subtitle now lives inside `.abyss-tg-block-toprow` (paired with the count
+    // badges) rather than as a bare direct child of `.abyss-tg-block`, so DOM order is asserted
     // via compareDocumentPosition instead of indexOf-ing `block.children` directly.
     expect(subtitle.compareDocumentPosition(head) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
@@ -1293,7 +1303,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block).not.toBeNull();
     expect(block.style.top).toBe(`${((15 * 60) / 60) * 48}px`);
     expect(block.style.height).toBe(`${(120 / 60) * 48}px`);
@@ -1318,7 +1328,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block.style.height).toBe('48px');
   });
 
@@ -1341,7 +1351,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(onTaskClick).not.toHaveBeenCalled();
   });
@@ -1365,7 +1375,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(onTaskClick).toHaveBeenCalledWith(t);
   });
@@ -1389,7 +1399,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
     handle.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(onTaskClick).not.toHaveBeenCalled();
   });
@@ -1413,7 +1423,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+    const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
     expect(blocks).toHaveLength(2);
     expect(blocks[0]!.style.width).toBe('50%');
     expect(blocks[1]!.style.width).toBe('50%');
@@ -1439,7 +1449,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.setPointerCapture = () => {}; // jsdom stub
     block.releasePointerCapture = () => {};
     block.dispatchEvent(
@@ -1470,7 +1480,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
     handle.setPointerCapture = () => {};
     handle.releasePointerCapture = () => {};
     handle.dispatchEvent(
@@ -1501,7 +1511,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.setPointerCapture = () => {};
     block.releasePointerCapture = () => {};
     block.dispatchEvent(
@@ -1520,22 +1530,22 @@ describe('renderTimedBlocksForDay', () => {
       planning: { time: '09:00' },
     });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const title = container.querySelector('.tc-tg-block-title') as HTMLElement;
-    // renderTaskText only wraps in a `.tc-md` holder (and defers to MarkdownRenderer) when it
+    const title = container.querySelector('.abyss-tg-block-title') as HTMLElement;
+    // renderTaskText only wraps in a `.abyss-md` holder (and defers to MarkdownRenderer) when it
     // detects link syntax — a plain `.textContent =` assignment would show the raw brackets
     // instead of taking this path. MarkdownRenderer itself is a noop in this test harness (see
     // test/center-panel-integration.test.ts and friends), so real <a> production is not
-    // observable here; the `.tc-md` holder is the reliable signal that markdown rendering (not
+    // observable here; the `.abyss-md` holder is the reliable signal that markdown rendering (not
     // raw text) is in effect, matching this codebase's existing MarkdownRenderer-mock convention.
-    expect(title.querySelector('.tc-md')).not.toBeNull();
+    expect(title.querySelector('.abyss-md')).not.toBeNull();
   });
 
   it('renders plain title text (no [[links]]) via the renderTaskText fast path, unchanged from before', () => {
     const container = freshContainer();
     const t = task({ title: 'Gym', markdownTitle: 'Gym', planning: { time: '09:00' } });
     renderTimedBlocksForDay(container, [t], callbacks());
-    const title = container.querySelector('.tc-tg-block-title') as HTMLElement;
-    expect(title.querySelector('.tc-md')).toBeNull();
+    const title = container.querySelector('.abyss-tg-block-title') as HTMLElement;
+    expect(title.querySelector('.abyss-md')).toBeNull();
     expect(title.textContent).toBe('Gym');
   });
 
@@ -1548,12 +1558,12 @@ describe('renderTimedBlocksForDay', () => {
       planning: { time: '09:00', duration: 60 },
     });
     renderTimedBlocksForDay(container, [t], cbs);
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.setPointerCapture = () => {};
     block.releasePointerCapture = () => {};
     // renderTaskText's MarkdownRenderer.render is a noop in this test harness, so simulate the
     // real post-render DOM it would eventually produce: an <a> inside the title holder.
-    const holder = block.querySelector('.tc-md') as HTMLElement;
+    const holder = block.querySelector('.abyss-md') as HTMLElement;
     const link = holder.createEl('a', { cls: 'internal-link', text: 'Note' });
     // Real browser event order for a click on a nested link: pointerdown bubbles first, then
     // pointerup, then click — reproduced here exactly, targeting the link.
@@ -1575,10 +1585,10 @@ describe('renderTimedBlocksForDay', () => {
       planning: { time: '09:00', duration: 60 },
     });
     renderTimedBlocksForDay(container, [t], cbs);
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
     block.setPointerCapture = () => {};
     block.releasePointerCapture = () => {};
-    const title = container.querySelector('.tc-tg-block-title') as HTMLElement;
+    const title = container.querySelector('.abyss-tg-block-title') as HTMLElement;
     title.dispatchEvent(
       new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
     );
@@ -1601,7 +1611,7 @@ describe('renderTimedBlocksForDay', () => {
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '10:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1623,7 +1633,7 @@ describe('renderTimedBlocksForDay', () => {
       const onDurationChange = vi.fn();
       const t = task({ planning: { time: '10:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onDurationChange });
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = () => {};
       handle.releasePointerCapture = () => {};
       handle.dispatchEvent(
@@ -1643,7 +1653,7 @@ describe('renderTimedBlocksForDay', () => {
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1674,7 +1684,7 @@ describe('renderTimedBlocksForDay', () => {
       onSetPriority: vi.fn(),
       statusRegistry: registry,
     });
-    const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+    const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
     handle.setPointerCapture = () => {};
     handle.releasePointerCapture = () => {};
     handle.dispatchEvent(
@@ -1684,7 +1694,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(onDurationChange).not.toHaveBeenCalled();
   });
 
-  it('renders count badges in a top-right .tc-tg-block-badges container when the task has them, and never a tag chip even when the task has tags (Task 35)', () => {
+  it('renders count badges in a top-right .abyss-tg-block-badges container when the task has them, and never a tag chip even when the task has tags (Task 35)', () => {
     const container = freshContainer();
     const t = task({
       tags: ['#work'],
@@ -1696,15 +1706,15 @@ describe('renderTimedBlocksForDay', () => {
     renderTimedBlocksForDay(container, [t], callbacks(), [
       { id: '1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#3498db' },
     ]);
-    const block = container.querySelector('.tc-tg-block') as HTMLElement;
-    const badges = block.querySelector('.tc-tg-block-badges') as HTMLElement;
+    const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+    const badges = block.querySelector('.abyss-tg-block-badges') as HTMLElement;
     expect(badges).not.toBeNull();
-    expect(badges.querySelectorAll('.tc-task-count-badge')).toHaveLength(2); // comment + link
-    expect(block.querySelector('.tc-task-tag')).toBeNull();
-    expect(block.querySelector('.tc-tg-block-meta')).toBeNull();
+    expect(badges.querySelectorAll('.abyss-task-count-badge')).toHaveLength(2); // comment + link
+    expect(block.querySelector('.abyss-task-tag')).toBeNull();
+    expect(block.querySelector('.abyss-tg-block-meta')).toBeNull();
   });
 
-  it('omits .tc-tg-block-badges entirely for a task with no subtasks/comments/links (including a tag-only task, since tags no longer render anything here)', () => {
+  it('omits .abyss-tg-block-badges entirely for a task with no subtasks/comments/links (including a tag-only task, since tags no longer render anything here)', () => {
     const container = freshContainer();
     const plain = task({ planning: { time: '09:00' } });
     const tagOnly = task({
@@ -1713,8 +1723,8 @@ describe('renderTimedBlocksForDay', () => {
       source: { originalMarkdown: '- [ ] t #work', originalBlock: '- [ ] t #work', line: 1 },
     });
     renderTimedBlocksForDay(container, [plain, tagOnly], callbacks());
-    expect(container.querySelector('.tc-tg-block-badges')).toBeNull();
-    expect(container.querySelector('.tc-task-tag')).toBeNull();
+    expect(container.querySelector('.abyss-tg-block-badges')).toBeNull();
+    expect(container.querySelector('.abyss-task-tag')).toBeNull();
   });
 
   describe('native drag remains absent in the legacy no-date seam', () => {
@@ -1722,7 +1732,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       expect(block.getAttribute('draggable')).toBeNull();
     });
 
@@ -1730,7 +1740,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       expect(handle.getAttribute('draggable')).toBe('false');
     });
 
@@ -1738,7 +1748,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' }, source: { filePath: 'a.md', line: 3 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       const dt = dispatchDnD(block, 'dragstart');
       expect(dt.getData('text/plain')).toBe('');
     });
@@ -1747,7 +1757,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       dispatchDnD(block, 'dragstart');
       expect(block.hasClass('is-dragging')).toBe(false);
       dispatchDnD(block, 'dragend');
@@ -1759,7 +1769,7 @@ describe('renderTimedBlocksForDay', () => {
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1776,7 +1786,7 @@ describe('renderTimedBlocksForDay', () => {
       const onDurationChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange, onDurationChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1802,7 +1812,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       const originalTop = block.style.top;
@@ -1825,8 +1835,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = () => {};
       handle.releasePointerCapture = () => {};
       const originalHeight = block.style.height;
@@ -1844,8 +1854,8 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const block = container.querySelector('.tc-tg-block') as HTMLElement;
-        const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+        const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
         handle.setPointerCapture = () => {};
         handle.releasePointerCapture = () => {};
 
@@ -1862,8 +1872,8 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const block = container.querySelector('.tc-tg-block') as HTMLElement;
-        const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+        const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
         handle.setPointerCapture = () => {};
         handle.releasePointerCapture = () => {};
 
@@ -1879,7 +1889,7 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const block = container.querySelector('.tc-tg-block') as HTMLElement;
+        const block = container.querySelector('.abyss-tg-block') as HTMLElement;
         block.setPointerCapture = () => {};
         block.releasePointerCapture = () => {};
 
@@ -1898,7 +1908,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       expect(block.hasClass('is-picked-up')).toBe(false);
@@ -1912,7 +1922,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1926,7 +1936,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1944,8 +1954,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = () => {};
       handle.releasePointerCapture = () => {};
       handle.dispatchEvent(
@@ -1954,8 +1964,8 @@ describe('renderTimedBlocksForDay', () => {
       expect(block.hasClass('is-picked-up')).toBe(false);
     });
 
-    it('.tc-tg-block.is-picked-up gets a distinct visual treatment from .is-dragging (not opacity-based)', () => {
-      const rule = declarationsFor('.tc-tg-block.is-picked-up');
+    it('.abyss-tg-block.is-picked-up gets a distinct visual treatment from .is-dragging (not opacity-based)', () => {
+      const rule = declarationsFor('.abyss-tg-block.is-picked-up');
       expect(rule).not.toBe('');
       expect(rule).not.toMatch(/opacity\s*:/u);
     });
@@ -1972,7 +1982,7 @@ describe('renderTimedBlocksForDay', () => {
       const onTimeChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onTimeChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -1993,8 +2003,8 @@ describe('renderTimedBlocksForDay', () => {
       const onDurationChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onDurationChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = () => {};
       handle.releasePointerCapture = () => {};
       handle.dispatchEvent(
@@ -2019,17 +2029,17 @@ describe('renderTimedBlocksForDay', () => {
 
       renderTimedBlocksForDay(container, [t], callbacks());
 
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      expect(block.dataset['tcTaskFile']).toBe('Folder/task.md');
-      expect(block.dataset['tcTaskLine']).toBe('17');
-      expect(block.dataset['tcStartMinutes']).toBe('570');
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      expect(block.dataset['abyssTaskFile']).toBe('Folder/task.md');
+      expect(block.dataset['abyssTaskLine']).toBe('17');
+      expect(block.dataset['abyssStartMinutes']).toBe('570');
     });
 
     it('the block is a keyboard-focusable target (tabindex="0")', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       expect(block.getAttribute('tabindex')).toBe('0');
     });
 
@@ -2049,7 +2059,7 @@ describe('renderTimedBlocksForDay', () => {
         const cbs = callbacks();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], cbs);
-        const block = container.querySelector('.tc-tg-block') as HTMLElement;
+        const block = container.querySelector('.abyss-tg-block') as HTMLElement;
         const event = new KeyboardEvent('keydown', {
           key,
           shiftKey,
@@ -2079,7 +2089,7 @@ describe('renderTimedBlocksForDay', () => {
         const cbs = callbacks();
         const t = task({ planning: { time: '09:00', duration: 60 } });
         renderTimedBlocksForDay(container, [t], cbs);
-        const block = container.querySelector('.tc-tg-block') as HTMLElement;
+        const block = container.querySelector('.abyss-tg-block') as HTMLElement;
 
         for (const key of ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']) {
           const event = new KeyboardEvent('keydown', {
@@ -2106,8 +2116,8 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const link = block.querySelector('.tc-tg-block-title')!.createEl('a');
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const link = block.querySelector('.abyss-tg-block-title')!.createEl('a');
 
       link.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       block.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2119,16 +2129,18 @@ describe('renderTimedBlocksForDay', () => {
       });
     });
 
-    it('.tc-tg-block:focus-visible gets a distinct tag-aware inset outline so a keyboard user can see which block arrow keys will nudge', () => {
-      const rule = declarationsFor('.tc-tg-block:focus-visible');
+    it('.abyss-tg-block:focus-visible gets a distinct tag-aware inset outline so a keyboard user can see which block arrow keys will nudge', () => {
+      const rule = declarationsFor('.abyss-tg-block:focus-visible');
       expect(rule).toMatch(/box-shadow\s*:\s*inset 0 0 0 2px/u);
-      expect(rule).toMatch(/--tc-event-focus-tag-strength/u);
+      expect(rule).toMatch(/--abyss-event-focus-tag-strength/u);
       expect(rule).toMatch(/--text-normal/u);
     });
 
     it('keeps terminal and continuation titles at the all-day/Month 1.4 line-height', () => {
-      expect(declarationsFor('.tc-tg-block-title')).toMatch(/line-height\s*:\s*1\.4/u);
-      expect(declarationsFor('.tc-tg-block-continuation-title')).toMatch(/line-height\s*:\s*1\.4/u);
+      expect(declarationsFor('.abyss-tg-block-title')).toMatch(/line-height\s*:\s*1\.4/u);
+      expect(declarationsFor('.abyss-tg-block-continuation-title')).toMatch(
+        /line-height\s*:\s*1\.4/u,
+      );
     });
   });
 
@@ -2136,10 +2148,10 @@ describe('renderTimedBlocksForDay', () => {
     it('follows visual start order, uses DOM order for tied starts, wraps, and stays in the current day', () => {
       const container = freshContainer();
       document.body.appendChild(container);
-      const firstDay = container.createDiv({ cls: 'tc-tg-day-column' });
-      const firstHourColumn = firstDay.createDiv({ cls: 'tc-tg-hour-column' });
-      const secondDay = container.createDiv({ cls: 'tc-tg-day-column' });
-      const secondHourColumn = secondDay.createDiv({ cls: 'tc-tg-hour-column' });
+      const firstDay = container.createDiv({ cls: 'abyss-tg-day-column' });
+      const firstHourColumn = firstDay.createDiv({ cls: 'abyss-tg-hour-column' });
+      const secondDay = container.createDiv({ cls: 'abyss-tg-day-column' });
+      const secondHourColumn = secondDay.createDiv({ cls: 'abyss-tg-hour-column' });
       const late = task({
         source: { filePath: 'late.md', line: 1 },
         planning: { time: '10:00', duration: 60 },
@@ -2159,7 +2171,7 @@ describe('renderTimedBlocksForDay', () => {
       renderTimedBlocksForDay(firstHourColumn, [late, tiedFirst, tiedSecond], callbacks());
       renderTimedBlocksForDay(secondHourColumn, [otherDay], callbacks());
       const byFile = (filePath: string): HTMLElement =>
-        container.querySelector(`[data-tc-task-file="${filePath}"]`) as HTMLElement;
+        container.querySelector(`[data-abyss-task-file="${filePath}"]`) as HTMLElement;
       const tiedFirstBlock = byFile('tied-first.md');
       const tiedSecondBlock = byFile('tied-second.md');
       const lateBlock = byFile('late.md');
@@ -2201,8 +2213,8 @@ describe('renderTimedBlocksForDay', () => {
     it('moves from an embedded link to the next block root', () => {
       const container = freshContainer();
       document.body.appendChild(container);
-      const day = container.createDiv({ cls: 'tc-tg-day-column' });
-      const hourColumn = day.createDiv({ cls: 'tc-tg-hour-column' });
+      const day = container.createDiv({ cls: 'abyss-tg-day-column' });
+      const hourColumn = day.createDiv({ cls: 'abyss-tg-hour-column' });
       const first = task({
         source: { filePath: 'first.md', line: 1 },
         planning: { time: '09:00' },
@@ -2212,8 +2224,8 @@ describe('renderTimedBlocksForDay', () => {
         planning: { time: '10:00' },
       });
       renderTimedBlocksForDay(hourColumn, [first, second], callbacks());
-      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
-      const link = blocks[0]!.querySelector('.tc-tg-block-title')!.createEl('a');
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
+      const link = blocks[0]!.querySelector('.abyss-tg-block-title')!.createEl('a');
       link.href = '#';
       link.focus();
 
@@ -2227,10 +2239,10 @@ describe('renderTimedBlocksForDay', () => {
 
     it('wraps a single isolated hour-column item onto its own root', () => {
       const hourColumn = freshContainer();
-      hourColumn.addClass('tc-tg-hour-column');
+      hourColumn.addClass('abyss-tg-hour-column');
       document.body.appendChild(hourColumn);
       renderTimedBlocksForDay(hourColumn, [task({ planning: { time: '09:00' } })], callbacks());
-      const block = hourColumn.querySelector('.tc-tg-block') as HTMLElement;
+      const block = hourColumn.querySelector('.abyss-tg-block') as HTMLElement;
       block.focus();
 
       block.dispatchEvent(
@@ -2256,14 +2268,14 @@ describe('renderTimedBlocksForDay', () => {
     ] as const)('%s bypasses Tab and Shift+Tab without preventing default', (_name, modifier) => {
       const container = freshContainer();
       document.body.appendChild(container);
-      const day = container.createDiv({ cls: 'tc-tg-day-column' });
-      const hourColumn = day.createDiv({ cls: 'tc-tg-hour-column' });
+      const day = container.createDiv({ cls: 'abyss-tg-day-column' });
+      const hourColumn = day.createDiv({ cls: 'abyss-tg-hour-column' });
       renderTimedBlocksForDay(
         hourColumn,
         [task({ planning: { time: '09:00' } }), task({ planning: { time: '10:00' } })],
         callbacks(),
       );
-      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
       blocks[0]!.focus();
 
       for (const shiftKey of [false, true]) {
@@ -2288,7 +2300,7 @@ describe('renderTimedBlocksForDay', () => {
       document.body.appendChild(container);
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       expect(block.hasClass('is-selected')).toBe(false);
       block.focus();
       expect(block.hasClass('is-selected')).toBe(true);
@@ -2300,7 +2312,7 @@ describe('renderTimedBlocksForDay', () => {
       document.body.appendChild(container);
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.focus();
       expect(block.hasClass('is-selected')).toBe(true);
       block.blur();
@@ -2308,19 +2320,19 @@ describe('renderTimedBlocksForDay', () => {
       container.remove();
     });
 
-    it('.tc-tg-block.is-selected is a distinct rule from transient drag and edge-specific resize state and can coexist with is-picked-up', () => {
-      const rule = declarationsFor('.tc-tg-block.is-selected');
+    it('.abyss-tg-block.is-selected is a distinct rule from transient drag and edge-specific resize state and can coexist with is-picked-up', () => {
+      const rule = declarationsFor('.abyss-tg-block.is-selected');
       expect(rule).not.toBe('');
       // Distinct rule bodies: is-selected must not just be an alias reusing is-picked-up's
       // scale/shadow transform (that's the transient drag-feedback language, not "selected").
-      const pickedUpRule = declarationsFor('.tc-tg-block.is-picked-up');
+      const pickedUpRule = declarationsFor('.abyss-tg-block.is-picked-up');
       expect(rule).not.toBe(pickedUpRule);
 
       const container = freshContainer();
       document.body.appendChild(container);
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.focus();
@@ -2340,8 +2352,8 @@ describe('renderTimedBlocksForDay', () => {
       document.body.appendChild(container);
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
       const link = document.createElement('a');
       link.href = '#';
       link.tabIndex = 0;
@@ -2370,8 +2382,8 @@ describe('renderTimedBlocksForDay', () => {
       const onKeyboardIntent = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onKeyboardIntent });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const title = block.querySelector('.tc-tg-block-title') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const title = block.querySelector('.abyss-tg-block-title') as HTMLElement;
       const link = document.createElement('a');
       link.href = '#';
       link.tabIndex = 0;
@@ -2409,8 +2421,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = block.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = block.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       expect(handle).not.toBeNull();
     });
 
@@ -2418,7 +2430,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       expect(handle.getAttribute('draggable')).toBe('false');
     });
 
@@ -2427,7 +2439,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       // jsdom's elementFromPoint always returns null, so real coordinate-based day resolution
       // can't be exercised here — this drives the same deterministic __tgTestEndDrag seam
@@ -2446,7 +2458,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60, due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       handle.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
       );
@@ -2465,7 +2477,7 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
         const dayEl = document.createElement('div');
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
@@ -2478,7 +2490,7 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
         const dayA = document.createElement('div');
         dayA.setAttribute('data-tg-date', '2026-07-11');
         const dayB = document.createElement('div');
@@ -2497,7 +2509,7 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
         const dayEl = document.createElement('div');
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
@@ -2512,7 +2524,7 @@ describe('renderTimedBlocksForDay', () => {
         const container = freshContainer();
         const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
         renderTimedBlocksForDay(container, [t], callbacks());
-        const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+        const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
         const dayEl = document.createElement('div');
         dayEl.setAttribute('data-tg-date', '2026-07-12');
         activeDocument.elementFromPoint = () => dayEl;
@@ -2529,7 +2541,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       // Override the describe-block-wide null stub just for this test: a day-column stand-in
       // that DOES resolve to a date, so that a still-live pointerup listener would provably
       // fire onExtendToSpan — proving its absence here is due to pointercancel's cleanup, not
@@ -2553,7 +2565,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = () => {};
       block.releasePointerCapture = () => {};
       block.dispatchEvent(
@@ -2569,7 +2581,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = () => {};
       handle.releasePointerCapture = () => {};
       handle.dispatchEvent(
@@ -2585,8 +2597,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
 
       expect(block.getAttribute('draggable')).toBeNull();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2599,8 +2611,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
 
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
@@ -2624,16 +2636,16 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      expect(block.querySelector('.tc-tg-span-edge--left')).not.toBeNull();
-      expect(block.querySelector('.tc-tg-span-edge--right')).not.toBeNull();
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      expect(block.querySelector('.abyss-tg-span-edge--left')).not.toBeNull();
+      expect(block.querySelector('.abyss-tg-span-edge--right')).not.toBeNull();
     });
 
     it('the left-edge handle stays explicitly draggable=false', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       expect(handle.getAttribute('draggable')).toBe('false');
     });
 
@@ -2642,7 +2654,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       // Same deterministic __tgTestEndDrag seam the right-edge suite uses, driven here via the
       // left handle's own pointerdown so only ITS resolve is armed (see renderTimedBlocks.ts's
@@ -2662,7 +2674,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const rightHandle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const rightHandle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       rightHandle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
         '2026-07-12',
@@ -2676,7 +2688,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60, due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true, clientY: 100, pointerId: 1 }),
       );
@@ -2691,7 +2703,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       const fakeDayEl = document.createElement('div');
       fakeDayEl.setAttribute('data-tg-date', '2026-07-08');
       activeDocument.elementFromPoint = () => fakeDayEl;
@@ -2709,7 +2721,7 @@ describe('renderTimedBlocksForDay', () => {
         planning: { time: '13:00', duration: 60, start: '2026-07-13', due: '2026-07-15' },
       });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
         '2026-07-16',
@@ -2725,7 +2737,7 @@ describe('renderTimedBlocksForDay', () => {
         planning: { time: '13:00', duration: 60, start: '2026-07-13', due: '2026-07-15' },
       });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
         '2026-07-14',
@@ -2738,7 +2750,7 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '13:00', duration: 60, due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       (container as unknown as { __tgTestEndDrag: (date: string) => void }).__tgTestEndDrag(
         '2026-07-08',
@@ -2752,10 +2764,10 @@ describe('renderTimedBlocksForDay', () => {
       const cbs = callbacks();
       const t = task({ planning: { time: '09:00', duration: 60, due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], cbs);
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const leftHandle = block.querySelector('.tc-tg-span-edge--left') as HTMLElement;
-      const rightHandle = block.querySelector('.tc-tg-span-edge--right') as HTMLElement;
-      const resizeHandle = block.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const leftHandle = block.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
+      const rightHandle = block.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
+      const resizeHandle = block.querySelector('.abyss-tg-resize-handle') as HTMLElement;
 
       // Native whole-block drag remains absent.
       expect(block.getAttribute('draggable')).toBeNull();
@@ -2816,8 +2828,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
 
       expect(block.getAttribute('draggable')).toBeNull();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
@@ -2830,8 +2842,8 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
 
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1 }));
       expect(block.getAttribute('draggable')).toBe('false');
@@ -2867,7 +2879,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(
@@ -2880,7 +2892,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       block.setPointerCapture = vi.fn();
       block.releasePointerCapture = vi.fn();
       block.dispatchEvent(
@@ -2893,7 +2905,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 5 }));
@@ -2904,7 +2916,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-span-edge--right') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--right') as HTMLElement;
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 6 }));
@@ -2916,8 +2928,8 @@ describe('renderTimedBlocksForDay', () => {
       const onDurationChange = vi.fn();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], { ...callbacks(), onDurationChange });
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       // Deliberately NOT stubbing setPointerCapture/releasePointerCapture here — jsdom's
       // HTMLElement has neither method at all (both are `undefined`), reproducing any real host
       // that lacks Pointer Events capture support.
@@ -2937,7 +2949,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 60 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-resize-handle') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-resize-handle') as HTMLElement;
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(
@@ -2951,7 +2963,7 @@ describe('renderTimedBlocksForDay', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', due: '2026-07-10' } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const handle = container.querySelector('.tc-tg-span-edge--left') as HTMLElement;
+      const handle = container.querySelector('.abyss-tg-span-edge--left') as HTMLElement;
       handle.setPointerCapture = vi.fn();
       handle.releasePointerCapture = vi.fn();
       handle.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 11 }));
@@ -2982,13 +2994,17 @@ describe('renderTimedBlocksForDay', () => {
       { date: '2026-07-02', terminal: false },
     );
 
-    const block = container.querySelector<HTMLElement>('.tc-tg-block-continuation')!;
+    const block = container.querySelector<HTMLElement>('.abyss-tg-block-continuation')!;
     expect(block.style.top).toBe(`${((15 * 60) / 60) * 48}px`);
     expect(block.style.height).toBe(`${(90 / 60) * 48}px`);
-    expect(block.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
-    expect(block.querySelector('.tc-tg-block-continuation-title')?.textContent).toBe('Conference');
-    expect(block.querySelector('.tc-tg-block-subtitle')?.textContent).toBe('15:00–16:30 (1h30m)');
-    expect(block.querySelectorAll('.tc-task-count-badge')).toHaveLength(2);
+    expect(block.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
+    expect(block.querySelector('.abyss-tg-block-continuation-title')?.textContent).toBe(
+      'Conference',
+    );
+    expect(block.querySelector('.abyss-tg-block-subtitle')?.textContent).toBe(
+      '15:00–16:30 (1h30m)',
+    );
+    expect(block.querySelectorAll('.abyss-task-count-badge')).toHaveLength(2);
     expect(block.dataset['occurrenceState']).toBe('materialized');
     expect(block.dataset['continuity']).toBe('continuation');
     expect(block.dataset['spanRole']).toBe('timed-continuation:2026-07-02');
@@ -2998,24 +3014,24 @@ describe('renderTimedBlocksForDay', () => {
   });
 
   describe('Task 36: minimum block size so very-short-duration text never becomes invisible', () => {
-    it('.tc-tg-block declares a min-height', () => {
-      expect(declarationsFor('.tc-tg-block')).toMatch(/min-height\s*:/u);
+    it('.abyss-tg-block declares a min-height', () => {
+      expect(declarationsFor('.abyss-tg-block')).toMatch(/min-height\s*:/u);
     });
 
-    it('.tc-tg-block-continuation declares a min-height', () => {
-      expect(declarationsFor('.tc-tg-block-continuation')).toMatch(/min-height\s*:/u);
+    it('.abyss-tg-block-continuation declares a min-height', () => {
+      expect(declarationsFor('.abyss-tg-block-continuation')).toMatch(/min-height\s*:/u);
     });
 
-    it("the subtitle/badges row (.tc-tg-block-toprow) is the one that shrinks/collapses under pressure — the checkbox+title row (.tc-tg-block-head) doesn't", () => {
-      expect(declarationsFor('.tc-tg-block-toprow')).toMatch(/flex-shrink\s*:\s*1/u);
-      expect(declarationsFor('.tc-tg-block-head')).toMatch(/flex-shrink\s*:\s*0/u);
+    it("the subtitle/badges row (.abyss-tg-block-toprow) is the one that shrinks/collapses under pressure — the checkbox+title row (.abyss-tg-block-head) doesn't", () => {
+      expect(declarationsFor('.abyss-tg-block-toprow')).toMatch(/flex-shrink\s*:\s*1/u);
+      expect(declarationsFor('.abyss-tg-block-head')).toMatch(/flex-shrink\s*:\s*0/u);
     });
 
     it('a 10-minute task does not get an explicit inline min-height override when nothing follows it in its column (the CSS rule alone is enough)', () => {
       const container = freshContainer();
       const t = task({ planning: { time: '09:00', duration: 10 } });
       renderTimedBlocksForDay(container, [t], callbacks());
-      const block = container.querySelector('.tc-tg-block') as HTMLElement;
+      const block = container.querySelector('.abyss-tg-block') as HTMLElement;
       expect(block.style.height).toBe(`${(10 / 60) * 48}px`);
       expect(block.style.minHeight).toBe('');
     });
@@ -3033,12 +3049,12 @@ describe('renderTimedBlocksForDay', () => {
         source: { line: 1 },
       });
       renderTimedBlocksForDay(container, [a, b], callbacks());
-      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
       expect(blocks).toHaveLength(2);
       const [blockA, blockB] = blocks;
       const topA = parseFloat(blockA!.style.top);
       const topB = parseFloat(blockB!.style.top);
-      // Without the fix, .tc-tg-block's CSS min-height (~24.5px) would grow block A well past
+      // Without the fix, .abyss-tg-block's CSS min-height (~24.5px) would grow block A well past
       // block B's top (8px further down) — an inline min-height clamp is required here.
       expect(blockA!.style.minHeight).not.toBe('');
       const clampedHeight = parseFloat(blockA!.style.minHeight);
@@ -3051,7 +3067,7 @@ describe('renderTimedBlocksForDay', () => {
       const a = task({ planning: { time: '09:00', duration: 10 }, source: { line: 0 } });
       const b = task({ planning: { time: '11:00', duration: 60 }, source: { line: 1 } });
       renderTimedBlocksForDay(container, [a, b], callbacks());
-      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.tc-tg-block'));
+      const blocks = Array.from(container.querySelectorAll<HTMLElement>('.abyss-tg-block'));
       expect(blocks[0]!.style.minHeight).toBe('');
     });
   });
@@ -3059,37 +3075,43 @@ describe('renderTimedBlocksForDay', () => {
 
 describe('calendar surface style contract', () => {
   it('gives timed terminal and ghost blocks one shared scale, rail geometry, fill, and tag outline', () => {
-    const terminal = declarationsFor('.tc-tg-block');
-    const ghost = declarationsFor('.tc-tg-block-continuation');
-    const sharedFill = declarationsForRuleContaining('.tc-tg-block', '.tc-tg-span', '.tc-tg-plain');
+    const terminal = declarationsFor('.abyss-tg-block');
+    const ghost = declarationsFor('.abyss-tg-block-continuation');
+    const sharedFill = declarationsForRuleContaining(
+      '.abyss-tg-block',
+      '.abyss-tg-span',
+      '.abyss-tg-plain',
+    );
 
-    expect(terminal).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
-    expect(terminal).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
-    expect(terminal).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
-    expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u);
-    expect(ghost).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
-    expect(sharedFill).toMatch(/border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid/u);
-    expect(sharedFill).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
-    expect(sharedFill).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
+    expect(terminal).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
+    expect(terminal).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
+    expect(terminal).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
+    expect(ghost).toMatch(/border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed/u);
+    expect(ghost).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
+    expect(sharedFill).toMatch(
+      /border-inline-start\s*:\s*var\(--abyss-calendar-item-rail\) solid/u,
+    );
+    expect(sharedFill).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
+    expect(sharedFill).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--abyss-calendar-border\)/u);
   });
 
   it('makes ghost proxy rails discoverable without enlarging literal terminal handles', () => {
-    const literal = declarationsFor('.tc-tg-span-edge');
-    const literalRailPosition = declarationsForExactRule('.tc-tg-span-edge::after');
-    const proxy = declarationsFor('.tc-tg-span-edge--proxy');
+    const literal = declarationsFor('.abyss-tg-span-edge');
+    const literalRailPosition = declarationsForExactRule('.abyss-tg-span-edge::after');
+    const proxy = declarationsFor('.abyss-tg-span-edge--proxy');
     const leftProxy = declarationsFor(
-      '.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left',
+      '.abyss-tg-span-continuation > .abyss-tg-span-edge--proxy.abyss-tg-span-edge--left',
     );
-    const startHandle = declarationsForExactRule('.tc-tg-span-edge--left');
-    const dueHandle = declarationsForExactRule('.tc-tg-span-edge--right');
-    const proxyRail = declarationsFor('.tc-tg-span-edge--proxy');
-    const proxyRailPosition = declarationsForExactRule('.tc-tg-span-edge--proxy::after');
-    const marker = declarationsFor('.tc-tg-body > .tc-status-marker');
+    const startHandle = declarationsForExactRule('.abyss-tg-span-edge--left');
+    const dueHandle = declarationsForExactRule('.abyss-tg-span-edge--right');
+    const proxyRail = declarationsFor('.abyss-tg-span-edge--proxy');
+    const proxyRailPosition = declarationsForExactRule('.abyss-tg-span-edge--proxy::after');
+    const marker = declarationsFor('.abyss-tg-body > .abyss-status-marker');
 
     expect(literal).toMatch(/width\s*:\s*10px/u);
     expect(proxy).toMatch(/width\s*:\s*16px/u);
     expect(leftProxy).toMatch(
-      /inset-inline-start\s*:\s*calc\(-1 \* var\(--tc-calendar-ghost-rail\)\)/u,
+      /inset-inline-start\s*:\s*calc\(-1 \* var\(--abyss-calendar-ghost-rail\)\)/u,
     );
     expect(leftProxy).toMatch(/inset-inline-end\s*:\s*auto/u);
     expect(leftProxy).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
@@ -3101,10 +3123,10 @@ describe('calendar surface style contract', () => {
       literalRailPosition,
       startHandle,
       dueHandle,
-      declarationsFor('.tc-tg-block > .tc-tg-span-edge--right'),
-      declarationsFor('.tc-tg-block > .tc-tg-span-edge--left'),
-      declarationsFor('.tc-tg-body > .tc-tg-span-edge--right'),
-      declarationsFor('.tc-tg-body > .tc-tg-span-edge--left'),
+      declarationsFor('.abyss-tg-block > .abyss-tg-span-edge--right'),
+      declarationsFor('.abyss-tg-block > .abyss-tg-span-edge--left'),
+      declarationsFor('.abyss-tg-body > .abyss-tg-span-edge--right'),
+      declarationsFor('.abyss-tg-body > .abyss-tg-span-edge--left'),
     ]) {
       expect(declarations).not.toMatch(/(?:^|;)\s*(?:left|right)\s*:/u);
     }
@@ -3118,17 +3140,17 @@ describe('calendar surface style contract', () => {
   it('maps start and due handles to logical edges in both LTR and RTL', () => {
     const style = document.createElement('style');
     style.textContent = `
-      .tc-tg-span-edge { ${declarationsFor('.tc-tg-span-edge')} }
-      .tc-tg-span-edge::after { ${declarationsForExactRule('.tc-tg-span-edge::after')} }
-      .tc-tg-span-edge--proxy { ${declarationsFor('.tc-tg-span-edge--proxy')} }
-      .tc-tg-span-edge--proxy::after { ${declarationsForExactRule(
-        '.tc-tg-span-edge--proxy::after',
+      .abyss-tg-span-edge { ${declarationsFor('.abyss-tg-span-edge')} }
+      .abyss-tg-span-edge::after { ${declarationsForExactRule('.abyss-tg-span-edge::after')} }
+      .abyss-tg-span-edge--proxy { ${declarationsFor('.abyss-tg-span-edge--proxy')} }
+      .abyss-tg-span-edge--proxy::after { ${declarationsForExactRule(
+        '.abyss-tg-span-edge--proxy::after',
       )} }
-      .tc-tg-span-edge--left { ${declarationsForExactRule('.tc-tg-span-edge--left')} }
-      .tc-tg-span-edge--right { ${declarationsForExactRule('.tc-tg-span-edge--right')} }
-      .tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left {
+      .abyss-tg-span-edge--left { ${declarationsForExactRule('.abyss-tg-span-edge--left')} }
+      .abyss-tg-span-edge--right { ${declarationsForExactRule('.abyss-tg-span-edge--right')} }
+      .abyss-tg-span-continuation > .abyss-tg-span-edge--proxy.abyss-tg-span-edge--left {
         ${declarationsFor(
-          '.tc-tg-span-continuation > .tc-tg-span-edge--proxy.tc-tg-span-edge--left',
+          '.abyss-tg-span-continuation > .abyss-tg-span-edge--proxy.abyss-tg-span-edge--left',
         )}
       }
     `;
@@ -3136,13 +3158,13 @@ describe('calendar surface style contract', () => {
 
     const computedFor = (direction: 'ltr' | 'rtl') => {
       const body = document.createElement('div');
-      body.className = 'tc-tg-span-continuation';
+      body.className = 'abyss-tg-span-continuation';
       body.dir = direction;
-      body.style.setProperty('--tc-calendar-ghost-rail', '3px');
+      body.style.setProperty('--abyss-calendar-ghost-rail', '3px');
       const start = body.createDiv({
-        cls: 'tc-tg-span-edge tc-tg-span-edge--left tc-tg-span-edge--proxy',
+        cls: 'abyss-tg-span-edge abyss-tg-span-edge--left abyss-tg-span-edge--proxy',
       });
-      const due = body.createDiv({ cls: 'tc-tg-span-edge tc-tg-span-edge--right' });
+      const due = body.createDiv({ cls: 'abyss-tg-span-edge abyss-tg-span-edge--right' });
       document.body.append(body);
       const result = {
         body,
@@ -3158,7 +3180,7 @@ describe('calendar surface style contract', () => {
       expect(ltr.start.direction).toBe('ltr');
       expect(rtl.start.direction).toBe('rtl');
       for (const computed of [ltr.start, rtl.start]) {
-        expect(computed.insetInlineStart).toBe('calc(-1 * var(--tc-calendar-ghost-rail))');
+        expect(computed.insetInlineStart).toBe('calc(-1 * var(--abyss-calendar-ghost-rail))');
         expect(computed.insetInlineEnd).toBe('auto');
       }
       for (const computed of [ltr.due, rtl.due]) {

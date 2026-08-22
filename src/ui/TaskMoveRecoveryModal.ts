@@ -8,7 +8,7 @@ export class TaskMoveRecoveryModal extends Modal {
     private readonly recovery: MoveRecovery,
   ) {
     super(app);
-    this.modalEl.addClass('tc-task-move-recovery');
+    this.modalEl.addClass('abyss-task-move-recovery');
   }
 
   onOpen(): void {
@@ -25,7 +25,7 @@ export class TaskMoveRecoveryModal extends Modal {
     this.contentEl.createEl('p', {
       text: `The task was copied to ${this.recovery.targetPath}, but the original remains in ${this.recovery.source.filePath}.`,
     });
-    const actions = this.contentEl.createDiv({ cls: 'tc-task-move-recovery-actions' });
+    const actions = this.contentEl.createDiv({ cls: 'abyss-task-move-recovery-actions' });
     const keep = actions.createEl('button', { text: 'Keep both' });
     keep.addEventListener('click', () => this.close());
     const remove = actions.createEl('button', { text: 'Remove original' });
@@ -67,7 +67,7 @@ export class TaskMoveRecoveryModal extends Modal {
     this.contentEl.createEl('pre', {
       text: current.source.originalBlock,
     });
-    const actions = this.contentEl.createDiv({ cls: 'tc-task-move-recovery-actions' });
+    const actions = this.contentEl.createDiv({ cls: 'abyss-task-move-recovery-actions' });
     const keep = actions.createEl('button', { text: 'Keep both' });
     keep.addEventListener('click', () => this.close());
     const remove = actions.createEl('button', { text: 'Remove changed original' });

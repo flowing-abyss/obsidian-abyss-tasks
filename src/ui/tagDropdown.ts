@@ -9,7 +9,7 @@ export function showTagDropdown(
   onCommit: (tag: string) => void,
   onClose?: () => void,
 ): HTMLElement {
-  container.querySelector('.tc-tag-dropdown-wrap')?.remove();
+  container.querySelector('.abyss-tag-dropdown-wrap')?.remove();
 
   const rawTags = Object.keys(
     (app.metadataCache as unknown as { getTags(): Record<string, number> }).getTags(),
@@ -28,10 +28,10 @@ export function showTagDropdown(
       return aClean.localeCompare(bClean);
     });
 
-  const wrap = container.createDiv({ cls: 'tc-tag-dropdown-wrap' });
-  const dropdownId = `tc-tag-dropdown-${nextTagDropdownId++}`;
+  const wrap = container.createDiv({ cls: 'abyss-tag-dropdown-wrap' });
+  const dropdownId = `abyss-tag-dropdown-${nextTagDropdownId++}`;
   const input = wrap.createEl('input', {
-    cls: 'tc-tag-input',
+    cls: 'abyss-tag-input',
     attr: {
       type: 'text',
       placeholder: '#Tag',
@@ -43,7 +43,7 @@ export function showTagDropdown(
     },
   });
   const dropdown = wrap.createDiv({
-    cls: 'tc-tag-dropdown',
+    cls: 'abyss-tag-dropdown',
     attr: { id: dropdownId, role: 'listbox', 'aria-label': 'Available tags' },
   });
   let activeTag: string | undefined;
@@ -70,42 +70,42 @@ export function showTagDropdown(
       : sortedTags;
     if (activeTag !== undefined && !filtered.includes(activeTag)) activeTag = undefined;
     if (filtered.length === 0) {
-      dropdown.addClass('tc-tag-dropdown--hidden');
+      dropdown.addClass('abyss-tag-dropdown--hidden');
       input.setAttribute('aria-expanded', 'false');
       input.removeAttribute('aria-activedescendant');
       return;
     }
-    dropdown.removeClass('tc-tag-dropdown--hidden');
+    dropdown.removeClass('abyss-tag-dropdown--hidden');
     input.setAttribute('aria-expanded', 'true');
     for (const tag of filtered) {
       const optionId = `${dropdownId}-option-${sortedTags.indexOf(tag)}`;
       const active = tag === activeTag;
       const opt = dropdown.createDiv({
-        cls: `tc-tag-dropdown-opt${active ? ' is-active' : ''}`,
+        cls: `abyss-tag-dropdown-opt${active ? ' is-active' : ''}`,
         text: tag,
         attr: { id: optionId, role: 'option', 'aria-selected': String(active) },
       });
       const color = getTagColor(tag);
-      if (color) opt.setCssProps({ '--tc-tag-opt-color': color });
+      if (color) opt.setCssProps({ '--abyss-tag-opt-color': color });
       opt.addEventListener('mousedown', (e) => {
         e.preventDefault();
         commit(tag);
       });
     }
-    const active = dropdown.querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active');
+    const active = dropdown.querySelector<HTMLElement>('.abyss-tag-dropdown-opt.is-active');
     if (active) input.setAttribute('aria-activedescendant', active.id);
     else input.removeAttribute('aria-activedescendant');
   };
 
   const updateActive = (delta: number): void => {
-    const opts = Array.from(dropdown.querySelectorAll<HTMLElement>('.tc-tag-dropdown-opt'));
+    const opts = Array.from(dropdown.querySelectorAll<HTMLElement>('.abyss-tag-dropdown-opt'));
     if (opts.length === 0) return;
     const activeIdx = opts.findIndex((option) => option.getAttribute('aria-selected') === 'true');
     const nextIdx = Math.max(0, Math.min(opts.length - 1, activeIdx + delta));
     activeTag = opts[nextIdx]?.textContent ?? undefined;
     renderOptions(input.value);
     dropdown
-      .querySelector<HTMLElement>('.tc-tag-dropdown-opt.is-active')
+      .querySelector<HTMLElement>('.abyss-tag-dropdown-opt.is-active')
       ?.scrollIntoView?.({ block: 'nearest' });
   };
 

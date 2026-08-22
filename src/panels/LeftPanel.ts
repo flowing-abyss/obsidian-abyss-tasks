@@ -78,7 +78,7 @@ export class LeftPanel {
     const vs = this.settings.listViewStates?.[key];
     if (vs && isListViewCustomized(vs, key)) {
       labelParent.createEl('span', {
-        cls: 'tc-left-custom-dot',
+        cls: 'abyss-left-custom-dot',
         attr: { role: 'img', 'aria-label': 'Custom view applied' },
       });
     }
@@ -93,7 +93,7 @@ export class LeftPanel {
     const allTasks = [...this.queries.list()];
     const today = window.moment().format('YYYY-MM-DD');
 
-    this.el.createDiv({ cls: 'tc-left-section' }, (section) => {
+    this.el.createDiv({ cls: 'abyss-left-section' }, (section) => {
       this.renderSmartList(section, 'inbox', 'Inbox', 'inbox', this.countInbox(allTasks));
       this.renderSmartList(section, 'today', 'Today', 'calendar', this.countToday(allTasks, today));
       this.renderSmartList(
@@ -161,18 +161,18 @@ export class LeftPanel {
     body: (bodyEl: HTMLElement) => void,
   ): void {
     const collapsed = this.settings.sectionCollapse[key];
-    const section = this.el.createDiv({ cls: `tc-left-section tc-left-section--${key}` });
+    const section = this.el.createDiv({ cls: `abyss-left-section abyss-left-section--${key}` });
 
     const header = section.createDiv({
-      cls: 'tc-left-section-header tc-left-section-header--collapsible',
+      cls: 'abyss-left-section-header abyss-left-section-header--collapsible',
     });
-    const chevron = header.createSpan({ cls: 'tc-left-section-chevron' });
+    const chevron = header.createSpan({ cls: 'abyss-left-section-chevron' });
     setIcon(chevron, collapsed ? 'chevron-right' : 'chevron-down');
-    header.createSpan({ cls: 'tc-left-section-title', text: title });
+    header.createSpan({ cls: 'abyss-left-section-title', text: title });
 
     if (addAction) {
       const add = header.createSpan({
-        cls: 'tc-left-add',
+        cls: 'abyss-left-add',
         attr: { 'aria-label': `Add to ${title}` },
       });
       setIcon(add, 'plus');
@@ -189,7 +189,7 @@ export class LeftPanel {
     });
 
     if (!collapsed) {
-      const bodyEl = section.createDiv({ cls: 'tc-left-section-body' });
+      const bodyEl = section.createDiv({ cls: 'abyss-left-section-body' });
       body(bodyEl);
     }
   }
@@ -210,21 +210,21 @@ export class LeftPanel {
       // equals what the center list shows when you open the project.
       const openCount = project.stats.total - project.stats.done - project.stats.cancelled;
       const row = parent.createDiv({
-        cls: `tc-left-item tc-project-item${isActive ? ' is-active' : ''}`,
+        cls: `abyss-left-item abyss-project-item${isActive ? ' is-active' : ''}`,
       });
-      row.createDiv({ cls: 'tc-left-item-left' }, (l) => {
+      row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
         // Diamond colour indicator — deliberately not round, to read differently
         // from the round tag dots. Colour comes from the project's status.
         const status = project.statusId ? statusById.get(project.statusId) : undefined;
-        const dot = l.createEl('span', { cls: 'tc-project-dot' });
+        const dot = l.createEl('span', { cls: 'abyss-project-dot' });
         if (status?.color) dot.style.background = status.color;
-        l.createEl('span', { cls: 'tc-left-label', text: project.name });
+        l.createEl('span', { cls: 'abyss-left-label', text: project.name });
         this.appendCustomDot(l, { type: 'project', path: project.path });
       });
       this.attachProjectDropZone(row, project.path);
       this.attachProjectDragSource(row, project.path);
       if (openCount > 0) {
-        row.createEl('span', { cls: 'tc-left-count', text: String(openCount) });
+        row.createEl('span', { cls: 'abyss-left-count', text: String(openCount) });
       }
       row.addEventListener('click', () => {
         this.state.set('selectedList', { type: 'project', path: project.path });
@@ -237,9 +237,9 @@ export class LeftPanel {
     }
 
     if (!this.showAllProjects && projects.length > PROJECTS_CAP) {
-      const more = parent.createDiv({ cls: 'tc-left-item tc-left-showmore' });
+      const more = parent.createDiv({ cls: 'abyss-left-item abyss-left-showmore' });
       more.createEl('span', {
-        cls: 'tc-left-label',
+        cls: 'abyss-left-label',
         text: `Show ${projects.length - PROJECTS_CAP} more…`,
       });
       more.addEventListener('click', () => {
@@ -266,18 +266,18 @@ export class LeftPanel {
       void this.onSaveSettings();
       this.render();
     }
-    const section = this.el.querySelector(`.tc-left-section--${key}`);
+    const section = this.el.querySelector(`.abyss-left-section--${key}`);
     if (!section) return;
-    const existing = section.querySelector('.tc-left-add-input');
+    const existing = section.querySelector('.abyss-left-add-input');
     if (existing) {
       (existing as HTMLInputElement).focus();
       return;
     }
     const body =
-      section.querySelector('.tc-left-section-body') ??
-      section.createDiv({ cls: 'tc-left-section-body' });
+      section.querySelector('.abyss-left-section-body') ??
+      section.createDiv({ cls: 'abyss-left-section-body' });
     const input = body.createEl('input', {
-      cls: 'tc-left-add-input',
+      cls: 'abyss-left-add-input',
       attr: { type: 'text', placeholder },
     });
     // Place it directly under the header, above existing rows.
@@ -357,13 +357,13 @@ export class LeftPanel {
     const count = allTasks.filter((t) => isActiveTask(t) && t.tags?.includes(tag) === true).length;
 
     const row = parent.createDiv({
-      cls: `tc-left-item tc-pinned-tag${isActive ? ' is-active' : ''}`,
+      cls: `abyss-left-item abyss-pinned-tag${isActive ? ' is-active' : ''}`,
     });
-    row.createDiv({ cls: 'tc-left-item-left' }, (l) => {
-      l.createEl('span', { cls: 'tc-left-label', text: tag });
+    row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
+      l.createEl('span', { cls: 'abyss-left-label', text: tag });
       this.appendCustomDot(l, { type: 'tag', tag });
     });
-    if (count > 0) row.createEl('span', { cls: 'tc-left-count', text: String(count) });
+    if (count > 0) row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = true;
@@ -392,18 +392,18 @@ export class LeftPanel {
     const count = allTasks.filter((t) => isActiveTask(t) && t.tags?.includes(tag) === true).length;
 
     const row = parent.createDiv({
-      cls: `tc-left-item tc-tag-leaf${isActive ? ' is-active' : ''}`,
+      cls: `abyss-left-item abyss-tag-leaf${isActive ? ' is-active' : ''}`,
     });
-    row.createDiv({ cls: 'tc-left-item-left' }, (l) => {
+    row.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
       // Match group rows: a color dot + the group name (no leading '#').
       if (group.color) {
-        const dot = l.createEl('span', { cls: 'tc-group-dot' });
+        const dot = l.createEl('span', { cls: 'abyss-group-dot' });
         dot.style.background = group.color;
       }
-      l.createEl('span', { cls: 'tc-left-label', text: group.name });
+      l.createEl('span', { cls: 'abyss-left-label', text: group.name });
       this.appendCustomDot(l, { type: 'tag', tag });
     });
-    if (count > 0) row.createEl('span', { cls: 'tc-left-count', text: String(count) });
+    if (count > 0) row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = false;
@@ -429,16 +429,16 @@ export class LeftPanel {
   ): void {
     const current = this.state.get('selectedList');
     const isActive = current === selection;
-    const row = parent.createDiv({ cls: `tc-left-item${isActive ? ' is-active' : ''}` });
+    const row = parent.createDiv({ cls: `abyss-left-item${isActive ? ' is-active' : ''}` });
 
-    const left = row.createDiv({ cls: 'tc-left-item-left' });
-    const iconEl = left.createEl('span', { cls: 'tc-left-icon' });
+    const left = row.createDiv({ cls: 'abyss-left-item-left' });
+    const iconEl = left.createEl('span', { cls: 'abyss-left-icon' });
     setIcon(iconEl, icon);
-    left.createEl('span', { cls: 'tc-left-label', text: label });
+    left.createEl('span', { cls: 'abyss-left-label', text: label });
     this.appendCustomDot(left, selection);
 
     if (count > 0) {
-      row.createEl('span', { cls: 'tc-left-count', text: String(count) });
+      row.createEl('span', { cls: 'abyss-left-count', text: String(count) });
     }
 
     row.addEventListener('click', () => {
@@ -479,15 +479,15 @@ export class LeftPanel {
 
     const isExpanded = this.expandedGroups.has(group.id);
 
-    const container = parent.createDiv({ cls: 'tc-tag-group' });
+    const container = parent.createDiv({ cls: 'abyss-tag-group' });
     const header = container.createDiv({
-      cls: `tc-tag-group-header${isGroupActive ? ' is-active' : ''}`,
+      cls: `abyss-tag-group-header${isGroupActive ? ' is-active' : ''}`,
     });
     this.attachGroupReorder(header, group.id);
 
     // Chevron: toggles expand/collapse only, does NOT select the group
     const chevron = header.createEl('span', {
-      cls: `tc-left-icon tc-group-arrow${isExpanded ? ' is-open' : ''}`,
+      cls: `abyss-left-icon abyss-group-arrow${isExpanded ? ' is-open' : ''}`,
     });
     setIcon(chevron, isExpanded ? 'chevron-down' : 'chevron-right');
     chevron.addEventListener('click', (e) => {
@@ -503,10 +503,10 @@ export class LeftPanel {
     });
 
     if (group.color) {
-      const dot = header.createEl('span', { cls: 'tc-group-dot' });
+      const dot = header.createEl('span', { cls: 'abyss-group-dot' });
       dot.style.background = group.color;
     }
-    header.createEl('span', { cls: 'tc-left-label', text: group.name });
+    header.createEl('span', { cls: 'abyss-left-label', text: group.name });
     this.appendCustomDot(header, { type: 'group', groupId: group.id });
 
     // Count all tasks matching any tag in this group (including root prefix tag)
@@ -516,7 +516,7 @@ export class LeftPanel {
       (t) => isActiveTask(t) && allGroupTags.some((tag) => t.tags?.includes(tag) === true),
     ).length;
     if (groupCount > 0) {
-      header.createEl('span', { cls: 'tc-left-count', text: String(groupCount) });
+      header.createEl('span', { cls: 'abyss-left-count', text: String(groupCount) });
     }
 
     // Header click: select the group (expand/collapse is handled by the chevron above)
@@ -531,7 +531,7 @@ export class LeftPanel {
     });
 
     if (isExpanded) {
-      const children = container.createDiv({ cls: 'tc-tag-group-children' });
+      const children = container.createDiv({ cls: 'abyss-tag-group-children' });
       for (const tag of tags) {
         // Strip the group prefix from display label: #work/dev → dev
         const label =
@@ -545,13 +545,14 @@ export class LeftPanel {
         ).length;
 
         const child = children.createDiv({
-          cls: `tc-left-item tc-tag-child${isTagActive ? ' is-active' : ''}`,
+          cls: `abyss-left-item abyss-tag-child${isTagActive ? ' is-active' : ''}`,
         });
-        child.createDiv({ cls: 'tc-left-item-left' }, (l) => {
-          l.createEl('span', { cls: 'tc-left-label', text: label });
+        child.createDiv({ cls: 'abyss-left-item-left' }, (l) => {
+          l.createEl('span', { cls: 'abyss-left-label', text: label });
           this.appendCustomDot(l, { type: 'tag', tag });
         });
-        if (tagCount > 0) child.createEl('span', { cls: 'tc-left-count', text: String(tagCount) });
+        if (tagCount > 0)
+          child.createEl('span', { cls: 'abyss-left-count', text: String(tagCount) });
 
         child.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -745,7 +746,7 @@ export class LeftPanel {
     };
   }
 
-  private static readonly GROUP_DND = 'application/x-tc-taggroup';
+  private static readonly GROUP_DND = 'application/x-abyss-taggroup';
 
   /**
    * Makes a tag-group row a drag source AND drop target for reordering groups on
@@ -757,18 +758,18 @@ export class LeftPanel {
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation();
       e.dataTransfer?.setData(LeftPanel.GROUP_DND, groupId);
-      el.classList.add('tc-dragging');
+      el.classList.add('abyss-dragging');
     });
-    el.addEventListener('dragend', () => el.classList.remove('tc-dragging'));
+    el.addEventListener('dragend', () => el.classList.remove('abyss-dragging'));
     el.addEventListener('dragover', (e) => {
       if (!e.dataTransfer?.types.includes(LeftPanel.GROUP_DND)) return;
       e.preventDefault();
-      el.classList.add('tc-reorder-target');
+      el.classList.add('abyss-reorder-target');
     });
-    el.addEventListener('dragleave', () => el.classList.remove('tc-reorder-target'));
+    el.addEventListener('dragleave', () => el.classList.remove('abyss-reorder-target'));
     el.addEventListener('drop', (e) => {
       const draggedId = e.dataTransfer?.getData(LeftPanel.GROUP_DND);
-      el.classList.remove('tc-reorder-target');
+      el.classList.remove('abyss-reorder-target');
       if (!draggedId || draggedId === groupId) return;
       e.preventDefault();
       e.stopPropagation();
@@ -792,11 +793,11 @@ export class LeftPanel {
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation();
       this.state.set('draggingTag', tag);
-      el.classList.add('tc-dragging');
+      el.classList.add('abyss-dragging');
     });
     el.addEventListener('dragend', () => {
       this.state.set('draggingTag', null);
-      el.classList.remove('tc-dragging');
+      el.classList.remove('abyss-dragging');
     });
   }
 
@@ -807,13 +808,13 @@ export class LeftPanel {
       const task = this.state.get('draggingTask');
       if (!this.projectManager || !task || task.source.filePath === projectPath) return;
       e.preventDefault();
-      el.classList.add('tc-drop-target');
+      el.classList.add('abyss-drop-target');
     });
     el.addEventListener('dragleave', () => {
-      el.classList.remove('tc-drop-target');
+      el.classList.remove('abyss-drop-target');
     });
     el.addEventListener('drop', (e) => {
-      el.classList.remove('tc-drop-target');
+      el.classList.remove('abyss-drop-target');
       const task = this.state.get('draggingTask');
       if (!task || task.source.filePath === projectPath || !this.projectManager) return;
       e.preventDefault();
@@ -834,11 +835,11 @@ export class LeftPanel {
     el.addEventListener('dragstart', (e) => {
       e.stopPropagation();
       this.state.set('draggingProject', projectPath);
-      el.classList.add('tc-dragging');
+      el.classList.add('abyss-dragging');
     });
     el.addEventListener('dragend', () => {
       this.state.set('draggingProject', null);
-      el.classList.remove('tc-dragging');
+      el.classList.remove('abyss-dragging');
     });
   }
 
@@ -846,14 +847,14 @@ export class LeftPanel {
     el.addEventListener('dragover', (e) => {
       if (!this.state.get('draggingTask')) return;
       e.preventDefault();
-      el.classList.add('tc-drop-target');
+      el.classList.add('abyss-drop-target');
     });
     el.addEventListener('dragleave', () => {
-      el.classList.remove('tc-drop-target');
+      el.classList.remove('abyss-drop-target');
     });
     el.addEventListener('drop', (e) => {
       e.preventDefault();
-      el.classList.remove('tc-drop-target');
+      el.classList.remove('abyss-drop-target');
       const dragging = this.state.get('draggingTask');
       if (!dragging) return;
       void this.assignTagFromInbox(dragging, tag);

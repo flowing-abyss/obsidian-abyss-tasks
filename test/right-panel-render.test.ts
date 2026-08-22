@@ -44,26 +44,28 @@ describe('RightPanel recurrence editor integration', () => {
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
 
-    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
     expect(chip.textContent).toBe('+ repeat');
     const kebab = el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!;
     click(kebab);
     expect(
-      Array.from(el.querySelectorAll<HTMLElement>('.tc-task-context-menu .tc-context-item')).some(
-        (item) => item.textContent === 'Edit repeat…',
-      ),
+      Array.from(
+        el.querySelectorAll<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
+      ).some((item) => item.textContent === 'Edit repeat…'),
     ).toBe(true);
 
     click(chip);
 
-    expect(el.querySelectorAll('.tc-recurrence-popover')).toHaveLength(1);
-    expect(el.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
-    expect(el.querySelector('.tc-recurrence-popover')?.classList).toContain('tc-popover-anchored');
+    expect(el.querySelectorAll('.abyss-recurrence-popover')).toHaveLength(1);
+    expect(el.querySelectorAll('.abyss-recurrence-editor')).toHaveLength(1);
+    expect(el.querySelector('.abyss-recurrence-popover')?.classList).toContain(
+      'abyss-popover-anchored',
+    );
 
-    el.querySelector<HTMLElement>('.tc-recurrence-editor')!.dispatchEvent(
+    el.querySelector<HTMLElement>('.abyss-recurrence-editor')!.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
     );
-    expect(el.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
     expect(activeDocument.activeElement).toBe(chip);
     el.remove();
   });
@@ -73,12 +75,12 @@ describe('RightPanel recurrence editor integration', () => {
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
     const outside = activeDocument.body.createEl('button', { text: 'Outside' });
-    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
 
     click(chip);
     await tick();
-    const popover = el.querySelector<HTMLElement>('.tc-recurrence-popover')!;
-    const title = popover.querySelector<HTMLElement>('.tc-recurrence-title')!;
+    const popover = el.querySelector<HTMLElement>('.abyss-recurrence-popover')!;
+    const title = popover.querySelector<HTMLElement>('.abyss-recurrence-title')!;
     expect(popover.getAttribute('role')).toBe('dialog');
     expect(popover.getAttribute('aria-modal')).toBe('false');
     expect(popover.getAttribute('aria-labelledby')).toBe(title.id);
@@ -86,7 +88,7 @@ describe('RightPanel recurrence editor integration', () => {
 
     click(outside);
 
-    expect(el.querySelector('.tc-recurrence-popover')).toBeNull();
+    expect(el.querySelector('.abyss-recurrence-popover')).toBeNull();
     expect(activeDocument.activeElement).toBe(chip);
     el.remove();
     outside.remove();
@@ -103,18 +105,18 @@ describe('RightPanel recurrence editor integration', () => {
     });
     state.set('taskStack', [root]);
 
-    const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!;
     expect(chip.textContent).toBe('every week');
-    expect(chip.querySelector('.tc-recurrence-badge')?.getAttribute('aria-label')).toBe(
+    expect(chip.querySelector('.abyss-recurrence-badge')?.getAttribute('aria-label')).toBe(
       'Repeats: every week',
     );
-    expect(chip.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
+    expect(chip.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
     click(chip);
 
-    expect(el.querySelector('.tc-recurrence-status')?.textContent).toBe(
+    expect(el.querySelector('.abyss-recurrence-status')?.textContent).toBe(
       'Remove the nested repeat conflict first.',
     );
-    expect(el.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.disabled).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')?.disabled).toBe(true);
   });
 
   it('opens the shared editor for the exact selected sub-task from its context menu', async () => {
@@ -132,22 +134,26 @@ describe('RightPanel recurrence editor integration', () => {
     const { state, el } = await makePanel({}, { queries: queryApiForTasks(() => [root]), execute });
     state.set('taskStack', [root, child]);
 
-    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
+    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
       (button) => button.textContent === '⋯',
     )!;
     click(more);
     const edit = Array.from(
-      el.querySelectorAll<HTMLElement>('.tc-task-context-menu .tc-context-item'),
+      el.querySelectorAll<HTMLElement>('.abyss-task-context-menu .abyss-context-item'),
     ).find((item) => item.textContent === 'Edit repeat…');
     expect(edit).not.toBeUndefined();
     click(edit!);
 
-    expect(el.querySelectorAll('.tc-recurrence-popover .tc-recurrence-editor')).toHaveLength(1);
-    expect(el.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe('every weekday');
-    const raw = el.querySelector<HTMLInputElement>('.tc-recurrence-raw')!;
+    expect(el.querySelectorAll('.abyss-recurrence-popover .abyss-recurrence-editor')).toHaveLength(
+      1,
+    );
+    expect(el.querySelector<HTMLInputElement>('.abyss-recurrence-raw')?.value).toBe(
+      'every weekday',
+    );
+    const raw = el.querySelector<HTMLInputElement>('.abyss-recurrence-raw')!;
     raw.value = 'every month';
     raw.dispatchEvent(new Event('input', { bubbles: true }));
-    click(el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!);
+    click(el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!);
     await flushMicrotasks();
 
     expect(execute).toHaveBeenCalledWith({
@@ -170,15 +176,15 @@ describe('RightPanel recurrence editor integration', () => {
     );
     activeDocument.body.append(el);
     state.set('taskStack', [root]);
-    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
+    const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn')).find(
       (button) => button.textContent === '⋯',
     )!;
 
     try {
       more.focus();
       click(more);
-      const menu = el.querySelector<HTMLElement>('.tc-task-context-menu')!;
-      const firstItem = menu.querySelector<HTMLElement>('.tc-context-item')!;
+      const menu = el.querySelector<HTMLElement>('.abyss-task-context-menu')!;
+      const firstItem = menu.querySelector<HTMLElement>('.abyss-context-item')!;
 
       expect(menu.getAttribute('role')).toBe('menu');
       expect(firstItem.getAttribute('role')).toBe('menuitem');
@@ -187,15 +193,15 @@ describe('RightPanel recurrence editor integration', () => {
       expect(firstItem.tabIndex).toBe(0);
 
       firstItem.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
+      expect(el.querySelector('.abyss-task-context-menu')).toBeNull();
       expect(activeDocument.activeElement).toBe(more);
 
       click(more);
-      el.querySelector<HTMLElement>('.tc-task-context-menu .tc-context-item')!.dispatchEvent(
+      el.querySelector<HTMLElement>('.abyss-task-context-menu .abyss-context-item')!.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
-      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
-      expect(el.querySelector('.tc-recurrence-popover')).not.toBeNull();
+      expect(el.querySelector('.abyss-task-context-menu')).toBeNull();
+      expect(el.querySelector('.abyss-recurrence-popover')).not.toBeNull();
     } finally {
       panel.destroy();
       el.remove();
@@ -223,9 +229,9 @@ describe('RightPanel recurrence editor integration', () => {
     state.set('taskStack', [first]);
 
     try {
-      const more = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-right-action-btn')).find(
-        (button) => button.textContent === '⋯',
-      )!;
+      const more = Array.from(
+        el.querySelectorAll<HTMLButtonElement>('.abyss-right-action-btn'),
+      ).find((button) => button.textContent === '⋯')!;
       click(more);
       vi.stubGlobal('activeDocument', replacementDocument);
       await tick();
@@ -240,7 +246,7 @@ describe('RightPanel recurrence editor integration', () => {
 
       state.set('taskStack', [second]);
 
-      expect(el.querySelector('.tc-task-context-menu')).toBeNull();
+      expect(el.querySelector('.abyss-task-context-menu')).toBeNull();
       expect(ownerRemove).toHaveBeenCalledWith('keydown', keyRegistration[1], true);
       expect(ownerRemove).toHaveBeenCalledWith('click', clickRegistration[1], true);
     } finally {
@@ -384,21 +390,21 @@ describe('RightPanel render lifecycle', () => {
 
     state.set('taskStack', [task({ title: 'First' })]);
     const firstActions = renderHeaderActions.mock.calls[0]?.[0];
-    expect(firstActions?.classList.contains('tc-right-header-actions')).toBe(true);
-    expect(firstActions?.parentElement?.classList.contains('tc-right-header')).toBe(true);
+    expect(firstActions?.classList.contains('abyss-right-header-actions')).toBe(true);
+    expect(firstActions?.parentElement?.classList.contains('abyss-right-header')).toBe(true);
 
     state.set('taskStack', [task({ title: 'Second' })]);
     const secondActions = renderHeaderActions.mock.calls[1]?.[0];
     expect(renderHeaderActions).toHaveBeenCalledTimes(2);
     expect(secondActions).not.toBe(firstActions);
-    expect(secondActions?.parentElement).toBe(el.querySelector('.tc-right-header'));
+    expect(secondActions?.parentElement).toBe(el.querySelector('.abyss-right-header'));
   });
 
   it('mount subscribes to taskStack → re-renders when stack changes', async () => {
     const { state, el } = await makePanel();
-    expect(el.querySelector('.tc-right-title-view')).toBeNull();
+    expect(el.querySelector('.abyss-right-title-view')).toBeNull();
     state.set('taskStack', [task({ title: 'Hello' })]);
-    const view = el.querySelector('.tc-right-title-view');
+    const view = el.querySelector('.abyss-right-title-view');
     expect(view).not.toBeNull();
   });
 
@@ -406,14 +412,14 @@ describe('RightPanel render lifecycle', () => {
     const { panel, state, el } = await makePanel();
     panel.destroy();
     state.set('taskStack', [task({ title: 'After destroy' })]);
-    expect(el.querySelector('.tc-right-title-view')).toBeNull();
+    expect(el.querySelector('.abyss-right-title-view')).toBeNull();
     expect(el.children).toHaveLength(0);
   });
 
   it('empty taskStack renders the empty-state message', async () => {
     const { el } = await makePanel();
-    expect(el.querySelector('.tc-right-empty')).not.toBeNull();
-    expect(el.querySelector('.tc-right-empty-title')?.textContent).toBe('No task selected');
+    expect(el.querySelector('.abyss-right-empty')).not.toBeNull();
+    expect(el.querySelector('.abyss-right-empty-title')?.textContent).toBe('No task selected');
   });
 });
 
@@ -422,12 +428,12 @@ describe('RightPanel.renderTask', () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Task' })]);
     const headings = Array.from(
-      el.querySelectorAll<HTMLElement>('.tc-right-section-label'),
+      el.querySelectorAll<HTMLElement>('.abyss-right-section-label'),
       (element) => element.textContent,
     );
 
     expect(headings).toEqual(['Description', 'Sub-tasks', 'Comments']);
-    expect(el.querySelector('.tc-right-divider')).toBeNull();
+    expect(el.querySelector('.abyss-right-divider')).toBeNull();
   });
 
   it.each(['root', 'subtask'] as const)(
@@ -489,10 +495,10 @@ describe('RightPanel.renderTask', () => {
       const { state, el } = await makePanel({}, tasks, registry, acknowledge);
       state.set('taskStack', selection === 'root' ? [root] : [root, child]);
 
-      const header = el.querySelector<HTMLElement>('.tc-right-header')!;
-      const marker = header.querySelector<HTMLElement>(':scope > .tc-status-marker')!;
-      const title = header.querySelector<HTMLElement>(':scope > .tc-right-title')!;
-      expect(header.querySelectorAll(':scope > .tc-status-marker')).toHaveLength(1);
+      const header = el.querySelector<HTMLElement>('.abyss-right-header')!;
+      const marker = header.querySelector<HTMLElement>(':scope > .abyss-status-marker')!;
+      const title = header.querySelector<HTMLElement>(':scope > .abyss-right-title')!;
+      expect(header.querySelectorAll(':scope > .abyss-status-marker')).toHaveLength(1);
       expect(marker).not.toBeNull();
       expect(marker.nextElementSibling).toBe(title);
       expect(marker.getAttribute('data-status')).toBe('status-waiting');
@@ -513,17 +519,19 @@ describe('RightPanel.renderTask', () => {
         selection === 'root' ? [freshRoot] : [freshRoot, freshChild],
       );
 
-      const currentMarker = el.querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')!;
+      const currentMarker = el.querySelector<HTMLElement>(
+        '.abyss-right-header > .abyss-status-marker',
+      )!;
       currentMarker.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
-      const popover = activeDocument.body.querySelector<HTMLElement>('.tc-status-popover')!;
+      const popover = activeDocument.body.querySelector<HTMLElement>('.abyss-status-popover')!;
       expect(
-        popover.querySelectorAll('.tc-status-popover-list .tc-status-popover-row'),
+        popover.querySelectorAll('.abyss-status-popover-list .abyss-status-popover-row'),
       ).toHaveLength(registry.all().length);
-      expect(popover.querySelectorAll('.tc-status-popover-flag')).toHaveLength(6);
+      expect(popover.querySelectorAll('.abyss-status-popover-flag')).toHaveLength(6);
       const waiting = Array.from(
-        popover.querySelectorAll<HTMLElement>('.tc-status-popover-row'),
+        popover.querySelectorAll<HTMLElement>('.abyss-status-popover-row'),
       ).find((row) => row.textContent?.includes('Waiting'))!;
       click(waiting);
       await flushMicrotasks();
@@ -538,12 +546,12 @@ describe('RightPanel.renderTask', () => {
         symbol: 'w',
       });
 
-      el.querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')!.dispatchEvent(
+      el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
       click(
         activeDocument.body.querySelector<HTMLElement>(
-          ".tc-status-popover-flag[data-tc-priority='A']",
+          ".abyss-status-popover-flag[data-abyss-priority='A']",
         )!,
       );
       await flushMicrotasks();
@@ -564,27 +572,27 @@ describe('RightPanel.renderTask', () => {
     const parent = task({ title: 'Parent', subtasks: [child] });
 
     state.set('taskStack', [parent]);
-    expect(el.firstElementChild?.classList.contains('tc-right-header')).toBe(true);
-    expect(el.querySelector('.tc-breadcrumb')).toBeNull();
+    expect(el.firstElementChild?.classList.contains('abyss-right-header')).toBe(true);
+    expect(el.querySelector('.abyss-breadcrumb')).toBeNull();
 
     state.set('taskStack', [parent, child]);
     const breadcrumb = el.firstElementChild;
-    expect(breadcrumb?.classList.contains('tc-breadcrumb')).toBe(true);
-    expect(breadcrumb?.nextElementSibling?.classList.contains('tc-right-header')).toBe(true);
+    expect(breadcrumb?.classList.contains('abyss-breadcrumb')).toBe(true);
+    expect(breadcrumb?.nextElementSibling?.classList.contains('abyss-right-header')).toBe(true);
     // Crumb text renders via MarkdownRenderer (mocked as a noop in tests), so we
     // assert on the crumb item element's presence rather than its textContent.
-    expect(breadcrumb?.querySelector('.tc-breadcrumb-item')).not.toBeNull();
+    expect(breadcrumb?.querySelector('.abyss-breadcrumb-item')).not.toBeNull();
   });
 
   it('title view renders idle; clicking it enters edit mode with markdownText', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'My task' })]);
-    const view = el.querySelector<HTMLElement>('.tc-right-title-view')!;
+    const view = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
     expect(view).not.toBeNull();
-    expect(el.querySelector('.tc-right-title-edit')).toBeNull();
+    expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
 
     click(view);
-    const ta = el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit');
+    const ta = el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit');
     expect(ta).not.toBeNull();
     expect(ta!.value).toBe('My task');
   });
@@ -598,17 +606,17 @@ describe('RightPanel.renderTask', () => {
     });
     attachCurrentRef(panel, current);
     state.set('taskStack', [current]);
-    const view = el.querySelector<HTMLElement>('.tc-right-title-view')!;
+    const view = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
     click(view);
-    const ta = el.querySelector<HTMLTextAreaElement>('.tc-right-title-edit')!;
+    const ta = el.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
     ta.value = 'Updated task';
     ta.dispatchEvent(new Event('blur', { bubbles: true }));
     await flushMicrotasks();
 
     const written = await readMd(app, 'f.md');
     expect(written).toContain('Updated task');
-    expect(el.querySelector('.tc-right-title-edit')).toBeNull();
-    expect(el.querySelector('.tc-right-title-view')).not.toBeNull();
+    expect(el.querySelector('.abyss-right-title-edit')).toBeNull();
+    expect(el.querySelector('.abyss-right-title-view')).not.toBeNull();
   });
 
   it('date chip renders (non-empty) when task.due is present', async () => {
@@ -623,18 +631,18 @@ describe('RightPanel.renderTask', () => {
         },
       }),
     ]);
-    const chips = el.querySelectorAll('.tc-chips-row .tc-chip');
+    const chips = el.querySelectorAll('.abyss-chips-row .abyss-chip');
     const dateChip = Array.from(chips).find((c) => c.textContent?.startsWith('📅'));
     expect(dateChip).toBeDefined();
-    expect(dateChip?.classList.contains('tc-chip-empty')).toBe(false);
+    expect(dateChip?.classList.contains('abyss-chip-empty')).toBe(false);
   });
 
   it('priority chip renders (non-empty) when task.priority !== "D"', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'A' })]);
-    const chip = el.querySelector('.tc-priority-chip');
+    const chip = el.querySelector('.abyss-priority-chip');
     expect(chip).not.toBeNull();
-    expect(chip?.classList.contains('tc-chip-empty')).toBe(false);
+    expect(chip?.classList.contains('abyss-chip-empty')).toBe(false);
     expect(chip?.getAttribute('data-priority')).toBe('A');
   });
 
@@ -643,23 +651,23 @@ describe('RightPanel.renderTask', () => {
     async (priority) => {
       const { state, el } = await makePanel();
       state.set('taskStack', [task({ title: 'P', priority })]);
-      const chip = el.querySelector('.tc-priority-chip');
+      const chip = el.querySelector('.abyss-priority-chip');
       expect(chip?.getAttribute('data-priority')).toBe(priority);
     },
   );
 
   // Round 4 Task 41: the priority chip's color rule (styles.css) reads
-  // `--tc-priority-*`, which is only defined under `.tc-panel-view` (see
+  // `--abyss-priority-*`, which is only defined under `.abyss-panel-view` (see
   // PanelView.ts). TaskModal mounts RightPanel at document.body OUTSIDE that
   // class, so without a hardcoded fallback the chip rendered colorless in the
   // task detail modal even though the correct data-priority attribute was
   // always present. Guard the fallback so this can't silently regress.
-  it('priority chip color rule in styles.css falls back to a global color var (works outside .tc-panel-view)', async () => {
+  it('priority chip color rule in styles.css falls back to a global color var (works outside .abyss-panel-view)', async () => {
     const { readFileSync } = await import('node:fs');
     const { resolve } = await import('node:path');
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
-    const rule = /\.tc-priority-chip\[data-priority='A'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
-    expect(rule).toMatch(/var\(--tc-priority-a,\s*var\(--color-red\)\)/);
+    const rule = /\.abyss-priority-chip\[data-priority='A'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    expect(rule).toMatch(/var\(--abyss-priority-a,\s*var\(--color-red\)\)/);
   });
 
   it('tag chips render for each #tag in rawText', async () => {
@@ -674,7 +682,7 @@ describe('RightPanel.renderTask', () => {
         },
       }),
     ]);
-    const tagChips = el.querySelectorAll('.tc-chip-tag');
+    const tagChips = el.querySelectorAll('.abyss-chip-tag');
     expect(tagChips).toHaveLength(2);
     expect(tagChips[0]?.textContent).toContain('#work');
     expect(tagChips[1]?.textContent).toContain('#home/kitchen');
@@ -694,7 +702,7 @@ describe('RightPanel.renderTask', () => {
 
     state.set('taskStack', [inlineOnly]);
 
-    expect(el.querySelectorAll('.tc-chip-tag')).toHaveLength(0);
+    expect(el.querySelectorAll('.abyss-chip-tag')).toHaveLength(0);
   });
 
   it('renders one canonical chip for mixed inline and real occurrences', async () => {
@@ -714,8 +722,8 @@ describe('RightPanel.renderTask', () => {
 
     state.set('taskStack', [mixed]);
 
-    expect(el.querySelectorAll('.tc-chip-tag')).toHaveLength(1);
-    expect(el.querySelector('.tc-chip-tag')?.textContent).toContain('#work');
+    expect(el.querySelectorAll('.abyss-chip-tag')).toHaveLength(1);
+    expect(el.querySelector('.abyss-chip-tag')?.textContent).toContain('#work');
   });
 });
 
@@ -741,11 +749,11 @@ describe('RightPanel.renderSubTask', () => {
         core: false,
       },
     ]);
-    el.querySelector<HTMLElement>('.tc-subtask-row .tc-status-marker')!.dispatchEvent(
+    el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker')!.dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
 
-    expect(activeDocument.body.querySelector('.tc-status-popover')?.textContent).toContain(
+    expect(activeDocument.body.querySelector('.abyss-status-popover')?.textContent).toContain(
       'Waiting',
     );
     expect(state.get('taskStack')).toBe(observedStack);
@@ -755,14 +763,14 @@ describe('RightPanel.renderSubTask', () => {
     const { state, el } = await makePanel();
     const sub = subtask({ title: 'sub one', ref: { originalBlock: '  - [ ] sub one' } });
     state.set('taskStack', [task({ title: 'Parent', subtasks: [sub] })]);
-    const row = el.querySelector('.tc-subtask-row');
+    const row = el.querySelector('.abyss-subtask-row');
     expect(row).not.toBeNull();
-    const marker = row?.querySelector<HTMLElement>('.tc-status-marker');
+    const marker = row?.querySelector<HTMLElement>('.abyss-status-marker');
     expect(marker).not.toBeNull();
     expect(marker?.getAttribute('data-status-type')).toBe('todo');
     // Label text renders via MarkdownRenderer (mocked as a noop in tests), so we
     // assert on the label element's presence rather than its textContent.
-    expect(row?.querySelector('.tc-subtask-label')).not.toBeNull();
+    expect(row?.querySelector('.abyss-subtask-label')).not.toBeNull();
   });
 
   it('clicking the status marker → toggleSubTask writes [x] to file', async () => {
@@ -774,7 +782,7 @@ describe('RightPanel.renderSubTask', () => {
     state.set('taskStack', [
       task({ title: 'parent', subtasks: [sub], source: { filePath: 'f.md', line: 0 } }),
     ]);
-    const marker = el.querySelector<HTMLElement>('.tc-subtask-row .tc-status-marker')!;
+    const marker = el.querySelector<HTMLElement>('.abyss-subtask-row .abyss-status-marker')!;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     await flushMicrotasks(20);
     const content = await readMd(app, 'f.md');
@@ -782,8 +790,8 @@ describe('RightPanel.renderSubTask', () => {
   });
 
   // Same bug class as the priority chip fix (Round 4 Task 41): the subtask row's
-  // status marker (styles.css `.tc-status-marker[data-priority='X']`) also reads
-  // bare `--tc-priority-*`, which is only defined under `.tc-panel-view`. Subtask
+  // status marker (styles.css `.abyss-status-marker[data-priority='X']`) also reads
+  // bare `--abyss-priority-*`, which is only defined under `.abyss-panel-view`. Subtask
   // rows render here in RightPanel, which TaskModal mounts at document.body
   // OUTSIDE that class — so without a hardcoded fallback the marker's
   // priority-colored border/color was lost in the task detail modal. Guard the
@@ -795,25 +803,25 @@ describe('RightPanel.renderSubTask', () => {
     ['E', 'blue'],
     ['F', 'purple'],
   ] as const)(
-    "status marker priority='%s' rule in styles.css falls back to var(--color-%s) (works outside .tc-panel-view)",
+    "status marker priority='%s' rule in styles.css falls back to var(--color-%s) (works outside .abyss-panel-view)",
     async (priority, colorName) => {
       const { readFileSync } = await import('node:fs');
       const { resolve } = await import('node:path');
       const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
       const rule =
         new RegExp(
-          `\\.tc-status-marker\\[data-priority='${priority}'\\]\\s*\\{([^}]*)\\}`,
+          `\\.abyss-status-marker\\[data-priority='${priority}'\\]\\s*\\{([^}]*)\\}`,
           'u',
         ).exec(css)?.[1] ?? '';
       const priorityVar = priority.toLowerCase();
       expect(rule).toMatch(
         new RegExp(
-          `border-color:\\s*var\\(--tc-priority-${priorityVar},\\s*var\\(--color-${colorName}\\)\\)`,
+          `border-color:\\s*var\\(--abyss-priority-${priorityVar},\\s*var\\(--color-${colorName}\\)\\)`,
         ),
       );
       expect(rule).toMatch(
         new RegExp(
-          `color:\\s*var\\(--tc-priority-${priorityVar},\\s*var\\(--color-${colorName}\\)\\)`,
+          `color:\\s*var\\(--abyss-priority-${priorityVar},\\s*var\\(--color-${colorName}\\)\\)`,
         ),
       );
     },
@@ -831,13 +839,13 @@ describe('RightPanel.renderComment', () => {
     const { state, el } = await makePanel({}, undefined, testStatusRegistry(), undefined, context);
     const comment = taskComment({ text: 'hello world', date: '2026-06-20' });
     state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
-    const row = el.querySelector('.tc-comment-row');
+    const row = el.querySelector('.abyss-comment-row');
     expect(row).not.toBeNull();
-    expect(row?.querySelector('.tc-comment-date')?.textContent).toBe('Today');
+    expect(row?.querySelector('.abyss-comment-date')?.textContent).toBe('Today');
     expect(context).toHaveBeenCalledOnce();
     // Comment text renders through MarkdownRenderer (a no-op mock in tests), so assert the
     // element exists rather than its async-populated textContent.
-    expect(row?.querySelector('.tc-comment-text')).not.toBeNull();
+    expect(row?.querySelector('.abyss-comment-text')).not.toBeNull();
   });
 
   it('renders an Atom comment using elapsed hour-and-minute precision', async () => {
@@ -862,17 +870,17 @@ describe('RightPanel.renderComment', () => {
 
     state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
 
-    expect(el.querySelector('.tc-comment-date')?.textContent).toBe('1 hour 20 minutes ago');
+    expect(el.querySelector('.abyss-comment-date')?.textContent).toBe('1 hour 20 minutes ago');
   });
 
   it('click on comment text → edit-mode textarea appears', async () => {
     const { state, el } = await makePanel();
     const comment = taskComment({ text: 'editable', date: '2026-06-20' });
     state.set('taskStack', [task({ title: 'T', comments: [comment] })]);
-    const textEl = el.querySelector<HTMLElement>('.tc-comment-text')!;
+    const textEl = el.querySelector<HTMLElement>('.abyss-comment-text')!;
     click(textEl);
-    expect(el.querySelector('.tc-comment-edit-input')).not.toBeNull();
-    expect(el.querySelector('.tc-comment-text')).toBeNull();
+    expect(el.querySelector('.abyss-comment-edit-input')).not.toBeNull();
+    expect(el.querySelector('.abyss-comment-text')).toBeNull();
   });
 });
 
@@ -907,7 +915,7 @@ describe('RightPanel popovers', () => {
     vi.spyOn(app.workspace, 'getLeaf').mockReturnValue(leaf);
 
     click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!);
-    const openItem = Array.from(el.querySelectorAll<HTMLElement>('.tc-context-item')).find(
+    const openItem = Array.from(el.querySelectorAll<HTMLElement>('.abyss-context-item')).find(
       (item) => item.textContent === 'Open in file',
     );
     click(openItem!);
@@ -928,12 +936,12 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chips = el.querySelectorAll('.tc-chips-row .tc-chip');
+    const chips = el.querySelectorAll('.abyss-chips-row .abyss-chip');
     const dateChip = Array.from(chips).find((c) => c.textContent?.startsWith('📅')) as HTMLElement;
     expect(dateChip).toBeDefined();
     click(dateChip);
-    expect(el.querySelector('.tc-date-popover')).not.toBeNull();
-    expect(el.querySelector('.tc-date-input')).not.toBeNull();
+    expect(el.querySelector('.abyss-date-popover')).not.toBeNull();
+    expect(el.querySelector('.abyss-date-input')).not.toBeNull();
     panel.destroy();
   });
 
@@ -952,9 +960,9 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
-      (candidate) => candidate.textContent?.startsWith('📅'),
-    )!;
+    const chip = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
+    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
@@ -962,8 +970,8 @@ describe('RightPanel popovers', () => {
       chip.focus();
       click(chip);
       await tick();
-      const popover = el.querySelector<HTMLElement>('.tc-date-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.tc-date-input')!;
+      const popover = el.querySelector<HTMLElement>('.abyss-date-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.abyss-date-input')!;
       expect(ownerDocument.activeElement).toBe(input);
 
       const escape = new KeyboardEvent('keydown', {
@@ -975,7 +983,7 @@ describe('RightPanel popovers', () => {
 
       expect(escape.defaultPrevented).toBe(true);
       expect(escapedToDocument).not.toHaveBeenCalled();
-      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(el.querySelector('.abyss-date-popover')).toBeNull();
       expect(ownerDocument.activeElement).toBe(chip);
     } finally {
       ownerDocument.removeEventListener('keydown', escapedToDocument);
@@ -994,27 +1002,27 @@ describe('RightPanel popovers', () => {
     outside.textContent = 'Outside';
     ownerDocument.body.append(outside);
     state.set('taskStack', [task({ title: 'Date traversal', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
-      (candidate) => candidate.textContent?.startsWith('📅'),
-    )!;
+    const chip = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
+    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
     vi.useFakeTimers();
 
     try {
       click(chip);
       vi.runOnlyPendingTimers();
-      const popover = el.querySelector<HTMLElement>('.tc-date-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.tc-date-input')!;
+      const popover = el.querySelector<HTMLElement>('.abyss-date-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.abyss-date-input')!;
       const clear = popover.querySelector<HTMLButtonElement>('[aria-label="Clear date"]')!;
       expect(ownerDocument.activeElement).toBe(input);
 
       clear.focus();
       vi.advanceTimersByTime(250);
-      expect(el.querySelector('.tc-date-popover')).toBe(popover);
+      expect(el.querySelector('.abyss-date-popover')).toBe(popover);
       expect(ownerDocument.activeElement).toBe(clear);
 
       outside.focus();
       vi.advanceTimersByTime(250);
-      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(el.querySelector('.abyss-date-popover')).toBeNull();
     } finally {
       panel.destroy();
       el.remove();
@@ -1030,9 +1038,9 @@ describe('RightPanel popovers', () => {
     const outside = ownerDocument.createElement('button');
     ownerDocument.body.append(outside);
     state.set('taskStack', [task({ title: 'Date cleanup', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chips-row > button')).find(
-      (candidate) => candidate.textContent?.startsWith('📅'),
-    )!;
+    const chip = Array.from(
+      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
+    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
     vi.useFakeTimers();
     const clearTimeout = vi.spyOn(ownerDocument.defaultView!, 'clearTimeout');
 
@@ -1046,7 +1054,7 @@ describe('RightPanel popovers', () => {
 
       expect(clearTimeout).toHaveBeenCalledWith(expect.any(Number));
       vi.advanceTimersByTime(250);
-      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(el.querySelector('.abyss-date-popover')).toBeNull();
     } finally {
       panel.destroy();
       el.remove();
@@ -1103,12 +1111,12 @@ describe('RightPanel popovers', () => {
       ),
     ]);
 
-    const dateChip = Array.from(el.querySelectorAll<HTMLElement>('.tc-chips-row .tc-chip')).find(
-      (chip) => chip.textContent?.startsWith('📅'),
-    );
+    const dateChip = Array.from(
+      el.querySelectorAll<HTMLElement>('.abyss-chips-row .abyss-chip'),
+    ).find((chip) => chip.textContent?.startsWith('📅'));
     expect(dateChip).toBeDefined();
     click(dateChip!);
-    click(el.querySelector<HTMLElement>('.tc-popover-clear-icon-btn')!);
+    click(el.querySelector<HTMLElement>('.abyss-popover-clear-icon-btn')!);
     await flushMicrotasks();
 
     expect(execute).toHaveBeenCalledWith({
@@ -1116,8 +1124,8 @@ describe('RightPanel popovers', () => {
       target: { type: 'task', ref },
       patch: { scheduled: { type: 'clear' } },
     });
-    expect(el2Text(el, '.tc-chips-row .tc-chip')).toContain('Date');
-    expect(el.querySelector('.tc-chip-scheduled')).toBeNull();
+    expect(el2Text(el, '.abyss-chips-row .abyss-chip')).toContain('Date');
+    expect(el.querySelector('.abyss-chip-scheduled')).toBeNull();
   });
 
   it('time chip click → popover has both a time input and a duration input', async () => {
@@ -1132,12 +1140,12 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chip = el.querySelector<HTMLElement>('.tc-chip-time')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
     click(chip);
-    expect(el.querySelector('.tc-time-popover')).not.toBeNull();
-    const timeInput = el.querySelector<HTMLInputElement>('.tc-time-input')!;
+    expect(el.querySelector('.abyss-time-popover')).not.toBeNull();
+    const timeInput = el.querySelector<HTMLInputElement>('.abyss-time-input')!;
     expect(timeInput.value).toBe('15:00');
-    const durationInput = el.querySelector<HTMLInputElement>('.tc-duration-input')!;
+    const durationInput = el.querySelector<HTMLInputElement>('.abyss-duration-input')!;
     expect(durationInput).not.toBeNull();
     expect(durationInput.value).toBe('1h30m');
     panel.destroy();
@@ -1149,7 +1157,7 @@ describe('RightPanel popovers', () => {
     const ownerDocument = frame.contentDocument!;
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Keyboard time', planning: { time: '09:15' } })]);
-    const chip = el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
@@ -1157,8 +1165,8 @@ describe('RightPanel popovers', () => {
       chip.focus();
       click(chip);
       await tick();
-      const popover = el.querySelector<HTMLElement>('.tc-time-popover')!;
-      const input = popover.querySelector<HTMLInputElement>('.tc-time-input')!;
+      const popover = el.querySelector<HTMLElement>('.abyss-time-popover')!;
+      const input = popover.querySelector<HTMLInputElement>('.abyss-time-input')!;
       expect(ownerDocument.activeElement).toBe(input);
 
       const escape = new KeyboardEvent('keydown', {
@@ -1170,7 +1178,7 @@ describe('RightPanel popovers', () => {
 
       expect(escape.defaultPrevented).toBe(true);
       expect(escapedToDocument).not.toHaveBeenCalled();
-      expect(el.querySelector('.tc-time-popover')).toBeNull();
+      expect(el.querySelector('.abyss-time-popover')).toBeNull();
       expect(ownerDocument.activeElement).toBe(chip);
     } finally {
       ownerDocument.removeEventListener('keydown', escapedToDocument);
@@ -1191,16 +1199,16 @@ describe('RightPanel popovers', () => {
     state.set('taskStack', [
       task({ title: 'Keyboard traversal', planning: { time: '09:15', duration: 45 } }),
     ]);
-    const chip = el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
     vi.useFakeTimers();
 
     try {
       click(chip);
       vi.runOnlyPendingTimers();
-      const popover = el.querySelector<HTMLElement>('.tc-time-popover')!;
-      const timeInput = popover.querySelector<HTMLInputElement>('.tc-time-input')!;
+      const popover = el.querySelector<HTMLElement>('.abyss-time-popover')!;
+      const timeInput = popover.querySelector<HTMLInputElement>('.abyss-time-input')!;
       const clearTime = popover.querySelector<HTMLButtonElement>('[aria-label="Clear time"]')!;
-      const durationInput = popover.querySelector<HTMLInputElement>('.tc-duration-input')!;
+      const durationInput = popover.querySelector<HTMLInputElement>('.abyss-duration-input')!;
       const clearDuration = popover.querySelector<HTMLButtonElement>(
         '[aria-label="Clear duration"]',
       )!;
@@ -1209,13 +1217,13 @@ describe('RightPanel popovers', () => {
       for (const control of [clearTime, durationInput, clearDuration]) {
         control.focus();
         vi.advanceTimersByTime(250);
-        expect(el.querySelector('.tc-time-popover')).toBe(popover);
+        expect(el.querySelector('.abyss-time-popover')).toBe(popover);
         expect(ownerDocument.activeElement).toBe(control);
       }
 
       outside.focus();
       vi.advanceTimersByTime(250);
-      expect(el.querySelector('.tc-time-popover')).toBeNull();
+      expect(el.querySelector('.abyss-time-popover')).toBeNull();
     } finally {
       panel.destroy();
       el.remove();
@@ -1233,20 +1241,24 @@ describe('RightPanel popovers', () => {
     state.set('taskStack', [task({ title: 'Overlay roles' })]);
 
     const inlineTagTrigger = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.tc-chip-add'),
+      el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add'),
     ).find((candidate) => candidate.textContent === '+ tag')!;
     const cases = [
       [
         el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!,
-        '.tc-task-context-menu',
+        '.abyss-task-context-menu',
         'menu',
       ],
-      [el.querySelector<HTMLButtonElement>('.tc-chip-time')!, '.tc-time-popover', 'dialog'],
-      [inlineTagTrigger, '.tc-tag-dropdown', 'listbox'],
-      [el.querySelector<HTMLButtonElement>('.tc-chip-add-date')!, '.tc-add-date-menu', 'menu'],
+      [el.querySelector<HTMLButtonElement>('.abyss-chip-time')!, '.abyss-time-popover', 'dialog'],
+      [inlineTagTrigger, '.abyss-tag-dropdown', 'listbox'],
       [
-        el.querySelector<HTMLButtonElement>('.tc-priority-chip')!,
-        '.tc-priority-popover',
+        el.querySelector<HTMLButtonElement>('.abyss-chip-add-date')!,
+        '.abyss-add-date-menu',
+        'menu',
+      ],
+      [
+        el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!,
+        '.abyss-priority-popover',
         'listbox',
       ],
     ] as const;
@@ -1277,25 +1289,25 @@ describe('RightPanel popovers', () => {
     const ownerDocument = frame.contentDocument!;
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Add a date' })]);
-    const trigger = el.querySelector<HTMLButtonElement>('.tc-chip-add-date')!;
+    const trigger = el.querySelector<HTMLButtonElement>('.abyss-chip-add-date')!;
 
     try {
       click(trigger);
-      click(el.querySelector<HTMLElement>('.tc-add-date-menu-item')!);
-      const dialog = el.querySelector<HTMLElement>('.tc-date-popover')!;
+      click(el.querySelector<HTMLElement>('.abyss-add-date-menu-item')!);
+      const dialog = el.querySelector<HTMLElement>('.abyss-date-popover')!;
 
       expect(dialog.getAttribute('role')).toBe('dialog');
       expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
       expect(trigger.getAttribute('aria-expanded')).toBe('true');
 
-      dialog.querySelector<HTMLInputElement>('.tc-date-input')!.dispatchEvent(
+      dialog.querySelector<HTMLInputElement>('.abyss-date-input')!.dispatchEvent(
         new ownerDocument.defaultView!.KeyboardEvent('keydown', {
           key: 'Escape',
           bubbles: true,
           cancelable: true,
         }),
       );
-      expect(el.querySelector('.tc-date-popover')).toBeNull();
+      expect(el.querySelector('.abyss-date-popover')).toBeNull();
       expect(trigger.getAttribute('aria-haspopup')).toBe('menu');
       expect(trigger.getAttribute('aria-expanded')).toBe('false');
     } finally {
@@ -1322,7 +1334,7 @@ describe('RightPanel popovers', () => {
     state.set('taskStack', [task({ title: 'Tag lifecycle' })]);
 
     const trigger = (): HTMLButtonElement =>
-      Array.from(el.querySelectorAll<HTMLButtonElement>('.tc-chip-add')).find(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chip-add')).find(
         (candidate) => candidate.textContent === '+ tag',
       )!;
 
@@ -1330,7 +1342,7 @@ describe('RightPanel popovers', () => {
       const escapeTrigger = trigger();
       escapeTrigger.focus();
       click(escapeTrigger);
-      const input = el.querySelector<HTMLInputElement>('.tc-tag-input')!;
+      const input = el.querySelector<HTMLInputElement>('.abyss-tag-input')!;
       expect(ownerDocument.activeElement).toBe(input);
       const escape = new ownerDocument.defaultView!.KeyboardEvent('keydown', {
         key: 'Escape',
@@ -1340,31 +1352,31 @@ describe('RightPanel popovers', () => {
       input.dispatchEvent(escape);
       expect(escape.defaultPrevented).toBe(true);
       expect(escapedToDocument).not.toHaveBeenCalled();
-      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(el.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
       expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
       expect(ownerDocument.activeElement).toBe(escapeTrigger);
 
       click(escapeTrigger);
       await tick();
       click(outside);
-      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(el.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
       expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
 
       click(escapeTrigger);
       click(escapeTrigger);
-      expect(el.querySelector('.tc-tag-dropdown-wrap')).toBeNull();
+      expect(el.querySelector('.abyss-tag-dropdown-wrap')).toBeNull();
       expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
-      expect(escapeTrigger.classList.contains('tc-chip-add--hidden')).toBe(false);
+      expect(escapeTrigger.classList.contains('abyss-chip-add--hidden')).toBe(false);
 
       click(escapeTrigger);
-      const rerenderedSurface = el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap')!;
+      const rerenderedSurface = el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap')!;
       state.set('taskStack', [task({ title: 'Rerendered tag lifecycle' })]);
       expect(rerenderedSurface.isConnected).toBe(false);
       expect(escapeTrigger.getAttribute('aria-expanded')).toBe('false');
 
       const destroyTrigger = trigger();
       click(destroyTrigger);
-      const destroyedSurface = el.querySelector<HTMLElement>('.tc-tag-dropdown-wrap')!;
+      const destroyedSurface = el.querySelector<HTMLElement>('.abyss-tag-dropdown-wrap')!;
       panel.destroy();
       expect(destroyedSurface.isConnected).toBe(false);
       expect(destroyTrigger.getAttribute('aria-expanded')).toBe('false');
@@ -1413,9 +1425,9 @@ describe('RightPanel popovers', () => {
         { ref },
       ),
     ]);
-    const chip = el.querySelector<HTMLElement>('.tc-chip-time')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
     click(chip);
-    const durationInput = el.querySelector<HTMLInputElement>('.tc-duration-input')!;
+    const durationInput = el.querySelector<HTMLInputElement>('.abyss-duration-input')!;
     durationInput.value = '2h';
     durationInput.dispatchEvent(new Event('change', { bubbles: true }));
     await flushMicrotasks();
@@ -1436,41 +1448,41 @@ describe('RightPanel popovers', () => {
     });
     const parent = task({ title: 'Parent', subtasks: [sub] });
     state.set('taskStack', [parent, parent.subtasks[0]!]);
-    const chip = el.querySelector<HTMLElement>('.tc-chip-time')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-chip-time')!;
     click(chip);
-    expect(el.querySelector('.tc-time-popover')).not.toBeNull();
-    expect(el.querySelector('.tc-duration-input')).toBeNull();
+    expect(el.querySelector('.abyss-time-popover')).not.toBeNull();
+    expect(el.querySelector('.abyss-duration-input')).toBeNull();
   });
 
   it('priority chip click → priority popover appears with options', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
     click(chip);
-    const pop = el.querySelector('.tc-priority-popover');
+    const pop = el.querySelector('.abyss-priority-popover');
     expect(pop).not.toBeNull();
-    expect(pop?.querySelectorAll('.tc-priority-option').length).toBe(6);
+    expect(pop?.querySelectorAll('.abyss-priority-option').length).toBe(6);
     panel.destroy();
   });
 
   it('priority popover options use the shared menu option structure', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'F' })]);
-    const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
     click(chip);
 
-    const active = el.querySelector<HTMLElement>('.tc-priority-option.is-active');
+    const active = el.querySelector<HTMLElement>('.abyss-priority-option.is-active');
 
     const children = Array.from(active?.children ?? []).map((el) => el.className);
 
     expect(children).toEqual([
-      'tc-priority-option-check',
-      'tc-priority-option-flag',
-      'tc-priority-option-label',
+      'abyss-priority-option-check',
+      'abyss-priority-option-flag',
+      'abyss-priority-option-label',
     ]);
-    expect(active?.querySelector('.tc-priority-option-flag')).not.toBeNull();
-    expect(active?.querySelector('.tc-priority-option-label')?.textContent).toBe('Lowest');
-    expect(active?.querySelector('.tc-priority-option-check')).not.toBeNull();
+    expect(active?.querySelector('.abyss-priority-option-flag')).not.toBeNull();
+    expect(active?.querySelector('.abyss-priority-option-label')?.textContent).toBe('Lowest');
+    expect(active?.querySelector('.abyss-priority-option-check')).not.toBeNull();
     panel.destroy();
   });
 
@@ -1480,15 +1492,17 @@ describe('RightPanel popovers', () => {
     const ownerDocument = frame.contentDocument!;
     ownerDocument.body.append(ownerDocument.adoptNode(el));
     state.set('taskStack', [task({ title: 'Keyboard priority', priority: 'F' })]);
-    const chip = el.querySelector<HTMLButtonElement>('.tc-priority-chip')!;
+    const chip = el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!;
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
     try {
       chip.focus();
       click(chip);
-      const popover = el.querySelector<HTMLElement>('.tc-priority-popover')!;
-      const selected = popover.querySelector<HTMLButtonElement>('.tc-priority-option.is-active')!;
+      const popover = el.querySelector<HTMLElement>('.abyss-priority-popover')!;
+      const selected = popover.querySelector<HTMLButtonElement>(
+        '.abyss-priority-option.is-active',
+      )!;
 
       expect(popover.contains(ownerDocument.activeElement)).toBe(true);
       expect(ownerDocument.activeElement).toBe(selected);
@@ -1502,15 +1516,15 @@ describe('RightPanel popovers', () => {
 
       expect(escape.defaultPrevented).toBe(true);
       expect(escapedToDocument).not.toHaveBeenCalled();
-      expect(el.querySelector('.tc-priority-popover')).toBeNull();
+      expect(el.querySelector('.abyss-priority-popover')).toBeNull();
       expect(ownerDocument.activeElement).toBe(chip);
 
       click(chip);
       const highest = el.querySelector<HTMLButtonElement>(
-        '.tc-priority-option[data-priority="A"]',
+        '.abyss-priority-option[data-priority="A"]',
       )!;
       click(highest);
-      expect(el.querySelector('.tc-priority-popover')).toBeNull();
+      expect(el.querySelector('.abyss-priority-popover')).toBeNull();
       expect(ownerDocument.activeElement).toBe(chip);
     } finally {
       ownerDocument.removeEventListener('keydown', escapedToDocument);
@@ -1523,7 +1537,7 @@ describe('RightPanel popovers', () => {
   it('converts viewport placement to a bordered and scrolled panel padding box', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 50, 300, 240),
@@ -1542,26 +1556,26 @@ describe('RightPanel popovers', () => {
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
-        if (this.classList.contains('tc-priority-popover')) return rect(0, 0, 120, 80);
+        if (this.classList.contains('abyss-priority-popover')) return rect(0, 0, 120, 80);
         return real.call(this);
       });
 
     click(chip);
 
-    const popover = el.querySelector<HTMLElement>('.tc-priority-popover')!;
+    const popover = el.querySelector<HTMLElement>('.abyss-priority-popover')!;
     expect(popover.parentElement).toBe(el);
-    expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
-    expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('62px');
+    expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe('180px');
+    expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('62px');
     panel.destroy();
     measure.mockRestore();
   });
 
   it.each([
-    ['date', '.tc-chips-row .tc-chip', '.tc-date-popover', 180],
-    ['time and duration', '.tc-chip-time', '.tc-time-popover', 180],
-    ['priority', '.tc-priority-chip', '.tc-priority-popover', 180],
-    ['add date', '.tc-chip-add-date', '.tc-add-date-menu', 180],
-    ['task actions', '[aria-label="More actions"]', '.tc-task-context-menu', 88],
+    ['date', '.abyss-chips-row .abyss-chip', '.abyss-date-popover', 180],
+    ['time and duration', '.abyss-chip-time', '.abyss-time-popover', 180],
+    ['priority', '.abyss-priority-chip', '.abyss-priority-popover', 180],
+    ['add date', '.abyss-chip-add-date', '.abyss-add-date-menu', 180],
+    ['task actions', '[aria-label="More actions"]', '.abyss-task-context-menu', 88],
   ] as const)(
     'anchors every floating task surface to its actual containing block: %s',
     async (_surface, triggerSelector, popoverSelector, expectedLeft) => {
@@ -1611,7 +1625,7 @@ describe('RightPanel popovers', () => {
       const offsetParent = vi
         .spyOn(HTMLElement.prototype, 'offsetParent', 'get')
         .mockImplementation(function (this: HTMLElement) {
-          if (this.matches('.tc-popover-anchored')) return containingBlock;
+          if (this.matches('.abyss-popover-anchored')) return containingBlock;
           return null;
         });
 
@@ -1621,12 +1635,12 @@ describe('RightPanel popovers', () => {
         const popover = el.querySelector<HTMLElement>(popoverSelector)!;
         expect(popover.offsetParent).toBe(containingBlock);
         expect(popover.offsetParent).not.toBe(el);
-        expect(popover.style.getPropertyValue('--tc-pop-left')).toBe(`${expectedLeft}px`);
-        expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('119px');
+        expect(popover.style.getPropertyValue('--abyss-pop-left')).toBe(`${expectedLeft}px`);
+        expect(popover.style.getPropertyValue('--abyss-pop-top')).toBe('119px');
 
-        // `--tc-popover-anchor-gap: 0.25rem` resolves to the configured 4px gap.
+        // `--abyss-popover-anchor-gap: 0.25rem` resolves to the configured 4px gap.
         const viewportTop =
-          Number.parseFloat(popover.style.getPropertyValue('--tc-pop-top')) + 20 + 4 - 19;
+          Number.parseFloat(popover.style.getPropertyValue('--abyss-pop-top')) + 20 + 4 - 19;
         expect(viewportTop - 120).toBe(4);
       } finally {
         offsetParent.mockRestore();
@@ -1645,7 +1659,7 @@ describe('RightPanel popovers', () => {
     const removeWindowListener = vi.spyOn(ownerWindow, 'removeEventListener');
     const removeDocumentListener = vi.spyOn(ownerDocument, 'removeEventListener');
 
-    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
     panel.destroy();
 
     expect(removeWindowListener).toHaveBeenCalledWith('resize', expect.any(Function));
@@ -1658,16 +1672,16 @@ describe('RightPanel popovers', () => {
     vi.useFakeTimers();
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
-    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
-    click(el.querySelector<HTMLElement>('.tc-chip-time')!);
+    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+    click(el.querySelector<HTMLElement>('.abyss-chip-time')!);
     vi.runOnlyPendingTimers();
 
     const installedDismissals = addListener.mock.calls.filter(
       ([type, , options]) => type === 'click' && options === true,
     );
     expect(installedDismissals).toHaveLength(1);
-    expect(el.querySelector('.tc-priority-popover')).toBeNull();
-    expect(el.querySelector('.tc-time-popover')).not.toBeNull();
+    expect(el.querySelector('.abyss-priority-popover')).toBeNull();
+    expect(el.querySelector('.abyss-time-popover')).not.toBeNull();
   });
 
   it('does not install priority dismissal after destroy before the timer', async () => {
@@ -1676,7 +1690,7 @@ describe('RightPanel popovers', () => {
     vi.useFakeTimers();
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
 
-    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
     panel.destroy();
     vi.runOnlyPendingTimers();
 
@@ -1692,7 +1706,7 @@ describe('RightPanel popovers', () => {
     const addListener = vi.spyOn(el.ownerDocument, 'addEventListener');
     const removeListener = vi.spyOn(el.ownerDocument, 'removeEventListener');
 
-    click(el.querySelector<HTMLElement>('.tc-priority-chip')!);
+    click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
     vi.runOnlyPendingTimers();
     const dismissalListener = addListener.mock.calls.find(
       ([type, , options]) => type === 'click' && options === true,
@@ -1707,15 +1721,15 @@ describe('RightPanel popovers', () => {
     const { panel, state, el } = await makePanel();
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);
-    const chip = el.querySelector<HTMLElement>('.tc-priority-chip')!;
+    const chip = el.querySelector<HTMLElement>('.abyss-priority-chip')!;
     click(chip);
-    expect(el.querySelector('.tc-priority-popover')).not.toBeNull();
+    expect(el.querySelector('.abyss-priority-popover')).not.toBeNull();
     // The outside-click listener is registered via setTimeout(0); wait for it.
     await tick(5);
     // Click on an unrelated element (the title view) — bubbles to el → once:click removes pop.
-    const title = el.querySelector<HTMLElement>('.tc-right-title-view')!;
+    const title = el.querySelector<HTMLElement>('.abyss-right-title-view')!;
     click(title);
-    expect(el.querySelector('.tc-priority-popover')).toBeNull();
+    expect(el.querySelector('.abyss-priority-popover')).toBeNull();
     panel.destroy();
     el.remove();
   });
@@ -1728,12 +1742,12 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
     // No placeholder pills for unset Start/Plan clutter the main row any more.
-    expect(el.querySelector('.tc-chip-start')).toBeNull();
-    expect(el.querySelector('.tc-chip-scheduled')).toBeNull();
+    expect(el.querySelector('.abyss-chip-start')).toBeNull();
+    expect(el.querySelector('.abyss-chip-scheduled')).toBeNull();
     // No separate "Planning" disclosure exists any more — fully unified into the top row.
-    expect(el.querySelector('.tc-planning-section')).toBeNull();
+    expect(el.querySelector('.abyss-planning-section')).toBeNull();
     // Compact "+"-style control, mirroring the "+ tag" button's pattern.
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date');
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date');
     expect(addBtn).not.toBeNull();
   });
 
@@ -1745,9 +1759,9 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
         planning: { due: undefined, scheduled: '2026-07-05', duration: undefined },
       }),
     ]);
-    const chip = el.querySelector('.tc-chip-scheduled');
+    const chip = el.querySelector('.abyss-chip-scheduled');
     expect(chip?.textContent).toContain('5 Jul');
-    expect(chip?.classList.contains('tc-chip-empty')).toBe(false);
+    expect(chip?.classList.contains('abyss-chip-empty')).toBe(false);
   });
 
   it('a task with start set shows a value-bearing (non-empty) start badge in the top row', async () => {
@@ -1758,9 +1772,9 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
         planning: { due: undefined, start: '2026-07-05', duration: undefined },
       }),
     ]);
-    const chip = el.querySelector('.tc-chip-start');
+    const chip = el.querySelector('.abyss-chip-start');
     expect(chip?.textContent).toContain('5 Jul');
-    expect(chip?.classList.contains('tc-chip-empty')).toBe(false);
+    expect(chip?.classList.contains('abyss-chip-empty')).toBe(false);
   });
 
   it('the "+" control\'s menu offers both Start and Plan when neither is set', async () => {
@@ -1771,12 +1785,12 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     try {
       addBtn.focus();
       click(addBtn);
-      const menu = el.querySelector<HTMLElement>('.tc-add-date-menu')!;
-      const firstItem = menu.querySelector<HTMLElement>('.tc-add-date-menu-item')!;
+      const menu = el.querySelector<HTMLElement>('.abyss-add-date-menu')!;
+      const firstItem = menu.querySelector<HTMLElement>('.abyss-add-date-menu-item')!;
       expect(menu.getAttribute('role')).toBe('menu');
       expect(firstItem.getAttribute('role')).toBe('menuitem');
       expect(firstItem.tabIndex).toBe(0);
@@ -1787,7 +1801,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       firstItem.dispatchEvent(
         new ownerDocument.defaultView!.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
       );
-      expect(el.querySelector('.tc-add-date-menu')).toBeNull();
+      expect(el.querySelector('.abyss-add-date-menu')).toBeNull();
       expect(ownerDocument.activeElement).toBe(addBtn);
     } finally {
       panel.destroy();
@@ -1801,7 +1815,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     Object.defineProperty(el, 'getBoundingClientRect', {
       configurable: true,
       value: () => rect(100, 40, 180, 280),
@@ -1814,19 +1828,21 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     const measure = vi
       .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
       .mockImplementation(function (this: HTMLElement) {
-        if (this.classList.contains('tc-add-date-menu')) return rect(0, 0, 90, 72);
+        if (this.classList.contains('abyss-add-date-menu')) return rect(0, 0, 90, 72);
         return real.call(this);
       });
 
     click(addBtn);
 
-    const menu = el.querySelector<HTMLElement>('.tc-add-date-menu')!;
+    const menu = el.querySelector<HTMLElement>('.abyss-add-date-menu')!;
     expect(menu.parentElement).toBe(el);
     expect(addBtn.contains(menu)).toBe(false);
-    expect(menu.classList.contains('tc-add-date-menu--compact')).toBe(true);
-    expect(menu.style.getPropertyValue('--tc-pop-left')).toBe('8px');
+    expect(menu.classList.contains('abyss-add-date-menu--compact')).toBe(true);
+    expect(menu.style.getPropertyValue('--abyss-pop-left')).toBe('8px');
     expect(
-      Array.from(menu.querySelectorAll('.tc-add-date-menu-item')).map((item) => item.textContent),
+      Array.from(menu.querySelectorAll('.abyss-add-date-menu-item')).map(
+        (item) => item.textContent,
+      ),
     ).toEqual(['🛫 Start', '⏳ Plan']);
     measure.mockRestore();
   });
@@ -1840,10 +1856,10 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
       }),
     ]);
     // Plan is set, so it renders as a normal pill and is no longer offered in the menu.
-    expect(el.querySelector('.tc-chip-scheduled')).not.toBeNull();
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    expect(el.querySelector('.abyss-chip-scheduled')).not.toBeNull();
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     click(addBtn);
-    const menu = el.querySelector('.tc-add-date-menu');
+    const menu = el.querySelector('.abyss-add-date-menu');
     expect(menu).not.toBeNull();
     expect(menu?.textContent).toContain('Start');
     expect(menu?.textContent).not.toContain('Plan');
@@ -1857,7 +1873,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
         planning: { start: '2026-07-01', scheduled: '2026-07-05', duration: undefined },
       }),
     ]);
-    expect(el.querySelector('.tc-chip-add-date')).toBeNull();
+    expect(el.querySelector('.abyss-chip-add-date')).toBeNull();
   });
 
   it('Space on "Start" in the "+" menu opens the shared date popover', async () => {
@@ -1865,15 +1881,15 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     click(addBtn);
-    const startOption = Array.from(el.querySelectorAll<HTMLElement>('.tc-add-date-menu-item')).find(
-      (o) => o.textContent?.includes('Start'),
-    )!;
+    const startOption = Array.from(
+      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
+    ).find((o) => o.textContent?.includes('Start'))!;
     startOption.dispatchEvent(
       new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
     );
-    const popover = el.querySelector('.tc-date-popover');
+    const popover = el.querySelector('.abyss-date-popover');
     expect(popover).not.toBeNull();
     expect(popover?.querySelector('input[type="date"]')).not.toBeNull();
   });
@@ -1883,13 +1899,13 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     state.set('taskStack', [
       task({ title: 'Dated', planning: { due: '2026-06-25', duration: undefined } }),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     click(addBtn);
-    const planOption = Array.from(el.querySelectorAll<HTMLElement>('.tc-add-date-menu-item')).find(
-      (o) => o.textContent?.includes('Plan'),
-    )!;
+    const planOption = Array.from(
+      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
+    ).find((o) => o.textContent?.includes('Plan'))!;
     click(planOption);
-    const popover = el.querySelector('.tc-date-popover');
+    const popover = el.querySelector('.abyss-date-popover');
     expect(popover).not.toBeNull();
     expect(popover?.querySelector('input[type="date"]')).not.toBeNull();
   });
@@ -1920,13 +1936,13 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
         { ref },
       ),
     ]);
-    const addBtn = el.querySelector<HTMLElement>('.tc-chip-add-date')!;
+    const addBtn = el.querySelector<HTMLElement>('.abyss-chip-add-date')!;
     click(addBtn);
-    const startOption = Array.from(el.querySelectorAll<HTMLElement>('.tc-add-date-menu-item')).find(
-      (o) => o.textContent?.includes('Start'),
-    )!;
+    const startOption = Array.from(
+      el.querySelectorAll<HTMLElement>('.abyss-add-date-menu-item'),
+    ).find((o) => o.textContent?.includes('Start'))!;
     click(startOption);
-    const input = el.querySelector<HTMLInputElement>('.tc-date-popover .tc-date-input')!;
+    const input = el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input')!;
     input.value = '2026-07-01';
     input.dispatchEvent(new Event('change'));
     await flushMicrotasks();
@@ -1948,16 +1964,16 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     // Drill into the sub-task directly, the same way clicking its label would.
     const parent = task({ title: 'Parent', subtasks: [sub] });
     state.set('taskStack', [parent, parent.subtasks[0]!]);
-    expect(el.querySelector('.tc-planning-section')).toBeNull();
-    expect(el.querySelector('.tc-chip-start')).toBeNull();
-    expect(el.querySelector('.tc-chip-scheduled')).toBeNull();
-    expect(el.querySelector('.tc-chip-add-date')).not.toBeNull();
+    expect(el.querySelector('.abyss-planning-section')).toBeNull();
+    expect(el.querySelector('.abyss-chip-start')).toBeNull();
+    expect(el.querySelector('.abyss-chip-scheduled')).toBeNull();
+    expect(el.querySelector('.abyss-chip-add-date')).not.toBeNull();
   });
 
   it('time chip keeps the alarm marker and exposes exact empty, time, and duration states', async () => {
     const emptyPanel = await makePanel();
     emptyPanel.state.set('taskStack', [task({ title: 'Empty time' })]);
-    const empty = emptyPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const empty = emptyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
     expect(empty.textContent).toBe('⏰ Time');
     expect(empty.getAttribute('aria-label')).toBe('Set time and duration');
 
@@ -1965,7 +1981,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
     withBothPanel.state.set('taskStack', [
       task({ title: 'TD', planning: { time: '15:00', duration: 90 } }),
     ]);
-    const withBoth = withBothPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const withBoth = withBothPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
     expect(withBoth.textContent).toBe('⏰ 15:00 · 1h30m');
     expect(withBoth.getAttribute('aria-label')).toBe(
       'Change time, currently 15:00, duration 90 minutes',
@@ -1973,7 +1989,7 @@ describe('RightPanel Start/Plan badges (round-pill, unified with due/time/priori
 
     const timeOnlyPanel = await makePanel();
     timeOnlyPanel.state.set('taskStack', [task({ title: 'T', planning: { time: '15:00' } })]);
-    const timeOnly = timeOnlyPanel.el.querySelector<HTMLButtonElement>('.tc-chip-time')!;
+    const timeOnly = timeOnlyPanel.el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
     expect(timeOnly.textContent).toBe('⏰ 15:00');
     expect(timeOnly.getAttribute('aria-label')).toBe('Change time, currently 15:00, no duration');
   });

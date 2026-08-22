@@ -55,8 +55,8 @@ describe('native picker button visual reset', () => {
   });
 
   it.each([
-    '.tc-tag-picker-modal button.tc-tag-picker-item',
-    '.tc-status-icon-field button.tc-status-icon-result',
+    '.abyss-tag-picker-modal button.abyss-tag-picker-item',
+    '.abyss-status-icon-field button.abyss-status-icon-result',
   ])('out-ranks Obsidian’s %s button defaults', (selector) => {
     const declarations = declarationsFor(selector);
 
@@ -80,7 +80,7 @@ describe('native picker button visual reset', () => {
   });
 
   it('keeps tag rows content-height and wrapping instead of inheriting the base button geometry', () => {
-    const selector = '.tc-tag-picker-modal button.tc-tag-picker-item';
+    const selector = '.abyss-tag-picker-modal button.abyss-tag-picker-item';
     const declarations = declarationsFor(selector);
 
     expect(
@@ -100,27 +100,31 @@ describe('native picker button visual reset', () => {
 
   it('retains a focus-visible ring and checked/removing tag state after the reset', () => {
     const focus = declarationsFor(
-      '.tc-tag-picker-modal button.tc-tag-picker-item:focus-visible,\n.tc-status-icon-field button.tc-status-icon-result:focus-visible',
+      '.abyss-tag-picker-modal button.abyss-tag-picker-item:focus-visible,\n.abyss-status-icon-field button.abyss-status-icon-result:focus-visible',
     );
-    const checked = declarationsFor('.tc-tag-picker-modal button.tc-tag-picker-item--checked');
-    const removing = declarationsFor('.tc-tag-picker-modal button.tc-tag-picker-item--removing');
+    const checked = declarationsFor(
+      '.abyss-tag-picker-modal button.abyss-tag-picker-item--checked',
+    );
+    const removing = declarationsFor(
+      '.abyss-tag-picker-modal button.abyss-tag-picker-item--removing',
+    );
 
     expect(focus).toContain('outline: 2px solid var(--interactive-accent)');
     expect(focus).toContain('outline-offset: 2px');
     expect(checked).toContain('background: var(--background-modifier-active-hover)');
     expect(removing).toContain('background: rgba(var(--color-red-rgb), 0.08)');
-    expect(css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item--checked')).toBeGreaterThan(
-      css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item {'),
-    );
-    expect(css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item--removing')).toBeGreaterThan(
-      css.indexOf('.tc-tag-picker-modal button.tc-tag-picker-item {'),
-    );
+    expect(
+      css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item--checked'),
+    ).toBeGreaterThan(css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item {'));
+    expect(
+      css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item--removing'),
+    ).toBeGreaterThan(css.indexOf('.abyss-tag-picker-modal button.abyss-tag-picker-item {'));
   });
 
   it('keeps checked and removing backgrounds ahead of the ordinary hover state', () => {
-    const hover = '.tc-tag-picker-modal button.tc-tag-picker-item:hover';
-    const checkedHover = '.tc-tag-picker-modal button.tc-tag-picker-item--checked:hover';
-    const removingHover = '.tc-tag-picker-modal button.tc-tag-picker-item--removing:hover';
+    const hover = '.abyss-tag-picker-modal button.abyss-tag-picker-item:hover';
+    const checkedHover = '.abyss-tag-picker-modal button.abyss-tag-picker-item--checked:hover';
+    const removingHover = '.abyss-tag-picker-modal button.abyss-tag-picker-item--removing:hover';
 
     expect(declarationsFor(checkedHover)).toContain(
       'background: var(--background-modifier-active-hover)',

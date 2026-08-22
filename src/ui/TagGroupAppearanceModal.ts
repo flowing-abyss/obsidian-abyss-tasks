@@ -31,7 +31,7 @@ export class TagGroupAppearanceModal extends Modal {
 
   onOpen(): void {
     const { contentEl } = this;
-    contentEl.addClass('tc-tag-group-appearance-modal');
+    contentEl.addClass('abyss-tag-group-appearance-modal');
     contentEl.createEl('h3', { text: 'Tag group appearance' });
 
     let nameInput!: HTMLInputElement;
@@ -57,7 +57,7 @@ export class TagGroupAppearanceModal extends Modal {
       });
     });
 
-    const buttonRow = contentEl.createDiv({ cls: 'tc-tag-group-appearance-buttons' });
+    const buttonRow = contentEl.createDiv({ cls: 'abyss-tag-group-appearance-buttons' });
     const resetButton = buttonRow.createEl('button', { text: 'Reset' });
     const cancelButton = buttonRow.createEl('button', { text: 'Cancel' });
     const saveButton = buttonRow.createEl('button', { text: 'Save', cls: 'mod-cta' });

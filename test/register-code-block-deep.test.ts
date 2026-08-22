@@ -138,7 +138,7 @@ describe('registerCodeBlock processor', () => {
     if (!processor) throw new Error('processor not registered');
 
     const { el } = invokeProcessor(processor, 'view: month');
-    const marker = el.querySelector<HTMLElement>('.task .tc-status-marker');
+    const marker = el.querySelector<HTMLElement>('.task .abyss-status-marker');
     expect(marker).not.toBeNull();
     marker!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(execute).toHaveBeenCalledWith({

@@ -10,25 +10,25 @@ export function renderProjectDashboard(
   project: Project | undefined,
   ctx: ProjectsDashboardContext,
 ): void {
-  container.addClass('tc-projects-dashboard');
+  container.addClass('abyss-projects-dashboard');
 
-  const back = container.createEl('button', { cls: 'tc-project-back' });
+  const back = container.createEl('button', { cls: 'abyss-project-back' });
   setIcon(back, 'arrow-left');
   back.createSpan({ text: 'Back to projects' });
   back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
 
   if (!project) {
-    container.createDiv({ cls: 'tc-projects-empty', text: 'Project not found' });
+    container.createDiv({ cls: 'abyss-projects-empty', text: 'Project not found' });
     return;
   }
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
 
-  const header = container.createDiv({ cls: 'tc-project-dashboard-header' });
-  header.createEl('h2', { cls: 'tc-project-dashboard-title', text: project.name });
+  const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
+  header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
 
-  const pill = header.createEl('button', { cls: 'tc-status-pill' });
+  const pill = header.createEl('button', { cls: 'abyss-status-pill' });
   if (status?.color) pill.style.background = status.color;
   pill.setText(status?.label ?? project.rawStatus ?? 'No status');
   pill.addEventListener('click', (e) => {
@@ -45,21 +45,21 @@ export function renderProjectDashboard(
   });
 
   const open = header.createEl('button', {
-    cls: 'tc-project-open-btn',
+    cls: 'abyss-project-open-btn',
     attr: { 'aria-label': 'Open note' },
   });
   setIcon(open, 'file-text');
   open.addEventListener('click', () => ctx.openNote(project.path));
 
-  const stats = container.createDiv({ cls: 'tc-project-dashboard-stats' });
+  const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, project.stats.done, project.stats.total);
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
   if (desc) {
-    container.createDiv({ cls: 'tc-project-description', text: desc });
+    container.createDiv({ cls: 'abyss-project-description', text: desc });
   }
 
-  const taskHost = container.createDiv({ cls: 'tc-project-tasks' });
+  const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
   ctx.renderTasks(taskHost, project.path);
 }

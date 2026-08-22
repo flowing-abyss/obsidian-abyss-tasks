@@ -130,12 +130,12 @@ describe('LeftPanel smart lists', () => {
   it('does not add a redundant Lists heading above the smart-list rows', () => {
     const { el } = makePanel();
     expect(el.textContent).not.toContain('Lists');
-    expect(el.querySelector('.tc-left-divider')).toBeNull();
+    expect(el.querySelector('.abyss-left-divider')).toBeNull();
   });
 
   it('renders Inbox/Today/Upcoming rows', () => {
     const { el } = makePanel();
-    const labels = Array.from(el.querySelectorAll('.tc-left-item .tc-left-label')).map(
+    const labels = Array.from(el.querySelectorAll('.abyss-left-item .abyss-left-label')).map(
       (l) => l.textContent,
     );
     expect(labels).toContain('Inbox');
@@ -164,8 +164,8 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.tc-left-item')!;
-    expect(inboxRow.querySelector('.tc-left-count')?.textContent).toBe('2');
+    const inboxRow = el.querySelector('.abyss-left-item')!;
+    expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
   it('countInbox untagged mode counts open tasks with no #tag', () => {
@@ -187,8 +187,8 @@ describe('LeftPanel smart lists', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'untagged', tag: '', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.tc-left-item')!;
-    expect(inboxRow.querySelector('.tc-left-count')?.textContent).toBe('1');
+    const inboxRow = el.querySelector('.abyss-left-item')!;
+    expect(inboxRow.querySelector('.abyss-left-count')?.textContent).toBe('1');
   });
 
   it('countToday matches only due/scheduled === today', () => {
@@ -201,9 +201,9 @@ describe('LeftPanel smart lists', () => {
       task({ status: 'done', planning: { due: t } }),
     ];
     const { el } = makePanel(tasks);
-    const rows = el.querySelectorAll('.tc-left-item');
+    const rows = el.querySelectorAll('.abyss-left-item');
     const todayRow = rows[1]!;
-    expect(todayRow.querySelector('.tc-left-count')?.textContent).toBe('2');
+    expect(todayRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
   it('countUpcoming matches due ?? scheduled > today', () => {
@@ -215,17 +215,17 @@ describe('LeftPanel smart lists', () => {
       task({ status: 'done', planning: { due: '2099-12-31' } }),
     ];
     const { el } = makePanel(tasks);
-    const rows = el.querySelectorAll('.tc-left-item');
+    const rows = el.querySelectorAll('.abyss-left-item');
     const upcomingRow = rows[2]!;
-    expect(upcomingRow.querySelector('.tc-left-count')?.textContent).toBe('2');
+    expect(upcomingRow.querySelector('.abyss-left-count')?.textContent).toBe('2');
   });
 
   it('count badge absent when count is 0', () => {
     const { el } = makePanel([], {
       inbox: { mode: 'tag', tag: '#inbox', removeTagOnAssign: true },
     });
-    const inboxRow = el.querySelector('.tc-left-item')!;
-    expect(inboxRow.querySelector('.tc-left-count')).toBeNull();
+    const inboxRow = el.querySelector('.abyss-left-item')!;
+    expect(inboxRow.querySelector('.abyss-left-count')).toBeNull();
   });
 
   it('is-active class on currently-selected smart list', () => {
@@ -237,27 +237,27 @@ describe('LeftPanel smart lists', () => {
     const panel = makeLeftPanelForTest(state, store, DEFAULT_SETTINGS, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
-    const active = el.querySelector('.tc-left-item.is-active .tc-left-label');
+    const active = el.querySelector('.abyss-left-item.is-active .abyss-left-label');
     expect(active?.textContent).toBe('Today');
   });
 
   it('click Inbox sets selectedList and mode', () => {
     const { el, state } = makePanel();
-    (el.querySelector('.tc-left-item') as HTMLElement).click();
+    (el.querySelector('.abyss-left-item') as HTMLElement).click();
     expect(state.get('selectedList')).toBe('inbox');
     expect(state.get('mode')).toBe('tasks');
   });
 
   it('click Today sets selectedList and mode', () => {
     const { el, state } = makePanel();
-    (el.querySelectorAll('.tc-left-item')[1] as HTMLElement).click();
+    (el.querySelectorAll('.abyss-left-item')[1] as HTMLElement).click();
     expect(state.get('selectedList')).toBe('today');
     expect(state.get('mode')).toBe('tasks');
   });
 
   it('click Upcoming sets selectedList and mode', () => {
     const { el, state } = makePanel();
-    (el.querySelectorAll('.tc-left-item')[2] as HTMLElement).click();
+    (el.querySelectorAll('.abyss-left-item')[2] as HTMLElement).click();
     expect(state.get('selectedList')).toBe('upcoming');
     expect(state.get('mode')).toBe('tasks');
   });
@@ -267,21 +267,21 @@ describe('LeftPanel tag groups (prefix mode)', () => {
   it('always renders the Tags section (with the + affordance), groups only when present', () => {
     // Empty groups: the Tags section still shows so the "+" is discoverable, but no group rows.
     const { el } = makePanel([], { tagGroups: [] });
-    expect(el.querySelector('.tc-left-section--tags')).not.toBeNull();
-    expect(el.querySelector('.tc-left-section--tags .tc-left-add')).not.toBeNull();
-    expect(el.querySelector('.tc-tag-group-header')).toBeNull();
+    expect(el.querySelector('.abyss-left-section--tags')).not.toBeNull();
+    expect(el.querySelector('.abyss-left-section--tags .abyss-left-add')).not.toBeNull();
+    expect(el.querySelector('.abyss-tag-group-header')).toBeNull();
     // With a group: the group renders.
     const { el: el2 } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    expect(el2.querySelector('.tc-tag-group-header')).not.toBeNull();
+    expect(el2.querySelector('.abyss-tag-group-header')).not.toBeNull();
   });
 
   it('group header renders name', () => {
     const { el } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    expect(el.querySelector('.tc-tag-group-header .tc-left-label')?.textContent).toBe('Work');
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-label')?.textContent).toBe('Work');
   });
 
   it('group count includes root prefix and subtags (open tasks only)', () => {
@@ -305,7 +305,7 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    expect(el.querySelector('.tc-tag-group-header .tc-left-count')?.textContent).toBe('2');
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('2');
   });
 
   it('group header is-active when selectedList is group', () => {
@@ -321,14 +321,14 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
-    expect(el.querySelector('.tc-tag-group-header')?.classList.contains('is-active')).toBe(true);
+    expect(el.querySelector('.abyss-tag-group-header')?.classList.contains('is-active')).toBe(true);
   });
 
   it('click group header sets selectedList and mode', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    (el.querySelector('.tc-tag-group-header') as HTMLElement).click();
+    (el.querySelector('.abyss-tag-group-header') as HTMLElement).click();
     expect(state.get('selectedList')).toEqual({ type: 'group', groupId: 'g1' });
     expect(state.get('mode')).toBe('tasks');
   });
@@ -337,10 +337,10 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    const chevron = el.querySelector('.tc-group-arrow') as HTMLElement;
-    expect(el.querySelector('.tc-tag-group-children')).toBeNull();
+    const chevron = el.querySelector('.abyss-group-arrow') as HTMLElement;
+    expect(el.querySelector('.abyss-tag-group-children')).toBeNull();
     chevron.click();
-    expect(el.querySelector('.tc-tag-group-children')).not.toBeNull();
+    expect(el.querySelector('.abyss-tag-group-children')).not.toBeNull();
   });
 
   it('chevron click collapses expanded group', () => {
@@ -362,9 +362,9 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const el = freshContainer();
     panel.mount(el);
     // auto-expanded due to active child
-    expect(el.querySelector('.tc-tag-group-children')).not.toBeNull();
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    expect(el.querySelector('.tc-tag-group-children')).toBeNull();
+    expect(el.querySelector('.abyss-tag-group-children')).not.toBeNull();
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    expect(el.querySelector('.abyss-tag-group-children')).toBeNull();
   });
 
   it('auto-expand when child tag is active (unless explicitly collapsed)', () => {
@@ -385,7 +385,7 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
-    expect(el.querySelector('.tc-tag-group-children')).not.toBeNull();
+    expect(el.querySelector('.abyss-tag-group-children')).not.toBeNull();
   });
 
   it('explicit collapse prevents auto-expand even with active child', () => {
@@ -407,10 +407,10 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const el = freshContainer();
     panel.mount(el);
     // Collapse explicitly
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
     // Re-render by triggering state change
     state.set('selectedList', { type: 'tag', tag: '#work/dev' });
-    expect(el.querySelector('.tc-tag-group-children')).toBeNull();
+    expect(el.querySelector('.abyss-tag-group-children')).toBeNull();
   });
 
   it('expanded group renders child tags with label stripping', () => {
@@ -424,8 +424,8 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    const childLabel = el.querySelector('.tc-tag-child .tc-left-label')?.textContent;
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    const childLabel = el.querySelector('.abyss-tag-child .abyss-left-label')?.textContent;
     expect(childLabel).toBe('dev');
   });
 
@@ -450,8 +450,8 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    expect(el.querySelector('.tc-tag-child .tc-left-count')?.textContent).toBe('2');
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    expect(el.querySelector('.abyss-tag-child .abyss-left-count')?.textContent).toBe('2');
   });
 
   it('child tag is-active when selectedList is that tag', () => {
@@ -472,7 +472,9 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const panel = makeLeftPanelForTest(state, store, settings, tm, null as never);
     const el = freshContainer();
     panel.mount(el);
-    expect(el.querySelector('.tc-tag-child.is-active .tc-left-label')?.textContent).toBe('dev');
+    expect(el.querySelector('.abyss-tag-child.is-active .abyss-left-label')?.textContent).toBe(
+      'dev',
+    );
   });
 
   it('click child tag sets selectedList and mode with stopPropagation', () => {
@@ -490,8 +492,8 @@ describe('LeftPanel tag groups (prefix mode)', () => {
         tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
       },
     );
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    const child = el.querySelector('.tc-tag-child') as HTMLElement;
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    const child = el.querySelector('.abyss-tag-child') as HTMLElement;
     child.click();
     expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#work/dev' });
     expect(state.get('mode')).toBe('tasks');
@@ -514,8 +516,8 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    const childLabels = Array.from(el.querySelectorAll('.tc-tag-child .tc-left-label')).map(
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    const childLabels = Array.from(el.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
       (l) => l.textContent,
     );
     // sorted localeCompare: #work/alpha < #work/dev
@@ -535,8 +537,8 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    expect(el.querySelectorAll('.tc-tag-child')).toHaveLength(0);
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    expect(el.querySelectorAll('.abyss-tag-child')).toHaveLength(0);
   });
 
   it('group count does not treat #workplace as the exact #work tag', () => {
@@ -553,14 +555,14 @@ describe('LeftPanel tag groups (prefix mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    expect(el.querySelector('.tc-tag-group-header .tc-left-count')).toBeNull();
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')).toBeNull();
   });
 
   it('group color renders as dot', () => {
     const { el } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work', color: '#ff0000' }],
     });
-    const dot = el.querySelector('.tc-group-dot');
+    const dot = el.querySelector('.abyss-group-dot');
     expect(dot).not.toBeNull();
     expect((dot as HTMLElement).style.background).toBe('rgb(255, 0, 0)');
   });
@@ -571,8 +573,8 @@ describe('LeftPanel tag groups (manual mode)', () => {
     const { el } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Manual', mode: 'manual', tags: ['#foo', '#bar'] }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    const labels = Array.from(el.querySelectorAll('.tc-tag-child .tc-left-label')).map(
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    const labels = Array.from(el.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
       (l) => l.textContent,
     );
     expect(labels).toEqual(['#foo', '#bar']);
@@ -599,27 +601,27 @@ describe('LeftPanel tag groups (manual mode)', () => {
     const { el } = makePanel(tasks, {
       tagGroups: [{ id: 'g1', name: 'Manual', mode: 'manual', tags: ['#foo', '#bar'] }],
     });
-    expect(el.querySelector('.tc-tag-group-header .tc-left-count')?.textContent).toBe('2');
+    expect(el.querySelector('.abyss-tag-group-header .abyss-left-count')?.textContent).toBe('2');
   });
 
   it('manual group no prefix stripping (labels are full tags)', () => {
     const { el } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Manual', mode: 'manual', tags: ['#work/dev', '#work/ops'] }],
     });
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    expect(el.querySelector('.tc-tag-child .tc-left-label')?.textContent).toBe('#work/dev');
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    expect(el.querySelector('.abyss-tag-child .abyss-left-label')?.textContent).toBe('#work/dev');
   });
 
   it('single-tag manual group renders flat (leaf: color dot + group name, no #, no chevron)', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'next', mode: 'manual', color: '#ff0000', tags: ['#next'] }],
     });
-    expect(el.querySelector('.tc-group-arrow')).toBeNull();
-    const leaf = el.querySelector('.tc-tag-leaf');
+    expect(el.querySelector('.abyss-group-arrow')).toBeNull();
+    const leaf = el.querySelector('.abyss-tag-leaf');
     expect(leaf).toBeTruthy();
     // Consistent with group rows: name without '#', plus a color dot.
-    expect(leaf!.querySelector('.tc-left-label')?.textContent).toBe('next');
-    expect(leaf!.querySelector('.tc-group-dot')).toBeTruthy();
+    expect(leaf!.querySelector('.abyss-left-label')?.textContent).toBe('next');
+    expect(leaf!.querySelector('.abyss-group-dot')).toBeTruthy();
     (leaf as HTMLElement).click();
     expect(state.get('selectedList')).toEqual({ type: 'tag', tag: '#next' });
   });
@@ -631,7 +633,7 @@ describe('LeftPanel top-level tag group menus', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Work', mode: 'prefix', prefix: 'work' }],
     });
-    const header = el.querySelector('.tc-tag-group-header')!;
+    const header = el.querySelector('.abyss-tag-group-header')!;
     const selectedBefore = state.get('selectedList');
 
     openContextMenu(header);
@@ -643,7 +645,7 @@ describe('LeftPanel top-level tag group menus', () => {
     ]);
     expect(state.get('selectedList')).toEqual(selectedBefore);
     expect(state.get('draggingTag')).toBeNull();
-    expect(el.querySelector('.tc-tag-group-children')).toBeNull();
+    expect(el.querySelector('.abyss-tag-group-children')).toBeNull();
   });
 
   it('multi-manual header identifies every member instead of guessing a rename scope', () => {
@@ -652,7 +654,7 @@ describe('LeftPanel top-level tag group menus', () => {
       tagGroups: [{ id: 'g1', name: 'Delivery', mode: 'manual', tags: ['#client', '#client/ops'] }],
     });
 
-    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
 
     expect(items.map((item) => item.title)).toEqual([
       'Rename display name…',
@@ -667,7 +669,7 @@ describe('LeftPanel top-level tag group menus', () => {
     const { el, state } = makePanel([], {
       tagGroups: [{ id: 'g1', name: 'Next', mode: 'manual', tags: ['#next'] }],
     });
-    const leaf = el.querySelector('.tc-tag-leaf')!;
+    const leaf = el.querySelector('.abyss-tag-leaf')!;
     const selectedBefore = state.get('selectedList');
 
     openContextMenu(leaf);
@@ -692,15 +694,15 @@ describe('LeftPanel top-level tag group menus', () => {
     const renameExact = vi.spyOn(tm, 'renameTagExact');
     const renamePrefix = vi.spyOn(tm, 'renameTagPrefix');
 
-    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
     items.find((item) => item.title === 'Rename display name…')!.click();
     const nameInput = activeDocument.querySelector<HTMLInputElement>(
-      '.tc-tag-group-appearance-modal input[type="text"]',
+      '.abyss-tag-group-appearance-modal input[type="text"]',
     )!;
     nameInput.value = 'Focused work';
     nameInput.dispatchEvent(new Event('input', { bubbles: true }));
     activeDocument
-      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
       .click();
     await flushMicrotasks();
 
@@ -708,14 +710,16 @@ describe('LeftPanel top-level tag group menus', () => {
     expect(merged.tagGroups[0]?.color).toBe('#ff0000');
 
     items.splice(0);
-    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
     items.find((item) => item.title === 'Change color…')!.click();
     const reset = Array.from(
-      activeDocument.querySelectorAll<HTMLButtonElement>('.tc-tag-group-appearance-modal button'),
+      activeDocument.querySelectorAll<HTMLButtonElement>(
+        '.abyss-tag-group-appearance-modal button',
+      ),
     ).find((button) => button.textContent === 'Reset')!;
     reset.click();
     activeDocument
-      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
       .click();
     await flushMicrotasks();
 
@@ -733,15 +737,15 @@ describe('LeftPanel top-level tag group menus', () => {
     });
     save.mockRejectedValueOnce(new Error('settings storage unavailable'));
 
-    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
     items.find((item) => item.title === 'Rename display name…')!.click();
     const nameInput = activeDocument.querySelector<HTMLInputElement>(
-      '.tc-tag-group-appearance-modal input[type="text"]',
+      '.abyss-tag-group-appearance-modal input[type="text"]',
     )!;
     nameInput.value = 'Focused work';
     nameInput.dispatchEvent(new Event('input', { bubbles: true }));
     activeDocument
-      .querySelector<HTMLButtonElement>('.tc-tag-group-appearance-modal .mod-cta')!
+      .querySelector<HTMLButtonElement>('.abyss-tag-group-appearance-modal .mod-cta')!
       .click();
     await flushMicrotasks();
 
@@ -806,9 +810,9 @@ describe('LeftPanel top-level tag group menus', () => {
       changedFiles: ['a.md', 'b.md'],
     });
 
-    openContextMenu(el.querySelector('.tc-tag-group-header')!);
+    openContextMenu(el.querySelector('.abyss-tag-group-header')!);
     items.find((item) => item.title === 'Rename prefix across vault…')!.click();
-    const modal = activeDocument.querySelector<HTMLElement>('.tc-rename-tag-modal')!;
+    const modal = activeDocument.querySelector<HTMLElement>('.abyss-rename-tag-modal')!;
     const input = modal.querySelector<HTMLInputElement>('input')!;
     input.value = '#focus';
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -953,12 +957,12 @@ describe('LeftPanel top-level tag group menus', () => {
       ['#pinned'],
     );
 
-    openContextMenu(el.querySelector('.tc-pinned-tag')!);
+    openContextMenu(el.querySelector('.abyss-pinned-tag')!);
     expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
 
     items.splice(0);
-    (el.querySelector('.tc-group-arrow') as HTMLElement).click();
-    openContextMenu(el.querySelector('.tc-tag-child')!);
+    (el.querySelector('.abyss-group-arrow') as HTMLElement).click();
+    openContextMenu(el.querySelector('.abyss-tag-child')!);
     expect(items.map((item) => item.title)).toContain('Rename tag across vault…');
   });
 });
@@ -974,7 +978,9 @@ describe('LeftPanel lifecycle', () => {
     panel.mount(el);
     state.set('selectedList', 'inbox');
     // re-rendered: inbox should be active
-    expect(el.querySelector('.tc-left-item.is-active .tc-left-label')?.textContent).toBe('Inbox');
+    expect(el.querySelector('.abyss-left-item.is-active .abyss-left-label')?.textContent).toBe(
+      'Inbox',
+    );
   });
 
   it('mount subscribes to mode changes', () => {
@@ -993,10 +999,10 @@ describe('LeftPanel lifecycle', () => {
 
   it('refresh re-renders', () => {
     const { el, panel } = makePanel([]);
-    (el.querySelector('.tc-left-item') as HTMLElement).click();
+    (el.querySelector('.abyss-left-item') as HTMLElement).click();
     panel.refresh();
     // still has content after refresh
-    expect(el.querySelector('.tc-left-section-header')).not.toBeNull();
+    expect(el.querySelector('.abyss-left-section-header')).not.toBeNull();
   });
 
   it('destroy removes listeners and empties el', () => {
@@ -1030,7 +1036,7 @@ describe('LeftPanel lifecycle', () => {
 describe('LeftPanel Pinned section', () => {
   it('renders Pinned section when pinnedTags is non-empty', () => {
     const { el } = makePanel([], {}, ['#task/next']);
-    const headers = Array.from(el.querySelectorAll('.tc-left-section-header')).map(
+    const headers = Array.from(el.querySelectorAll('.abyss-left-section-header')).map(
       (h) => h.textContent,
     );
     expect(headers).toContain('Pinned');
@@ -1038,7 +1044,7 @@ describe('LeftPanel Pinned section', () => {
 
   it('does not render Pinned section when pinnedTags is empty', () => {
     const { el } = makePanel();
-    const headers = Array.from(el.querySelectorAll('.tc-left-section-header')).map(
+    const headers = Array.from(el.querySelectorAll('.abyss-left-section-header')).map(
       (h) => h.textContent,
     );
     expect(headers).not.toContain('Pinned');
@@ -1046,13 +1052,13 @@ describe('LeftPanel Pinned section', () => {
 
   it('shows full tag name in Pinned section', () => {
     const { el } = makePanel([], {}, ['#task/next_action']);
-    const items = el.querySelectorAll('.tc-pinned-tag .tc-left-label');
+    const items = el.querySelectorAll('.abyss-pinned-tag .abyss-left-label');
     expect(items[0]?.textContent).toBe('#task/next_action');
   });
 
   it('clicking pinned tag sets selectedList to that tag', () => {
     const { el, state } = makePanel([], {}, ['#task/next']);
-    const item = el.querySelector('.tc-pinned-tag') as HTMLElement;
+    const item = el.querySelector('.abyss-pinned-tag') as HTMLElement;
     item.click();
     const sel = state.get('selectedList');
     expect(typeof sel === 'object' && sel.type === 'tag' && sel.tag).toBe('#task/next');
@@ -1072,7 +1078,7 @@ describe('LeftPanel archived tags are hidden', () => {
       tagGroups: [{ id: 'g1', name: 'work', mode: 'prefix', prefix: 'work' }],
     };
     const { el } = makePanel(tasks, settings, [], ['#work/dev']);
-    const childLabels = Array.from(el.querySelectorAll('.tc-tag-child .tc-left-label')).map(
+    const childLabels = Array.from(el.querySelectorAll('.abyss-tag-child .abyss-left-label')).map(
       (l) => l.textContent,
     );
     expect(childLabels).not.toContain('dev');
@@ -1096,7 +1102,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const inboxCount = el.querySelector('.tc-left-item .tc-left-count')?.textContent;
+    const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
     expect(inboxCount).toBe('1');
   });
 
@@ -1116,7 +1122,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
     const { el } = makePanel([inlineOnly], {
       inbox: { mode: 'tag', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const inboxCount = el.querySelector('.tc-left-item .tc-left-count')?.textContent;
+    const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
 
     expect(inboxCount).toBeUndefined();
   });
@@ -1136,7 +1142,7 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'untagged', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const inboxCount = el.querySelector('.tc-left-item .tc-left-count')?.textContent;
+    const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
     expect(inboxCount).toBe('1');
   });
 
@@ -1168,31 +1174,31 @@ describe('LeftPanel inbox logic (new inbox object)', () => {
     const { el } = makePanel(tasks, {
       inbox: { mode: 'both', tag: '#task/inbox', removeTagOnAssign: true },
     });
-    const inboxCount = el.querySelector('.tc-left-item .tc-left-count')?.textContent;
+    const inboxCount = el.querySelector('.abyss-left-item .abyss-left-count')?.textContent;
     expect(inboxCount).toBe('2');
   });
 });
 
 describe('LeftPanel drop zones', () => {
-  it('adds tc-drop-target class on dragover when draggingTask is set', () => {
+  it('adds abyss-drop-target class on dragover when draggingTask is set', () => {
     const t = task({
       status: 'open',
       source: { originalMarkdown: '- [ ] t', originalBlock: '- [ ] t' },
     });
     const { el, state } = makePanel([], {}, ['#task/next']);
     state.set('draggingTask', t);
-    const pinned = el.querySelector('.tc-pinned-tag') as HTMLElement;
+    const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
     const ev = new MouseEvent('dragover', { bubbles: true, cancelable: true });
     pinned.dispatchEvent(ev);
-    expect(pinned.classList.contains('tc-drop-target')).toBe(true);
+    expect(pinned.classList.contains('abyss-drop-target')).toBe(true);
   });
 
-  it('does not add tc-drop-target when no draggingTask', () => {
+  it('does not add abyss-drop-target when no draggingTask', () => {
     const { el } = makePanel([], {}, ['#task/next']);
-    const pinned = el.querySelector('.tc-pinned-tag') as HTMLElement;
+    const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
     const ev = new MouseEvent('dragover', { bubbles: true, cancelable: true });
     pinned.dispatchEvent(ev);
-    expect(pinned.classList.contains('tc-drop-target')).toBe(false);
+    expect(pinned.classList.contains('abyss-drop-target')).toBe(false);
   });
 
   it('assigns a dropped inbox task through one combined API patch', () => {
@@ -1212,7 +1218,7 @@ describe('LeftPanel drop zones', () => {
       ['#task/next'],
     );
     state.set('draggingTask', t);
-    const pinned = el.querySelector('.tc-pinned-tag') as HTMLElement;
+    const pinned = el.querySelector('.abyss-pinned-tag') as HTMLElement;
 
     pinned.dispatchEvent(new MouseEvent('drop', { bubbles: true, cancelable: true }));
 
@@ -1275,7 +1281,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     const { el } = makeFull({
       settings: { tagGroups: [{ id: 'g', name: 'W', mode: 'manual', tags: ['#w'] }] },
     });
-    const chevron = el.querySelector('.tc-left-section--tags .tc-left-section-chevron');
+    const chevron = el.querySelector('.abyss-left-section--tags .abyss-left-section-chevron');
     expect(chevron).toBeTruthy();
     expect(chevron?.textContent).toBe('');
   });
@@ -1286,18 +1292,18 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       projects: [{ path: 'Projects/A.md', name: 'A' }],
     });
     const headings = Array.from(
-      el.querySelectorAll<HTMLElement>('.tc-left-section-title'),
+      el.querySelectorAll<HTMLElement>('.abyss-left-section-title'),
       (element) => element.textContent,
     );
 
     expect(headings).toEqual(['Pinned', 'Projects', 'Tags']);
-    expect(el.querySelector('.tc-left-divider')).toBeNull();
+    expect(el.querySelector('.abyss-left-divider')).toBeNull();
   });
 
   it('persists section collapse via onSaveSettings', () => {
     const { el, save, merged } = makeFull({});
     const header = el.querySelector(
-      '.tc-left-section--tags .tc-left-section-header',
+      '.abyss-left-section--tags .abyss-left-section-header',
     ) as HTMLElement;
     header.click();
     expect(merged.sectionCollapse.tags).toBe(true);
@@ -1310,8 +1316,8 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       name: `P${i}`,
     }));
     const { el } = makeFull({ projects });
-    expect(el.querySelectorAll('.tc-project-item').length).toBe(10);
-    expect(el.querySelector('.tc-left-showmore')).toBeTruthy();
+    expect(el.querySelectorAll('.abyss-project-item').length).toBe(10);
+    expect(el.querySelector('.abyss-left-showmore')).toBeTruthy();
   });
 
   it('project badge counts active (total − done − cancelled = open + in-progress)', () => {
@@ -1324,26 +1330,26 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       },
     ];
     const { el } = makeFull({ projects });
-    expect(el.querySelector('.tc-project-item .tc-left-count')?.textContent).toBe('2');
+    expect(el.querySelector('.abyss-project-item .abyss-left-count')?.textContent).toBe('2');
   });
 
   it('clicking a project selects it without leaving tasks mode', () => {
     const { el, state } = makeFull({ projects: [{ path: 'Projects/A.md', name: 'A' }] });
-    (el.querySelector('.tc-project-item') as HTMLElement).click();
+    (el.querySelector('.abyss-project-item') as HTMLElement).click();
     expect(state.get('selectedList')).toEqual({ type: 'project', path: 'Projects/A.md' });
     expect(state.get('mode')).toBe('tasks');
   });
 
   it('does not render the Projects section when there are no active projects', () => {
     const { el } = makeFull({ projects: [] });
-    expect(el.querySelector('.tc-left-section--projects')).toBeNull();
+    expect(el.querySelector('.abyss-left-section--projects')).toBeNull();
   });
 
   it('tags + opens an input that creates a manual group', () => {
     const { el, tm } = makeFull({});
     const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
-    (el.querySelector('.tc-left-section--tags .tc-left-add') as HTMLElement).click();
-    const input = el.querySelector('.tc-left-add-input') as HTMLInputElement;
+    (el.querySelector('.abyss-left-section--tags .abyss-left-add') as HTMLElement).click();
+    const input = el.querySelector('.abyss-left-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'Focus';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
@@ -1353,8 +1359,8 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
   it('tags + creates only ONE group (Enter then blur must not double-fire)', () => {
     const { el, tm } = makeFull({});
     const spy = vi.spyOn(tm, 'createManualGroup').mockResolvedValue();
-    (el.querySelector('.tc-left-section--tags .tc-left-add') as HTMLElement).click();
-    const input = el.querySelector('.tc-left-add-input') as HTMLInputElement;
+    (el.querySelector('.abyss-left-section--tags .abyss-left-add') as HTMLElement).click();
+    const input = el.querySelector('.abyss-left-add-input') as HTMLInputElement;
     input.value = 'next';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     input.dispatchEvent(new FocusEvent('blur'));
@@ -1370,12 +1376,12 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
         ],
       },
     });
-    const headers = el.querySelectorAll('.tc-tag-group-header');
+    const headers = el.querySelectorAll('.abyss-tag-group-header');
     expect(headers.length).toBe(2);
     // Drop group g1 onto g2's header → g1 moves to g2's slot.
     const dt = {
-      getData: (t: string) => (t === 'application/x-tc-taggroup' ? 'g1' : ''),
-      types: ['application/x-tc-taggroup'],
+      getData: (t: string) => (t === 'application/x-abyss-taggroup' ? 'g1' : ''),
+      types: ['application/x-abyss-taggroup'],
       setData: () => {},
     };
     const drop = new Event('drop', { bubbles: true });
@@ -1394,8 +1400,10 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
         ],
       },
     });
-    (el.querySelector('.tc-left-section--tags .tc-left-add') as HTMLElement).click();
-    const body = el.querySelector('.tc-left-section--tags .tc-left-section-body') as HTMLElement;
-    expect(body.firstElementChild?.classList.contains('tc-left-add-input')).toBe(true);
+    (el.querySelector('.abyss-left-section--tags .abyss-left-add') as HTMLElement).click();
+    const body = el.querySelector(
+      '.abyss-left-section--tags .abyss-left-section-body',
+    ) as HTMLElement;
+    expect(body.firstElementChild?.classList.contains('abyss-left-add-input')).toBe(true);
   });
 });

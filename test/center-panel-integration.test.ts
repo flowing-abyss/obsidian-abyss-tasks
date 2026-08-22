@@ -189,24 +189,24 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const card = panel['el'].querySelector<HTMLElement>('.tc-task-card')!;
-      const mainRow = card.querySelector<HTMLElement>('.tc-task-card-main-row')!;
+      const card = panel['el'].querySelector<HTMLElement>('.abyss-task-card')!;
+      const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row')!;
       expect(Array.from(mainRow.children, (child) => child.className)).toEqual([
-        expect.stringContaining('tc-status-marker'),
-        'tc-task-body',
-        'tc-task-meta-right',
-        'tc-task-delete-btn',
+        expect.stringContaining('abyss-status-marker'),
+        'abyss-task-body',
+        'abyss-task-meta-right',
+        'abyss-task-delete-btn',
       ]);
 
-      const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
-      const recurrence = titleRow.querySelector<HTMLElement>('.tc-recurrence-badge')!;
-      expect(recurrence.nextElementSibling?.classList.contains('tc-task-title')).toBe(true);
+      const titleRow = mainRow.querySelector<HTMLElement>('.abyss-task-title-row')!;
+      const recurrence = titleRow.querySelector<HTMLElement>('.abyss-recurrence-badge')!;
+      expect(recurrence.nextElementSibling?.classList.contains('abyss-task-title')).toBe(true);
 
-      const description = card.querySelector<HTMLElement>('.tc-task-desc')!;
+      const description = card.querySelector<HTMLElement>('.abyss-task-desc')!;
       expect(description.parentElement).toBe(card);
       expect(description.previousElementSibling).toBe(mainRow);
 
-      const deleteButton = mainRow.querySelector<HTMLButtonElement>('.tc-task-delete-btn')!;
+      const deleteButton = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn')!;
       expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
       expect(deleteButton.textContent).toBe('');
     } finally {
@@ -227,11 +227,11 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
-      const titleRow = mainRow.querySelector<HTMLElement>('.tc-task-title-row')!;
-      expect(titleRow.querySelector('.tc-recurrence-badge')).toBeNull();
-      expect(titleRow.firstElementChild?.classList.contains('tc-task-title')).toBe(true);
-      expect(mainRow.querySelector('.tc-task-desc')).toBeNull();
+      const mainRow = panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row')!;
+      const titleRow = mainRow.querySelector<HTMLElement>('.abyss-task-title-row')!;
+      expect(titleRow.querySelector('.abyss-recurrence-badge')).toBeNull();
+      expect(titleRow.firstElementChild?.classList.contains('abyss-task-title')).toBe(true);
+      expect(mainRow.querySelector('.abyss-task-desc')).toBeNull();
     } finally {
       panel.destroy();
     }
@@ -251,11 +251,11 @@ describe('CenterPanel task-card primary row', () => {
     try {
       panel.mount(freshContainer());
 
-      const mainRow = panel['el'].querySelector<HTMLElement>('.tc-task-card-main-row')!;
-      const body = mainRow.querySelector<HTMLElement>('.tc-task-body')!;
-      expect(body.querySelector('.tc-task-title')).not.toBeNull();
-      expect(mainRow.querySelector('.tc-task-meta-right')).not.toBeNull();
-      expect(panel['el'].querySelector('.tc-task-card > .tc-task-desc')).toBeNull();
+      const mainRow = panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row')!;
+      const body = mainRow.querySelector<HTMLElement>('.abyss-task-body')!;
+      expect(body.querySelector('.abyss-task-title')).not.toBeNull();
+      expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
+      expect(panel['el'].querySelector('.abyss-task-card > .abyss-task-desc')).toBeNull();
     } finally {
       panel.destroy();
     }
@@ -297,13 +297,13 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
-      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
       trigger.focus();
       trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
 
-      const popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      const popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
       expect(activeDocument.activeElement).toBe(
-        popover.querySelector<HTMLElement>('.tc-view-state-row-main'),
+        popover.querySelector<HTMLElement>('.abyss-view-state-row-main'),
       );
       expect(popover.contains(activeDocument.activeElement)).toBe(true);
       const focusedRow = activeDocument.activeElement as HTMLElement;
@@ -312,15 +312,15 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       );
       expect(focusedRow.getAttribute('aria-expanded')).toBe('true');
       expect(
-        focusedRow.parentElement?.querySelector('.tc-view-state-sublist')?.classList,
-      ).not.toContain('tc-hidden');
+        focusedRow.parentElement?.querySelector('.abyss-view-state-sublist')?.classList,
+      ).not.toContain('abyss-hidden');
       focusedRow.dispatchEvent(
         new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }),
       );
       expect(focusedRow.getAttribute('aria-expanded')).toBe('false');
       expect(
-        focusedRow.parentElement?.querySelector('.tc-view-state-sublist')?.classList,
-      ).toContain('tc-hidden');
+        focusedRow.parentElement?.querySelector('.abyss-view-state-sublist')?.classList,
+      ).toContain('abyss-hidden');
     } finally {
       panel.destroy();
       container.remove();
@@ -336,16 +336,16 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
-      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
       trigger.focus();
       trigger.dispatchEvent(new PointerEvent('click', { bubbles: true }));
-      const popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      const popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
 
       (activeDocument.activeElement as HTMLElement).dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
 
-      expect(container.querySelector('.tc-view-state-popover')).toBeNull();
+      expect(container.querySelector('.abyss-view-state-popover')).toBeNull();
       expect(activeDocument.activeElement).toBe(trigger);
     } finally {
       panel.destroy();
@@ -366,7 +366,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     const openAndRegisteredListener = (): EventListener => {
       const start = addListener.mock.calls.length;
-      const trigger = container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!;
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!;
       trigger.click();
       vi.runOnlyPendingTimers();
       const registration = addListener.mock.calls
@@ -380,7 +380,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       panel.mount(container);
 
       const toggledListener = openAndRegisteredListener();
-      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
       expect(removeListener).toHaveBeenCalledWith('click', toggledListener, true);
 
       const rerenderedListener = openAndRegisteredListener();
@@ -423,7 +423,7 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 
     try {
       panel.mount(container);
-      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
       vi.stubGlobal('activeDocument', replacementActiveDocument);
       vi.runOnlyPendingTimers();
 
@@ -436,10 +436,10 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       ).toBe(false);
 
       ownerDocument.body.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(container.querySelector('.tc-view-state-popover')).toBeNull();
+      expect(container.querySelector('.abyss-view-state-popover')).toBeNull();
       expect(ownerRemove).toHaveBeenCalledWith('click', outsideRegistration![1], true);
 
-      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
+      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
       vi.runOnlyPendingTimers();
       const ownerClickRegistrations = ownerAdd.mock.calls.filter(
         ([type, , options]) => type === 'click' && options === true,
@@ -478,17 +478,18 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
     activeDocument.body.append(container);
 
     const open = (): HTMLElement => {
-      container.querySelector<HTMLButtonElement>('.tc-view-state-btn')!.click();
-      return container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      return container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
     };
     const row = (popover: HTMLElement, label: string): HTMLElement =>
-      Array.from(popover.querySelectorAll<HTMLElement>('.tc-view-state-row')).find(
-        (candidate) => candidate.querySelector('.tc-view-state-row-label')?.textContent === label,
+      Array.from(popover.querySelectorAll<HTMLElement>('.abyss-view-state-row')).find(
+        (candidate) =>
+          candidate.querySelector('.abyss-view-state-row-label')?.textContent === label,
       )!;
     const option = (popover: HTMLElement, rowLabel: string, label: string): HTMLButtonElement =>
       Array.from(row(popover, rowLabel).querySelectorAll<HTMLButtonElement>('button')).find(
         (candidate) =>
-          candidate.querySelector('.tc-view-state-option-label')?.textContent === label,
+          candidate.querySelector('.abyss-view-state-option-label')?.textContent === label,
       )!;
 
     try {
@@ -512,13 +513,13 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
       option(popover, 'Show', 'All').click();
 
-      popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('true');
       option(popover, 'Show', 'Done').click();
 
-      popover = container.querySelector<HTMLElement>('.tc-view-state-popover')!;
+      popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
       expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('false');
       expect(option(popover, 'Show', 'To do').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
@@ -824,7 +825,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
       }),
     ];
     const container = renderWithGroupingByDate(tasks);
-    const headers = container.querySelectorAll('.tc-group-header');
+    const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent?.trim());
     expect(labels).toContain('Overdue  1');
     expect(labels).toContain('Today  1');
@@ -837,7 +838,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
       task({ title: 'daily-only', presentation: { dailyNoteDate: '2026-06-25' } }),
     ]);
     expect(
-      Array.from(container.querySelectorAll('.tc-group-header')).map(
+      Array.from(container.querySelectorAll('.abyss-group-header')).map(
         (header) => header.textContent,
       ),
     ).toContain('No date  1');
@@ -852,7 +853,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
       }),
     ];
     const container = renderWithGroupingByDate(tasks);
-    const headers = container.querySelectorAll('.tc-group-header');
+    const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent?.trim());
     expect(labels).toEqual(['Today  1']);
   });
@@ -860,7 +861,7 @@ describe('CenterPanel.renderWithGrouping (date grouping)', () => {
   it('no-date task falls into "No date" bucket (not Overdue)', () => {
     const tasks = [task({ title: 'no date', source: { filePath: 't.md', line: 0 } })];
     const container = renderWithGroupingByDate(tasks);
-    const headers = container.querySelectorAll('.tc-group-header');
+    const headers = container.querySelectorAll('.abyss-group-header');
     const labels = Array.from(headers).map((h) => h.textContent?.trim());
     expect(labels).toEqual(['No date  1']);
   });
@@ -907,11 +908,11 @@ describe('CenterPanel.renderSearch', () => {
     state.set('searchQuery', 'milk');
     const panel = makeStaticPanel(state, tasks);
     panel.mount(freshContainer());
-    const cards = panel['el'].querySelectorAll('.tc-task-card');
+    const cards = panel['el'].querySelectorAll('.abyss-task-card');
     expect(cards).toHaveLength(1);
     // Title renders via MarkdownRenderer (mocked as a noop in tests), so identity
     // is asserted via the card's stable file-path/line dataset instead of title text.
-    expect(cards[0]?.querySelector('.tc-task-title')).toBeTruthy();
+    expect(cards[0]?.querySelector('.abyss-task-title')).toBeTruthy();
     expect((cards[0] as HTMLElement).dataset['filePath']).toBe('a.md');
     expect((cards[0] as HTMLElement).dataset['line']).toBe('0');
     panel.destroy();
@@ -948,8 +949,8 @@ describe('CenterPanel.renderSearch', () => {
 
     panel.mount(freshContainer());
 
-    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
       'persisted.md',
     );
     expect(list).toHaveBeenCalled();
@@ -968,7 +969,7 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const originalInput = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    const originalInput = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
     originalInput.focus();
     const renderSpy = vi.spyOn(panel as unknown as { render: () => void }, 'render');
     const renderFlatSpy = vi.spyOn(
@@ -984,10 +985,10 @@ describe('CenterPanel.renderSearch', () => {
       flush();
     });
 
-    expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
+    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
     expect(document.activeElement).toBe(originalInput);
     expect(originalInput.value).toBe('milk');
-    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
+    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
     expect(renderSpy).not.toHaveBeenCalled();
     expect(renderFlatSpy).toHaveBeenCalledTimes(1);
     panel.destroy();
@@ -1006,7 +1007,7 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const originalInput = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    const originalInput = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
     originalInput.focus();
     originalInput.setSelectionRange(1, 3);
     const renderFlatSpy = vi.spyOn(
@@ -1026,20 +1027,20 @@ describe('CenterPanel.renderSearch', () => {
       panel.refresh();
 
       expect(callbacks).toHaveLength(1);
-      expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
-      expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+      expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
+      expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
         'a.md',
       );
       flush();
     });
 
-    expect(panel['el'].querySelector('.tc-search-global')).toBe(originalInput);
+    expect(panel['el'].querySelector('.abyss-search-global')).toBe(originalInput);
     expect(document.activeElement).toBe(originalInput);
     expect(originalInput.value).toBe('milk');
     expect(originalInput.selectionStart).toBe(1);
     expect(originalInput.selectionEnd).toBe(3);
-    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(1);
-    expect(panel['el'].querySelector<HTMLElement>('.tc-task-card')?.dataset['filePath']).toBe(
+    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    expect(panel['el'].querySelector<HTMLElement>('.abyss-task-card')?.dataset['filePath']).toBe(
       'c.md',
     );
     expect(renderFlatSpy).toHaveBeenCalledTimes(1);
@@ -1056,7 +1057,7 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const input = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
 
     withQueuedAnimationFrames((_flush, callbacks) => {
       input.value = 'milk';
@@ -1067,8 +1068,8 @@ describe('CenterPanel.renderSearch', () => {
       expect(() => callback(0)).not.toThrow();
     });
 
-    expect(panel['el'].querySelector('.tc-search-global')).toBeNull();
-    expect(panel['el'].querySelectorAll('.tc-task-card')).toHaveLength(0);
+    expect(panel['el'].querySelector('.abyss-search-global')).toBeNull();
+    expect(panel['el'].querySelectorAll('.abyss-task-card')).toHaveLength(0);
     panel.destroy();
     container.remove();
   });
@@ -1082,7 +1083,7 @@ describe('CenterPanel.renderSearch', () => {
     const container = freshContainer();
     document.body.append(container);
     panel.mount(container);
-    const input = panel['el'].querySelector<HTMLInputElement>('.tc-search-global')!;
+    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
 
     withQueuedAnimationFrames((_flush, callbacks) => {
       input.value = 'milk';
@@ -1108,7 +1109,7 @@ describe('CenterPanel.renderSearch', () => {
     state.set('searchQuery', 'milk');
     const panel = makeStaticPanel(state, [t]);
     panel.mount(freshContainer());
-    const card = panel['el'].querySelector<HTMLElement>('.tc-task-card')!;
+    const card = panel['el'].querySelector<HTMLElement>('.abyss-task-card')!;
     card.click();
     expect(state.get('mode')).toBe('tasks');
     expect(state.get('selectedList')).toBe('today');
@@ -1128,7 +1129,7 @@ describe('CenterPanel.renderSearch', () => {
     state.set('searchQuery', 'daily');
     const panel = makeStaticPanel(state, [t]);
     panel.mount(freshContainer());
-    panel['el'].querySelector<HTMLElement>('.tc-task-card')!.click();
+    panel['el'].querySelector<HTMLElement>('.abyss-task-card')!.click();
     expect(state.get('selectedList')).toBe('inbox');
     panel.destroy();
   });
@@ -1160,7 +1161,7 @@ describe('CenterPanel source note chip', () => {
       presentation: { dailyNoteDate: '2026-06-25' },
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
-    expect(panel['el'].querySelector('.tc-task-source-note')).not.toBeNull();
+    expect(panel['el'].querySelector('.abyss-task-source-note')).not.toBeNull();
     panel.destroy();
   });
 
@@ -1172,7 +1173,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'Projects/alpha.md' },
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'never' });
-    expect(panel['el'].querySelector('.tc-task-source-note')).toBeNull();
+    expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
     panel.destroy();
   });
 
@@ -1183,7 +1184,7 @@ describe('CenterPanel source note chip', () => {
       source: { filePath: 'Projects/alpha.md' },
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
-    const chip = panel['el'].querySelector('.tc-task-source-note');
+    const chip = panel['el'].querySelector('.abyss-task-source-note');
     expect(chip).not.toBeNull();
     expect(chip?.textContent).toContain('alpha');
     panel.destroy();
@@ -1197,11 +1198,11 @@ describe('CenterPanel source note chip', () => {
       presentation: { dailyNoteDate: '2026-06-25' },
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'non-default' });
-    expect(panel['el'].querySelector('.tc-task-source-note')).toBeNull();
+    expect(panel['el'].querySelector('.abyss-task-source-note')).toBeNull();
     panel.destroy();
   });
 
-  it('chip appears before tag in tc-task-meta-right', () => {
+  it('chip appears before tag in abyss-task-meta-right', () => {
     const t = task({
       title: 'project task',
       tags: ['#work'],
@@ -1213,11 +1214,11 @@ describe('CenterPanel source note chip', () => {
       },
     });
     const panel = makeSearchPanel([t], { sourceNoteDisplay: 'always' });
-    const meta = panel['el'].querySelector('.tc-task-meta-right');
+    const meta = panel['el'].querySelector('.abyss-task-meta-right');
     expect(meta).not.toBeNull();
     const children = Array.from(meta!.children);
-    const noteIdx = children.findIndex((el) => el.classList.contains('tc-task-source-note'));
-    const tagIdx = children.findIndex((el) => el.classList.contains('tc-task-tag'));
+    const noteIdx = children.findIndex((el) => el.classList.contains('abyss-task-source-note'));
+    const tagIdx = children.findIndex((el) => el.classList.contains('abyss-task-tag'));
     expect(noteIdx).toBeGreaterThanOrEqual(0);
     expect(tagIdx).toBeGreaterThan(noteIdx);
     panel.destroy();
@@ -1323,8 +1324,8 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const { state, el } = await makeProjectsPanel();
     state.set('mode', 'projects');
     // The projects panel class lives on the child host, never on the center el.
-    expect(el.classList.contains('tc-projects-panel')).toBe(false);
-    expect(el.querySelector('.tc-projects-host .tc-projects-list')).toBeTruthy();
+    expect(el.classList.contains('abyss-projects-panel')).toBe(false);
+    expect(el.querySelector('.abyss-projects-host .abyss-projects-list')).toBeTruthy();
   });
 
   it('leaving projects mode restores a clean tasks center (no leaked class or DOM)', async () => {
@@ -1333,12 +1334,12 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     // Back to tasks with a tag selection.
     state.set('selectedList', { type: 'tag', tag: '#work' });
     state.set('mode', 'tasks');
-    expect(el.classList.contains('tc-projects-panel')).toBe(false);
-    expect(el.classList.contains('tc-center--projects')).toBe(false);
-    expect(el.querySelector('.tc-projects-host')).toBeNull();
+    expect(el.classList.contains('abyss-projects-panel')).toBe(false);
+    expect(el.classList.contains('abyss-center--projects')).toBe(false);
+    expect(el.querySelector('.abyss-projects-host')).toBeNull();
     // Normal tasks-mode header (title + controls) renders again.
-    expect(el.querySelector('.tc-center-header')).toBeTruthy();
-    expect(el.querySelector('.tc-center-scroll')).toBeTruthy();
+    expect(el.querySelector('.abyss-center-header')).toBeTruthy();
+    expect(el.querySelector('.abyss-center-scroll')).toBeTruthy();
   });
 });
 
@@ -1362,13 +1363,13 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
 
   it('view switcher shows Day, Week, Month (not Today/Week/Month)', async () => {
     const { el } = await makeCalendarPanel();
-    const labels = Array.from(el.querySelectorAll('.tc-cal-view-btn')).map((b) => b.textContent);
+    const labels = Array.from(el.querySelectorAll('.abyss-cal-view-btn')).map((b) => b.textContent);
     expect(labels).toEqual(['Day', 'Week', 'Month']);
   });
 
   it('defaults to Month and mounts MonthGridView', async () => {
     const { el } = await makeCalendarPanel();
-    expect(el.querySelector('.tc-mg-grid')).not.toBeNull();
+    expect(el.querySelector('.abyss-mg-grid')).not.toBeNull();
   });
 
   it('renders forecast occurrences as inert, non-draggable calendar items', () => {
@@ -1426,25 +1427,25 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const item = forecastBadge?.parentElement;
     expect(item?.getAttribute('draggable')).toBeNull();
     item
-      ?.querySelector<HTMLElement>('.tc-status-marker')
+      ?.querySelector<HTMLElement>('.abyss-status-marker')
       ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
 
     clickCalendarView(el, 'Day');
     const timedForecastBadge = el.querySelector<HTMLElement>(
-      ".tc-tg-block [data-recurrence-forecast='true']",
+      ".abyss-tg-block [data-recurrence-forecast='true']",
     );
     expect(timedForecastBadge).not.toBeNull();
-    const timedBlock = timedForecastBadge?.closest<HTMLElement>('.tc-tg-block');
-    expect(timedBlock?.querySelector('.tc-status-marker')).toBeNull();
+    const timedBlock = timedForecastBadge?.closest<HTMLElement>('.abyss-tg-block');
+    expect(timedBlock?.querySelector('.abyss-status-marker')).toBeNull();
     expect(timedBlock?.getAttribute('tabindex')).toBeNull();
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
     timedBlock?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(execute).not.toHaveBeenCalled();
     const spanBadge = el.querySelector<HTMLElement>(
-      ".tc-tg-body [data-recurrence-forecast='true']",
+      ".abyss-tg-body [data-recurrence-forecast='true']",
     );
-    const spanBody = spanBadge?.closest<HTMLElement>('.tc-tg-body');
+    const spanBody = spanBadge?.closest<HTMLElement>('.abyss-tg-body');
     expect(spanBody).not.toBeNull();
     expect(spanBody?.getAttribute('draggable')).toBeNull();
     expect(spanBody?.querySelector('[data-resize-edge]')).toBeNull();
@@ -1509,20 +1510,12 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-09');
     state.set('mode', 'calendar');
 
-    const item = el.querySelector<HTMLElement>('.tc-mg-block-dot');
+    const item = el.querySelector<HTMLElement>('.abyss-mg-block-dot');
     expect(item).not.toBeNull();
     expect(item?.getAttribute('draggable')).toBeNull();
     item?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(openModal).not.toHaveBeenCalled();
-    const marker = item?.querySelector<HTMLElement>('.tc-status-marker');
-    marker?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
-    expect(activeDocument.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.disabled).toBe(
-      false,
-    );
-    Array.from(activeDocument.querySelectorAll<HTMLButtonElement>('.tc-recurrence-popover button'))
-      .find((button) => button.textContent === 'Cancel')
-      ?.click();
+    const marker = item?.querySelector<HTMLElement>('.abyss-status-marker');
     marker?.click();
 
     expect(execute).toHaveBeenCalledWith({
@@ -1531,7 +1524,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     });
 
     clickCalendarView(el, 'Day');
-    const timedBlock = el.querySelector<HTMLElement>('.tc-tg-block');
+    const timedBlock = el.querySelector<HTMLElement>('.abyss-tg-block');
     expect(timedBlock).not.toBeNull();
     expect(timedBlock?.getAttribute('tabindex')).toBeNull();
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
@@ -1573,13 +1566,13 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const modal = new TaskModal(app, registry, DEFAULT_SETTINGS, queries, application);
     try {
       panelHost
-        .querySelector<HTMLElement>('.tc-right-header > .tc-status-marker')
+        .querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
 
       modal.open(recurring);
       activeDocument
-        .querySelector<HTMLElement>('.tc-modal .tc-right-header > .tc-status-marker')
+        .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
 
@@ -1602,22 +1595,22 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   it('clicking Today switches to TodayView', async () => {
     const { el } = await makeCalendarPanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Day',
       ) as HTMLElement
     ).click();
-    expect(el.querySelector('.tc-tg-root')).not.toBeNull();
+    expect(el.querySelector('.abyss-tg-root')).not.toBeNull();
   });
 
   it('clicking a Month day cell drills into Day (Today) view for that specific date', async () => {
     const { el } = await makeCalendarPanel();
     const cell = el.querySelector(
-      '.tc-mg-cell:not(.is-outside-month)[data-mg-date]',
+      '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
     const date = cell.getAttribute('data-mg-date')!;
     cell.click();
     // A single day column for the clicked date — not a 7-column week — confirms Today, not Week.
-    const columns = el.querySelectorAll('.tc-tg-day-column');
+    const columns = el.querySelectorAll('.abyss-tg-day-column');
     expect(columns).toHaveLength(1);
     expect(columns[0]?.getAttribute('data-tg-date')).toBe(date);
   });
@@ -1625,16 +1618,16 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   it('clicking a Week header cell drills into Day (Today) view for that specific date', async () => {
     const { el } = await makeCalendarPanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Week',
       ) as HTMLElement
     ).click();
-    const headerCells = Array.from(el.querySelectorAll('.tc-tg-header-cell'));
+    const headerCells = Array.from(el.querySelectorAll('.abyss-tg-header-cell'));
     expect(headerCells.length).toBeGreaterThan(1); // sanity: still in Week (multi-column)
-    const dayColumnsBefore = Array.from(el.querySelectorAll('.tc-tg-day-column'));
+    const dayColumnsBefore = Array.from(el.querySelectorAll('.abyss-tg-day-column'));
     const targetDate = dayColumnsBefore[2]?.getAttribute('data-tg-date');
     (headerCells[2] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    const columns = el.querySelectorAll('.tc-tg-day-column');
+    const columns = el.querySelectorAll('.abyss-tg-day-column');
     expect(columns).toHaveLength(1);
     expect(columns[0]?.getAttribute('data-tg-date')).toBe(targetDate);
   });
@@ -1642,23 +1635,23 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   it('clicking inside the all-day band in Week view does not drill into Today (separate row from the header)', async () => {
     const { el } = await makeCalendarPanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Week',
       ) as HTMLElement
     ).click();
-    const alldayCell = el.querySelector('.tc-tg-allday-cell') as HTMLElement;
+    const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(el.querySelectorAll('.tc-tg-day-column')).toHaveLength(7);
+    expect(el.querySelectorAll('.abyss-tg-day-column')).toHaveLength(7);
   });
 
   it('no 🎨 style-cycle button is rendered in the new calendar toolbar', async () => {
     const { el } = await makeCalendarPanel();
-    expect(el.querySelector('.tc-cal-style-btn')).toBeNull();
+    expect(el.querySelector('.abyss-cal-style-btn')).toBeNull();
   });
 
   it.each([
-    ['month', '.tc-cal-nav-month', '.tc-month-picker', '.tc-month-picker-btn'],
-    ['year', '.tc-cal-nav-year', '.tc-year-picker', '.tc-year-picker-btn'],
+    ['month', '.abyss-cal-nav-month', '.abyss-month-picker', '.abyss-month-picker-btn'],
+    ['year', '.abyss-cal-nav-year', '.abyss-year-picker', '.abyss-year-picker-btn'],
   ] as const)(
     '%s picker removes its document dismiss listener after selection, toggle-close, and destroy',
     async (_kind, anchorSelector, pickerSelector, optionSelector) => {
@@ -1710,8 +1703,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   );
 
   it.each([
-    ['month', '.tc-cal-nav-month', '.tc-month-picker-btn'],
-    ['year', '.tc-cal-nav-year', '.tc-year-picker-btn'],
+    ['month', '.abyss-cal-nav-month', '.abyss-month-picker-btn'],
+    ['year', '.abyss-cal-nav-year', '.abyss-year-picker-btn'],
   ] as const)(
     '%s picker selection before deferred registration does not install a stale document listener',
     async (_kind, anchorSelector, optionSelector) => {
@@ -1734,8 +1727,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   );
 
   it.each([
-    ['month', '.tc-cal-nav-month', '.tc-month-picker', '.tc-month-picker-btn'],
-    ['year', '.tc-cal-nav-year', '.tc-year-picker', '.tc-year-picker-btn'],
+    ['month', '.abyss-cal-nav-month', '.abyss-month-picker', '.abyss-month-picker-btn'],
+    ['year', '.abyss-cal-nav-year', '.abyss-year-picker', '.abyss-year-picker-btn'],
   ] as const)(
     '%s picker owns initial focus and Escape dismissal',
     async (_kind, anchorSelector, pickerSelector, optionSelector) => {
@@ -1819,18 +1812,18 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     panel.mount(el);
     state.set('mode', 'calendar');
     const marker = el.querySelector(
-      '.tc-mg-plain .tc-status-marker, .tc-mg-deadline-marker .tc-status-marker',
+      '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
     ) as HTMLElement;
     expect(marker).not.toBeNull();
 
     // Right-click the checkbox: opens the popover, not the TaskModal (no modal container appended).
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const popover = document.querySelector('.tc-status-popover');
+    const popover = document.querySelector('.abyss-status-popover');
     expect(popover).not.toBeNull();
     expect(document.querySelector('.modal')).toBeNull();
 
     const flagBtn = popover!.querySelector(
-      '.tc-status-popover-flag[data-tc-priority="A"]',
+      '.abyss-status-popover-flag[data-abyss-priority="A"]',
     ) as HTMLElement;
     expect(flagBtn).not.toBeNull();
     flagBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1863,7 +1856,7 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
 
   function clickViewBtn(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === label,
       ) as HTMLElement
     ).click();
@@ -1928,7 +1921,7 @@ describe('CenterPanel calendar mode — scroll-to-now dedup (Task 27)', () => {
     clickViewBtn(el, 'Week');
     expect(lastShouldScrollToNow(renderSpy)).toBe(true);
 
-    const nextBtn = el.querySelector('.tc-cal-nav-btn[aria-label="Next"]') as HTMLElement;
+    const nextBtn = el.querySelector('.abyss-cal-nav-btn[aria-label="Next"]') as HTMLElement;
     expect(nextBtn).not.toBeNull();
     nextBtn.click();
 
@@ -1980,7 +1973,7 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
 
   function clickViewBtn(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === label,
       ) as HTMLElement
     ).click();
@@ -1991,14 +1984,14 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     clickViewBtn(el, 'Week');
     await flushMicrotasks();
 
-    const nav = el.querySelector('.tc-cal-nav');
-    const body = el.querySelector('.tc-cal-body');
-    const header = el.querySelector('.tc-tg-header-row');
-    const gridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
-    const hourRow = el.querySelector('.tc-tg-hour-row');
-    const dayCell = el.querySelector(`[data-tg-date="${TODAY}"].tc-tg-day-column`);
-    const nowLine = el.querySelector('.tc-tg-now-line');
-    const taskNode = el.querySelector('.tc-tg-plain');
+    const nav = el.querySelector('.abyss-cal-nav');
+    const body = el.querySelector('.abyss-cal-body');
+    const header = el.querySelector('.abyss-tg-header-row');
+    const gridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
+    const hourRow = el.querySelector('.abyss-tg-hour-row');
+    const dayCell = el.querySelector(`[data-tg-date="${TODAY}"].abyss-tg-day-column`);
+    const nowLine = el.querySelector('.abyss-tg-now-line');
+    const taskNode = el.querySelector('.abyss-tg-plain');
     const viewInstance = (
       panel as unknown as {
         calViewInstance: TodayView | WeekTimeGridView | null;
@@ -2014,8 +2007,8 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     });
     await flushMicrotasks();
 
-    expect(el.querySelector('.tc-cal-nav')).toBe(nav);
-    expect(el.querySelector('.tc-cal-body')).toBe(body);
+    expect(el.querySelector('.abyss-cal-nav')).toBe(nav);
+    expect(el.querySelector('.abyss-cal-body')).toBe(body);
     expect(
       (
         panel as unknown as {
@@ -2023,12 +2016,12 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
         }
       ).calViewInstance,
     ).toBe(viewInstance);
-    expect(el.querySelector('.tc-tg-header-row')).toBe(header);
-    expect(el.querySelector('.tc-tg-grid-row')).toBe(gridRowEl);
-    expect(el.querySelector('.tc-tg-hour-row')).toBe(hourRow);
-    expect(el.querySelector(`[data-tg-date="${TODAY}"].tc-tg-day-column`)).toBe(dayCell);
-    expect(el.querySelector('.tc-tg-now-line')).toBe(nowLine);
-    expect(el.querySelector('.tc-tg-plain')).not.toBe(taskNode);
+    expect(el.querySelector('.abyss-tg-header-row')).toBe(header);
+    expect(el.querySelector('.abyss-tg-grid-row')).toBe(gridRowEl);
+    expect(el.querySelector('.abyss-tg-hour-row')).toBe(hourRow);
+    expect(el.querySelector(`[data-tg-date="${TODAY}"].abyss-tg-day-column`)).toBe(dayCell);
+    expect(el.querySelector('.abyss-tg-now-line')).toBe(nowLine);
+    expect(el.querySelector('.abyss-tg-plain')).not.toBe(taskNode);
     expect(gridRowEl.scrollTop).toBe(777);
   });
 
@@ -2036,14 +2029,14 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
     const { el } = await makeCalendarPanel();
     clickViewBtn(el, 'Week');
 
-    const gridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     gridRowEl.scrollTop = 777;
 
     // Genuine navigation: switching view type is a new (viewType, date) pair, so
     // shouldScrollToNow is true here and must take priority over any stale prior scrollTop.
     clickViewBtn(el, 'Day');
 
-    const newGridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const newGridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     expect(newGridRowEl).not.toBeNull();
     expect(newGridRowEl).not.toBe(gridRowEl);
     // Must NOT equal the stale Week-view scrollTop (777) it never asked to inherit.
@@ -2052,11 +2045,11 @@ describe('CenterPanel calendar mode — preserve scroll position across reactive
 
   it('switching from Month (no grid-row) into Week does not error and scrolls to now as a fresh navigation', async () => {
     const { el } = await makeCalendarPanel();
-    // Default calViewType is 'month' — no `.tc-tg-grid-row` exists yet.
-    expect(el.querySelector('.tc-tg-grid-row')).toBeNull();
+    // Default calViewType is 'month' — no `.abyss-tg-grid-row` exists yet.
+    expect(el.querySelector('.abyss-tg-grid-row')).toBeNull();
 
     clickViewBtn(el, 'Week');
-    const gridRowEl = el.querySelector('.tc-tg-grid-row') as HTMLElement;
+    const gridRowEl = el.querySelector('.abyss-tg-grid-row') as HTMLElement;
     expect(gridRowEl).not.toBeNull();
   });
 });
@@ -2085,20 +2078,20 @@ describe('CenterPanel calendar mode — click-to-create', () => {
   it('Month quick-add relies on the task-index patch and retains the mounted grid and header', async () => {
     const { panel, el, app } = await makeClickToCreatePanel();
     const cell = el.querySelector(
-      '.tc-mg-cell:not(.is-outside-month)[data-mg-date]',
+      '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
-    const header = el.querySelector('.tc-mg-head-row');
-    const row = cell.closest('.tc-mg-row');
+    const header = el.querySelector('.abyss-mg-head-row');
+    const row = cell.closest('.abyss-mg-row');
     const viewInstance = (
       panel as unknown as {
         calViewInstance: TodayView | WeekTimeGridView | null;
       }
     ).calViewInstance;
     const date = cell.getAttribute('data-mg-date')!;
-    const addBtn = cell.querySelector('.tc-mg-add-btn') as HTMLElement;
+    const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    const input = el.querySelector('.tc-mg-quick-add-input') as HTMLInputElement;
+    const input = el.querySelector('.abyss-mg-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'water the plants';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2106,9 +2099,9 @@ describe('CenterPanel calendar mode — click-to-create', () => {
 
     const content = await readMd(app, 'inbox.md');
     expect(content).toContain(`- [ ] water the plants ➕ ${TODAY} 📅 ${date}`);
-    expect(el.querySelector('.tc-mg-head-row')).toBe(header);
+    expect(el.querySelector('.abyss-mg-head-row')).toBe(header);
     expect(el.querySelector(`[data-mg-date="${date}"]`)).toBe(cell);
-    expect(cell.closest('.tc-mg-row')).toBe(row);
+    expect(cell.closest('.abyss-mg-row')).toBe(row);
     expect(
       (
         panel as unknown as {
@@ -2122,34 +2115,34 @@ describe('CenterPanel calendar mode — click-to-create', () => {
   it('clicking the + button does not also drill into Week (onDayClick suppressed)', async () => {
     const { el } = await makeClickToCreatePanel();
     const cell = el.querySelector(
-      '.tc-mg-cell:not(.is-outside-month)[data-mg-date]',
+      '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
-    const addBtn = cell.querySelector('.tc-mg-add-btn') as HTMLElement;
+    const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     // Still on Month (a drill-down would swap in the hour grid).
-    expect(el.querySelector('.tc-mg-grid')).not.toBeNull();
-    expect(el.querySelector('.tc-tg-day-column')).toBeNull();
+    expect(el.querySelector('.abyss-mg-grid')).not.toBeNull();
+    expect(el.querySelector('.abyss-tg-day-column')).toBeNull();
   });
 
   it('clicking elsewhere in a Month day cell still drills into Day (Today) view, unaffected by the + button', async () => {
     const { el } = await makeClickToCreatePanel();
     const cell = el.querySelector(
-      '.tc-mg-cell:not(.is-outside-month)[data-mg-date]',
+      '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
     ) as HTMLElement;
     cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(el.querySelectorAll('.tc-tg-day-column')).toHaveLength(1);
+    expect(el.querySelectorAll('.abyss-tg-day-column')).toHaveLength(1);
   });
 
   it('clicking empty hour-grid space in Today view opens an inline quick-add; Enter writes a timed task', async () => {
     const { el, app } = await makeClickToCreatePanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Day',
       ) as HTMLElement
     ).click();
 
-    const hourColumnEl = el.querySelector('.tc-tg-hour-column') as HTMLElement;
-    const date = (el.querySelector('.tc-tg-day-column') as HTMLElement).getAttribute(
+    const hourColumnEl = el.querySelector('.abyss-tg-hour-column') as HTMLElement;
+    const date = (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute(
       'data-tg-date',
     )!;
     vi.spyOn(hourColumnEl, 'getBoundingClientRect').mockReturnValue({
@@ -2158,7 +2151,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     } as DOMRect);
     hourColumnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 480 })); // 480px = 10:00
 
-    const input = el.querySelector('.tc-tg-quick-add-input') as HTMLInputElement;
+    const input = el.querySelector('.abyss-tg-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.placeholder).toBe('Task at 10:00…');
     input.value = 'stand-up';
@@ -2179,32 +2172,32 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     panel.mount(el);
     state.set('mode', 'calendar');
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Day',
       ) as HTMLElement
     ).click();
 
-    const block = el.querySelector('.tc-tg-block') as HTMLElement;
+    const block = el.querySelector('.abyss-tg-block') as HTMLElement;
     expect(block).toBeTruthy();
     block.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(el.querySelector('.tc-tg-quick-add')).toBeNull();
+    expect(el.querySelector('.abyss-tg-quick-add')).toBeNull();
   });
 
   it('clicking empty space in the all-day/"no-time" row in Today view opens an inline quick-add; Enter writes a plain (untimed) task', async () => {
     const { el, app } = await makeClickToCreatePanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Day',
       ) as HTMLElement
     ).click();
 
-    const alldayCell = el.querySelector('.tc-tg-allday-cell') as HTMLElement;
-    const date = (el.querySelector('.tc-tg-day-column') as HTMLElement).getAttribute(
+    const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
+    const date = (el.querySelector('.abyss-tg-day-column') as HTMLElement).getAttribute(
       'data-tg-date',
     )!;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    const input = el.querySelector('.tc-tg-allday-quick-add-input') as HTMLInputElement;
+    const input = el.querySelector('.abyss-tg-allday-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'renew passport';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2217,16 +2210,16 @@ describe('CenterPanel calendar mode — click-to-create', () => {
   it('clicking empty space in the all-day row in Week view opens an inline quick-add; Enter writes a plain task on that day', async () => {
     const { el, app } = await makeClickToCreatePanel();
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Week',
       ) as HTMLElement
     ).click();
 
-    const alldayCell = el.querySelector('.tc-tg-allday-cell') as HTMLElement;
+    const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
     const date = alldayCell.getAttribute('data-tg-date')!;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
-    const input = el.querySelector('.tc-tg-allday-quick-add-input') as HTMLInputElement;
+    const input = el.querySelector('.abyss-tg-allday-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'water plants';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -2247,15 +2240,15 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     panel.mount(el);
     state.set('mode', 'calendar');
     (
-      Array.from(el.querySelectorAll('.tc-cal-view-btn')).find(
+      Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
         (b) => b.textContent === 'Day',
       ) as HTMLElement
     ).click();
 
-    const chip = el.querySelector('.tc-tg-plain') as HTMLElement;
+    const chip = el.querySelector('.abyss-tg-plain') as HTMLElement;
     expect(chip).toBeTruthy();
     chip.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    expect(el.querySelector('.tc-tg-allday-quick-add')).toBeNull();
+    expect(el.querySelector('.abyss-tg-allday-quick-add')).toBeNull();
   });
 });
 
@@ -2346,7 +2339,7 @@ function keyboardPanelHarness(
 }
 
 function clickCalendarView(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): void {
-  const button = Array.from(el.querySelectorAll<HTMLElement>('.tc-cal-view-btn')).find(
+  const button = Array.from(el.querySelectorAll<HTMLElement>('.abyss-cal-view-btn')).find(
     (candidate) => candidate.textContent === label,
   );
   if (!button) throw new Error(`missing ${label} calendar view button`);
@@ -2354,9 +2347,9 @@ function clickCalendarView(el: HTMLElement, label: 'Day' | 'Week' | 'Month'): vo
 }
 
 function timedBlock(el: HTMLElement, filePath?: string): HTMLElement {
-  const blocks = Array.from(el.querySelectorAll<HTMLElement>('.tc-tg-block'));
+  const blocks = Array.from(el.querySelectorAll<HTMLElement>('.abyss-tg-block'));
   const found = filePath
-    ? blocks.find((block) => block.dataset['tcTaskFile'] === filePath)
+    ? blocks.find((block) => block.dataset['abyssTaskFile'] === filePath)
     : blocks[0];
   if (!found) throw new Error(`missing timed block${filePath ? ` for ${filePath}` : ''}`);
   return found;
@@ -2413,11 +2406,14 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
     const h = keyboardPanelHarness([original], vi.fn());
     try {
       const marker = h.el.querySelector<HTMLElement>(
-        '.tc-mg-plain .tc-status-marker, .tc-mg-deadline-marker .tc-status-marker',
+        '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
       )!;
-      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+      (
+        h.panel as unknown as {
+          openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
+        }
+      ).openRecurrenceEditor(marker, original);
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).not.toBeNull();
 
       h.setSnapshots([
         task({ title: 'After patch', recurrence: 'every week', planning: { due: TODAY } }),
@@ -2425,7 +2421,7 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
       h.emit();
 
       expect(marker.isConnected).toBe(false);
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
     } finally {
       h.panel.destroy();
       h.el.remove();
@@ -2437,16 +2433,19 @@ describe('CenterPanel calendar mode — task-index patch coordinator', () => {
     const h = keyboardPanelHarness([recurring], vi.fn());
     try {
       const marker = h.el.querySelector<HTMLElement>(
-        '.tc-mg-plain .tc-status-marker, .tc-mg-deadline-marker .tc-status-marker',
+        '.abyss-mg-plain .abyss-status-marker, .abyss-mg-deadline-marker .abyss-status-marker',
       )!;
-      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
+      (
+        h.panel as unknown as {
+          openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void;
+        }
+      ).openRecurrenceEditor(marker, recurring);
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).not.toBeNull();
 
       h.el.querySelector<HTMLButtonElement>('[aria-label="Next"]')?.click();
 
       expect(marker.isConnected).toBe(false);
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-recurrence-popover')).toBeNull();
     } finally {
       h.panel.destroy();
       h.el.remove();
@@ -2468,7 +2467,7 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     const h = keyboardPanelHarness([t], execute);
     clickCalendarView(h.el, 'Week');
 
-    const days = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column'));
+    const days = Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'));
     for (const [index, day] of days.entries()) {
       day.getBoundingClientRect = () =>
         ({
@@ -2479,11 +2478,11 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
           width: 100,
           height: 24 * 48,
         }) as DOMRect;
-      const hour = day.querySelector<HTMLElement>('.tc-tg-hour-column');
+      const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column');
       if (!hour) throw new Error('missing hour column');
       hour.getBoundingClientRect = day.getBoundingClientRect;
     }
-    const allDayCells = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-allday-cell'));
+    const allDayCells = Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-allday-cell'));
     for (const [index, cell] of allDayCells.entries()) {
       cell.getBoundingClientRect = () =>
         ({
@@ -2497,7 +2496,9 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
     }
 
     const segments = [start, due].map((date) => {
-      const block = h.el.querySelector<HTMLElement>(`.tc-tg-block[data-tg-segment-date="${date}"]`);
+      const block = h.el.querySelector<HTMLElement>(
+        `.abyss-tg-block[data-tg-segment-date="${date}"]`,
+      );
       if (!block) throw new Error(`missing timed segment ${date}`);
       const index = days.findIndex((day) => day.dataset['tgDate'] === date);
       block.getBoundingClientRect = () =>
@@ -2519,7 +2520,7 @@ describe('CenterPanel calendar mode — timed pointer command bridge', () => {
         new PointerEvent('pointerdown', { bubbles: true, clientX, clientY, pointerId }),
       );
       window.dispatchEvent(new PointerEvent('pointerup', { clientX, clientY, pointerId }));
-      expect(h.el.querySelector('.tc-tg-drag-preview')).toBeNull();
+      expect(h.el.querySelector('.abyss-tg-drag-preview')).toBeNull();
     }
     await flushMicrotasks();
     expect(execute).not.toHaveBeenCalled();
@@ -2644,9 +2645,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Week');
 
-    const gridRow = h.el.querySelector('.tc-tg-grid-row');
+    const gridRow = h.el.querySelector('.abyss-tg-grid-row');
     const outgoing = h.el.querySelector<HTMLElement>(
-      `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
+      `.abyss-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
     );
     if (!outgoing) throw new Error('missing pre-due ghost');
     outgoing.focus();
@@ -2659,9 +2660,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     await flushMicrotasks();
 
     const replacement = h.el.querySelector<HTMLElement>(
-      `.tc-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
+      `.abyss-tg-block-continuation[data-tg-segment-date="${grabbedDate}"]`,
     );
-    expect(h.el.querySelector('.tc-tg-grid-row')).toBe(gridRow);
+    expect(h.el.querySelector('.abyss-tg-grid-row')).toBe(gridRow);
     expect(replacement).not.toBe(outgoing);
     expect(activeDocument.activeElement).toBe(replacement);
   });
@@ -2760,7 +2761,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       calendar.render();
 
       const outgoing = h.el.querySelector<HTMLElement>(
-        `.tc-tg-block-continuation[data-tg-segment-date="${focusedDate}"]`,
+        `.abyss-tg-block-continuation[data-tg-segment-date="${focusedDate}"]`,
       );
       if (!outgoing) throw new Error(`missing outgoing timed ghost ${focusedDate}`);
       outgoing.focus();
@@ -2775,7 +2776,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         pending.resolve(okTask(updated));
         await flushMicrotasks();
         preEventCandidate = h.el.querySelector<HTMLElement>(
-          `.tc-tg-block[data-tg-segment-date="${nextSegmentDate}"]`,
+          `.abyss-tg-block[data-tg-segment-date="${nextSegmentDate}"]`,
         );
         h.setSnapshots([updated]);
         h.emit();
@@ -2787,18 +2788,18 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
         ref: original.ref,
         days: key === 'ArrowLeft' ? -1 : 1,
       });
-      const visibleDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
-        (column) => column.dataset['tgDate'],
-      );
+      const visibleDates = Array.from(
+        h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
+      ).map((column) => column.dataset['tgDate']);
       expect(visibleDates[0]).toBe(expectedWeekStart);
       expect(visibleDates).toContain(nextSegmentDate);
       expect(
-        Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).map(
+        Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).map(
           (block) => block.dataset['tgSegmentDate'],
         ),
       ).toContain(nextSegmentDate);
       const replacement = h.el.querySelector<HTMLElement>(
-        `.tc-tg-block-continuation[data-tg-segment-date="${nextSegmentDate}"]`,
+        `.abyss-tg-block-continuation[data-tg-segment-date="${nextSegmentDate}"]`,
       );
       expect(replacement).not.toBeNull();
       expect(replacement).not.toBe(outgoing);
@@ -2931,9 +2932,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     pending.resolve(okTask(updated));
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
     expect(h.el.ownerDocument.activeElement).not.toBe(block);
-    expect(h.el.ownerDocument.activeElement?.classList.contains('tc-tg-block')).not.toBe(true);
+    expect(h.el.ownerDocument.activeElement?.classList.contains('abyss-tg-block')).not.toBe(true);
   });
 
   it('retains a special-path locator across two remounts and focuses only the newest connected block', async () => {
@@ -2989,7 +2990,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     });
     h = keyboardPanelHarness([current], execute);
     clickCalendarView(h.el, 'Day');
-    const dateBefore = h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date');
+    const dateBefore = h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date');
 
     let block = timedBlock(h.el);
     block.focus();
@@ -3000,7 +3001,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     await flushMicrotasks();
 
     expect(execute).toHaveBeenCalledTimes(2);
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(dateBefore);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+      dateBefore,
+    );
     expect(activeDocument.activeElement).toBe(timedBlock(h.el));
   });
 
@@ -3021,7 +3024,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(block, 'ArrowRight');
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(tomorrow);
     expect(activeDocument.activeElement).toBe(timedBlock(h.el));
   });
 
@@ -3052,14 +3055,16 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     first.resolve(okTask(dayTwo));
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
     await flushMicrotasks();
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(dayTwoDate);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+      dayTwoDate,
+    );
 
     h.setSnapshots([dayThree]);
     h.emit();
     second.resolve(okTask(dayThree));
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(
       dayThreeDate,
     );
     expect(patch).toHaveBeenCalledTimes(2);
@@ -3089,16 +3094,16 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     });
     h = keyboardPanelHarness([current], execute);
     clickCalendarView(h.el, 'Week');
-    const originalDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
-      (column) => column.dataset['tgDate'],
-    );
+    const originalDates = Array.from(
+      h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
+    ).map((column) => column.dataset['tgDate']);
 
     let block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
     await flushMicrotasks();
     expect(
-      Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')).map(
         (column) => column.dataset['tgDate'],
       ),
     ).toEqual(originalDates);
@@ -3111,9 +3116,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     block.focus();
     press(block, 'ArrowRight');
     await flushMicrotasks();
-    const followedDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
-      (column) => column.dataset['tgDate'],
-    );
+    const followedDates = Array.from(
+      h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
+    ).map((column) => column.dataset['tgDate']);
     expect(followedDates).toContain(outside);
     expect(followedDates).not.toEqual(originalDates);
   });
@@ -3137,7 +3142,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     calendar.render();
 
     expect(
-      Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
+      Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')).map(
         (column) => column.dataset['tgDate'],
       ),
     ).toEqual([
@@ -3154,9 +3159,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     press(block, 'ArrowRight');
     await flushMicrotasks();
 
-    const followedDates = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-day-column')).map(
-      (column) => column.dataset['tgDate'],
-    );
+    const followedDates = Array.from(
+      h.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column'),
+    ).map((column) => column.dataset['tgDate']);
     expect(followedDates).toEqual([
       '2026-01-05',
       '2026-01-06',
@@ -3195,7 +3200,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       ),
     );
     await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
 
     const updatedB = keyboardSnapshot(TODAY, '10:15', 'b.md', 'b-2');
     h.setSnapshots([taskA, updatedB]);
@@ -3225,7 +3230,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     );
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
     expect(activeDocument.activeElement).toBe(blockB);
   });
 
@@ -3237,7 +3242,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const h = keyboardPanelHarness([original], execute);
     clickCalendarView(h.el, 'Day');
 
-    const gridRow = h.el.querySelector('.tc-tg-grid-row');
+    const gridRow = h.el.querySelector('.abyss-tg-grid-row');
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowDown');
@@ -3245,14 +3250,14 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.emit();
     await flushMicrotasks();
     const remounted = timedBlock(h.el);
-    expect(h.el.querySelector('.tc-tg-grid-row')).toBe(gridRow);
+    expect(h.el.querySelector('.abyss-tg-grid-row')).toBe(gridRow);
     expect(activeDocument.activeElement).not.toBe(remounted);
 
     pending.resolve(okTask(updated));
     await flushMicrotasks();
     expect(activeDocument.activeElement).toBe(remounted);
 
-    const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
     other.focus();
     h.emit();
     await flushMicrotasks();
@@ -3272,7 +3277,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    const toolbarControl = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    const toolbarControl = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
     toolbarControl.focus();
     h.setSnapshots([updated]);
     h.emit();
@@ -3282,7 +3287,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     pending.resolve(okTask(updated));
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
     expect(activeDocument.activeElement).toBe(toolbarControl);
   });
 
@@ -3307,7 +3312,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       pending.resolve(okTask(updated));
       await flushMicrotasks();
 
-      expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+      expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
       expect(activeDocument.activeElement).toBe(externalControl);
     } finally {
       externalControl.remove();
@@ -3358,9 +3363,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       pending.resolve(okTask(updated));
       await flushMicrotasks();
 
-      expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+      expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
       expect(foreignDocument.activeElement).toBe(externalControl);
-      expect(activeDocument.activeElement?.classList.contains('tc-tg-block')).not.toBe(true);
+      expect(activeDocument.activeElement?.classList.contains('abyss-tg-block')).not.toBe(true);
     } finally {
       iframe.remove();
       h.panel.destroy();
@@ -3418,7 +3423,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     pending.resolve(okTaskUnchanged(original));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
     nav.focus();
     h.emit();
     await flushMicrotasks();
@@ -3456,7 +3461,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       block.focus();
       press(block, key, true);
       expect(execute).not.toHaveBeenCalled();
-      const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
       other.focus();
       h.emit();
       await flushMicrotasks();
@@ -3492,7 +3497,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       await flushMicrotasks();
       expect(execute).toHaveBeenCalledOnce();
 
-      const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
       nav.focus();
       h.emit();
       await flushMicrotasks();
@@ -3562,7 +3567,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     third.resolve(okTaskUnchanged(boundary));
     await flushMicrotasks();
 
-    const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
     nav.focus();
     h.emit();
     await flushMicrotasks();
@@ -3635,7 +3640,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       await flushMicrotasks();
 
       const focused = timedBlock(h.el);
-      expect(focused.dataset['tcTaskLine']).toBe('5');
+      expect(focused.dataset['abyssTaskLine']).toBe('5');
       expect(activeDocument.activeElement).toBe(focused);
     },
   );
@@ -3668,10 +3673,10 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       }
 
       const focused = timedBlock(h.el);
-      expect(focused.dataset['tcTaskLine']).toBe('5');
+      expect(focused.dataset['abyssTaskLine']).toBe('5');
       expect(activeDocument.activeElement).toBe(focused);
 
-      const nav = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      const nav = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
       nav.focus();
       h.emit();
       await flushMicrotasks();
@@ -3762,7 +3767,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     await flushMicrotasks();
 
     const focused = timedBlock(h.el);
-    expect(focused.dataset['tcTaskLine']).toBe('5');
+    expect(focused.dataset['abyssTaskLine']).toBe('5');
     expect(activeDocument.activeElement).toBe(focused);
   });
 
@@ -3797,7 +3802,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     await flushMicrotasks();
 
     const focused = timedBlock(h.el);
-    expect(focused.dataset['tcTaskLine']).toBe('6');
+    expect(focused.dataset['abyssTaskLine']).toBe('6');
     expect(activeDocument.activeElement).toBe(focused);
   });
 
@@ -3827,8 +3832,8 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     h.setSnapshots([replacement, moved]);
     h.emit();
     await flushMicrotasks();
-    const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
-      (block) => block.dataset['tcTaskLine'] === '4',
+    const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.abyss-tg-block')).find(
+      (block) => block.dataset['abyssTaskLine'] === '4',
     )!;
     replacementBlock.focus();
     press(replacementBlock, 'ArrowDown');
@@ -3877,9 +3882,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       h.emit();
       await flushMicrotasks();
 
-      const replacementBlock = Array.from(h.el.querySelectorAll<HTMLElement>('.tc-tg-block')).find(
-        (block) => block.dataset['tcTaskLine'] === '4',
-      )!;
+      const replacementBlock = Array.from(
+        h.el.querySelectorAll<HTMLElement>('.abyss-tg-block'),
+      ).find((block) => block.dataset['abyssTaskLine'] === '4')!;
       expect(activeDocument.activeElement).not.toBe(replacementBlock);
       replacementBlock.focus();
       press(replacementBlock, 'ArrowDown');
@@ -3915,7 +3920,7 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       block.focus();
       press(block, 'ArrowDown');
       await flushMicrotasks();
-      const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+      const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
       other.focus();
       h.emit();
       await flushMicrotasks();
@@ -3933,12 +3938,12 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
     const block = timedBlock(h.el);
     block.focus();
     press(block, 'ArrowRight');
-    const other = h.el.querySelector<HTMLElement>('.tc-cal-nav-today')!;
+    const other = h.el.querySelector<HTMLElement>('.abyss-cal-nav-today')!;
     other.focus();
     pending.resolve({ type: 'conflict', current: original });
     await flushMicrotasks();
 
-    expect(h.el.querySelector('.tc-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
+    expect(h.el.querySelector('.abyss-tg-day-column')?.getAttribute('data-tg-date')).toBe(TODAY);
     expect(activeDocument.activeElement).toBe(other);
   });
 
@@ -3966,9 +3971,9 @@ describe('CenterPanel calendar mode — serialized keyboard focus and follow', (
       pending.resolve(okTask(updated));
       await flushMicrotasks();
 
-      expect(activeDocument.activeElement?.classList.contains('tc-tg-block')).toBe(false);
-      if (kind === 'view') expect(h.el.querySelector('.tc-mg-grid')).not.toBeNull();
-      if (kind === 'mode') expect(h.el.querySelector('.tc-center-header')).not.toBeNull();
+      expect(activeDocument.activeElement?.classList.contains('abyss-tg-block')).toBe(false);
+      if (kind === 'view') expect(h.el.querySelector('.abyss-mg-grid')).not.toBeNull();
+      if (kind === 'mode') expect(h.el.querySelector('.abyss-center-header')).not.toBeNull();
       if (kind === 'destroy') expect(h.el.children).toHaveLength(0);
     },
   );

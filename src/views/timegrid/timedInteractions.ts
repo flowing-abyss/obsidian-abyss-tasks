@@ -93,39 +93,39 @@ interface MeasuredColumn {
 }
 
 function measuredColumns(source: HTMLElement): MeasuredColumn[] {
-  const root = source.closest<HTMLElement>('.tc-tg-root');
+  const root = source.closest<HTMLElement>('.abyss-tg-root');
   if (!root) return [];
-  return Array.from(root.querySelectorAll<HTMLElement>('.tc-tg-day-column[data-tg-date]')).flatMap(
-    (day) => {
-      const date = day.dataset['tgDate'];
-      const hour = day.querySelector<HTMLElement>('.tc-tg-hour-column');
-      if (!date || !hour) return [];
-      const dayRect = day.getBoundingClientRect();
-      const hourRect = hour.getBoundingClientRect();
-      const allDay = root.querySelector<HTMLElement>(`.tc-tg-allday-cell[data-tg-date="${date}"]`);
-      const allDayRect = allDay?.getBoundingClientRect();
-      const drag: TimedDragColumn = {
-        date: date as TimedDragColumn['date'],
-        left: dayRect.left,
-        right: dayRect.right,
-        timeGridTop: hourRect.top,
-        timeGridBottom: hourRect.bottom,
-        ...(allDayRect && allDayRect.bottom > allDayRect.top
-          ? { allDayTop: allDayRect.top, allDayBottom: allDayRect.bottom }
-          : {}),
-      };
-      return [
-        {
-          date,
-          day,
-          hour,
-          allDay: allDay ?? undefined,
-          drag,
-          boundary: { date: drag.date, left: drag.left, right: drag.right },
-        },
-      ];
-    },
-  );
+  return Array.from(
+    root.querySelectorAll<HTMLElement>('.abyss-tg-day-column[data-tg-date]'),
+  ).flatMap((day) => {
+    const date = day.dataset['tgDate'];
+    const hour = day.querySelector<HTMLElement>('.abyss-tg-hour-column');
+    if (!date || !hour) return [];
+    const dayRect = day.getBoundingClientRect();
+    const hourRect = hour.getBoundingClientRect();
+    const allDay = root.querySelector<HTMLElement>(`.abyss-tg-allday-cell[data-tg-date="${date}"]`);
+    const allDayRect = allDay?.getBoundingClientRect();
+    const drag: TimedDragColumn = {
+      date: date as TimedDragColumn['date'],
+      left: dayRect.left,
+      right: dayRect.right,
+      timeGridTop: hourRect.top,
+      timeGridBottom: hourRect.bottom,
+      ...(allDayRect && allDayRect.bottom > allDayRect.top
+        ? { allDayTop: allDayRect.top, allDayBottom: allDayRect.bottom }
+        : {}),
+    };
+    return [
+      {
+        date,
+        day,
+        hour,
+        allDay: allDay ?? undefined,
+        drag,
+        boundary: { date: drag.date, left: drag.left, right: drag.right },
+      },
+    ];
+  });
 }
 
 function frozen<T extends object>(value: T): Readonly<T> {
@@ -136,7 +136,7 @@ function previewElement(
   existing: HTMLElement | undefined,
   source: HTMLElement,
   target: object,
-  className: 'tc-tg-drag-preview' | 'tc-tg-boundary-preview',
+  className: 'abyss-tg-drag-preview' | 'abyss-tg-boundary-preview',
   content: {
     readonly title: string;
     readonly timeLabel: string;
@@ -146,7 +146,7 @@ function previewElement(
   copyLaneGeometry = true,
 ): HTMLElement {
   const preview = existing ?? source.ownerDocument.createElement('div');
-  const countLabel = source.querySelector<HTMLElement>('.tc-tg-block-badges')?.textContent;
+  const countLabel = source.querySelector<HTMLElement>('.abyss-tg-block-badges')?.textContent;
   preview.className = className;
   preview.dataset['target'] = JSON.stringify(target);
   if (copyLaneGeometry) {
@@ -160,7 +160,7 @@ function previewElement(
       title: content.title,
       ...(content.recurrence && { recurrence: content.recurrence }),
       actionable:
-        content.phase === 'terminal' && source.querySelector('.tc-status-marker') !== null,
+        content.phase === 'terminal' && source.querySelector('.abyss-status-marker') !== null,
       ...(countLabel && { countLabel }),
     },
     density: 'regular',
@@ -287,7 +287,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     if (
       kind === 'move' &&
       (event.target as HTMLElement).closest(
-        '.tc-status-marker, a, .tc-tg-resize-handle, .tc-tg-span-edge',
+        '.abyss-status-marker, a, .abyss-tg-resize-handle, .abyss-tg-span-edge',
       )
     ) {
       return;
@@ -329,7 +329,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
         preview,
         source,
         target,
-        'tc-tg-drag-preview',
+        'abyss-tg-drag-preview',
         {
           title: task.title,
           ...(task.recurrence && { recurrence: task.recurrence }),
@@ -357,7 +357,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     };
 
     const renderDurationPreview = (target: Readonly<TimedVerticalResizeTarget>): void => {
-      preview = previewElement(preview, source, target, 'tc-tg-drag-preview', {
+      preview = previewElement(preview, source, target, 'abyss-tg-drag-preview', {
         title: task.title,
         ...(task.recurrence && { recurrence: task.recurrence }),
         timeLabel: timedPreviewText(target.startMinutes, target.durationMinutes),
@@ -375,7 +375,7 @@ export function attachTimedInteractions(binding: TimedInteractionBinding): void 
     const renderBoundaryPreview = (target: Readonly<TimedBoundaryTarget>): void => {
       const column = columns.find((candidate) => candidate.date === target.date);
       if (!column) return;
-      preview = previewElement(preview, source, target, 'tc-tg-boundary-preview', {
+      preview = previewElement(preview, source, target, 'abyss-tg-boundary-preview', {
         title: task.title,
         ...(task.recurrence && { recurrence: task.recurrence }),
         timeLabel: timedPreviewText(startMinutes, durationMinutes),

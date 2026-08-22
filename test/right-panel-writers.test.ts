@@ -238,7 +238,7 @@ describe('RightPanel recurrence writer', () => {
     state.set('taskStack', [current]);
     const process = vi.spyOn(app.vault, 'process');
 
-    el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!.click();
+    el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!.click();
     const weekdays = Array.from(el.querySelectorAll<HTMLButtonElement>('button')).find(
       (candidate) => candidate.textContent === 'Weekdays',
     )!;
@@ -246,7 +246,7 @@ describe('RightPanel recurrence writer', () => {
     const completed = el.querySelector<HTMLSelectElement>('[aria-label="Completed task"]')!;
     completed.value = 'delete';
     completed.dispatchEvent(new Event('change', { bubbles: true }));
-    el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!.click();
+    el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!.click();
     await flushMicrotasks();
 
     expect(process).toHaveBeenCalledOnce();
@@ -294,9 +294,9 @@ describe('RightPanel recurrence writer', () => {
     panel.mount(el);
     state.set('taskStack', [current]);
 
-    el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!.click();
+    el.querySelector<HTMLButtonElement>('.abyss-repeat-chip')!.click();
     prepare(el);
-    el.querySelector<HTMLButtonElement>('.tc-recurrence-save')!.click();
+    el.querySelector<HTMLButtonElement>('.abyss-recurrence-save')!.click();
     await flushMicrotasks();
 
     expect(await readMd(app, 't.md')).toBe(expected);
@@ -1188,7 +1188,7 @@ describe('RightPanel.addComment', () => {
     const after = await readMd(app, 't.md');
     const lines = after.split('\n');
     // The returned snapshot drives the real panel; this detached list is not optimistically edited.
-    expect(commentList.querySelectorAll('.tc-comment-row')).toHaveLength(0);
+    expect(commentList.querySelectorAll('.abyss-comment-row')).toHaveLength(0);
     expect(inputEl.value).toBe('');
     // Line 1 should be the comment (inserted at task.line + 1)
     expect(lines[1]).toContain('2026-07-14T12:04:03+07:00: hello');
@@ -1246,7 +1246,7 @@ describe('RightPanel.addComment', () => {
     await expect(
       call<Promise<boolean>>(panel, 'addComment', missing, 'ghost', commentList, inputEl),
     ).resolves.toBe(false);
-    expect(commentList.querySelectorAll('.tc-comment-row')).toHaveLength(0);
+    expect(commentList.querySelectorAll('.abyss-comment-row')).toHaveLength(0);
     expect(inputEl.value).toBe('pre-existing');
   });
 

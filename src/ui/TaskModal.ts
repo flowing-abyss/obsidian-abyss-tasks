@@ -61,18 +61,18 @@ export class TaskModal {
       this.queryUnsub = this.queries.subscribe((event) => this.onIndexEvent(event));
     }
 
-    const backdrop = this.ownerDoc.body.createDiv({ cls: 'tc-modal-backdrop' });
+    const backdrop = this.ownerDoc.body.createDiv({ cls: 'abyss-modal-backdrop' });
     this.backdropEl = backdrop;
     // Marks the document so hover-preview popovers can stack above the modal (see styles.css).
-    this.ownerDoc.body.addClass('tc-modal-open');
+    this.ownerDoc.body.addClass('abyss-modal-open');
 
-    const modal = backdrop.createDiv({ cls: 'tc-modal' });
+    const modal = backdrop.createDiv({ cls: 'abyss-modal' });
     this.modalEl = modal;
     if (context) {
-      modal.createDiv({ cls: 'tc-forecast-source-context', text: context });
+      modal.createDiv({ cls: 'abyss-forecast-source-context', text: context });
     }
 
-    const panelEl = modal.createDiv({ cls: 'tc-right tc-modal-body' });
+    const panelEl = modal.createDiv({ cls: 'abyss-right abyss-modal-body' });
     this.innerPanel = new RightPanel(
       this.innerState,
       this.app,
@@ -88,7 +88,7 @@ export class TaskModal {
 
     // A mocked/legacy panel may not invoke the render hook. Preserve the direct fallback.
     this.renderCloseButton(
-      panelEl.querySelector<HTMLElement>('.tc-right-header-actions') ?? panelEl,
+      panelEl.querySelector<HTMLElement>('.abyss-right-header-actions') ?? panelEl,
     );
 
     backdrop.addEventListener('click', (e) => {
@@ -102,13 +102,13 @@ export class TaskModal {
   }
 
   private renderCloseButton(parent: HTMLElement): void {
-    const existing = this.modalEl?.querySelector<HTMLElement>('.tc-modal-close-btn');
+    const existing = this.modalEl?.querySelector<HTMLElement>('.abyss-modal-close-btn');
     if (existing) {
       if (existing.parentElement !== parent) parent.appendChild(existing);
       return;
     }
     const closeBtn = (this.ownerDoc ?? activeDocument).createElement('button');
-    closeBtn.className = 'tc-right-action-btn tc-modal-close-btn';
+    closeBtn.className = 'abyss-right-action-btn abyss-modal-close-btn';
     closeBtn.setAttribute('aria-label', 'Close');
     closeBtn.setAttribute('title', 'Close');
     closeBtn.textContent = '✕';
@@ -125,7 +125,7 @@ export class TaskModal {
     this.queryUnsub = null;
     this.selectionUnsub?.();
     this.selectionUnsub = null;
-    this.ownerDoc?.body.removeClass('tc-modal-open');
+    this.ownerDoc?.body.removeClass('abyss-modal-open');
     this.ownerDoc = null;
     this.innerPanel?.destroy();
     this.innerPanel = null;
@@ -231,6 +231,6 @@ export class TaskModal {
   }
 
   private clearResolutionMessage(): void {
-    this.modalEl?.querySelector('.tc-task-selection-message')?.remove();
+    this.modalEl?.querySelector('.abyss-task-selection-message')?.remove();
   }
 }

@@ -32,7 +32,7 @@ vi.mock('../src/panels/RightPanel', () => ({
       mount: (el: HTMLElement) => {
         mockState.mountImpl(el);
         if (mockState.includeHeaderActions.value) {
-          el.createDiv({ cls: 'tc-right-header-actions' });
+          el.createDiv({ cls: 'abyss-right-header-actions' });
         }
       },
       destroy: mockState.destroyImpl,
@@ -65,16 +65,16 @@ describe('TaskModal', () => {
   });
 
   describe('open', () => {
-    it('creates .tc-modal-backdrop appended to activeDocument.body', () => {
+    it('creates .abyss-modal-backdrop appended to activeDocument.body', () => {
       modal.open(task());
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).not.toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     });
 
-    it('inside backdrop creates .tc-modal → .tc-right.tc-modal-body', () => {
+    it('inside backdrop creates .abyss-modal → .abyss-right.abyss-modal-body', () => {
       modal.open(task());
-      const backdrop = activeDocument.body.querySelector('.tc-modal-backdrop')!;
-      expect(backdrop.querySelector('.tc-modal')).not.toBeNull();
-      expect(backdrop.querySelector('.tc-right.tc-modal-body')).not.toBeNull();
+      const backdrop = activeDocument.body.querySelector('.abyss-modal-backdrop')!;
+      expect(backdrop.querySelector('.abyss-modal')).not.toBeNull();
+      expect(backdrop.querySelector('.abyss-right.abyss-modal-body')).not.toBeNull();
     });
 
     it('RightPanel constructed and mount called on panelEl', () => {
@@ -99,54 +99,56 @@ describe('TaskModal', () => {
       expect(mockState.capturedTasks).toBe(tasks);
     });
 
-    it('close button has tc-right-action-btn tc-modal-close-btn class', () => {
+    it('close button has abyss-right-action-btn abyss-modal-close-btn class', () => {
       modal.open(task());
-      const btn = activeDocument.body.querySelector('.tc-modal-close-btn') as HTMLButtonElement;
+      const btn = activeDocument.body.querySelector('.abyss-modal-close-btn') as HTMLButtonElement;
       expect(btn).not.toBeNull();
-      expect(btn.classList.contains('tc-right-action-btn')).toBe(true);
+      expect(btn.classList.contains('abyss-right-action-btn')).toBe(true);
     });
 
-    it('close button inserted into .tc-right-header-actions when present', () => {
+    it('close button inserted into .abyss-right-header-actions when present', () => {
       mockState.includeHeaderActions.value = true;
       modal.open(task());
-      const actions = activeDocument.body.querySelector('.tc-right-header-actions')!;
-      expect(actions.querySelector('.tc-modal-close-btn')).not.toBeNull();
+      const actions = activeDocument.body.querySelector('.abyss-right-header-actions')!;
+      expect(actions.querySelector('.abyss-modal-close-btn')).not.toBeNull();
     });
 
-    it('close button appended to panelEl when .tc-right-header-actions missing (fallback)', () => {
+    it('close button appended to panelEl when .abyss-right-header-actions missing (fallback)', () => {
       mockState.includeHeaderActions.value = false;
       modal.open(task());
-      const panelEl = activeDocument.body.querySelector('.tc-right.tc-modal-body') as HTMLElement;
-      expect(panelEl.querySelector(':scope > .tc-modal-close-btn')).not.toBeNull();
+      const panelEl = activeDocument.body.querySelector(
+        '.abyss-right.abyss-modal-body',
+      ) as HTMLElement;
+      expect(panelEl.querySelector(':scope > .abyss-modal-close-btn')).not.toBeNull();
       // ensure not inside a header-actions (there is none)
-      expect(activeDocument.body.querySelector('.tc-right-header-actions')).toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-right-header-actions')).toBeNull();
     });
 
     it('backdrop click (target === backdrop) closes modal', () => {
       modal.open(task());
-      const backdrop = activeDocument.body.querySelector('.tc-modal-backdrop') as HTMLElement;
+      const backdrop = activeDocument.body.querySelector('.abyss-modal-backdrop') as HTMLElement;
       backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
     });
 
     it('backdrop click where target is descendant does NOT close', () => {
       modal.open(task());
-      const backdrop = activeDocument.body.querySelector('.tc-modal-backdrop') as HTMLElement;
-      const inner = backdrop.querySelector('.tc-modal') as HTMLElement;
+      const backdrop = activeDocument.body.querySelector('.abyss-modal-backdrop') as HTMLElement;
+      const inner = backdrop.querySelector('.abyss-modal') as HTMLElement;
       inner.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).not.toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     });
 
     it('Escape keydown closes modal', () => {
       modal.open(task());
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
     });
 
     it('other keys do not close', () => {
       modal.open(task());
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).not.toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     });
   });
 
@@ -154,7 +156,7 @@ describe('TaskModal', () => {
     it('removes backdrop from DOM', () => {
       modal.open(task());
       modal.close();
-      expect(activeDocument.body.querySelector('.tc-modal-backdrop')).toBeNull();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
     });
 
     it('calls RightPanel.destroy()', () => {
@@ -188,13 +190,17 @@ describe('TaskModal', () => {
   describe('lifecycle', () => {
     it('open twice without close → first backdrop removed, second created', () => {
       modal.open(task({ title: 'first' }));
-      const firstBackdrop = activeDocument.body.querySelector('.tc-modal-backdrop') as HTMLElement;
+      const firstBackdrop = activeDocument.body.querySelector(
+        '.abyss-modal-backdrop',
+      ) as HTMLElement;
       modal.open(task({ title: 'second' }));
-      const secondBackdrop = activeDocument.body.querySelector('.tc-modal-backdrop') as HTMLElement;
+      const secondBackdrop = activeDocument.body.querySelector(
+        '.abyss-modal-backdrop',
+      ) as HTMLElement;
       expect(secondBackdrop).not.toBeNull();
       expect(firstBackdrop.isConnected).toBe(false);
       // only one backdrop at a time
-      expect(activeDocument.body.querySelectorAll('.tc-modal-backdrop')).toHaveLength(1);
+      expect(activeDocument.body.querySelectorAll('.abyss-modal-backdrop')).toHaveLength(1);
     });
   });
 });

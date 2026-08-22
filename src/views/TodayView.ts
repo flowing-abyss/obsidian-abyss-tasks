@@ -318,7 +318,9 @@ export class TodayView extends BaseView {
     const tagGroups = this.callbacks.tagGroups ?? [];
     if (!installCellBindings) {
       day.hourColumnEl
-        .querySelectorAll<HTMLElement>(':scope > .tc-tg-block, :scope > .tc-tg-block-continuation')
+        .querySelectorAll<HTMLElement>(
+          ':scope > .abyss-tg-block, :scope > .abyss-tg-block-continuation',
+        )
         .forEach((element) => element.remove());
     }
     renderTimedBlocksForDay(
@@ -369,17 +371,19 @@ export class TodayView extends BaseView {
       this.spanInteractions,
       'timegrid',
     );
-    day.allDayCellEl.style.setProperty('--tc-span-lane-count', String(spanRow.laneCount));
+    day.allDayCellEl.style.setProperty('--abyss-span-lane-count', String(spanRow.laneCount));
     if (installCellBindings) {
       renderAllDayCell(day.allDayCellEl, date, [], plain, deadlines, allDayCallbacks, tagGroups);
-      const allDayItems = day.allDayCellEl.createDiv({ cls: 'tc-tg-cell-items' });
+      const allDayItems = day.allDayCellEl.createDiv({ cls: 'abyss-tg-cell-items' });
       for (const child of Array.from(day.allDayCellEl.children)) {
         if (child !== allDayItems) allDayItems.appendChild(child);
       }
       return;
     }
 
-    const allDayItems = day.allDayCellEl.querySelector<HTMLElement>(':scope > .tc-tg-cell-items');
+    const allDayItems = day.allDayCellEl.querySelector<HTMLElement>(
+      ':scope > .abyss-tg-cell-items',
+    );
     if (!allDayItems) return;
     allDayItems.empty();
     const scratch = day.allDayCellEl.ownerDocument.createElement('div');

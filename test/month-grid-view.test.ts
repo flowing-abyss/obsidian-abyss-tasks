@@ -79,8 +79,8 @@ function requiredElement(root: ParentNode, selector: string): HTMLElement {
 }
 
 function recurrenceBadgeDom(root: ParentNode): Record<string, string | undefined> {
-  const badge = root.querySelector<HTMLElement>('.tc-recurrence-badge');
-  const icon = badge?.querySelector<HTMLElement>('.tc-recurrence-badge-icon');
+  const badge = root.querySelector<HTMLElement>('.abyss-recurrence-badge');
+  const icon = badge?.querySelector<HTMLElement>('.abyss-recurrence-badge-icon');
   return {
     rootClass: badge?.className,
     validity: badge?.dataset['recurrenceValidity'],
@@ -119,7 +119,7 @@ function allDayCallbacks() {
 }
 
 function measureMonthCells(container: HTMLElement): void {
-  Array.from(container.querySelectorAll<HTMLElement>('.tc-mg-cell')).forEach((cell, index) => {
+  Array.from(container.querySelectorAll<HTMLElement>('.abyss-mg-cell')).forEach((cell, index) => {
     const column = index % 7;
     const row = Math.floor(index / 7);
     vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue(
@@ -166,16 +166,16 @@ function monthChronologyTasks(
 
 function monthGridRowFor(container: HTMLElement, date: string, title: string): number {
   const cell = requiredElement(container, `[data-mg-date="${date}"]`);
-  const row = cell.closest<HTMLElement>('.tc-mg-row');
+  const row = cell.closest<HTMLElement>('.abyss-mg-row');
   if (!row) throw new Error(`Expected Month row containing ${date}`);
   const candidates = [
     ...row.querySelectorAll<HTMLElement>(`[data-span-date="${date}"]`),
     ...cell.querySelectorAll<HTMLElement>(
-      '.tc-mg-cell-items > .tc-mg-plain, .tc-mg-cell-items > .tc-mg-block-dot, .tc-mg-cell-items > .tc-mg-deadline-marker',
+      '.abyss-mg-cell-items > .abyss-mg-plain, .abyss-mg-cell-items > .abyss-mg-block-dot, .abyss-mg-cell-items > .abyss-mg-deadline-marker',
     ),
   ];
   const element = candidates.find(
-    (candidate) => candidate.querySelector('.tc-mg-item-title')?.textContent === title,
+    (candidate) => candidate.querySelector('.abyss-mg-item-title')?.textContent === title,
   );
   if (!element) throw new Error(`Expected Month item "${title}" on ${date}`);
   return Number(element.style.gridRow);
@@ -196,11 +196,11 @@ describe('MonthGridView', () => {
       resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 }),
     );
 
-    expect(recurrenceBadgeDom(requiredElement(container, '.tc-mg-block-dot'))).toEqual({
-      rootClass: 'tc-recurrence-badge',
+    expect(recurrenceBadgeDom(requiredElement(container, '.abyss-mg-block-dot'))).toEqual({
+      rootClass: 'abyss-recurrence-badge',
       validity: 'valid',
       label: 'Repeats: every week',
-      iconClass: 'tc-recurrence-badge-icon',
+      iconClass: 'abyss-recurrence-badge-icon',
       icon: 'repeat-2',
     });
   });
@@ -254,8 +254,8 @@ describe('MonthGridView', () => {
     const config = resolvedConfig({ startPosition: '2026-07', firstDayOfWeek: 1 });
     view.render(container, monthChronologyTasks(), config);
     const cell = requiredElement(container, '[data-mg-date="2026-07-30"]');
-    const row = cell.closest('.tc-mg-row');
-    const spanLayer = row?.querySelector('.tc-mg-span-layer');
+    const row = cell.closest('.abyss-mg-row');
+    const spanLayer = row?.querySelector('.abyss-mg-span-layer');
 
     view.patch(
       container,
@@ -264,8 +264,8 @@ describe('MonthGridView', () => {
     );
 
     expect(requiredElement(container, '[data-mg-date="2026-07-30"]')).toBe(cell);
-    expect(cell.closest('.tc-mg-row')).toBe(row);
-    expect(row?.querySelector('.tc-mg-span-layer')).toBe(spanLayer);
+    expect(cell.closest('.abyss-mg-row')).toBe(row);
+    expect(row?.querySelector('.abyss-mg-span-layer')).toBe(spanLayer);
     expect(
       ['15 span', '20 compact', '09 span', 'Untimed span'].map((title) =>
         monthGridRowFor(container, '2026-07-30', title),
@@ -285,11 +285,11 @@ describe('MonthGridView', () => {
     });
 
     view.render(container, [initial], config);
-    const header = container.querySelector('.tc-mg-head-row');
-    const row = requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.tc-mg-row');
+    const header = container.querySelector('.abyss-mg-head-row');
+    const row = requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.abyss-mg-row');
     const cell = container.querySelector('[data-mg-date="2026-07-15"]');
-    const dayLabel = cell?.querySelector('.tc-mg-day-label');
-    const spanLayer = row?.querySelector('.tc-mg-span-layer');
+    const dayLabel = cell?.querySelector('.abyss-mg-day-label');
+    const spanLayer = row?.querySelector('.abyss-mg-span-layer');
 
     for (let revision = 1; revision <= 3; revision++) {
       view.patch(
@@ -311,13 +311,13 @@ describe('MonthGridView', () => {
       );
     }
 
-    expect(container.querySelector('.tc-mg-head-row')).toBe(header);
-    expect(requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.tc-mg-row')).toBe(
+    expect(container.querySelector('.abyss-mg-head-row')).toBe(header);
+    expect(requiredElement(container, '[data-mg-date="2026-07-15"]').closest('.abyss-mg-row')).toBe(
       row,
     );
     expect(container.querySelector('[data-mg-date="2026-07-15"]')).toBe(cell);
-    expect(cell?.querySelector('.tc-mg-day-label')).toBe(dayLabel);
-    expect(row?.querySelector('.tc-mg-span-layer')).toBe(spanLayer);
+    expect(cell?.querySelector('.abyss-mg-day-label')).toBe(dayLabel);
+    expect(row?.querySelector('.abyss-mg-span-layer')).toBe(spanLayer);
     expect(container.textContent).not.toContain('Initial month task');
     expect(container.textContent).toContain('Updated month task 3');
     expect(container.textContent).toContain('Updated span 3');
@@ -330,11 +330,11 @@ describe('MonthGridView', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    const header = container.querySelector('.tc-mg-head-row');
+    const header = container.querySelector('.abyss-mg-head-row');
 
     view.patch(container, [], resolvedConfig({ startPosition: '2026-08' }));
 
-    expect(container.querySelector('.tc-mg-head-row')).not.toBe(header);
+    expect(container.querySelector('.abyss-mg-head-row')).not.toBe(header);
     expect(container.querySelector('[data-mg-date="2026-08-01"]')).not.toBeNull();
   });
 
@@ -343,7 +343,7 @@ describe('MonthGridView', () => {
     const parent = container.createDiv();
     const dates = ['2026-07-13', '2026-07-14', '2026-07-15'];
     for (const [index, date] of dates.entries()) {
-      const cell = parent.createDiv({ cls: 'tc-tg-allday-cell' });
+      const cell = parent.createDiv({ cls: 'abyss-tg-allday-cell' });
       cell.setAttribute('data-tg-date', date);
       vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
         x: index * 100,
@@ -357,7 +357,7 @@ describe('MonthGridView', () => {
         toJSON: () => ({}),
       });
     }
-    const layer = parent.createDiv({ cls: 'tc-tg-span-layer' });
+    const layer = parent.createDiv({ cls: 'abyss-tg-span-layer' });
     const row = layoutVisibleSpans(
       [task({ planning: { start: '2026-07-13', due: '2026-07-15' } })],
       dates,
@@ -395,8 +395,8 @@ describe('MonthGridView', () => {
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-13"]').closest('.tc-mg-row')!;
-    const cells = Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell'));
+    const row = requiredElement(container, '[data-mg-date="2026-07-13"]').closest('.abyss-mg-row')!;
+    const cells = Array.from(row.querySelectorAll<HTMLElement>('.abyss-mg-cell'));
     for (const [index, cell] of cells.entries()) {
       vi.spyOn(cell, 'getBoundingClientRect').mockReturnValue({
         x: index * 100,
@@ -447,14 +447,16 @@ describe('MonthGridView', () => {
 
     view.render(container, [long, single], resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.tc-mg-row')!;
-    expect(row.querySelectorAll('.tc-mg-span-layer')).toHaveLength(1);
+    const row = requiredElement(container, '[data-mg-date="2026-07-14"]').closest('.abyss-mg-row')!;
+    expect(row.querySelectorAll('.abyss-mg-span-layer')).toHaveLength(1);
     expect(row.querySelectorAll('[data-span-kind="ghost"]')).toHaveLength(2);
     expect(row.querySelectorAll('[data-span-kind="terminal"]')).toHaveLength(1);
     expect(
-      [...row.querySelectorAll('[data-span-kind] .tc-mg-item-title')].map((el) => el.textContent),
+      [...row.querySelectorAll('[data-span-kind] .abyss-mg-item-title')].map(
+        (el) => el.textContent,
+      ),
     ).toEqual(['Trip', 'Trip', 'Trip']);
-    expect(row.querySelectorAll('[data-span-kind] .tc-status-marker')).toHaveLength(1);
+    expect(row.querySelectorAll('[data-span-kind] .abyss-status-marker')).toHaveLength(1);
     for (const segment of row.querySelectorAll<HTMLElement>('[data-span-kind="ghost"]')) {
       expect(segment.querySelector('[data-boundary="start"]')).not.toBeNull();
       expect(segment.querySelector('[data-boundary="due"]')).not.toBeNull();
@@ -468,11 +470,11 @@ describe('MonthGridView', () => {
       ),
     ).toEqual(['2 / 3', '3 / 4', '4 / 5']);
     expect(
-      row.querySelector('[data-mg-date="2026-07-15"] .tc-mg-cell-items .tc-mg-plain'),
+      row.querySelector('[data-mg-date="2026-07-15"] .abyss-mg-cell-items .abyss-mg-plain'),
     ).not.toBeNull();
     expect(
-      Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell')).every(
-        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '2',
+      Array.from(row.querySelectorAll<HTMLElement>('.abyss-mg-cell')).every(
+        (cell) => cell.style.getPropertyValue('--abyss-span-lane-count') === '2',
       ),
     ).toBe(true);
   });
@@ -494,19 +496,19 @@ describe('MonthGridView', () => {
 
     view.render(container, spans, resolvedConfig({ startPosition: '2026-07' }));
 
-    const row = requiredElement(container, '[data-mg-date="2026-07-30"]').closest('.tc-mg-row')!;
+    const row = requiredElement(container, '[data-mg-date="2026-07-30"]').closest('.abyss-mg-row')!;
     expect(
       Array.from(row.querySelectorAll<HTMLElement>('[data-span-date="2026-07-30"]')).map(
         (segment) => segment.style.gridRow,
       ),
     ).toEqual(['1', '2', '3', '4', '5']);
     expect(
-      Array.from(row.querySelectorAll<HTMLElement>('.tc-mg-cell')).every(
-        (cell) => cell.style.getPropertyValue('--tc-span-lane-count') === '5',
+      Array.from(row.querySelectorAll<HTMLElement>('.abyss-mg-cell')).every(
+        (cell) => cell.style.getPropertyValue('--abyss-span-lane-count') === '5',
       ),
     ).toBe(true);
-    expect(declarationsFor('.tc-mg-cell-items')).toMatch(
-      /min-height\s*:\s*calc\(var\(--tc-span-lane-count, 0\) \* var\(--tc-calendar-track-height\)\)/u,
+    expect(declarationsFor('.abyss-mg-cell-items')).toMatch(
+      /min-height\s*:\s*calc\(var\(--abyss-span-lane-count, 0\) \* var\(--abyss-calendar-track-height\)\)/u,
     );
   });
 
@@ -533,19 +535,19 @@ describe('MonthGridView', () => {
       new PointerEvent('pointermove', { clientX: 450, clientY: 250, pointerId: 40 }),
     );
     expect(
-      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+      Array.from(container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')).map(
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['2 / 3', '3 / 4', '4 / 5', '5 / 6']);
-    const preview = requiredElement(container, '.tc-span-boundary-preview');
+    const preview = requiredElement(container, '.abyss-span-boundary-preview');
     expect(preview.getAttribute('aria-hidden')).toBe('true');
     expect(preview.textContent).toContain(t.title);
-    expect(preview.querySelector(':scope > .tc-calendar-preview-target-outline')).not.toBeNull();
+    expect(preview.querySelector(':scope > .abyss-calendar-preview-target-outline')).not.toBeNull();
     expect(
-      preview.querySelector(':scope > .tc-calendar-preview-shell .tc-calendar-preview-title')
+      preview.querySelector(':scope > .abyss-calendar-preview-shell .abyss-calendar-preview-title')
         ?.textContent,
     ).toBe(t.title);
-    expect(preview.querySelector('.tc-status-marker')).toBeNull();
+    expect(preview.querySelector('.abyss-status-marker')).toBeNull();
     expect(preview.querySelector('a')).toBeNull();
     expect(preview.getAttribute('tabindex')).toBeNull();
     window.dispatchEvent(
@@ -556,7 +558,7 @@ describe('MonthGridView', () => {
       t,
       expect.objectContaining({ boundary: 'due', date: '2026-07-17' }),
     );
-    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+    expect(container.querySelector('.abyss-span-boundary-preview')).toBeNull();
   });
 
   it('moves an actual Month start boundary into the previous week and previews every clipped row piece', () => {
@@ -584,22 +586,22 @@ describe('MonthGridView', () => {
     const previousRow = requiredElement(
       container,
       '[data-mg-date="2026-07-09"]',
-    ).closest<HTMLElement>('.tc-mg-row')!;
+    ).closest<HTMLElement>('.abyss-mg-row')!;
     const sourceRow = requiredElement(
       container,
       '[data-mg-date="2026-07-14"]',
-    ).closest<HTMLElement>('.tc-mg-row')!;
+    ).closest<HTMLElement>('.abyss-mg-row')!;
     const previews = Array.from(
-      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+      container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview'),
     );
     expect(previews).toHaveLength(8);
     expect(
-      Array.from(previousRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+      Array.from(previousRow.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')).map(
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['4 / 5', '5 / 6', '6 / 7', '7 / 8']);
     expect(
-      Array.from(sourceRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+      Array.from(sourceRow.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')).map(
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['1 / 2', '2 / 3', '3 / 4', '4 / 5']);
@@ -616,7 +618,7 @@ describe('MonthGridView', () => {
       date: '2026-07-09',
       dayDelta: -5,
     });
-    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+    expect(container.querySelector('.abyss-span-boundary-preview')).toBeNull();
   });
 
   it('moves an actual Month due boundary into the following week and previews every clipped row piece', () => {
@@ -644,22 +646,22 @@ describe('MonthGridView', () => {
     const sourceRow = requiredElement(
       container,
       '[data-mg-date="2026-07-14"]',
-    ).closest<HTMLElement>('.tc-mg-row')!;
+    ).closest<HTMLElement>('.abyss-mg-row')!;
     const followingRow = requiredElement(
       container,
       '[data-mg-date="2026-07-21"]',
-    ).closest<HTMLElement>('.tc-mg-row')!;
+    ).closest<HTMLElement>('.abyss-mg-row')!;
     const previews = Array.from(
-      container.querySelectorAll<HTMLElement>('.tc-span-boundary-preview'),
+      container.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview'),
     );
     expect(previews).toHaveLength(8);
     expect(
-      Array.from(sourceRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+      Array.from(sourceRow.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')).map(
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['2 / 3', '3 / 4', '4 / 5', '5 / 6', '6 / 7', '7 / 8']);
     expect(
-      Array.from(followingRow.querySelectorAll<HTMLElement>('.tc-span-boundary-preview')).map(
+      Array.from(followingRow.querySelectorAll<HTMLElement>('.abyss-span-boundary-preview')).map(
         (preview) => preview.style.gridColumn,
       ),
     ).toEqual(['1 / 2', '2 / 3']);
@@ -676,7 +678,7 @@ describe('MonthGridView', () => {
       date: '2026-07-21',
       dayDelta: 5,
     });
-    expect(container.querySelector('.tc-span-boundary-preview')).toBeNull();
+    expect(container.querySelector('.abyss-span-boundary-preview')).toBeNull();
   });
 
   it('moves a Month span into another week by its grabbed date and previews the full shifted range', () => {
@@ -706,7 +708,7 @@ describe('MonthGridView', () => {
       }) as PointerEvent,
     );
     expect(
-      Array.from(container.querySelectorAll<HTMLElement>('.tc-span-move-preview')).map(
+      Array.from(container.querySelectorAll<HTMLElement>('.abyss-span-move-preview')).map(
         (preview) => ({
           column: preview.style.gridColumn,
           target: JSON.parse(preview.dataset['target']!),
@@ -734,7 +736,7 @@ describe('MonthGridView', () => {
     const container = freshContainer();
     const view = new MonthGridView(callbacks());
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    expect(container.querySelectorAll('.tc-mg-cell')).toHaveLength(42);
+    expect(container.querySelectorAll('.abyss-mg-cell')).toHaveLength(42);
   });
 
   // Task 42b: when a month's 1st falls on a Sunday and firstDayOfWeek is Monday, the naive
@@ -746,7 +748,7 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(callbacks());
     view.render(container, [], resolvedConfig({ startPosition: '2026-02', firstDayOfWeek: 1 }));
     expect(container.querySelector('[data-mg-date="2026-02-01"]')).not.toBeNull();
-    expect(container.querySelectorAll('.tc-mg-cell')).toHaveLength(42);
+    expect(container.querySelectorAll('.abyss-mg-cell')).toHaveLength(42);
   });
 
   it("marks today's cell with is-today", () => {
@@ -759,10 +761,10 @@ describe('MonthGridView', () => {
   });
 
   it("today's cell CSS keeps only the red border, with no separate background tint (Round 3)", () => {
-    // Round 3: the user asked for the pre-existing background-color tint on .tc-mg-cell.is-today
+    // Round 3: the user asked for the pre-existing background-color tint on .abyss-mg-cell.is-today
     // to be removed, keeping just the border that Round 2 added. Assert against the actual
     // declarations so a future edit can't silently reintroduce a background alongside it.
-    const declarations = declarationsFor('.tc-mg-cell.is-today');
+    const declarations = declarationsFor('.abyss-mg-cell.is-today');
     expect(declarations).toContain('box-shadow');
     expect(declarations).not.toMatch(/background/u);
   });
@@ -773,7 +775,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]');
-    expect(cell?.querySelector('.tc-mg-plain')?.textContent).toContain('Plain');
+    expect(cell?.querySelector('.abyss-mg-plain')?.textContent).toContain('Plain');
   });
 
   it('never sets data-priority on compact items, even for a prioritized task (calendar items no longer render a priority border)', () => {
@@ -781,7 +783,9 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(callbacks());
     const t = task({ priority: 'C', title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
     expect(row.hasAttribute('data-priority')).toBe(false);
 
     const container2 = freshContainer();
@@ -789,12 +793,12 @@ describe('MonthGridView', () => {
     const none = task({ priority: 'D', title: 'Plain', planning: { due: '2026-07-15' } });
     view2.render(container2, [none], resolvedConfig({ startPosition: '2026-07' }));
     const row2 = container2.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-plain',
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
     ) as HTMLElement;
     expect(row2.hasAttribute('data-priority')).toBe(false);
   });
 
-  it('sets --tc-tag-color on compact items when a tag matches a configured tag group', () => {
+  it('sets --abyss-tag-color on compact items when a tag matches a configured tag group', () => {
     const container = freshContainer();
     const cbs = {
       ...callbacks(),
@@ -810,8 +814,10 @@ describe('MonthGridView', () => {
       source: { originalMarkdown: '- [ ] t #work', originalBlock: '- [ ] t #work' },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
-    expect(row.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
+    expect(row.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
   });
 
   it('keeps a prioritized deadline rooted in tag identity and priority only on its marker', () => {
@@ -832,11 +838,11 @@ describe('MonthGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
     const root = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
-    expect(root.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
+    expect(root.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
     expect(root.hasAttribute('data-priority')).toBe(false);
-    expect(root.querySelector('.tc-status-marker')?.getAttribute('data-priority')).toBe('A');
+    expect(root.querySelector('.abyss-status-marker')?.getAttribute('data-priority')).toBe('A');
   });
 
   it('uses the shared interactive-accent fallback for an untagged deadline root', () => {
@@ -850,21 +856,23 @@ describe('MonthGridView', () => {
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
     const root = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
     const identityRule = declarationsForRuleContaining(
-      '.tc-tg-block',
-      '.tc-mg-plain',
-      '.tc-mg-deadline-marker',
+      '.abyss-tg-block',
+      '.abyss-mg-plain',
+      '.abyss-mg-deadline-marker',
     );
-    expect(root.style.getPropertyValue('--tc-tag-color')).toBe('');
+    expect(root.style.getPropertyValue('--abyss-tag-color')).toBe('');
     expect(root.hasAttribute('data-priority')).toBe(false);
     expect(identityRule).toMatch(
-      /border-inline-start\s*:\s*var\(--tc-calendar-item-rail\) solid\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+      /border-inline-start\s*:\s*var\(--abyss-calendar-item-rail\) solid\s+var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)/u,
     );
-    expect(identityRule).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
-    expect(identityRule).toMatch(/box-shadow\s*:\s*inset 0 0 0 1px var\(--tc-calendar-border\)/u);
-    expect(css).not.toMatch(/\.tc-mg-deadline-marker\[data-priority=/u);
+    expect(identityRule).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
+    expect(identityRule).toMatch(
+      /box-shadow\s*:\s*inset 0 0 0 1px var\(--abyss-calendar-border\)/u,
+    );
+    expect(css).not.toMatch(/\.abyss-mg-deadline-marker\[data-priority=/u);
   });
 
   it('uses event contrast for both native Month drag origins', () => {
@@ -889,12 +897,12 @@ describe('MonthGridView', () => {
         resolvedConfig({ startPosition: '2026-07' }),
       );
 
-      for (const selector of ['.tc-mg-plain', '.tc-mg-block-dot']) {
+      for (const selector of ['.abyss-mg-plain', '.abyss-mg-block-dot']) {
         expect(
           (container.querySelector(selector) as HTMLElement).style.getPropertyValue(
-            '--tc-tag-text-color',
+            '--abyss-tag-text-color',
           ),
-        ).toBe('var(--tc-tag-text-dark)');
+        ).toBe('var(--abyss-tag-text-dark)');
       }
     } finally {
       document.body.style.setProperty('--background-primary', originalBackground);
@@ -917,7 +925,7 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
-    const addBtn = cell.querySelector('.tc-mg-add-btn') as HTMLElement;
+    const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     expect(addBtn).not.toBeNull();
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onCreateAtDate).toHaveBeenCalledWith('2026-07-15');
@@ -953,8 +961,8 @@ describe('MonthGridView', () => {
     );
     view.render(container, tasks, resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
-    expect(cell.querySelectorAll('.tc-mg-plain').length).toBe(8); // cell is fully packed
-    const dayLabel = cell.querySelector('.tc-mg-day-label') as HTMLElement;
+    expect(cell.querySelectorAll('.abyss-mg-plain').length).toBe(8); // cell is fully packed
+    const dayLabel = cell.querySelector('.abyss-mg-day-label') as HTMLElement;
     dayLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onDayClick).toHaveBeenCalledWith('2026-07-15');
   });
@@ -965,7 +973,7 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
     const cell = container.querySelector('[data-mg-date="2026-07-15"]') as HTMLElement;
-    const dayLabel = cell.querySelector('.tc-mg-day-label') as HTMLElement;
+    const dayLabel = cell.querySelector('.abyss-mg-day-label') as HTMLElement;
     dayLabel.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onDayClick).toHaveBeenCalledTimes(1);
   });
@@ -976,7 +984,9 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
     row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
@@ -987,7 +997,9 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
     row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
   });
@@ -999,7 +1011,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Timed', planning: { due: '2026-07-15', time: '09:00' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const dot = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-block-dot',
+      '[data-mg-date="2026-07-15"] .abyss-mg-block-dot',
     ) as HTMLElement;
     dot.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1012,7 +1024,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Timed', planning: { due: '2026-07-15', time: '09:00' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const dot = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-block-dot',
+      '[data-mg-date="2026-07-15"] .abyss-mg-block-dot',
     ) as HTMLElement;
     dot.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
@@ -1025,7 +1037,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
     ) as HTMLElement;
     bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1038,7 +1050,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
     ) as HTMLElement;
     bar.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
@@ -1051,7 +1063,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Deadline', planning: { due: '2026-07-15', scheduled: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const marker = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1064,7 +1076,7 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Deadline', planning: { due: '2026-07-15', scheduled: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const marker = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
@@ -1076,8 +1088,10 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
-    const marker = row.querySelector('.tc-status-marker');
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
+    const marker = row.querySelector('.abyss-status-marker');
     expect(marker).not.toBeNull();
     expect(row.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1092,9 +1106,9 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Timed', planning: { due: '2026-07-15', time: '09:00' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const dot = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-block-dot',
+      '[data-mg-date="2026-07-15"] .abyss-mg-block-dot',
     ) as HTMLElement;
-    const marker = dot.querySelector('.tc-status-marker');
+    const marker = dot.querySelector('.abyss-status-marker');
     expect(marker).not.toBeNull();
     expect(dot.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1109,9 +1123,9 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
     ) as HTMLElement;
-    const marker = bar.querySelector('.tc-status-marker');
+    const marker = bar.querySelector('.abyss-status-marker');
     expect(marker).not.toBeNull();
     expect(bar.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1126,9 +1140,9 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Deadline', planning: { due: '2026-07-15', scheduled: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const markerEl = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
-    const marker = markerEl.querySelector('.tc-status-marker');
+    const marker = markerEl.querySelector('.abyss-status-marker');
     expect(marker).not.toBeNull();
     expect(markerEl.firstElementChild).toBe(marker);
     (marker as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1142,9 +1156,11 @@ describe('MonthGridView', () => {
     const view = new MonthGridView(cbs);
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
-    const marker = row.querySelector('.tc-status-marker');
-    const title = row.querySelector('.tc-mg-item-title');
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
+    const marker = row.querySelector('.abyss-status-marker');
+    const title = row.querySelector('.abyss-mg-item-title');
     expect(marker).not.toBeNull();
     expect(title).not.toBeNull();
     expect(marker?.nextElementSibling).toBe(title);
@@ -1157,11 +1173,11 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Timed', planning: { due: '2026-07-15', time: '09:00' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const dot = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-block-dot',
+      '[data-mg-date="2026-07-15"] .abyss-mg-block-dot',
     ) as HTMLElement;
-    const marker = dot.querySelector('.tc-status-marker');
-    const time = dot.querySelector('.tc-mg-item-time');
-    const title = dot.querySelector('.tc-mg-item-title');
+    const marker = dot.querySelector('.abyss-status-marker');
+    const time = dot.querySelector('.abyss-mg-item-time');
+    const title = dot.querySelector('.abyss-mg-item-title');
     expect(marker).not.toBeNull();
     expect(time).not.toBeNull();
     expect(title).not.toBeNull();
@@ -1176,10 +1192,10 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const bar = container.querySelector(
-      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
     ) as HTMLElement;
-    const marker = bar.querySelector('.tc-status-marker');
-    const title = bar.querySelector('.tc-mg-item-title');
+    const marker = bar.querySelector('.abyss-status-marker');
+    const title = bar.querySelector('.abyss-mg-item-title');
     expect(marker).not.toBeNull();
     expect(title).not.toBeNull();
     expect(marker?.nextElementSibling).toBe(title);
@@ -1192,9 +1208,9 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Deadline', planning: { due: '2026-07-15', scheduled: '2026-07-10' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const markerEl = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker',
     ) as HTMLElement;
-    const title = markerEl.querySelector('.tc-mg-item-title');
+    const title = markerEl.querySelector('.abyss-mg-item-title');
     expect(title).not.toBeNull();
   });
 
@@ -1205,10 +1221,10 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const marker = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-plain .tc-status-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain .abyss-status-marker',
     ) as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    expect(document.querySelector('.tc-status-popover')).not.toBeNull();
+    expect(document.querySelector('.abyss-status-popover')).not.toBeNull();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
@@ -1219,17 +1235,17 @@ describe('MonthGridView', () => {
     const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const marker = container.querySelector(
-      '[data-mg-date="2026-07-15"] .tc-mg-plain .tc-status-marker',
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain .abyss-status-marker',
     ) as HTMLElement;
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const statusRow = document.querySelector('.tc-status-popover-row') as HTMLElement;
+    const statusRow = document.querySelector('.abyss-status-popover-row') as HTMLElement;
     statusRow.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onSetStatus).toHaveBeenCalledWith(t, expect.any(String));
 
-    document.querySelectorAll('.tc-status-popover').forEach((el) => el.remove());
+    document.querySelectorAll('.abyss-status-popover').forEach((el) => el.remove());
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const flagBtn = document.querySelector(
-      '.tc-status-popover-flag[data-tc-priority="A"]',
+      '.abyss-status-popover-flag[data-abyss-priority="A"]',
     ) as HTMLElement;
     flagBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onSetPriority).toHaveBeenCalledWith(t, 'A');
@@ -1249,11 +1265,13 @@ describe('MonthGridView', () => {
       planning: { due: '2026-07-15' },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
     // MarkdownRenderer is a noop in this test harness (see test/center-panel-integration.test.ts
-    // and friends); `.tc-md` is the reliable signal that renderTaskText's markdown path (not a
+    // and friends); `.abyss-md` is the reliable signal that renderTaskText's markdown path (not a
     // raw textContent assignment) was taken.
-    expect(row.querySelector('.tc-md')).not.toBeNull();
+    expect(row.querySelector('.abyss-md')).not.toBeNull();
   });
 
   it('a click on the compact row title (inside a [[wikilink]]-bearing task) still does not fire onDayClick, since the row container class is excluded regardless of nested content', () => {
@@ -1266,8 +1284,10 @@ describe('MonthGridView', () => {
       planning: { due: '2026-07-15' },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('[data-mg-date="2026-07-15"] .tc-mg-plain') as HTMLElement;
-    const titleEl = row.querySelector('.tc-md') as HTMLElement;
+    const row = container.querySelector(
+      '[data-mg-date="2026-07-15"] .abyss-mg-plain',
+    ) as HTMLElement;
+    const titleEl = row.querySelector('.abyss-md') as HTMLElement;
     titleEl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onDayClick).not.toHaveBeenCalled();
   });
@@ -1277,7 +1297,7 @@ describe('MonthGridView', () => {
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    const weekBtns = container.querySelectorAll('.tc-mg-week-btn');
+    const weekBtns = container.querySelectorAll('.abyss-mg-week-btn');
     expect(weekBtns.length).toBe(6);
     (weekBtns[0] as HTMLElement).click();
     expect(cbs.onWeekClick).toHaveBeenCalled();
@@ -1288,7 +1308,7 @@ describe('MonthGridView', () => {
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    const weekBtns = container.querySelectorAll('.tc-mg-week-btn');
+    const weekBtns = container.querySelectorAll('.abyss-mg-week-btn');
     (weekBtns[0] as HTMLElement).click();
     const expectedWeek = window.moment('2026-06-29', 'YYYY-MM-DD').format('w');
     const expectedYear = window.moment('2026-06-29', 'YYYY-MM-DD').format('YYYY');
@@ -1300,7 +1320,7 @@ describe('MonthGridView', () => {
     const cbs = callbacks();
     const view = new MonthGridView(cbs);
     view.render(container, [], resolvedConfig({ startPosition: '2026-07' }));
-    const weekBtn = container.querySelector('.tc-mg-week-btn') as HTMLElement;
+    const weekBtn = container.querySelector('.abyss-mg-week-btn') as HTMLElement;
     weekBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onDayClick).not.toHaveBeenCalled();
   });
@@ -1314,7 +1334,7 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 3 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const item = container.querySelector('.tc-mg-plain') as HTMLElement;
+    const item = container.querySelector('.abyss-mg-plain') as HTMLElement;
     expect(item.getAttribute('draggable')).toBe('true');
     const dt = new DataTransferStub();
     const ev = new MouseEvent('dragstart', { bubbles: true });
@@ -1333,7 +1353,7 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 7 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const item = container.querySelector('.tc-mg-block-dot') as HTMLElement;
+    const item = container.querySelector('.abyss-mg-block-dot') as HTMLElement;
     expect(item.getAttribute('draggable')).toBe('true');
     const dt = new DataTransferStub();
     const ev = new MouseEvent('dragstart', { bubbles: true });
@@ -1352,7 +1372,7 @@ describe('MonthGridView', () => {
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
     const item = container.querySelector(
-      '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+      '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
     ) as HTMLElement;
     expect(item.hasAttribute('draggable')).toBe(false);
     expect(item.getAttribute('tabindex')).toBe('0');
@@ -1367,7 +1387,7 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 11 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const marker = container.querySelector('.tc-mg-deadline-marker') as HTMLElement;
+    const marker = container.querySelector('.abyss-mg-deadline-marker') as HTMLElement;
     expect(marker.hasAttribute('draggable')).toBe(false);
   });
 
@@ -1381,8 +1401,8 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 3 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('.tc-mg-plain') as HTMLElement;
-    const marker = row.querySelector('.tc-status-marker') as HTMLElement;
+    const row = container.querySelector('.abyss-mg-plain') as HTMLElement;
+    const marker = row.querySelector('.abyss-status-marker') as HTMLElement;
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onToggle).toHaveBeenCalledWith(t);
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1399,12 +1419,12 @@ describe('MonthGridView', () => {
       source: { filePath: 'f.md', line: 3 },
     });
     view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-    const row = container.querySelector('.tc-mg-plain') as HTMLElement;
+    const row = container.querySelector('.abyss-mg-plain') as HTMLElement;
     expect(row.getAttribute('draggable')).toBe('true');
     // A plain click on the title (not a dragstart) must not be swallowed — it's a normal
     // click event, distinct from the native HTML5 drag gesture which only starts on
     // dragstart, not click.
-    const titleEl = row.querySelector('.tc-md') as HTMLElement;
+    const titleEl = row.querySelector('.abyss-md') as HTMLElement;
     titleEl.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     expect(cbs.onDayClick).not.toHaveBeenCalled();
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
@@ -1435,28 +1455,28 @@ describe('MonthGridView', () => {
       });
     }
 
-    it('omits .tc-mg-item-meta on a plain row, even with tags/subtasks/comments/links', () => {
+    it('omits .abyss-mg-item-meta on a plain row, even with tags/subtasks/comments/links', () => {
       const container = freshContainer();
       const view = new MonthGridView({ ...callbacks(), tagGroups });
       const t = busyTask({ title: 'Plain', planning: { due: '2026-07-15' } });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      const row = container.querySelector('.tc-mg-plain') as HTMLElement;
-      expect(row.querySelector('.tc-mg-item-meta')).toBeNull();
-      expect(row.querySelector('.tc-task-tag')).toBeNull();
-      expect(row.querySelector('.tc-task-count-badge')).toBeNull();
+      const row = container.querySelector('.abyss-mg-plain') as HTMLElement;
+      expect(row.querySelector('.abyss-mg-item-meta')).toBeNull();
+      expect(row.querySelector('.abyss-task-tag')).toBeNull();
+      expect(row.querySelector('.abyss-task-count-badge')).toBeNull();
     });
 
-    it('omits .tc-mg-item-meta on a timed block-dot, keeping the time prefix', () => {
+    it('omits .abyss-mg-item-meta on a timed block-dot, keeping the time prefix', () => {
       const container = freshContainer();
       const view = new MonthGridView({ ...callbacks(), tagGroups });
       const t = busyTask({ title: 'Timed', planning: { due: '2026-07-15', time: '09:00' } });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      const dot = container.querySelector('.tc-mg-block-dot') as HTMLElement;
-      expect(dot.querySelector('.tc-mg-item-meta')).toBeNull();
-      expect(dot.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+      const dot = container.querySelector('.abyss-mg-block-dot') as HTMLElement;
+      expect(dot.querySelector('.abyss-mg-item-meta')).toBeNull();
+      expect(dot.querySelector('.abyss-mg-item-time')?.textContent).toContain('09:00');
     });
 
-    it('omits .tc-mg-item-meta on an untimed span-segment', () => {
+    it('omits .abyss-mg-item-meta on an untimed span-segment', () => {
       const container = freshContainer();
       const view = new MonthGridView({ ...callbacks(), tagGroups });
       const t = busyTask({
@@ -1465,12 +1485,12 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const bar = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
       ) as HTMLElement;
-      expect(bar.querySelector('.tc-mg-item-meta')).toBeNull();
+      expect(bar.querySelector('.abyss-mg-item-meta')).toBeNull();
     });
 
-    it("omits .tc-mg-item-meta on a timed span-segment's anchor day, keeping the time prefix", () => {
+    it("omits .abyss-mg-item-meta on a timed span-segment's anchor day, keeping the time prefix", () => {
       const container = freshContainer();
       const view = new MonthGridView({ ...callbacks(), tagGroups });
       const t = busyTask({
@@ -1479,13 +1499,13 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const anchorBar = container.querySelector(
-        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
       ) as HTMLElement;
-      expect(anchorBar.querySelector('.tc-mg-item-meta')).toBeNull();
-      expect(anchorBar.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+      expect(anchorBar.querySelector('.abyss-mg-item-meta')).toBeNull();
+      expect(anchorBar.querySelector('.abyss-mg-item-time')?.textContent).toContain('09:00');
     });
 
-    it('omits .tc-mg-item-meta on a deadline marker', () => {
+    it('omits .abyss-mg-item-meta on a deadline marker', () => {
       const container = freshContainer();
       const view = new MonthGridView({ ...callbacks(), tagGroups });
       const t = busyTask({
@@ -1493,8 +1513,8 @@ describe('MonthGridView', () => {
         planning: { due: '2026-07-15', scheduled: '2026-07-10' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      const marker = container.querySelector('.tc-mg-deadline-marker') as HTMLElement;
-      expect(marker.querySelector('.tc-mg-item-meta')).toBeNull();
+      const marker = container.querySelector('.abyss-mg-deadline-marker') as HTMLElement;
+      expect(marker.querySelector('.abyss-mg-item-meta')).toBeNull();
     });
   });
 
@@ -1507,7 +1527,7 @@ describe('MonthGridView', () => {
         planning: { start: '2026-07-14', due: '2026-07-16', time: '09:00' },
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
-      expect(container.querySelectorAll('.tc-mg-span-segment')).toHaveLength(3);
+      expect(container.querySelectorAll('.abyss-mg-span-segment')).toHaveLength(3);
       expect(
         Array.from(container.querySelectorAll<HTMLElement>('[data-span-kind]')).map(
           (segment) => segment.dataset['spanDate'],
@@ -1524,9 +1544,9 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const anchorBar = container.querySelector(
-        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
       ) as HTMLElement;
-      expect(anchorBar.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+      expect(anchorBar.querySelector('.abyss-mg-item-time')?.textContent).toContain('09:00');
     });
 
     it('shows the time prefix on continuation days of the same timed span', () => {
@@ -1538,9 +1558,9 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const midBar = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
       ) as HTMLElement;
-      expect(midBar.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+      expect(midBar.querySelector('.abyss-mg-item-time')?.textContent).toContain('09:00');
     });
 
     it('an untimed start+due span still renders with no time prefix (unchanged existing behavior)', () => {
@@ -1549,9 +1569,9 @@ describe('MonthGridView', () => {
       const t = task({ title: 'Trip', planning: { start: '2026-07-14', due: '2026-07-16' } });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const bar = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-15"] .abyss-mg-span-segment',
       ) as HTMLElement;
-      expect(bar.querySelector('.tc-mg-item-time')).toBeNull();
+      expect(bar.querySelector('.abyss-mg-item-time')).toBeNull();
     });
 
     it('a right-click on a timed span-segment fires onTaskClick', () => {
@@ -1564,7 +1584,7 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const bar = container.querySelector(
-        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
       ) as HTMLElement;
       bar.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       expect(cbs.onTaskClick).toHaveBeenCalledWith(t);
@@ -1579,7 +1599,7 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const bar = container.querySelector(
-        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
       ) as HTMLElement;
       expect(bar.hasAttribute('draggable')).toBe(false);
       expect(bar.getAttribute('tabindex')).toBe('0');
@@ -1607,16 +1627,18 @@ describe('MonthGridView', () => {
       const ghost = requiredElement(container, '[data-span-kind="ghost"]');
       const terminal = requiredElement(container, '[data-span-kind="terminal"]');
 
-      expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
+      expect(
+        container.querySelectorAll('.abyss-mg-span-segment .abyss-status-marker'),
+      ).toHaveLength(1);
       expect(terminal.hasAttribute('draggable')).toBe(false);
       expect(terminal.getAttribute('tabindex')).toBe('0');
-      expect(terminal.classList.contains('tc-mg-span-continuation')).toBe(false);
-      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+      expect(terminal.classList.contains('abyss-mg-span-continuation')).toBe(false);
+      expect(ghost.classList.contains('abyss-mg-span-continuation')).toBe(true);
+      expect(ghost.querySelector('.abyss-status-marker')).toBeNull();
       expect(ghost.hasAttribute('draggable')).toBe(false);
       expect(ghost.getAttribute('tabindex')).toBe('0');
-      expect(ghost.style.getPropertyValue('--tc-tag-color')).toBe('#3498db');
-      expect(ghost.querySelector('.tc-mg-item-title')?.classList.contains('is-done')).toBe(true);
+      expect(ghost.style.getPropertyValue('--abyss-tag-color')).toBe('#3498db');
+      expect(ghost.querySelector('.abyss-mg-item-title')?.classList.contains('is-done')).toBe(true);
 
       ghost.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       expect(cbs.onDayClick).not.toHaveBeenCalled();
@@ -1639,13 +1661,15 @@ describe('MonthGridView', () => {
       const ghost = requiredElement(container, '[data-span-kind="ghost"]');
       const terminal = requiredElement(container, '[data-span-kind="terminal"]');
 
-      expect(container.querySelectorAll('.tc-mg-span-segment .tc-status-marker')).toHaveLength(1);
+      expect(
+        container.querySelectorAll('.abyss-mg-span-segment .abyss-status-marker'),
+      ).toHaveLength(1);
       expect(terminal.getAttribute('tabindex')).toBe('0');
       for (const segment of [ghost, terminal]) {
-        expect(segment.querySelector('.tc-mg-item-time')?.textContent).toContain('09:00');
+        expect(segment.querySelector('.abyss-mg-item-time')?.textContent).toContain('09:00');
       }
-      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-      expect(ghost.querySelector('.tc-status-marker')).toBeNull();
+      expect(ghost.classList.contains('abyss-mg-span-continuation')).toBe(true);
+      expect(ghost.querySelector('.abyss-status-marker')).toBeNull();
       expect(ghost.hasAttribute('draggable')).toBe(false);
       expect(ghost.getAttribute('tabindex')).toBe('0');
 
@@ -1668,37 +1692,37 @@ describe('MonthGridView', () => {
 
       const ghost = requiredElement(
         container,
-        '[data-mg-date="2026-07-15"] .tc-mg-span-continuation',
+        '[data-mg-date="2026-07-15"] .abyss-mg-span-continuation',
       );
       const terminal = requiredElement(
         container,
-        '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+        '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
       );
-      expect(ghost.querySelector('.tc-md')).toBeNull();
+      expect(ghost.querySelector('.abyss-md')).toBeNull();
       expect(ghost.querySelector('a')).toBeNull();
-      expect(ghost.querySelector('.tc-mg-item-title')?.textContent).toBe(
+      expect(ghost.querySelector('.abyss-mg-item-title')?.textContent).toBe(
         'Conference at 🔗 Note with bold, old and code 🌐 site',
       );
       expect(ghost.textContent).not.toContain('[[');
       expect(ghost.textContent).not.toContain('**');
       expect(ghost.textContent).not.toContain('~~');
       expect(ghost.textContent).not.toContain('`');
-      expect(terminal.querySelector('.tc-md')).not.toBeNull();
+      expect(terminal.querySelector('.abyss-md')).not.toBeNull();
     });
 
     it('styles span continuations as opaque restrained committed tiles through their shared root', () => {
-      const monthDeclarations = declarationsFor('.tc-mg-span-continuation');
-      const ghostDeclarations = declarationsFor('.tc-tg-span-continuation');
+      const monthDeclarations = declarationsFor('.abyss-mg-span-continuation');
+      const ghostDeclarations = declarationsFor('.abyss-tg-span-continuation');
       const sharedSurface = declarationsForRuleContaining(
-        '.tc-tg-span',
-        '.tc-tg-span-continuation',
-        '.tc-mg-span-continuation',
+        '.abyss-tg-span',
+        '.abyss-tg-span-continuation',
+        '.abyss-mg-span-continuation',
       );
       expect(monthDeclarations).not.toMatch(/opacity\s*:/u);
       expect(ghostDeclarations).toMatch(
-        /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed\s+var\(--tc-tag-color,\s*var\(--interactive-accent\)\)/u,
+        /border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed\s+var\(--abyss-tag-color,\s*var\(--interactive-accent\)\)/u,
       );
-      expect(sharedSurface).toMatch(/background\s*:\s*var\(--tc-calendar-surface\)/u);
+      expect(sharedSurface).toMatch(/background\s*:\s*var\(--abyss-calendar-surface\)/u);
       expect(monthDeclarations).toMatch(/cursor\s*:\s*grab/u);
     });
 
@@ -1713,11 +1737,11 @@ describe('MonthGridView', () => {
 
       const ghost = requiredElement(container, '[data-span-kind="ghost"]');
       const terminal = requiredElement(container, '[data-span-kind="terminal"]');
-      expect(ghost.classList.contains('tc-tg-span-continuation')).toBe(true);
-      expect(ghost.classList.contains('tc-mg-span-segment')).toBe(true);
-      expect(ghost.classList.contains('tc-mg-span-continuation')).toBe(true);
-      expect(winningCssDeclaration(ghost, 'background')).toBe('var(--tc-calendar-surface)');
-      expect(winningCssDeclaration(terminal, 'background')).toBe('var(--tc-calendar-surface)');
+      expect(ghost.classList.contains('abyss-tg-span-continuation')).toBe(true);
+      expect(ghost.classList.contains('abyss-mg-span-segment')).toBe(true);
+      expect(ghost.classList.contains('abyss-mg-span-continuation')).toBe(true);
+      expect(winningCssDeclaration(ghost, 'background')).toBe('var(--abyss-calendar-surface)');
+      expect(winningCssDeclaration(terminal, 'background')).toBe('var(--abyss-calendar-surface)');
       expect(winningCssDeclaration(ghost, 'border-inline-start')).toContain('dashed');
     });
 
@@ -1739,15 +1763,17 @@ describe('MonthGridView', () => {
         view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
 
         const ghost = container.querySelector(
-          '[data-mg-date="2026-07-15"] .tc-mg-span-continuation',
+          '[data-mg-date="2026-07-15"] .abyss-mg-span-continuation',
         ) as HTMLElement;
         const terminal = container.querySelector(
-          '[data-mg-date="2026-07-16"] .tc-mg-span-segment',
+          '[data-mg-date="2026-07-16"] .abyss-mg-span-segment',
         ) as HTMLElement;
 
-        expect(ghost.style.getPropertyValue('--tc-tag-text-color')).toBe('var(--tc-tag-text-dark)');
-        expect(terminal.style.getPropertyValue('--tc-tag-text-color')).toBe(
-          'var(--tc-tag-text-dark)',
+        expect(ghost.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+          'var(--abyss-tag-text-dark)',
+        );
+        expect(terminal.style.getPropertyValue('--abyss-tag-text-color')).toBe(
+          'var(--abyss-tag-text-dark)',
         );
       } finally {
         document.body.style.setProperty('--background-primary', originalBackground);
@@ -1767,7 +1793,7 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const title = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-item-title',
+        '[data-mg-date="2026-07-15"] .abyss-mg-item-title',
       ) as HTMLElement;
       expect(title.classList.contains('is-done')).toBe(true);
     });
@@ -1783,7 +1809,7 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const title = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-item-title',
+        '[data-mg-date="2026-07-15"] .abyss-mg-item-title',
       ) as HTMLElement;
       expect(title.classList.contains('is-cancelled')).toBe(true);
     });
@@ -1794,7 +1820,7 @@ describe('MonthGridView', () => {
       const t = task({ title: 'Plain', planning: { due: '2026-07-15' } });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const title = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-item-title',
+        '[data-mg-date="2026-07-15"] .abyss-mg-item-title',
       ) as HTMLElement;
       expect(title.classList.contains('is-done')).toBe(false);
       expect(title.classList.contains('is-cancelled')).toBe(false);
@@ -1811,14 +1837,14 @@ describe('MonthGridView', () => {
       });
       view.render(container, [t], resolvedConfig({ startPosition: '2026-07' }));
       const title = container.querySelector(
-        '[data-mg-date="2026-07-15"] .tc-mg-deadline-marker .tc-mg-item-title',
+        '[data-mg-date="2026-07-15"] .abyss-mg-deadline-marker .abyss-mg-item-title',
       ) as HTMLElement;
       expect(title).not.toBeNull();
       expect(title.classList.contains('is-done')).toBe(true);
     });
 
-    it('.tc-mg-item-title.is-done gets the same strikethrough convention as .tc-tg-block-title.is-done', () => {
-      const rule = /\.tc-mg-item-title\.is-done[^{]*\{[^}]*\}/u.exec(css)?.[0] ?? '';
+    it('.abyss-mg-item-title.is-done gets the same strikethrough convention as .abyss-tg-block-title.is-done', () => {
+      const rule = /\.abyss-mg-item-title\.is-done[^{]*\{[^}]*\}/u.exec(css)?.[0] ?? '';
       expect(rule).toMatch(/text-decoration\s*:\s*line-through/u);
     });
   });
@@ -1826,53 +1852,55 @@ describe('MonthGridView', () => {
   describe('calendar surface style contract', () => {
     it('aligns the Month span layer origin with the day-label line box', () => {
       let monthSpanLayer = '';
-      for (const match of css.matchAll(/^\.tc-mg-span-layer[ \t]*\{([^}]*)\}/gmu)) {
+      for (const match of css.matchAll(/^\.abyss-mg-span-layer[ \t]*\{([^}]*)\}/gmu)) {
         monthSpanLayer = match[1] ?? '';
       }
-      const monthDayLabel = declarationsFor('.tc-mg-day-label');
+      const monthDayLabel = declarationsFor('.abyss-mg-day-label');
 
       expect(monthDayLabel).toMatch(/font-size\s*:\s*0\.75em/u);
       expect(monthSpanLayer).toMatch(/top\s*:\s*calc\(3px\s*\+\s*0\.75lh\)/u);
     });
 
     it('keeps Month at the shared item scale while allowing vertical grid scrolling', () => {
-      const monthGrid = declarationsFor('.tc-mg-grid');
-      const monthRow = declarationsFor('.tc-mg-row');
-      const monthItems = declarationsFor('.tc-mg-cell-items');
+      const monthGrid = declarationsFor('.abyss-mg-grid');
+      const monthRow = declarationsFor('.abyss-mg-row');
+      const monthItems = declarationsFor('.abyss-mg-cell-items');
       const monthItem = declarationsForRuleContaining(
-        '.tc-mg-plain',
-        '.tc-mg-block-dot',
-        '.tc-mg-span-segment',
-        '.tc-mg-deadline-marker',
+        '.abyss-mg-plain',
+        '.abyss-mg-block-dot',
+        '.abyss-mg-span-segment',
+        '.abyss-mg-deadline-marker',
       );
-      const monthGhost = declarationsFor('.tc-mg-span-continuation');
-      const monthSpanGeometry = declarationsFor('.tc-mg-span-segment');
+      const monthGhost = declarationsFor('.abyss-mg-span-continuation');
+      const monthSpanGeometry = declarationsFor('.abyss-mg-span-segment');
       const compactGeometry = declarationsForRuleContaining(
-        '.tc-mg-cell-items > .tc-mg-plain',
-        '.tc-mg-cell-items > .tc-mg-block-dot',
-        '.tc-mg-cell-items > .tc-mg-deadline-marker',
+        '.abyss-mg-cell-items > .abyss-mg-plain',
+        '.abyss-mg-cell-items > .abyss-mg-block-dot',
+        '.abyss-mg-cell-items > .abyss-mg-deadline-marker',
       );
 
       expect(monthGrid).toMatch(/overflow-y\s*:\s*auto/u);
       expect(monthRow).toMatch(/flex\s*:\s*0 0 auto/u);
-      expect(monthRow).toMatch(/min-height\s*:\s*calc\(var\(--tc-calendar-track-height\) \* 4\)/u);
+      expect(monthRow).toMatch(
+        /min-height\s*:\s*calc\(var\(--abyss-calendar-track-height\) \* 4\)/u,
+      );
       expect(monthItems).toMatch(/display\s*:\s*grid/u);
-      expect(monthItems).toMatch(/grid-auto-rows\s*:\s*var\(--tc-calendar-track-height\)/u);
+      expect(monthItems).toMatch(/grid-auto-rows\s*:\s*var\(--abyss-calendar-track-height\)/u);
       expect(monthItems).toMatch(/gap\s*:\s*0/u);
       expect(monthItems).toMatch(/margin-top\s*:\s*0/u);
-      expect(monthItems).not.toMatch(/margin-top\s*:[^;]*--tc-span-lane-count/u);
-      expect(monthItem).toMatch(/font-size\s*:\s*var\(--tc-calendar-item-font-size\)/u);
-      expect(monthItem).toMatch(/border-radius\s*:\s*var\(--tc-calendar-item-radius\)/u);
-      expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--tc-calendar-item-pad-inline\)/u);
+      expect(monthItems).not.toMatch(/margin-top\s*:[^;]*--abyss-span-lane-count/u);
+      expect(monthItem).toMatch(/font-size\s*:\s*var\(--abyss-calendar-item-font-size\)/u);
+      expect(monthItem).toMatch(/border-radius\s*:\s*var\(--abyss-calendar-item-radius\)/u);
+      expect(monthItem).toMatch(/padding\s*:\s*2px\s+var\(--abyss-calendar-item-pad-inline\)/u);
       expect(monthSpanGeometry).toMatch(/margin-inline\s*:\s*5px/u);
       expect(compactGeometry).toMatch(/block-size\s*:\s*calc\(100% - 2px\)/u);
       expect(compactGeometry).toMatch(/margin-block\s*:\s*1px/u);
       expect(monthGhost).toMatch(
-        /border-inline-start\s*:\s*var\(--tc-calendar-ghost-rail\) dashed/u,
+        /border-inline-start\s*:\s*var\(--abyss-calendar-ghost-rail\) dashed/u,
       );
-      expect(declarationsFor('.tc-mg-item-title')).toMatch(/line-height\s*:\s*1\.4/u);
+      expect(declarationsFor('.abyss-mg-item-title')).toMatch(/line-height\s*:\s*1\.4/u);
       expect(css).not.toMatch(
-        /\.tc-mg-(?:plain|block-dot|span-segment|deadline-marker)[^{]*\{[^}]*font-size\s*:\s*0\.72em/u,
+        /\.abyss-mg-(?:plain|block-dot|span-segment|deadline-marker)[^{]*\{[^}]*font-size\s*:\s*0\.72em/u,
       );
     });
   });

@@ -18,12 +18,12 @@ describe('renderRecurrenceBadge', () => {
       validity: 'valid',
     });
 
-    expect(container.querySelectorAll('.tc-recurrence-badge')).toHaveLength(1);
+    expect(container.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge.dataset['recurrenceValidity']).toBe('valid');
     expect(badge.getAttribute('title')).toBe('Repeats: every week');
     expect(badge.getAttribute('aria-label')).toBe('Repeats: every week');
-    expect(badge.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
-    expect(badge.querySelector('.tc-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
+    expect(badge.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
+    expect(badge.querySelector('.abyss-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(
       'repeat-2',
     );
     expect(badge.querySelectorAll('[data-lucide="repeat-2"]')).toHaveLength(1);
@@ -39,14 +39,14 @@ describe('renderRecurrenceBadge', () => {
       forecast: true,
     });
 
-    expect(badge.classList.contains('tc-recurrence-badge')).toBe(true);
+    expect(badge.classList.contains('abyss-recurrence-badge')).toBe(true);
     expect(badge.dataset['recurrenceValidity']).toBe('invalid');
     expect(badge.dataset['recurrenceForecast']).toBe('true');
     expect(badge.getAttribute('title')).toBe('Invalid repeat rule: Start the rule with “every”.');
     expect(badge.getAttribute('aria-label')).toBe(
       'Invalid repeat rule: Start the rule with “every”.',
     );
-    expect(badge.querySelectorAll('.tc-recurrence-badge-icon')).toHaveLength(1);
+    expect(badge.querySelectorAll('.abyss-recurrence-badge-icon')).toHaveLength(1);
   });
 
   it('derives validity and parser issue text from the authoritative rule parser', () => {
@@ -63,23 +63,24 @@ describe('renderRecurrenceBadge', () => {
 
   it('keeps valid, invalid, and forecast states on one tokenized fixed geometry without opacity', () => {
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
-    const base = /\.tc-recurrence-badge\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
-    const icon = /\.tc-recurrence-badge-icon\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const base = /\.abyss-recurrence-badge\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const icon = /\.abyss-recurrence-badge-icon\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const invalid =
-      /\.tc-recurrence-badge\[data-recurrence-validity='invalid'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ??
-      '';
+      /\.abyss-recurrence-badge\[data-recurrence-validity='invalid'\]\s*\{([^}]*)\}/u.exec(
+        css,
+      )?.[1] ?? '';
     const forecast =
-      /\.tc-recurrence-badge\[data-recurrence-forecast='true'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ??
+      /\.abyss-recurrence-badge\[data-recurrence-forecast='true'\]\s*\{([^}]*)\}/u.exec(css)?.[1] ??
       '';
 
     expect(base).toMatch(/box-sizing:\s*border-box/u);
-    expect(base).toMatch(/height:\s*var\(--tc-recurrence-badge-height\)/u);
-    expect(base).toMatch(/border-radius:\s*var\(--tc-recurrence-badge-radius\)/u);
-    expect(base).toMatch(/padding:\s*var\(--tc-recurrence-badge-padding\)/u);
+    expect(base).toMatch(/height:\s*var\(--abyss-recurrence-badge-height\)/u);
+    expect(base).toMatch(/border-radius:\s*var\(--abyss-recurrence-badge-radius\)/u);
+    expect(base).toMatch(/padding:\s*var\(--abyss-recurrence-badge-padding\)/u);
     expect(base).toMatch(/background:\s*var\(--background-modifier-hover\)/u);
     expect(base).not.toMatch(/opacity/u);
-    expect(icon).toMatch(/width:\s*var\(--tc-recurrence-badge-icon-size\)/u);
-    expect(icon).toMatch(/flex:\s*0 0 var\(--tc-recurrence-badge-icon-size\)/u);
+    expect(icon).toMatch(/width:\s*var\(--abyss-recurrence-badge-icon-size\)/u);
+    expect(icon).toMatch(/flex:\s*0 0 var\(--abyss-recurrence-badge-icon-size\)/u);
     expect(invalid).toMatch(/color:\s*var\(--text-warning/u);
     expect(invalid).not.toMatch(/height|padding|border-radius|opacity/u);
     expect(forecast).toMatch(/outline:\s*1px dotted var\(--text-faint\)/u);
@@ -89,15 +90,16 @@ describe('renderRecurrenceBadge', () => {
   it('keeps the body-mounted editor fixed above the later generic anchored-popover rule', () => {
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
     const floating =
-      /\.tc-popover-anchored\.tc-recurrence-popover-floating\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+      /\.abyss-popover-anchored\.abyss-recurrence-popover-floating\s*\{([^}]*)\}/u.exec(css)?.[1] ??
+      '';
 
     expect(floating).toMatch(/position:\s*fixed/u);
   });
 
   it('layers destructive confirmation above the task-detail modal', () => {
     const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
-    const confirmation = /\.tc-recurrence-delete-confirm\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
-    const modal = /\.tc-modal-backdrop\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const confirmation = /\.abyss-recurrence-delete-confirm\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
+    const modal = /\.abyss-modal-backdrop\s*\{([^}]*)\}/u.exec(css)?.[1] ?? '';
     const confirmationLayer = Number(/z-index:\s*(\d+)/u.exec(confirmation)?.[1]);
     const modalLayer = Number(/z-index:\s*(\d+)/u.exec(modal)?.[1]);
 

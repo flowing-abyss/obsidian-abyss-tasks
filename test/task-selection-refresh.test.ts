@@ -38,7 +38,7 @@ vi.mock('../src/panels/RightPanel', () => ({
     captured.state = state;
     captured.acknowledgeOwnWrite = acknowledgeOwnWrite;
     return {
-      mount: (el: HTMLElement) => el.createDiv({ cls: 'tc-right-header-actions' }),
+      mount: (el: HTMLElement) => el.createDiv({ cls: 'abyss-right-header-actions' }),
       destroy: vi.fn(),
       captureDraftState: captured.captureDraftState,
       restoreDraftState: captured.restoreDraftState,
@@ -137,7 +137,7 @@ describe('revision-aware TaskModal refresh', () => {
       title: 'Current',
       ref: current.ref,
     });
-    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -162,7 +162,7 @@ describe('revision-aware TaskModal refresh', () => {
     });
     expect(captured.detachDraftState).toHaveBeenCalledWith(bundle);
     expect(captured.restoreDraftState).not.toHaveBeenCalled();
-    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -178,7 +178,7 @@ describe('revision-aware TaskModal refresh', () => {
     captured.state?.set('taskStack', [first]);
     h.changed();
     expect(captured.state?.get('taskStack')).toEqual([]);
-    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -189,7 +189,7 @@ describe('revision-aware TaskModal refresh', () => {
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')).toEqual([]);
-    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-task-selection-message')).toBeNull();
     modal.close();
   });
 
@@ -199,7 +199,7 @@ describe('revision-aware TaskModal refresh', () => {
     const modal = new TaskModal({} as App, testStatusRegistry(), undefined, h.queries);
     modal.open(observed);
     h.changed();
-    expect(activeDocument.body.querySelector('.tc-modal-backdrop')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
   });
 
   it('silently clears an ambiguous resolution instead of rendering a chooser', () => {
@@ -217,7 +217,7 @@ describe('revision-aware TaskModal refresh', () => {
     modal.open(observed);
     h.changed();
     expect(captured.state?.get('taskStack')).toEqual([]);
-    expect(activeDocument.body.querySelector('.tc-task-selection-message')).toBeNull();
+    expect(activeDocument.body.querySelector('.abyss-task-selection-message')).toBeNull();
     modal.close();
   });
 });

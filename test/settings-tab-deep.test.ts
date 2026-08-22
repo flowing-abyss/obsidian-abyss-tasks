@@ -96,11 +96,11 @@ function makeTab(
 }
 
 function openSection(tab: CalendarSettingsTab, index: number): HTMLElement {
-  const headers = tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header');
+  const headers = tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header');
   headers[index]!.click();
   return tab.containerEl
-    .querySelectorAll<HTMLElement>('.tc-settings-section')
-    [index]!.querySelector('.tc-settings-section-body')!;
+    .querySelectorAll<HTMLElement>('.abyss-settings-section')
+    [index]!.querySelector('.abyss-settings-section-body')!;
 }
 
 /** Find a Setting's root element within a section body by its nameEl text.
@@ -337,7 +337,7 @@ describe('CalendarSettingsTab renderTagGroupCard', () => {
       tagGroups: [{ ...baseGroup }, { ...baseGroup, id: 'g2', name: 'Other' }],
     });
     const body = openSection(tab, 4);
-    const cards = body.querySelectorAll('.tc-settings-card');
+    const cards = body.querySelectorAll('.abyss-settings-card');
     expect(cards).toHaveLength(2);
     // Each card has its own "Delete group" warning button.
     const delBtns = captured.filter((c) => {
@@ -468,7 +468,7 @@ describe('sourceNoteDisplay setting', () => {
     const { tab } = makeTab();
     // Open the General section (index 0) to make its body visible
     const headers = Array.from(
-      tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header'),
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
     headers[0]!.click();
     const selects = tab.containerEl.querySelectorAll<HTMLSelectElement>('select');
@@ -479,7 +479,7 @@ describe('sourceNoteDisplay setting', () => {
   it('dropdown has three options: never, always, non-default', () => {
     const { tab } = makeTab();
     const headers = Array.from(
-      tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header'),
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
     headers[0]!.click();
     const selects = Array.from(tab.containerEl.querySelectorAll<HTMLSelectElement>('select'));
@@ -499,7 +499,7 @@ describe('sourceNoteDisplay setting', () => {
     // eslint-disable-next-line @typescript-eslint/no-deprecated
     tab.display();
     const headers = Array.from(
-      tab.containerEl.querySelectorAll<HTMLElement>('.tc-settings-section-header'),
+      tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section-header'),
     );
     headers[0]!.click();
     const selects = Array.from(tab.containerEl.querySelectorAll<HTMLSelectElement>('select'));
@@ -514,22 +514,22 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
   it('statuses render as collapsed cards (title only) by default', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5); // Projects
-    const cards = body.querySelectorAll('.tc-settings-card');
+    const cards = body.querySelectorAll('.abyss-settings-card');
     expect(cards.length).toBe(DEFAULT_SETTINGS.projects.statuses.length);
     // Collapsed: title shown, no expanded body.
-    expect(cards[0]!.querySelector('.tc-settings-card-title')?.textContent).toBe('Active');
-    expect(cards[0]!.querySelector('.tc-settings-card-body')).toBeNull();
+    expect(cards[0]!.querySelector('.abyss-settings-card-title')?.textContent).toBe('Active');
+    expect(cards[0]!.querySelector('.abyss-settings-card-body')).toBeNull();
   });
 
   it('clicking a card header expands it to reveal the body', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5);
-    (body.querySelector('.tc-settings-card .tc-settings-card-header') as HTMLElement).click();
+    (body.querySelector('.abyss-settings-card .abyss-settings-card-header') as HTMLElement).click();
     const bodyAgain = tab.containerEl
-      .querySelectorAll<HTMLElement>('.tc-settings-section')[5]!
-      .querySelector('.tc-settings-section-body')!;
+      .querySelectorAll<HTMLElement>('.abyss-settings-section')[5]!
+      .querySelector('.abyss-settings-section-body')!;
     expect(
-      bodyAgain.querySelector('.tc-settings-card.is-open .tc-settings-card-body'),
+      bodyAgain.querySelector('.abyss-settings-card.is-open .abyss-settings-card-body'),
     ).toBeTruthy();
   });
 
@@ -570,7 +570,7 @@ describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => 
       ],
     });
     const body = openSection(tab, 4);
-    const badges = Array.from(body.querySelectorAll('.tc-settings-card-badge')).map(
+    const badges = Array.from(body.querySelectorAll('.abyss-settings-card-badge')).map(
       (b) => b.textContent,
     );
     expect(badges).toContain('prefix');
@@ -580,7 +580,7 @@ describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => 
   it('status card headers show a property/tag badge', () => {
     const { tab } = makeTab();
     const body = openSection(tab, 5);
-    const badges = Array.from(body.querySelectorAll('.tc-settings-card-badge')).map(
+    const badges = Array.from(body.querySelectorAll('.abyss-settings-card-badge')).map(
       (b) => b.textContent,
     );
     // Default statuses are all property-defined.

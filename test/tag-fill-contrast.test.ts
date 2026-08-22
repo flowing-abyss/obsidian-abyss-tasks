@@ -153,13 +153,13 @@ describe('tagFillTextColorVar', () => {
     ownerDocument.body.append(event, ghost);
 
     try {
-      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--tc-tag-text-light)');
-      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--tc-tag-text-light)');
+      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--abyss-tag-text-light)');
+      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--abyss-tag-text-light)');
 
       ownerDocument.body.classList.remove('theme-dark');
       ownerDocument.body.style.setProperty('--background-primary', '#ffffff');
-      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--tc-tag-text-dark)');
-      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--tc-tag-text-dark)');
+      expect(tagFillTextColorVar(event, '#ffffff')).toBe('var(--abyss-tag-text-dark)');
+      expect(tagFillTextColorVar(ghost, '#ffffff')).toBe('var(--abyss-tag-text-dark)');
     } finally {
       frame.remove();
     }
@@ -169,15 +169,15 @@ describe('tagFillTextColorVar', () => {
 describe('calendar focus and selection contrast', () => {
   it('mixes every span/timed focus outline toward text-normal while keeping task color primary', () => {
     const focusRules = [
-      declarationsFor('.tc-span-piece:focus-visible:hover'),
-      declarationsFor('.tc-tg-block:focus-visible'),
-      declarationsFor('.tc-tg-block.is-selected'),
+      declarationsFor('.abyss-span-piece:focus-visible:hover'),
+      declarationsFor('.abyss-tg-block:focus-visible'),
+      declarationsFor('.abyss-tg-block.is-selected'),
     ];
 
-    expect(cssPercent('--tc-event-focus-tag-strength')).toBe(55);
+    expect(cssPercent('--abyss-event-focus-tag-strength')).toBe(55);
     for (const rule of focusRules) {
       expect(rule).toContain(
-        'var(--tc-tag-color, var(--interactive-accent)) var(--tc-event-focus-tag-strength)',
+        'var(--abyss-tag-color, var(--interactive-accent)) var(--abyss-event-focus-tag-strength)',
       );
       expect(rule).toContain('var(--text-normal)');
       expect(rule).not.toContain('var(--background-primary)');
@@ -193,7 +193,7 @@ describe('calendar focus and selection contrast', () => {
   ])(
     'keeps the %s focus outline at 3:1 against its adjacent fill in light and dark themes',
     (_name, taskColor) => {
-      const focusTagStrength = cssPercent('--tc-event-focus-tag-strength');
+      const focusTagStrength = cssPercent('--abyss-event-focus-tag-strength');
       expect(focusTagStrength).not.toBeNull();
       if (focusTagStrength === null) return;
 

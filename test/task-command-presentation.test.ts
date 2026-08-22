@@ -36,7 +36,7 @@ describe('task command result presentation', () => {
 
   afterEach(() => {
     activeDocument
-      .querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm button')
+      .querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm button')
       ?.click();
   });
 
@@ -51,7 +51,9 @@ describe('task command result presentation', () => {
       });
       expect(settled).toBe(false);
 
-      const surface = activeDocument.querySelector<HTMLElement>('.tc-recurrence-delete-confirm')!;
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
       if (dismissal === 'Cancel') {
         Array.from(surface.querySelectorAll<HTMLButtonElement>('button'))
           .find((candidate) => candidate.textContent === 'Cancel')
@@ -67,7 +69,7 @@ describe('task command result presentation', () => {
       await completion;
       expect(settled).toBe(true);
       expect(mutation).not.toHaveBeenCalled();
-      expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+      expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
     },
   );
 
@@ -75,7 +77,7 @@ describe('task command result presentation', () => {
     const trigger = activeDocument.body.createEl('button', { text: 'Complete task' });
     trigger.focus();
     const completion = requestTaskCompletion(invalidDeleteTask, vi.fn());
-    const surface = activeDocument.querySelector<HTMLElement>('.tc-recurrence-delete-confirm')!;
+    const surface = activeDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm')!;
     const [cancel, confirm] = Array.from(surface.querySelectorAll<HTMLButtonElement>('button'));
 
     expect(activeDocument.activeElement).toBe(cancel);
@@ -125,7 +127,7 @@ describe('task command result presentation', () => {
     trigger.focus();
     const completion = requestTaskCompletion(invalidDeleteTask, mutation);
     activeDocument
-      .querySelector<HTMLButtonElement>('.tc-recurrence-delete-confirm-button')
+      .querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm-button')
       ?.click();
     let settled = false;
     void completion.then(() => {
@@ -135,7 +137,7 @@ describe('task command result presentation', () => {
     await Promise.resolve();
     expect(mutation).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
-    expect(activeDocument.querySelector('.tc-recurrence-delete-confirm')).toBeNull();
+    expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
     expect(activeDocument.activeElement).toBe(trigger);
     pending.resolve();
     await completion;
