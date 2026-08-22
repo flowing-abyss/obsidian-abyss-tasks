@@ -1202,10 +1202,11 @@ describe('TaskModal with real RightPanel', () => {
     let containingLeft = 30;
     let scrollLeft = 17;
     let scrollTop = 19;
-    let panelLeft = 100;
-    let panelTop = 50;
-    let anchorLeft = 200;
-    let anchorTop = 100;
+    const containingTop = 20;
+    const panelContentLeft = 80;
+    const panelContentTop = 45;
+    const anchorContentLeft = 180;
+    const anchorContentTop = 95;
     Object.defineProperties(panelEl, {
       clientLeft: { configurable: true, value: 3 },
       clientTop: { configurable: true, value: 5 },
@@ -1214,7 +1215,13 @@ describe('TaskModal with real RightPanel', () => {
     });
     Object.defineProperty(panelEl, 'getBoundingClientRect', {
       configurable: true,
-      value: () => rect(panelLeft, panelTop, 300, 240),
+      value: () =>
+        rect(
+          containingLeft + modalEl.clientLeft + panelContentLeft - scrollLeft,
+          containingTop + modalEl.clientTop + panelContentTop - scrollTop,
+          300,
+          240,
+        ),
     });
     Object.defineProperties(modalEl, {
       clientLeft: { configurable: true, value: 7 },
@@ -1224,11 +1231,19 @@ describe('TaskModal with real RightPanel', () => {
     });
     Object.defineProperty(modalEl, 'getBoundingClientRect', {
       configurable: true,
-      value: () => rect(containingLeft, 20, 500, 400),
+      value: () => rect(containingLeft, containingTop, 500, 400),
     });
+    const anchorRect = vi.fn(() =>
+      rect(
+        containingLeft + modalEl.clientLeft + anchorContentLeft - scrollLeft,
+        containingTop + modalEl.clientTop + anchorContentTop - scrollTop,
+        20,
+        20,
+      ),
+    );
     Object.defineProperty(chip, 'getBoundingClientRect', {
       configurable: true,
-      value: () => rect(anchorLeft, anchorTop, 20, 20),
+      value: anchorRect,
     });
     const realRect = HTMLElement.prototype.getBoundingClientRect;
     const measure = vi
@@ -1250,24 +1265,39 @@ describe('TaskModal with real RightPanel', () => {
       expect(popover.offsetParent).toBe(modalEl);
       expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
       expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('119px');
+      expect(anchorRect).toHaveBeenCalledTimes(1);
 
       scrollLeft = 31;
       scrollTop = 29;
-      panelLeft = 86;
-      panelTop = 40;
-      anchorLeft = 186;
-      anchorTop = 90;
-      modalEl.dispatchEvent(new Event('scroll'));
+      const scrollEvent = new Event('scroll', { bubbles: false });
+      modalEl.dispatchEvent(scrollEvent);
+      expect(scrollEvent.bubbles).toBe(false);
+      expect(anchorRect).toHaveBeenCalledTimes(2);
+      const scrolledAnchor = chip.getBoundingClientRect();
       const scrolledViewportLeft =
-        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-left')) + 30 + 7 - scrollLeft;
+        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-left')) +
+        containingLeft +
+        modalEl.clientLeft -
+        scrollLeft;
       const scrolledViewportTop =
-        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-top')) + 20 + 4 - scrollTop;
-      expect(scrolledViewportLeft).toBe(anchorLeft);
-      expect(scrolledViewportTop - (anchorTop + 20)).toBe(4);
+        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-top')) +
+        containingTop +
+        modalEl.clientTop -
+        scrollTop;
+      expect(scrolledViewportLeft).toBe(scrolledAnchor.left);
+      expect(scrolledViewportTop).toBe(114);
+      expect(scrolledViewportTop - scrolledAnchor.bottom).toBe(4);
 
       containingLeft = 40;
       activeDocument.defaultView!.dispatchEvent(new Event('resize'));
-      expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('170px');
+      expect(anchorRect).toHaveBeenCalledTimes(4);
+      expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
+      const resizedViewportLeft =
+        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-left')) +
+        containingLeft +
+        modalEl.clientLeft -
+        scrollLeft;
+      expect(resizedViewportLeft).toBe(196);
     } finally {
       offsetParent.mockRestore();
       measure.mockRestore();
