@@ -1,4 +1,5 @@
 // eslint-disable-next-line no-restricted-imports, import/no-extraneous-dependencies
+import { Menu } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -131,24 +132,83 @@ describe('CenterPanel multi-selection', () => {
     expect(cards[0]!.classList.contains('abyss-multi-selected')).toBe(false);
   });
 
-  it('shows selection badge when 2+ tasks selected', () => {
+  it('announces multi-selection without changing task-scroll children', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
+    const scroll = el.querySelector<HTMLElement>('.abyss-center-scroll')!;
+    const childOrder = Array.from(scroll.children);
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    const badge = el.querySelector('.abyss-selection-badge');
-    expect(badge).not.toBeNull();
-    expect(badge?.textContent).toContain('2');
+
+    const live = el.querySelector<HTMLElement>('.abyss-selection-live');
+    expect(el.querySelector('.abyss-selection-badge')).toBeNull();
+    expect(live?.textContent).toBe('2 tasks selected');
+    expect(scroll.contains(live!)).toBe(false);
+    expect(Array.from(scroll.children)).toEqual(childOrder);
+    expect(cards[0]!.getAttribute('aria-describedby')).toContain('abyss-selected-state-');
+    expect(cards[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
+
+    const menuTitles: string[] = [];
+    const makeMenu = (): { addItem: (callback: (item: never) => unknown) => unknown } => ({
+      addItem: (callback) => {
+        const item = {
+          setTitle: (title: string) => {
+            menuTitles.push(title);
+            return item;
+          },
+          setSection: () => item,
+          setDisabled: () => item,
+          setIcon: () => item,
+          setChecked: () => item,
+          onClick: () => item,
+          setSubmenu: () => makeMenu(),
+        };
+        callback(item as never);
+        return makeMenu();
+      },
+    });
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      callback,
+    ) {
+      const menu = makeMenu();
+      menu.addItem(callback as (item: never) => unknown);
+      return this;
+    });
+    try {
+      cards[1]!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      expect(menuTitles).toContain('2 tasks selected');
+    } finally {
+      addItem.mockRestore();
+    }
   });
 
-  it('badge is removed when selection drops below 2', () => {
+  it('removes a deselected card description while preserving the remaining selection state', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');
     cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
-    // Deselect one
     cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+
     expect(el.querySelector('.abyss-selection-badge')).toBeNull();
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
+    expect(cards[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
+    expect(cards[1]!.querySelector('.abyss-selected-state')).toBeNull();
+    expect(cards[1]!.getAttribute('aria-describedby') ?? '').not.toContain('abyss-selected-state-');
+  });
+
+  it('preserves another component description while toggling selection state', () => {
+    const { el } = makeCenter([t1]);
+    const card = cards(el)[0]!;
+    const externalDescription = el.createDiv({ attr: { id: 'other-component-description' } });
+    card.setAttribute('aria-describedby', externalDescription.id);
+
+    click(card, { ctrlKey: true });
+    expect(card.getAttribute('aria-describedby')).toContain(externalDescription.id);
+    expect(card.getAttribute('aria-describedby')).toContain('abyss-selected-state-');
+
+    click(card, { ctrlKey: true });
+    expect(card.getAttribute('aria-describedby')).toBe(externalDescription.id);
   });
 
   it('Escape key clears selection', () => {
@@ -310,7 +370,7 @@ describe('CenterPanel multi-selection', () => {
     const visibleCards = cards(el);
     click(visibleCards.find((card) => card.dataset['line'] === '0')!, { ctrlKey: true });
     click(visibleCards.find((card) => card.dataset['line'] === '1')!, { ctrlKey: true });
-    expect(el.querySelector('.abyss-selection-badge')).not.toBeNull();
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('2 tasks selected');
 
     tasks.splice(
       tasks.findIndex((candidate) => candidate.source.line === 0),
@@ -320,6 +380,8 @@ describe('CenterPanel multi-selection', () => {
 
     expect(selectedLines(el)).toEqual(['1']);
     expect(el.querySelector('.abyss-selection-badge')).toBeNull();
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('1 task selected');
+    expect(cards(el)[0]!.querySelector('.abyss-selected-state')?.textContent).toBe('Selected');
 
     tasks.splice(0);
     panel.refresh();

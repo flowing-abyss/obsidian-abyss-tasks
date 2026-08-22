@@ -3447,28 +3447,44 @@ export class CenterPanel {
   }
 
   private updateSelectionVisuals(): void {
-    // Sync abyss-multi-selected class on each card
     this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
       const key = `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`;
-      card.classList.toggle('abyss-multi-selected', this.selectedTaskKeys.has(key));
-    });
+      const isSelected = this.selectedTaskKeys.has(key);
+      const selectedStateId = `abyss-selected-state-${encodeURIComponent(key)}`;
+      const selectedState = card.querySelector<HTMLElement>('.abyss-selected-state');
+      card.classList.toggle('abyss-multi-selected', isSelected);
 
-    // Update or remove badge
-    const existing = this.el.querySelector('.abyss-selection-badge');
-    if (this.selectedTaskKeys.size >= 2) {
-      if (existing) {
-        existing.textContent = `${this.selectedTaskKeys.size} selected`;
+      if (isSelected) {
+        const description = selectedState ?? card.createDiv({ cls: 'abyss-selected-state' });
+        description.id = selectedStateId;
+        description.textContent = 'Selected';
+        const describedBy = (card.getAttribute('aria-describedby') ?? '')
+          .split(/\s+/)
+          .filter(Boolean);
+        if (!describedBy.includes(selectedStateId)) {
+          card.setAttribute('aria-describedby', [...describedBy, selectedStateId].join(' '));
+        }
       } else {
-        const list = this.el.querySelector('.abyss-center-scroll');
-        if (list) {
-          const badge = list.createDiv({ cls: 'abyss-selection-badge' });
-          badge.textContent = `${this.selectedTaskKeys.size} selected`;
-          list.prepend(badge);
+        selectedState?.remove();
+        const describedBy = (card.getAttribute('aria-describedby') ?? '')
+          .split(/\s+/)
+          .filter((id) => id && id !== selectedStateId && id !== selectedState?.id);
+        if (describedBy.length > 0) {
+          card.setAttribute('aria-describedby', describedBy.join(' '));
+        } else {
+          card.removeAttribute('aria-describedby');
         }
       }
-    } else {
-      existing?.remove();
-    }
+    });
+
+    const live =
+      this.el.querySelector<HTMLElement>('.abyss-selection-live') ??
+      this.el.createDiv({
+        cls: 'abyss-selection-live abyss-sr-only',
+        attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
+      });
+    const count = this.selectedTaskKeys.size;
+    live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;
   }
 
   private async setPriority(

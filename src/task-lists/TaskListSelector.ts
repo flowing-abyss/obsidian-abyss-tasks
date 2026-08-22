@@ -79,6 +79,15 @@ function compareOptional(left: string | undefined, right: string | undefined): n
   return left.localeCompare(right);
 }
 
+function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
+  const a = left.planning.created;
+  const b = right.planning.created;
+  if (a === b) return 0;
+  if (a === undefined) return -1;
+  if (b === undefined) return 1;
+  return a.localeCompare(b);
+}
+
 function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelectionInput): number {
   const field = input.viewState.sortBy.field;
   if (field === 'date') {
@@ -119,8 +128,9 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     )
     .slice()
     .sort((left, right) => {
-      const result = compare(left, right, input);
-      return input.viewState.sortBy.dir === 'asc' ? result : -result;
+      const explicit = compare(left, right, input);
+      if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
+      return compareCreated(left, right);
     });
 }
 

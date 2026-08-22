@@ -115,6 +115,127 @@ describe('selectTaskList', () => {
     expect(titles(candidates, 'today', viewState)).toEqual(['Alpha']);
   });
 
+  it('uses undated then ascending created order to quietly break equal explicit priorities', () => {
+    const viewState: ListViewState = {
+      groupBy: 'priority',
+      sortBy: { field: 'priority', dir: 'desc' },
+      filters: [],
+    };
+
+    expect(
+      titles(
+        [
+          snapshot('legacy', { priority: 'A' }),
+          snapshot('old', {
+            line: 1,
+            priority: 'A',
+            planning: { created: '2026-08-01' as LocalDate },
+          }),
+          snapshot('new', {
+            line: 2,
+            priority: 'A',
+            planning: { created: '2026-08-22' as LocalDate },
+          }),
+          snapshot('lower', {
+            line: 3,
+            priority: 'B',
+            planning: { created: '2026-08-23' as LocalDate },
+          }),
+        ],
+        { type: 'project', path: 'tasks.md' },
+        viewState,
+      ),
+    ).toEqual(['lower', 'legacy', 'old', 'new']);
+  });
+
+  it('preserves incoming order for equal created dates', () => {
+    const viewState: ListViewState = {
+      groupBy: 'priority',
+      sortBy: { field: 'priority', dir: 'desc' },
+      filters: [],
+    };
+
+    expect(
+      titles(
+        [
+          snapshot('first', { planning: { created: '2026-08-22' as LocalDate } }),
+          snapshot('second', { line: 1, planning: { created: '2026-08-22' as LocalDate } }),
+        ],
+        { type: 'project', path: 'tasks.md' },
+        viewState,
+      ),
+    ).toEqual(['first', 'second']);
+  });
+
+  it('does not reverse created order for a descending explicit sort', () => {
+    const viewState: ListViewState = {
+      groupBy: 'priority',
+      sortBy: { field: 'priority', dir: 'desc' },
+      filters: [],
+    };
+
+    expect(
+      titles(
+        [
+          snapshot('new', { planning: { created: '2026-08-22' as LocalDate } }),
+          snapshot('old', { line: 1, planning: { created: '2026-08-01' as LocalDate } }),
+        ],
+        { type: 'project', path: 'tasks.md' },
+        viewState,
+      ),
+    ).toEqual(['old', 'new']);
+  });
+
+  it('does not override non-equal explicit title, priority, or date comparisons', () => {
+    const selection = { type: 'project', path: 'tasks.md' } as const;
+
+    expect(
+      titles(
+        [
+          snapshot('Zulu', { planning: { created: '2026-08-01' as LocalDate } }),
+          snapshot('Alpha', { line: 1, planning: { created: '2026-08-22' as LocalDate } }),
+        ],
+        selection,
+        { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, filters: [] },
+      ),
+    ).toEqual(['Alpha', 'Zulu']);
+    expect(
+      titles(
+        [
+          snapshot('A', { priority: 'A', planning: { created: '2026-08-01' as LocalDate } }),
+          snapshot('B', {
+            line: 1,
+            priority: 'B',
+            planning: { created: '2026-08-22' as LocalDate },
+          }),
+        ],
+        selection,
+        { groupBy: 'priority', sortBy: { field: 'priority', dir: 'desc' }, filters: [] },
+      ),
+    ).toEqual(['B', 'A']);
+    expect(
+      titles(
+        [
+          snapshot('later due', {
+            planning: {
+              due: '2026-08-22' as LocalDate,
+              created: '2026-08-01' as LocalDate,
+            },
+          }),
+          snapshot('earlier due', {
+            line: 1,
+            planning: {
+              due: '2026-08-01' as LocalDate,
+              created: '2026-08-22' as LocalDate,
+            },
+          }),
+        ],
+        selection,
+        { groupBy: 'date', sortBy: { field: 'date', dir: 'asc' }, filters: [] },
+      ),
+    ).toEqual(['earlier due', 'later due']);
+  });
+
   it.each(['none', 'date', 'priority', 'tag', 'status'] as const)(
     'accepts the %s grouping input without changing membership',
     (groupBy) => {
