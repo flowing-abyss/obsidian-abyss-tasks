@@ -791,15 +791,12 @@ export class RightPanel {
       onLeftClick: () => void this.toggleTaskLike(task),
       onContextMenu: (event) => {
         event.stopPropagation();
-        const anchor = event.currentTarget instanceof HTMLElement ? event.currentTarget : header;
         showStatusMenuAt(event, {
           task,
           registry: this.statusRegistry,
           owner: this.md,
           onPickStatus: (symbol) => void this.setStatus(task, symbol),
           onPickPriority: (priority) => void this.updatePriority(task, priority),
-          onEditRepeat: () =>
-            this.showRecurrencePopover(anchor, task, this.recurrenceStackFor(task)),
         });
       },
     });
@@ -1151,14 +1148,12 @@ export class RightPanel {
       onLeftClick: () => void this.toggleSubTask(sub),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : row;
         showStatusMenuAt(ev, {
           task: sub,
           registry: this.statusRegistry,
           owner: this.md,
           onPickStatus: (c) => void this.setStatus(sub, c),
           onPickPriority: (p) => void this.updatePriority(sub, p),
-          onEditRepeat: () => this.showRecurrencePopover(anchor, sub, this.recurrenceStackFor(sub)),
         });
       },
     });

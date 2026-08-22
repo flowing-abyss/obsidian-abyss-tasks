@@ -2,7 +2,6 @@ import { Component, setIcon, type Menu } from 'obsidian';
 import { PRIORITY_LEVELS } from '../priority';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { SubtaskSnapshot, TaskPriority, TaskSnapshot } from '../tasks';
-import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderStatusMarker } from './StatusMarker';
 
 export interface StatusMenuOpts {
@@ -10,7 +9,6 @@ export interface StatusMenuOpts {
   registry: StatusRegistry;
   onPickStatus: (char: string) => void;
   onPickPriority: (p: TaskPriority) => void;
-  onEditRepeat?: () => void;
   /** Consumer lifetime that owns this body-mounted surface. */
   owner?: Component;
   /** Notifies a retaining consumer after this handle has fully closed, exactly once. */
@@ -98,7 +96,7 @@ function positionPopoverAt(pop: HTMLElement, ev: MouseEvent): void {
  * float above any panel; dismissed on outside click, Escape, or after a pick.
  */
 export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMenuHandle {
-  const { task, registry, onPickStatus, onPickPriority, onEditRepeat, owner, onClose } = opts;
+  const { task, registry, onPickStatus, onPickPriority, owner, onClose } = opts;
   const eventTarget = ev.currentTarget ?? ev.target;
   const targetDocument =
     eventTarget && 'ownerDocument' in eventTarget ? (eventTarget as Node).ownerDocument : null;
@@ -228,29 +226,6 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       list.createDiv({ cls: 'tc-status-popover-divider' });
     }
   });
-
-  if (onEditRepeat) {
-    pop.createDiv({ cls: 'tc-status-popover-divider' });
-    const editRepeat = pop.createDiv({
-      cls: 'tc-status-popover-row tc-status-popover-edit-repeat',
-      attr: { role: 'menuitem', tabindex: '0' },
-    });
-    if (task.recurrence) {
-      renderRecurrenceBadge(editRepeat, recurrenceBadgeInput(task.recurrence));
-    }
-    editRepeat.createSpan({ cls: 'tc-status-popover-name', text: 'Edit repeat…' });
-    const edit = (): void => {
-      close();
-      onEditRepeat();
-    };
-    editRepeat.addEventListener('click', edit);
-    editRepeat.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter' && event.key !== ' ') return;
-      event.preventDefault();
-      event.stopPropagation();
-      edit();
-    });
-  }
 
   positionPopoverAt(pop, ev);
   priorityRow.querySelector<HTMLButtonElement>('button')?.focus({ preventScroll: true });

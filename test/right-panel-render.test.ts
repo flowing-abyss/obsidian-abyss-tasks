@@ -39,13 +39,20 @@ afterEach(() => {
 });
 
 describe('RightPanel recurrence editor integration', () => {
-  it('renders a + repeat chip and mounts one anchored shared editor', async () => {
+  it('keeps repeat editing in explicit RightPanel controls', async () => {
     const { state, el } = await makePanel();
     activeDocument.body.append(el);
     state.set('taskStack', [task({ title: 'Repeat me', planning: { due: '2026-08-09' } })]);
 
     const chip = el.querySelector<HTMLButtonElement>('.tc-repeat-chip')!;
     expect(chip.textContent).toBe('+ repeat');
+    const kebab = el.querySelector<HTMLButtonElement>('[aria-label="More actions"]')!;
+    click(kebab);
+    expect(
+      Array.from(el.querySelectorAll<HTMLElement>('.tc-task-context-menu .tc-context-item')).some(
+        (item) => item.textContent === 'Edit repeat…',
+      ),
+    ).toBe(true);
 
     click(chip);
 

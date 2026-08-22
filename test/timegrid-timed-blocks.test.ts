@@ -1127,7 +1127,7 @@ describe('renderTimedBlocksForDay', () => {
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
-  it('offers Edit repeat in a timed task context menu and returns the exact task and marker anchor', () => {
+  it('keeps timed task checkbox menus focused on status and priority', () => {
     const container = freshContainer();
     const cbs = callbacks();
     const t = task({ recurrence: 'every week', planning: { time: '09:00' } });
@@ -1135,11 +1135,8 @@ describe('renderTimedBlocksForDay', () => {
     const marker = container.querySelector<HTMLElement>('.tc-status-marker')!;
 
     marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-    const editRepeat = document.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
-    expect(editRepeat).not.toBeNull();
-    editRepeat?.click();
-
-    expect(cbs.onEditRepeat).toHaveBeenCalledWith(t, marker);
+    expect(document.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
+    expect(cbs.onEditRepeat).not.toHaveBeenCalled();
   });
 
   it('picking a status from the popover fires onSetStatus with the task and chosen symbol', () => {

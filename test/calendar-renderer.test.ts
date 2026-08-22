@@ -766,7 +766,7 @@ describe('CalendarRenderer', () => {
       configured.index.destroy();
     });
 
-    it('opens the shared anchored recurrence editor from the ordinary task context menu', () => {
+    it('keeps ordinary task checkbox menus focused on status and priority', () => {
       const store = new StubStore();
       const root = freshContainer();
       const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
@@ -778,17 +778,8 @@ describe('CalendarRenderer', () => {
 
       const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      const edit = activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
-      expect(edit).not.toBeNull();
-      expect(edit?.textContent ?? '').toContain('Edit repeat…');
-      edit?.click();
-
-      const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
-      expect(popover?.classList.contains('tc-popover-anchored')).toBe(true);
-      expect(popover?.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
-      expect(popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
-        'every week',
-      );
+      expect(activeDocument.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
+      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
       r.destroy();
     });
 
@@ -897,51 +888,6 @@ describe('CalendarRenderer', () => {
         for (const handle of handles) handle.close();
         show.mockRestore();
       }
-    });
-
-    it('closes the anchored recurrence editor before a query patch replaces its task anchor', () => {
-      const store = new StubStore();
-      const root = freshContainer();
-      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
-      const todayStr = window.moment().format('YYYY-MM-DD');
-      store.setTasks([
-        task({ title: 'Before patch', recurrence: 'every week', planning: { due: todayStr } }),
-      ]);
-      r.mount();
-
-      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
-      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
-
-      store.setTasks([
-        task({ title: 'After patch', recurrence: 'every week', planning: { due: todayStr } }),
-      ]);
-      store.emit();
-
-      expect(marker.isConnected).toBe(false);
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
-      r.destroy();
-    });
-
-    it('closes the anchored recurrence editor before a calendar rerender replaces its anchor', () => {
-      const store = new StubStore();
-      const root = freshContainer();
-      const r = makeRenderer(root, store, resolvedConfig({ defaultView: 'month' }), fakeApp());
-      const todayStr = window.moment().format('YYYY-MM-DD');
-      store.setTasks([task({ recurrence: 'every week', planning: { due: todayStr } })]);
-      r.mount();
-
-      const marker = root.querySelector<HTMLElement>('.task .tc-status-marker')!;
-      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
-      activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')?.click();
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).not.toBeNull();
-
-      root.querySelector<HTMLButtonElement>('.next')?.click();
-
-      expect(marker.isConnected).toBe(false);
-      expect(activeDocument.querySelector('.tc-recurrence-popover')).toBeNull();
-      r.destroy();
     });
 
     it('requires a real confirmation click before invalid Delete completion removes the subtree', async () => {

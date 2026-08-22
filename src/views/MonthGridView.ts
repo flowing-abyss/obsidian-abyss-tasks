@@ -58,7 +58,6 @@ export interface MonthGridViewCallbacks extends ForecastInteractionCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
-  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   onWeekClick: (weekNr: string, year: string) => void;
   statusRegistry: StatusRegistry;
   tagGroups?: TagGroup[];
@@ -314,7 +313,6 @@ export class MonthGridView extends BaseView {
       ...(this.callbacks.forecastMenuOwner && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       ...(this.callbacks.onForecastClick && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
@@ -401,16 +399,12 @@ export class MonthGridView extends BaseView {
       onLeftClick: () => this.callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        const anchor = ev.currentTarget as HTMLElement;
         showStatusMenuAt(ev, {
           task: t,
           registry: this.callbacks.statusRegistry,
           owner: this.md,
           onPickStatus: (c) => this.callbacks.onSetStatus(t, c),
           onPickPriority: (p) => this.callbacks.onSetPriority(t, p),
-          ...(this.callbacks.onEditRepeat && {
-            onEditRepeat: () => this.callbacks.onEditRepeat?.(t, anchor),
-          }),
         });
       },
     });

@@ -1702,7 +1702,7 @@ describe('forecast interaction contract', () => {
     },
   );
 
-  it('opens the modern forecast source root with literal date context and edits its repeat owner', () => {
+  it('forecast right-click exposes only Edit repeat', () => {
     const sourceRoot = task({
       title: 'Modern daily source',
       recurrence: 'every day',
@@ -1745,6 +1745,7 @@ describe('forecast interaction contract', () => {
     );
 
     forecast.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(activeDocument.querySelector('.tc-forecast-context-menu-edit-repeat')).not.toBeNull();
     activeDocument.querySelector<HTMLElement>('.tc-forecast-context-menu-edit-repeat')!.click();
     expect(activeDocument.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
       'every day',

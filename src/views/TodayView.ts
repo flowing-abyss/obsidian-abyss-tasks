@@ -63,7 +63,6 @@ export interface TimeGridCallbacks extends ForecastInteractionCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
-  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   statusRegistry: StatusRegistry;
   tagGroups?: TagGroup[];
 }
@@ -303,7 +302,6 @@ export class TodayView extends BaseView {
       ...(this.callbacks.forecastMenuOwner && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       ...(this.callbacks.onForecastClick && {
         onForecastClick: this.callbacks.onForecastClick,
       }),
@@ -352,7 +350,6 @@ export class TodayView extends BaseView {
       ...(this.callbacks.forecastMenuOwner && {
         forecastMenuOwner: this.callbacks.forecastMenuOwner,
       }),
-      ...(this.callbacks.onEditRepeat && { onEditRepeat: this.callbacks.onEditRepeat }),
       ...(this.callbacks.onForecastClick && {
         onForecastClick: this.callbacks.onForecastClick,
       }),

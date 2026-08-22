@@ -205,7 +205,6 @@ export class CalendarRenderer {
         if (isForecastCalendarTask(task)) return;
         const target = calendarMutationTarget(task);
         if (!target) return;
-        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : this.rootEl;
         this.dismissStatusMenu();
         let cleanup: () => void;
         const statusMenu = showStatusMenuAt(ev, {
@@ -228,7 +227,6 @@ export class CalendarRenderer {
             });
             if (command) void this.tasks.execute(command).then(presentTaskCommandResult);
           },
-          onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
           onClose: () => {
             if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
           },

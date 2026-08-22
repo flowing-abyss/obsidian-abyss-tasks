@@ -73,7 +73,6 @@ export interface TimedBlockCallbacks extends ForecastInteractionCallbacks {
   onToggle: (task: TaskSnapshot) => void;
   onSetStatus: (task: TaskSnapshot, status: string) => void;
   onSetPriority: (task: TaskSnapshot, priority: TaskPriority) => void;
-  onEditRepeat?: (task: TaskSnapshot, anchor: HTMLElement) => void;
   statusRegistry: StatusRegistry;
 }
 
@@ -196,16 +195,12 @@ function renderTimedBlockControl(
     onLeftClick: () => callbacks.onToggle(task),
     onContextMenu: (event) => {
       event.stopPropagation();
-      const anchor = event.currentTarget as HTMLElement;
       showStatusMenuAt(event, {
         task,
         registry: callbacks.statusRegistry,
         owner: callbacks.component,
         onPickStatus: (status) => callbacks.onSetStatus(task, status),
         onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
-        ...(callbacks.onEditRepeat && {
-          onEditRepeat: () => callbacks.onEditRepeat?.(task, anchor),
-        }),
       });
     },
   });

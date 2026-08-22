@@ -27,50 +27,6 @@ afterEach(() => {
     .forEach((element) => element.remove());
 });
 
-describe('CenterPanel recurrence context action', () => {
-  it('opens one shared anchored editor and submits against the exact card task', async () => {
-    const recurring = task({
-      title: 'Repeat from card',
-      status: 'open',
-      tags: ['#task/inbox'],
-      recurrence: 'every week',
-      planning: { due: '2026-08-09' },
-      source: {
-        originalMarkdown: '- [ ] Repeat from card #task/inbox 🔁 every week 📅 2026-08-09',
-        originalBlock: '- [ ] Repeat from card #task/inbox 🔁 every week 📅 2026-08-09',
-      },
-    });
-    const { el, execute } = makeCenter([recurring]);
-
-    el.querySelector<HTMLElement>('.tc-task-card .tc-status-marker')!.dispatchEvent(
-      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
-    );
-    const edit = activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat');
-    expect(edit).not.toBeNull();
-    edit?.click();
-
-    const popover = activeDocument.querySelector<HTMLElement>('.tc-recurrence-popover');
-    expect(popover?.querySelectorAll('.tc-recurrence-editor')).toHaveLength(1);
-    expect(popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw')?.value).toBe(
-      'every week',
-    );
-    const raw = popover?.querySelector<HTMLInputElement>('.tc-recurrence-raw');
-    if (!raw) throw new Error('missing recurrence input');
-    raw.value = 'every month';
-    raw.dispatchEvent(new Event('input', { bubbles: true }));
-    popover?.querySelector<HTMLButtonElement>('.tc-recurrence-save')?.click();
-    await flushMicrotasks();
-
-    expect(execute).toHaveBeenCalledWith({
-      type: 'patch',
-      target: { type: 'task', ref: recurring.ref },
-      patch: {
-        recurrence: { type: 'set', value: 'every month' },
-      },
-    });
-  });
-});
-
 interface CapturedMenuItem {
   checked__: boolean | null;
   icon__: string;
@@ -570,13 +526,15 @@ describe('CenterPanel task date context menus', () => {
     expect(relevantDateTitles(items)).toEqual(['Today', 'Tomorrow', 'Set date…', 'Set tag…']);
   });
 
-  it('uses the shared repeat-2 icon for Edit repeat in the native task menu', () => {
+  it('keeps repeat editing in the native task menu', () => {
     const items = captureMenu();
     const { el } = makeCenter([first]);
 
     openMenu(el.querySelector<HTMLElement>('.tc-task-card')!);
 
-    expect(items.find((item) => item.title__ === 'Edit repeat…')?.icon__).toBe('repeat-2');
+    const editRepeat = items.find((item) => item.title__ === 'Edit repeat…');
+    expect(editRepeat).toBeDefined();
+    expect(editRepeat?.icon__).toBe('repeat-2');
   });
 
   it('uses the center panel as the explicit boundary for custom-date placement', () => {

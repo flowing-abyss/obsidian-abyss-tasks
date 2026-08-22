@@ -253,15 +253,13 @@ describe('status and priority consumer delegation', () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
-  it('makes status and edit-repeat choices keyboard-operable menu items', () => {
+  it('checkbox status menus exclude repeat editing', () => {
     const onPickStatus = vi.fn();
-    const onEditRepeat = vi.fn();
     const opts = {
       task: task({ recurrence: 'every week' }),
       registry: testStatusRegistry(),
       onPickStatus,
       onPickPriority: () => {},
-      onEditRepeat,
     };
 
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
@@ -274,12 +272,7 @@ describe('status and priority consumer delegation', () => {
     expect(onPickStatus).toHaveBeenCalledOnce();
 
     showStatusMenuAt(new MouseEvent('contextmenu'), opts);
-    row = activeDocument.querySelector<HTMLElement>('.tc-status-popover-edit-repeat')!;
-    expect(row.getAttribute('role')).toBe('menuitem');
-    expect(row.tabIndex).toBe(0);
-    row.focus();
-    row.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
-    expect(onEditRepeat).toHaveBeenCalledOnce();
+    expect(activeDocument.querySelector('.tc-status-popover-edit-repeat')).toBeNull();
 
     activeDocument.querySelectorAll('.tc-status-popover').forEach((element) => element.remove());
   });

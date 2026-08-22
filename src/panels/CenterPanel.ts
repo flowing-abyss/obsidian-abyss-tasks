@@ -980,7 +980,6 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
-          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -1021,7 +1020,6 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
-          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -1051,7 +1049,6 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
-          onEditRepeat: (t, anchor) => this.openRecurrenceEditor(anchor, t),
           onWeekClick: (wk, yr) => {
             this.cancelKeyboardInteraction();
             this.calViewType = 'week';
@@ -1617,14 +1614,12 @@ export class CenterPanel {
       onLeftClick: () => void this.toggleTask(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        const anchor = ev.currentTarget instanceof HTMLElement ? ev.currentTarget : card;
         showStatusMenuAt(ev, {
           task,
           registry: this.statusRegistry,
           owner: this.md,
           onPickStatus: (c) => void this.setTaskStatus(task, c),
           onPickPriority: (p) => void this.setPriority(task, p),
-          onEditRepeat: () => this.openRecurrenceEditor(anchor, task),
         });
       },
     });
