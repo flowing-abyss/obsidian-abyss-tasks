@@ -84,6 +84,7 @@ function controllerHarness(
 } {
   const host = freshContainer();
   const root = freshContainer();
+  measurePresentationRoot(root);
   const queries = queryHarness(resolution);
   const controller = new CreationPresentationController({
     host,
@@ -96,9 +97,14 @@ function controllerHarness(
 
 function renderIdentity(root: HTMLElement, ref: TaskRef): HTMLElement {
   const element = root.ownerDocument.createElement('div');
+  element.getBoundingClientRect = () => rect(10, 20, 100, 40);
   applyTaskPresentationIdentity(element, ref);
   root.appendChild(element);
   return element;
+}
+
+function measurePresentationRoot(root: HTMLElement): void {
+  root.getBoundingClientRect = () => rect(0, 0, 1_024, 768);
 }
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
@@ -335,6 +341,7 @@ describe('CreationPresentationController', () => {
     };
     const host = freshContainer();
     const root = freshContainer();
+    measurePresentationRoot(root);
     const controller = new CreationPresentationController({
       host,
       queries,
@@ -370,6 +377,7 @@ describe('CreationPresentationController', () => {
     };
     const host = freshContainer();
     const root = freshContainer();
+    measurePresentationRoot(root);
     const controller = new CreationPresentationController({
       host,
       queries,
@@ -429,14 +437,56 @@ describe('CreationPresentationController', () => {
     expect(visibleScroll).not.toHaveBeenCalled();
   });
 
-  it('does not treat a display-none zero rectangle as the first visible match', () => {
+  it('skips a zero-area first match in favor of a later visible canonical card', () => {
+    const created = task({ source: { filePath: 'capture.md', line: 2 } });
+    const result = successfulCreation(created);
+    const harness = controllerHarness(exact(created));
+    const zeroArea = renderIdentity(harness.root, created.ref);
+    const visible = renderIdentity(harness.root, created.ref);
+    zeroArea.getBoundingClientRect = () => rect(0, 0, 0, 0);
+    const zeroAreaScroll = vi.fn();
+    const visibleScroll = vi.fn();
+    zeroArea.scrollIntoView = zeroAreaScroll;
+    visible.scrollIntoView = visibleScroll;
+    harness.controller.afterRender(harness.root);
+
+    harness.controller.present(result, describeTaskCreationResult(result));
+
+    expect(zeroArea.classList.contains('is-just-created')).toBe(false);
+    expect(visible.classList.contains('is-just-created')).toBe(true);
+    expect(zeroAreaScroll).not.toHaveBeenCalled();
+    expect(visibleScroll).not.toHaveBeenCalled();
+  });
+
+  it('treats a zero-area-only canonical match as offscreen and scrolls it once', () => {
+    const created = task({ source: { filePath: 'capture.md', line: 2 } });
+    const result = successfulCreation(created);
+    const harness = controllerHarness(exact(created));
+    const zeroArea = renderIdentity(harness.root, created.ref);
+    zeroArea.getBoundingClientRect = () => rect(0, 0, 0, 0);
+    const scroll = vi.fn();
+    zeroArea.scrollIntoView = scroll;
+    harness.controller.afterRender(harness.root);
+
+    harness.controller.present(result, describeTaskCreationResult(result));
+    harness.controller.afterRender(harness.root);
+
+    expect(zeroArea.classList.contains('is-just-created')).toBe(true);
+    expect(scroll).toHaveBeenCalledOnce();
+    expect(scroll).toHaveBeenCalledWith({
+      behavior: 'smooth',
+      block: 'nearest',
+      inline: 'nearest',
+    });
+  });
+
+  it('does not treat a display-none match as the first visible match', () => {
     const created = task({ source: { filePath: 'capture.md', line: 2 } });
     const result = successfulCreation(created);
     const harness = controllerHarness(exact(created));
     const hidden = renderIdentity(harness.root, created.ref);
     const visible = renderIdentity(harness.root, created.ref);
     hidden.style.display = 'none';
-    visible.getBoundingClientRect = () => rect(10, 20, 100, 40);
     harness.controller.afterRender(harness.root);
 
     harness.controller.present(result, describeTaskCreationResult(result));
@@ -450,11 +500,13 @@ describe('CreationPresentationController', () => {
     const result = successfulCreation(created);
     const harness = controllerHarness(exact(created));
     const firstRoot = freshContainer();
+    measurePresentationRoot(firstRoot);
     const firstElement = renderIdentity(firstRoot, created.ref);
     harness.controller.afterRender(firstRoot);
     harness.controller.present(result, describeTaskCreationResult(result));
     vi.advanceTimersByTime(400);
     const replacementRoot = freshContainer();
+    measurePresentationRoot(replacementRoot);
     const replacement = renderIdentity(replacementRoot, created.ref);
 
     harness.controller.afterRender(replacementRoot);
@@ -607,6 +659,39 @@ describe('CreationPresentationController', () => {
       expect(notice).not.toHaveBeenCalled();
     },
   );
+
+  it('keeps the status role stable and performs one live/text update per success-to-error result', () => {
+    const created = task({ source: { filePath: 'capture.md', line: 2 } });
+    const success = successfulCreation(created);
+    const error = failedCreation();
+    const harness = controllerHarness({ type: 'not-found', ref: created.ref });
+    const attributeWrites = vi.spyOn(harness.host, 'setAttribute');
+    const observer = new MutationObserver(() => {});
+    observer.observe(harness.host, {
+      attributes: true,
+      attributeFilter: ['aria-live', 'role'],
+      childList: true,
+    });
+
+    const expectSingleAnnouncementUpdate = (expectedLive: 'polite' | 'assertive'): void => {
+      const records = observer.takeRecords();
+      expect(harness.host.getAttribute('role')).toBe('status');
+      expect(attributeWrites.mock.calls.filter(([name]) => name === 'aria-live')).toEqual([
+        ['aria-live', expectedLive],
+      ]);
+      expect(attributeWrites.mock.calls.filter(([name]) => name === 'role')).toHaveLength(0);
+      expect(records.filter((record) => record.attributeName === 'role')).toHaveLength(0);
+      expect(records.filter((record) => record.type === 'childList')).toHaveLength(1);
+      attributeWrites.mockClear();
+    };
+
+    harness.controller.present(success, describeTaskCreationResult(success));
+    expectSingleAnnouncementUpdate('polite');
+
+    harness.controller.present(error, describeTaskCreationResult(error));
+    expectSingleAnnouncementUpdate('assertive');
+    observer.disconnect();
+  });
 
   it('releases queued, highlighted, live-host, and query resources on destroy', () => {
     const created = task({ source: { filePath: 'capture.md', line: 2 } });

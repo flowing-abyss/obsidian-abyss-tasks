@@ -45,8 +45,8 @@ function intersects(left: DOMRect, right: DOMRect): boolean {
   );
 }
 
-function zeroRect(rect: DOMRect): boolean {
-  return rect.width === 0 && rect.height === 0 && rect.top === 0 && rect.left === 0;
+function hasArea(rect: DOMRect): boolean {
+  return rect.width > 0 && rect.height > 0;
 }
 
 function hiddenByStyle(root: HTMLElement, element: HTMLElement): boolean {
@@ -76,9 +76,7 @@ function clips(value: string): boolean {
 function visibleWithin(root: HTMLElement, element: HTMLElement): boolean {
   if (hiddenByStyle(root, element)) return false;
   const elementRect = element.getBoundingClientRect();
-  // JSDOM and temporarily unmeasured browser nodes report an all-zero rectangle. Treat that as
-  // already visible so presentation never causes an otherwise-unnecessary scroll jump.
-  if (zeroRect(elementRect)) return true;
+  if (!hasArea(elementRect)) return false;
 
   const ownerWindow = element.ownerDocument.defaultView;
   if (ownerWindow) {
@@ -94,21 +92,19 @@ function visibleWithin(root: HTMLElement, element: HTMLElement): boolean {
   let ancestor: HTMLElement | null = element.parentElement;
   while (ancestor) {
     const ancestorRect = ancestor.getBoundingClientRect();
-    if (!zeroRect(ancestorRect)) {
-      if (ancestor === root) {
-        if (!intersects(elementRect, ancestorRect)) return false;
-      } else if (ownerWindow) {
-        const style = ownerWindow.getComputedStyle(ancestor);
-        const overflowX = style.overflowX || style.overflow;
-        const overflowY = style.overflowY || style.overflow;
-        if (
-          (clips(overflowX) &&
-            (elementRect.right <= ancestorRect.left || elementRect.left >= ancestorRect.right)) ||
-          (clips(overflowY) &&
-            (elementRect.bottom <= ancestorRect.top || elementRect.top >= ancestorRect.bottom))
-        ) {
-          return false;
-        }
+    if (ancestor === root) {
+      if (!hasArea(ancestorRect) || !intersects(elementRect, ancestorRect)) return false;
+    } else if (ownerWindow) {
+      const style = ownerWindow.getComputedStyle(ancestor);
+      const overflowX = style.overflowX || style.overflow;
+      const overflowY = style.overflowY || style.overflow;
+      if (
+        (clips(overflowX) &&
+          (elementRect.right <= ancestorRect.left || elementRect.left >= ancestorRect.right)) ||
+        (clips(overflowY) &&
+          (elementRect.bottom <= ancestorRect.top || elementRect.top >= ancestorRect.bottom))
+      ) {
+        return false;
       }
     }
     if (ancestor === root) break;
@@ -198,7 +194,6 @@ export class CreationPresentationController {
 
   private announce(description: CreationResultDescription): void {
     this.options.host.setAttribute('aria-live', description.ariaLive);
-    this.options.host.setAttribute('role', description.kind === 'error' ? 'alert' : 'status');
     this.options.host.toggleAttribute('data-requires-recovery', description.requiresRecovery);
     this.options.host.dataset['resultKind'] = description.kind;
     this.options.host.textContent = description.message;
