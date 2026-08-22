@@ -4,6 +4,7 @@ import type { LinkToken } from '../src/parser/links';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskSnapshot as Task } from '../src/tasks';
+import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { MonthView } from '../src/views/MonthView';
 import { dispatchDnD, freshContainer, resolvedConfig, task, useRealMoment } from './helpers';
 
@@ -227,6 +228,9 @@ describe('MonthView', () => {
       const t = task({ status: 'open', planning: { due: '2026-06-20' } });
       view.render(c, [t], resolvedConfig());
       expect(c.querySelectorAll('.task')).toHaveLength(1);
+      expect(c.querySelector<HTMLElement>('.task')?.dataset['abyssTaskRefKey']).toBe(
+        taskPresentationKey(t.ref),
+      );
       vi.useRealTimers();
     });
 

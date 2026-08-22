@@ -121,11 +121,64 @@
 }
 
 .abyss-layout {
+  position: relative;
   display: flex;
   height: 100%;
   overflow: hidden;
   background: var(--background-primary);
   font-family: var(--font-interface);
+}
+
+.abyss-creation-feedback {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  inset-inline-end: 16px;
+  inset-block-end: 16px;
+  max-width: min(360px, calc(100% - 32px));
+  padding: 8px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
+  color: var(--text-normal);
+  pointer-events: none;
+}
+
+.abyss-creation-feedback[data-result-kind='error'] {
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.abyss-creation-feedback:empty {
+  opacity: 0;
+}
+
+.is-just-created {
+  --abyss-creation-accent: var(--abyss-tag-color, var(--task-color, var(--interactive-accent)));
+  outline: 2px solid var(--abyss-creation-accent);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
+  animation: abyss-just-created-paint 1100ms ease-out both;
+}
+
+@keyframes abyss-just-created-paint {
+  from {
+    outline-color: var(--abyss-creation-accent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
+  }
+  to {
+    outline-color: transparent;
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-just-created {
+    outline: 2px solid var(--abyss-creation-accent);
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
+    animation: none;
+  }
 }
 
 /* Layout mode modifiers — hide panels depending on active mode */

@@ -113,6 +113,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   parseRecurrenceRule: ['src/ui/recurrence/RecurrenceEditor.ts'],
   shiftLocalDate: ['src/ui/timedBlockKeyboardQueue.ts'],
   systemCommentTimeContext: ['src/code-block/registerCodeBlock.ts'],
+  taskReconciliationKey: ['src/ui/taskPresentationIdentity.ts'],
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {

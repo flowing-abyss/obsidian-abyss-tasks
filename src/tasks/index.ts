@@ -29,7 +29,7 @@ export {
   type RecurrenceParseResult,
   type RecurrencePolicy,
 } from './domain/recurrence';
-export type { TaskResolution } from './domain/taskReconciliation';
+export { taskReconciliationKey, type TaskResolution } from './domain/taskReconciliation';
 export type {
   CommentRef,
   DateRange,

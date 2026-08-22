@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { createSpanInteractionOwner } from '../src/views/spanInteractions';
 import { layoutVisibleSpans } from '../src/views/spanLayout';
@@ -95,6 +96,7 @@ describe('renderAllDayCell', () => {
 
     const body = container.querySelector<HTMLElement>('.abyss-tg-plain')!;
     const badge = body.querySelector<HTMLElement>('.abyss-recurrence-badge');
+    expect(body.dataset['abyssTaskRefKey']).toBe(taskPresentationKey(recurring.ref));
     expect(body.querySelectorAll('.abyss-recurrence-badge')).toHaveLength(1);
     expect(badge?.getAttribute('aria-label')).toBe('Repeats: every week');
     expect(badge?.querySelector('.abyss-recurrence-badge-icon')?.getAttribute('data-icon')).toBe(

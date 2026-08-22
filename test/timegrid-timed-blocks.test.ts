@@ -4,6 +4,7 @@ import { Component, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
+import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { calendarOccurrenceForRender } from '../src/views/calendarOccurrences';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import { renderTimedBlocksForDay } from '../src/views/timegrid/renderTimedBlocks';
@@ -3004,6 +3005,7 @@ describe('renderTimedBlocksForDay', () => {
     );
     expect(block.querySelectorAll('.abyss-task-count-badge')).toHaveLength(2);
     expect(block.dataset['occurrenceState']).toBe('materialized');
+    expect(block.dataset['abyssTaskRefKey']).toBe(taskPresentationKey(t.ref));
     expect(block.dataset['continuity']).toBe('continuation');
     expect(block.dataset['spanRole']).toBe('timed-continuation:2026-07-02');
     expect(block.dataset['segmentIdentity']).toBe(

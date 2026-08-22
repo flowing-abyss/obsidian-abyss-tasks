@@ -59,11 +59,13 @@ import {
   type CaptureTarget,
 } from '../ui/taskCapture/CaptureTargetResolver';
 import {
+  describeTaskCreationResult,
   presentTaskCommandResult,
-  presentTaskCreationResult,
   requestTaskCompletion,
+  type CreationResultDescription,
 } from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
+import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
@@ -223,6 +225,11 @@ export class CenterPanel {
     private tasks?: TaskApplicationApi,
     private commentTimeContext?: CommentTimeContextProvider,
     captureApplication?: TaskApplicationApi & TaskCaptureApplicationApi,
+    private readonly onCreationResult: (
+      result: TaskCommandResult,
+      description: CreationResultDescription,
+    ) => void = () => {},
+    private readonly onRenderComplete: (root: HTMLElement) => void = () => {},
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -639,8 +646,10 @@ export class CenterPanel {
         // lands on the shared center element (which would leak layout into tasks mode).
         const host = this.el.createDiv({ cls: 'abyss-projects-host' });
         this.projectsPanel.mount(host);
+        this.onRenderComplete(this.el);
       } else {
         this.el.createDiv({ cls: 'abyss-center-empty', text: 'Projects unavailable' });
+        this.onRenderComplete(this.el);
       }
       return;
     }
@@ -1086,6 +1095,7 @@ export class CenterPanel {
         preservedScrollTop,
       );
       projectionDiagnosticOwner.update(viewContainer, issues);
+      this.onRenderComplete(viewContainer);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
@@ -1105,6 +1115,7 @@ export class CenterPanel {
       const { config, issues, tasks } = currentCalendarContent();
       this.calViewInstance.patch(viewContainer, tasks, config);
       projectionDiagnosticOwner.update(viewContainer, issues);
+      this.onRenderComplete(viewContainer);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
 
@@ -1620,6 +1631,7 @@ export class CenterPanel {
       cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
       attr: { tabindex: '-1' },
     });
+    applyTaskPresentationIdentity(card, task.ref);
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
 
@@ -2839,7 +2851,7 @@ export class CenterPanel {
       markdownBody: commandBodyForCapture(target, markdownBody),
       ...(target.initial !== undefined && { initial: target.initial }),
     });
-    presentTaskCreationResult(result);
+    this.onCreationResult(result, describeTaskCreationResult(result));
   }
 
   private withDefaultTaskPrefix(markdownBody: string): string {
@@ -2859,9 +2871,7 @@ export class CenterPanel {
       markdownBody,
       ...(initial !== undefined && { initial }),
     });
-    presentTaskCreationResult(result, {
-      announceSuccess: destination.type === 'configured-default',
-    });
+    this.onCreationResult(result, describeTaskCreationResult(result));
     return result;
   }
 
@@ -3300,6 +3310,7 @@ export class CenterPanel {
 
   private completeTaskCardRender(): void {
     this.taskCardRenderGeneration += 1;
+    this.onRenderComplete(this.el);
     const continuityKey = this.taskDateFocusContinuityKey;
     const restored = continuityKey !== null && this.focusTaskDateTrigger(continuityKey);
     if (continuityKey !== null && !restored) {

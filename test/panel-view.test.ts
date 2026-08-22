@@ -1,4 +1,4 @@
-import { TFile, WorkspaceLeaf, type App } from 'obsidian';
+import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -11,6 +11,7 @@ import type {
   TaskQueryApi,
   TaskRef,
 } from '../src/tasks';
+import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -19,6 +20,7 @@ import {
   createAppWithFiles,
   flushMicrotasks,
   seedTaskCache,
+  task,
   useRealMoment,
 } from './helpers';
 
@@ -80,6 +82,92 @@ describe('PanelView', () => {
       expect(layout?.querySelector('.abyss-left')).not.toBeNull();
       expect(layout?.querySelector('.abyss-center')).not.toBeNull();
       expect(layout?.querySelector('.abyss-right')).not.toBeNull();
+    });
+
+    it('owns one stable out-of-flow creation feedback host inside the layout', () => {
+      const layout = view.contentEl.querySelector('.abyss-layout');
+      const feedback = layout?.querySelector('.abyss-creation-feedback');
+
+      expect(feedback).not.toBeNull();
+      expect(feedback?.getAttribute('role')).toBe('status');
+      expect(feedback?.getAttribute('aria-live')).toBe('polite');
+      expect(feedback?.getAttribute('aria-atomic')).toBe('true');
+      expect(layout?.querySelectorAll('.abyss-creation-feedback')).toHaveLength(1);
+    });
+
+    it('reports complete list, project, search, calendar mount, and calendar patch boundaries', () => {
+      const internals = view as unknown as {
+        state: AppState;
+        center: { refresh(): void };
+        creationPresentation: CreationPresentationController;
+      };
+      const afterRender = vi.spyOn(internals.creationPresentation, 'afterRender');
+
+      internals.center.refresh();
+      expect(afterRender).toHaveBeenCalledWith(
+        view.contentEl.querySelector<HTMLElement>('.abyss-center'),
+      );
+
+      afterRender.mockClear();
+      internals.state.set('mode', 'projects');
+      expect(afterRender).toHaveBeenCalled();
+
+      afterRender.mockClear();
+      internals.state.set('mode', 'search');
+      expect(afterRender).toHaveBeenCalled();
+
+      afterRender.mockClear();
+      internals.state.set('mode', 'calendar');
+      expect(afterRender).toHaveBeenCalledWith(
+        view.contentEl.querySelector<HTMLElement>('.abyss-cal-body'),
+      );
+
+      afterRender.mockClear();
+      emitQueryEvent(taskApplication.index, { type: 'changed', files: ['x.md'] });
+      expect(afterRender).toHaveBeenCalledWith(
+        view.contentEl.querySelector<HTMLElement>('.abyss-cal-body'),
+      );
+    });
+
+    it('routes Center creation results to the stable host without a Notice', async () => {
+      const created = task({ source: { filePath: 'capture.md', line: 0 } });
+      const result: TaskCommandResult = {
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: created },
+      };
+      const execute = vi.spyOn(taskApplication.tasks, 'execute').mockResolvedValue(result);
+      const notice = vi.spyOn(
+        Notice.prototype as unknown as {
+          constructor__(message: string | DocumentFragment, duration?: number): void;
+        },
+        'constructor__',
+      );
+      const center = (view as unknown as { center: unknown }).center as {
+        executeCreate(
+          markdownBody: string,
+          destination: { readonly type: 'configured-default' },
+        ): Promise<TaskCommandResult | undefined>;
+      };
+
+      await center.executeCreate('captured task', { type: 'configured-default' });
+
+      expect(execute).toHaveBeenCalledOnce();
+      expect(view.contentEl.querySelector('.abyss-creation-feedback')?.textContent).toBe(
+        'Task added to capture.md',
+      );
+      expect(notice).not.toHaveBeenCalled();
+    });
+
+    it('destroys creation presentation ownership on close', async () => {
+      const controller = (
+        view as unknown as { creationPresentation: CreationPresentationController }
+      ).creationPresentation;
+      const destroy = vi.spyOn(controller, 'destroy');
+
+      await view.onClose();
+
+      expect(destroy).toHaveBeenCalledOnce();
     });
 
     it('keeps planCreate on the PanelView application wrapper', async () => {

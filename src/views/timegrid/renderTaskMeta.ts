@@ -9,6 +9,7 @@ import {
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
 import { taskCardVisualStyle } from '../../ui/TaskCard';
+import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
 import {
   calendarOccurrenceForRender,
   type CalendarOccurrence,
@@ -71,6 +72,11 @@ export function applyOccurrenceDomState(
   element.setAttribute('data-occurrence-key', occurrence.key);
   element.setAttribute('data-span-role', spanRole);
   element.setAttribute('data-segment-identity', `${occurrence.key}:${spanRole}`);
+  if (occurrence.kind === 'materialized') {
+    applyTaskPresentationIdentity(element, occurrence.source.root.ref);
+  } else {
+    element.removeAttribute('data-abyss-task-ref-key');
+  }
   element.setAttribute(
     'data-control-slot',
     element.querySelector('.abyss-status-marker') === null ? 'reserved' : 'occupied',

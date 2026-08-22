@@ -21,6 +21,7 @@ import type {
   TaskRef,
   TaskResolution,
 } from '../tasks';
+import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
@@ -78,6 +79,7 @@ export class PanelView extends ItemView {
   private selectedListRenameUnsub?: () => void;
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
+  private creationPresentation?: CreationPresentationController;
   private ownedWriteRef: TaskRef | undefined = undefined;
   constructor(
     leaf: WorkspaceLeaf,
@@ -129,6 +131,15 @@ export class PanelView extends ItemView {
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
     const centerEl = layout.createDiv({ cls: 'abyss-center' });
     const rightEl = layout.createDiv({ cls: 'abyss-right' });
+    const creationFeedback = layout.createDiv({ cls: 'abyss-creation-feedback' });
+    this.creationPresentation = new CreationPresentationController({
+      host: creationFeedback,
+      queries: this.queries,
+      reducedMotion: () =>
+        creationFeedback.ownerDocument.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)')
+          .matches ?? false,
+      now: () => Date.now(),
+    });
 
     const resolver = new DailyNoteResolver(this.app, this.settings);
     const projectStore = new ProjectStore(this.app, this.queries, this.settings);
@@ -160,6 +171,8 @@ export class PanelView extends ItemView {
       selectionTasks,
       this.commentTimeContext,
       selectionTasks,
+      (result, description) => this.creationPresentation?.present(result, description),
+      (root) => this.creationPresentation?.afterRender(root),
     );
     this.right = new RightPanel(
       this.state,
@@ -268,6 +281,8 @@ export class PanelView extends ItemView {
     this.selectedListRenameUnsub?.();
     this.queryUnsub?.();
     this.projectStoreUnsub?.();
+    this.creationPresentation?.destroy();
+    this.creationPresentation = undefined;
     this.projectStore?.destroy();
     this.rail?.destroy();
     this.left?.destroy();
