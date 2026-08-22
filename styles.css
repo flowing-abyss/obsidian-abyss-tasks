@@ -4055,8 +4055,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--abyss-calendar-foreground);
 }
 
-.abyss-repeat-chip .abyss-recurrence-badge,
-.abyss-status-popover-edit-repeat .abyss-recurrence-badge {
+.abyss-repeat-chip .abyss-recurrence-badge {
   margin-inline-end: var(--size-2-1);
 }
 

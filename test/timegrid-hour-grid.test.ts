@@ -16,8 +16,8 @@ function declarationsFor(selector: string): string {
 
 function declarationsForRuleContaining(...selectors: string[]): string {
   for (const match of css.matchAll(/([^{}]+)\{([^}]*)\}/gu)) {
-    const selectorList = match[1] ?? '';
-    if (selectors.every((selector) => selectorList.includes(selector))) {
+    const selectorList = (match[1] ?? '').replace(/\s+/gu, '');
+    if (selectors.every((selector) => selectorList.includes(selector.replace(/\s+/gu, '')))) {
       return match[2] ?? '';
     }
   }
@@ -85,8 +85,20 @@ describe('renderHourGrid', () => {
     expect(dragging).not.toMatch(/background(?:-color)?\s*:/u);
     expect(css).not.toMatch(/(?:^|\n)\.is-dragging\s*\{[^}]*opacity\s*:/u);
     expect(
-      declarationsForRuleContaining('.is-dragging:not(.abyss-tg-block)', '.abyss-mg-plain'),
+      declarationsForRuleContaining(
+        '.is-dragging:not(.abyss-tg-block)',
+        ':not(.abyss-tg-body)',
+        ':not(.abyss-mg-block-dot)',
+        ':not(.abyss-mg-plain)',
+      ),
     ).toMatch(/opacity\s*:\s*0\.4/u);
+  });
+
+  it('keeps recurrence badge spacing on live repeat chips only', () => {
+    expect(css).not.toContain('.abyss-status-popover-edit-repeat');
+    expect(declarationsForRuleContaining('.abyss-repeat-chip .abyss-recurrence-badge')).toMatch(
+      /margin-inline-end\s*:\s*var\(--size-2-1\)/u,
+    );
   });
 
   it('provides full 10px vertical and horizontal resize hit targets', () => {

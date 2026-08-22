@@ -215,8 +215,8 @@ describe('PanelView', () => {
       expect(view.getViewType()).toBe(PANEL_VIEW_TYPE);
     });
 
-    it('getDisplayText returns "Task calendar"', () => {
-      expect(view.getDisplayText()).toBe('Task calendar');
+    it('getDisplayText returns "Abyss Tasks"', () => {
+      expect(view.getDisplayText()).toBe('Abyss Tasks');
     });
 
     it('getIcon returns calendar-days', () => {

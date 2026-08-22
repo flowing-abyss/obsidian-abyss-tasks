@@ -96,7 +96,8 @@ export class PanelView extends ItemView {
     return PANEL_VIEW_TYPE;
   }
   getDisplayText(): string {
-    return 'Task calendar';
+    // eslint-disable-next-line obsidianmd/ui/sentence-case -- The plugin's approved display name is branded title case.
+    return 'Abyss Tasks';
   }
   getIcon(): string {
     return 'calendar-days';
