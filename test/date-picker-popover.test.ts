@@ -37,6 +37,42 @@ function mockPopoverRect(width: number, height: number): void {
 }
 
 describe('showDatePickerPopover', () => {
+  it('acquires one blocking owner and releases it idempotently on replacement and close', () => {
+    vi.useFakeTimers();
+    const { anchor, boundary, owner } = host();
+    const releases = [vi.fn(), vi.fn()];
+    const acquire = vi
+      .fn()
+      .mockReturnValueOnce({ release: releases[0] })
+      .mockReturnValueOnce({ release: releases[1] });
+    const interactionOwnership = { acquire };
+
+    const firstClose = showDatePickerPopover({
+      owner,
+      anchor,
+      boundary,
+      onPick: vi.fn(),
+      interactionOwnership,
+    });
+    const secondClose = showDatePickerPopover({
+      owner,
+      anchor,
+      boundary,
+      onPick: vi.fn(),
+      interactionOwnership,
+    });
+
+    expect(acquire).toHaveBeenCalledTimes(2);
+    expect(acquire).toHaveBeenNthCalledWith(1, { blocksShortcuts: true });
+    expect(releases[0]).toHaveBeenCalledOnce();
+    firstClose();
+    secondClose();
+    secondClose();
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(releases[1]).toHaveBeenCalledOnce();
+    owner.remove();
+  });
+
   it('prefills the initial value and commits change exactly once', () => {
     vi.useFakeTimers();
     const { anchor, boundary, owner } = host();

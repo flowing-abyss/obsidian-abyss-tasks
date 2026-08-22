@@ -1,4 +1,5 @@
 import { anchoredPlacement } from './anchoredPlacement';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export interface DatePickerPopoverOptions {
   readonly owner: HTMLElement;
@@ -8,12 +9,16 @@ export interface DatePickerPopoverOptions {
   readonly onPick: (value: string) => void;
   readonly onClose?: () => void;
   readonly restoreFocus?: () => void;
+  readonly interactionOwnership?: InteractionOwnershipPort;
 }
 
 const ownerCleanups = new WeakMap<HTMLElement, () => void>();
 
 export function showDatePickerPopover(options: DatePickerPopoverOptions): () => void {
   ownerCleanups.get(options.owner)?.();
+  const ownershipToken = (options.interactionOwnership ?? noInteractionOwnership).acquire({
+    blocksShortcuts: true,
+  });
 
   const ownerDocument = options.owner.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
@@ -106,6 +111,7 @@ export function showDatePickerPopover(options: DatePickerPopoverOptions): () => 
     ownerDocument.removeEventListener('scroll', position, true);
     popover.remove();
     if (ownerCleanups.get(options.owner) === cleanup) ownerCleanups.delete(options.owner);
+    ownershipToken.release();
     if (restoreFocus) {
       if (options.restoreFocus) options.restoreFocus();
       else if (options.anchor.isConnected) options.anchor.focus({ preventScroll: true });

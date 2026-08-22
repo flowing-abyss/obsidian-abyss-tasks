@@ -1049,6 +1049,32 @@ describe('mountRecurrenceEditor', () => {
     expect(popover.querySelector('[aria-modal="true"]')).toBeNull();
   });
 
+  it('owns an anchored editor once and releases ownership idempotently on dismiss', () => {
+    const anchor = activeDocument.body.createEl('button', { text: 'Repeat marker' });
+    const root = task({ planning: { due: '2026-08-09' } });
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    const handle = mountAnchoredRecurrenceEditor({
+      anchor,
+      source: { root, target: { type: 'task', ref: root.ref } },
+      policy,
+      ownershipConflict: false,
+      onSubmit: vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'task', task: root },
+      }),
+      interactionOwnership,
+    });
+
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    handle.dismiss();
+    handle.dismiss();
+    handle.destroy();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('restores the previously focused anchor when Escape closes the editor', () => {
     const anchor = activeDocument.body.createEl('button', { text: '+ repeat' });
     anchor.focus();

@@ -1228,6 +1228,29 @@ describe('MonthGridView', () => {
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
+  it('passes calendar interaction ownership to the month status popover', () => {
+    const container = freshContainer();
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    const view = new MonthGridView({ ...callbacks(), interactionOwnership });
+    view.render(
+      container,
+      [task({ planning: { due: '2026-07-15' } })],
+      resolvedConfig({ startPosition: '2026-07' }),
+    );
+
+    container
+      .querySelector<HTMLElement>(
+        '[data-mg-date="2026-07-15"] .abyss-mg-plain .abyss-status-marker',
+      )!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expect(release).toHaveBeenCalledOnce();
+    view.destroy();
+  });
+
   it('picking a status/priority from the popover on a compact row fires onSetStatus/onSetPriority with the task', () => {
     const container = freshContainer();
     const cbs = callbacks();

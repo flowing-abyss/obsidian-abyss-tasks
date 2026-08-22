@@ -12,6 +12,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../tasks';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { isDirtyDraftBundle } from './taskDraftContinuity';
 import {
   rebuildTaskSelection,
@@ -30,6 +31,7 @@ export class TaskModal {
   private queryUnsub: (() => void) | null = null;
   private selectionUnsub: (() => void) | null = null;
   private ownedWriteRef: TaskRef | undefined = undefined;
+  private ownershipToken: { release(): void } | null = null;
 
   constructor(
     private app: App,
@@ -38,10 +40,12 @@ export class TaskModal {
     private queries?: TaskQueryApi,
     private tasks?: TaskApplicationApi,
     private commentTimeContext?: CommentTimeContextProvider,
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {}
 
   open(task: TaskSnapshot, context?: string): void {
     this.close();
+    this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     // Capture the active document at open time so close() removes from the same document
     this.ownerDoc = activeDocument;
     this.innerState = new AppState();
@@ -83,6 +87,7 @@ export class TaskModal {
       (actions) => this.renderCloseButton(actions),
       (event) => this.trackOwnWrite(event),
       this.commentTimeContext,
+      this.interactionOwnership,
     );
     this.innerPanel.mount(panelEl);
 
@@ -117,6 +122,9 @@ export class TaskModal {
   }
 
   close(): void {
+    const ownershipToken = this.ownershipToken;
+    this.ownershipToken = null;
+    ownershipToken?.release();
     if (this.keyHandler && this.ownerDoc) {
       this.ownerDoc.removeEventListener('keydown', this.keyHandler);
       this.keyHandler = null;

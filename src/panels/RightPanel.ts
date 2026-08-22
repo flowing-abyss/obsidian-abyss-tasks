@@ -37,6 +37,7 @@ import {
   insertAtCaret,
   whenPasteSettled,
 } from '../ui/attachmentDrop';
+import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import {
   mountRecurrenceEditor,
@@ -174,6 +175,7 @@ export class RightPanel {
     private onRenderHeaderActions?: (actions: HTMLElement) => void,
     private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
     private commentTimeContext?: CommentTimeContextProvider,
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -634,6 +636,7 @@ export class RightPanel {
         void this.executeLinkEdit({ type: 'title', target }, occ, newRaw);
       },
       rootTaskRef(task).filePath,
+      this.interactionOwnership,
     ).open();
   }
 
@@ -649,6 +652,7 @@ export class RightPanel {
       token,
       (newRaw) => void this.executeLinkEdit(target, occ, newRaw),
       sourcePath,
+      this.interactionOwnership,
     ).open();
   }
 
@@ -797,6 +801,7 @@ export class RightPanel {
           owner: this.md,
           onPickStatus: (symbol) => void this.setStatus(task, symbol),
           onPickPriority: (priority) => void this.updatePriority(task, priority),
+          interactionOwnership: this.interactionOwnership,
         });
       },
     });
@@ -1154,6 +1159,7 @@ export class RightPanel {
           owner: this.md,
           onPickStatus: (c) => void this.setStatus(sub, c),
           onPickPriority: (p) => void this.updatePriority(sub, p),
+          interactionOwnership: this.interactionOwnership,
         });
       },
     });
@@ -2200,7 +2206,9 @@ export class RightPanel {
     const ownerDocument = this.el.ownerDocument;
     const ownerWindow = ownerDocument.defaultView;
     const placementCleanup = this.anchoredSurfaceCleanups.get(menu);
+    const ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     let listening = false;
+    let cleaned = false;
     let focusLeaveTimer: number | undefined;
     anchor.setAttribute('aria-expanded', 'true');
     const dismiss = (e: MouseEvent): void => {
@@ -2234,6 +2242,8 @@ export class RightPanel {
       listening = true;
     }, 0);
     const cleanup = (): void => {
+      if (cleaned) return;
+      cleaned = true;
       placementCleanup?.();
       if (registrationTimer !== undefined) ownerWindow?.clearTimeout(registrationTimer);
       if (focusLeaveTimer !== undefined) ownerWindow?.clearTimeout(focusLeaveTimer);
@@ -2243,6 +2253,7 @@ export class RightPanel {
         menu.removeEventListener('focusout', dismissAfterFocusLeaves);
       }
       anchor.setAttribute('aria-expanded', 'false');
+      ownershipToken.release();
       options.onCleanup?.();
       if (this.anchoredSurfaceCleanups.get(menu) === cleanup) {
         this.anchoredSurfaceCleanups.delete(menu);

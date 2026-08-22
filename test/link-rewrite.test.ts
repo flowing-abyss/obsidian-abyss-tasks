@@ -46,6 +46,32 @@ function saveImmediately(replacement: string) {
 }
 
 describe('task link rewrite delegation', () => {
+  it('owns a link editor once per open and releases it idempotently on close', async () => {
+    const app = await createAppWithFiles({});
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    const modal = new LinkEditModal(
+      app,
+      {
+        raw: '[Old](https://example.com)',
+        type: 'md',
+        target: 'https://example.com',
+        display: 'Old',
+        index: 0,
+      },
+      vi.fn(),
+      '',
+      interactionOwnership,
+    );
+
+    modal.onOpen();
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    modal.onClose();
+    modal.onClose();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('routes a RightPanel title link edit through the typed target', async () => {
     const app = await createAppWithFiles({ 't.md': '- [ ] [[Old]]\n' });
     const ref: TaskRef = { filePath: 't.md', line: 0, revision: 'root' };

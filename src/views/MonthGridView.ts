@@ -319,6 +319,9 @@ export class MonthGridView extends BaseView {
       ...(this.callbacks.onForecastContextMenu && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
+      ...(this.callbacks.interactionOwnership && {
+        interactionOwnership: this.callbacks.interactionOwnership,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
     };
   }
@@ -407,6 +410,9 @@ export class MonthGridView extends BaseView {
           owner: this.md,
           onPickStatus: (c) => this.callbacks.onSetStatus(t, c),
           onPickPriority: (p) => this.callbacks.onSetPriority(t, p),
+          ...(this.callbacks.interactionOwnership && {
+            interactionOwnership: this.callbacks.interactionOwnership,
+          }),
         });
       },
     });

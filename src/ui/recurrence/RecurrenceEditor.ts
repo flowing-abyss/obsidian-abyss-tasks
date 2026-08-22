@@ -8,6 +8,7 @@ import {
   type TaskOccurrenceResult,
   type TaskPatch,
 } from '../../tasks';
+import { noInteractionOwnership, type InteractionOwnershipPort } from '../interactionOwnership';
 import type { RecurrenceEditorDraft } from '../taskDraftContinuity';
 import type { TaskSelectionNode } from '../taskSelection';
 import {
@@ -45,6 +46,7 @@ export interface AnchoredRecurrenceEditorOptions extends Omit<
 > {
   readonly anchor: HTMLElement;
   readonly onClose?: () => void;
+  readonly interactionOwnership?: InteractionOwnershipPort;
 }
 
 type Month = Extract<YearlyChoice, { type: 'date' }>['month'];
@@ -889,6 +891,9 @@ export function mountRecurrenceEditor(options: RecurrenceEditorOptions): Recurre
 export function mountAnchoredRecurrenceEditor(
   options: AnchoredRecurrenceEditorOptions,
 ): RecurrenceEditorHandle {
+  const ownershipToken = (options.interactionOwnership ?? noInteractionOwnership).acquire({
+    blocksShortcuts: true,
+  });
   const ownerDocument = options.anchor.ownerDocument;
   const ownerWindow = ownerDocument.defaultView;
   const popover = ownerDocument.body.createDiv({
@@ -932,6 +937,7 @@ export function mountAnchoredRecurrenceEditor(
     ownerWindow?.removeEventListener('resize', position);
     editor?.destroy();
     popover.remove();
+    ownershipToken.release();
     options.onClose?.();
   };
 

@@ -1137,6 +1137,24 @@ describe('renderTimedBlocksForDay', () => {
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
+  it('passes calendar interaction ownership to the timed status popover', () => {
+    const container = freshContainer();
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    renderTimedBlocksForDay(container, [task({ planning: { due: '2026-07-10', time: '09:00' } })], {
+      ...callbacks(),
+      interactionOwnership,
+    });
+
+    container
+      .querySelector<HTMLElement>('.abyss-status-marker')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('keeps timed task checkbox menus focused on status and priority', () => {
     const container = freshContainer();
     const cbs = callbacks();

@@ -3,11 +3,16 @@ import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
 import type { LocalDate, TaskNodeRef, TaskSnapshot } from '../../tasks';
 import { anchoredPlacement } from '../../ui/anchoredPlacement';
+import {
+  noInteractionOwnership,
+  type InteractionOwnershipPort,
+} from '../../ui/interactionOwnership';
 import { plainGhostTaskTitle } from '../../ui/plainGhostTaskTitle';
 import {
   recurrenceBadgeInput,
   renderRecurrenceBadge,
 } from '../../ui/recurrence/renderRecurrenceBadge';
+import { closeStatusPopovers, registerStatusPopoverClose } from '../../ui/statusMenu';
 import { taskCardVisualStyle } from '../../ui/TaskCard';
 import { applyTaskPresentationIdentity } from '../../ui/taskPresentationIdentity';
 import {
@@ -23,6 +28,7 @@ export interface ForecastInteractionCallbacks {
   readonly forecastMenuOwner?: ForecastContextMenuOwner;
   readonly onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
+  readonly interactionOwnership?: InteractionOwnershipPort;
 }
 
 export interface ForecastContextMenuOwner {
@@ -159,12 +165,17 @@ export function bindMaterializedInteractions(
   bind(occurrence.source.target);
 }
 
-export function createForecastContextMenuOwner(ownerDocument: Document): ForecastContextMenuOwner {
+export function createForecastContextMenuOwner(
+  ownerDocument: Document,
+  interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+): ForecastContextMenuOwner {
   interface ActiveMenu {
     readonly menu: HTMLElement;
     readonly restoreTarget: HTMLElement | null;
     readonly onDocumentKeydown: (event: KeyboardEvent) => void;
     readonly onDocumentMousedown: (event: MouseEvent) => void;
+    readonly ownershipToken: { release(): void };
+    readonly unregisterPopover: () => void;
   }
 
   let active: ActiveMenu | null = null;
@@ -179,7 +190,9 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
     active = null;
     ownerDocument.removeEventListener('keydown', current.onDocumentKeydown, true);
     ownerDocument.removeEventListener('mousedown', current.onDocumentMousedown, true);
+    current.unregisterPopover();
     current.menu.remove();
+    current.ownershipToken.release();
     if (options.restoreFocus !== false && current.restoreTarget?.isConnected) {
       current.restoreTarget.focus({ preventScroll: true });
     }
@@ -189,6 +202,8 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
     open(anchor, event, occurrence, callbacks): void {
       const restoreTarget = active?.restoreTarget ?? focusedElement() ?? anchor;
       dismiss({ restoreFocus: false });
+      closeStatusPopovers(ownerDocument);
+      const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
       const menu = ownerDocument.body.createDiv({
         cls: 'abyss-status-popover abyss-forecast-context-menu',
         attr: { role: 'menu' },
@@ -231,7 +246,17 @@ export function createForecastContextMenuOwner(ownerDocument: Document): Forecas
         if (active !== owned || menu.contains(mouseEvent.target as Node)) return;
         dismiss();
       };
-      owned = { menu, restoreTarget, onDocumentKeydown, onDocumentMousedown };
+      const unregisterPopover = registerStatusPopoverClose(menu, () => {
+        if (active === owned) dismiss({ restoreFocus: false });
+      });
+      owned = {
+        menu,
+        restoreTarget,
+        onDocumentKeydown,
+        onDocumentMousedown,
+        ownershipToken,
+        unregisterPopover,
+      };
       active = owned;
       ownerDocument.addEventListener('keydown', onDocumentKeydown, true);
       ownerDocument.addEventListener('mousedown', onDocumentMousedown, true);

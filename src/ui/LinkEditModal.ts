@@ -1,16 +1,19 @@
 import { App, Modal, Setting } from 'obsidian';
 import { buildLinkRaw, type LinkToken } from '../parser/links';
 import { NoteSuggest } from './NoteSuggest';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export class LinkEditModal extends Modal {
   private display: string;
   private target: string;
+  private ownershipToken: { release(): void } | null = null;
 
   constructor(
     app: App,
     private token: LinkToken,
     private onSave: (newRaw: string) => void,
     private sourcePath = '',
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {
     super(app);
     this.display = token.display;
@@ -18,6 +21,8 @@ export class LinkEditModal extends Modal {
   }
 
   onOpen(): void {
+    this.ownershipToken?.release();
+    this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const { contentEl, token } = this;
     contentEl.createEl('h3', { text: token.type === 'wiki' ? 'Edit wiki link' : 'Edit link' });
 
@@ -57,6 +62,9 @@ export class LinkEditModal extends Modal {
   }
 
   onClose(): void {
+    const ownershipToken = this.ownershipToken;
+    this.ownershipToken = null;
+    ownershipToken?.release();
     this.contentEl.empty();
   }
 }

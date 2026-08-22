@@ -17,6 +17,7 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
+import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
@@ -334,6 +335,7 @@ async function makePanel(
   statusRegistry: StatusRegistry = testStatusRegistry(),
   onSuccessfulMutation?: (ref?: TaskRef) => void,
   commentTimeContext?: CommentTimeContextProvider,
+  interactionOwnership?: InteractionOwnershipPort,
 ): Promise<{ panel: RightPanel; state: AppState; app: App; el: HTMLElement }> {
   const app = await createAppWithFiles(files);
   const state = new AppState();
@@ -364,11 +366,105 @@ async function makePanel(
     undefined,
     undefined,
     commentTimeContext,
+    interactionOwnership,
   );
   const el = freshContainer();
   panel.mount(el);
   return { panel, state, app, el };
 }
+
+describe('RightPanel interaction ownership', () => {
+  const cases = [
+    {
+      category: 'action',
+      open: (el: HTMLElement) =>
+        click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!),
+      focus: '.abyss-task-context-menu [role="menuitem"]',
+    },
+    {
+      category: 'add-date',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-add-date')!),
+      focus: '.abyss-add-date-menu [role="menuitem"]',
+    },
+    {
+      category: 'date',
+      open: (el: HTMLElement) =>
+        click(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+            (candidate) => candidate.textContent?.startsWith('📅'),
+          )!,
+        ),
+      focus: '.abyss-date-popover [aria-label="Clear date"]',
+    },
+    {
+      category: 'priority',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-priority-chip')!),
+      focus: '.abyss-priority-popover [role="option"]',
+    },
+    {
+      category: 'time/duration',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-time')!),
+      focus: '.abyss-time-popover [aria-label="Clear time"]',
+    },
+    {
+      category: 'status',
+      open: (el: HTMLElement) =>
+        el
+          .querySelector<HTMLElement>('.abyss-status-marker')!
+          .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })),
+      focus: '.abyss-status-popover [role="menuitemradio"]',
+    },
+  ] as const;
+
+  it.each(cases)(
+    'blocks semantic navigation in the $category surface and releases on rerender',
+    async ({ open, focus }) => {
+      const registry = new InteractionRegistry<'navigate'>();
+      const { panel, state, el } = await makePanel(
+        {},
+        undefined,
+        testStatusRegistry(),
+        undefined,
+        undefined,
+        registry,
+      );
+      activeDocument.body.append(el);
+      const navigate = vi.fn();
+      const onKeydown = (event: KeyboardEvent): void => {
+        if (event.key === 'n' && registry.allows('navigate')) navigate();
+      };
+      activeDocument.addEventListener('keydown', onKeydown);
+      state.set('taskStack', [
+        task({
+          title: 'Owned surface',
+          priority: 'B',
+          planning: { due: '2026-08-11', time: '09:15', duration: 45 },
+        }),
+      ]);
+
+      try {
+        open(el);
+        const focused =
+          el.querySelector<HTMLElement>(focus) ?? activeDocument.querySelector<HTMLElement>(focus);
+        expect(focused).not.toBeNull();
+        focused!.focus();
+        focused!.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+        expect(navigate).not.toHaveBeenCalled();
+
+        state.set('taskStack', [task({ title: 'Replacement' })]);
+        activeDocument.body.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'n', bubbles: true }),
+        );
+        expect(navigate).toHaveBeenCalledOnce();
+      } finally {
+        activeDocument.removeEventListener('keydown', onKeydown);
+        panel.destroy();
+        registry.destroy();
+        el.remove();
+      }
+    },
+  );
+});
 
 describe('RightPanel render lifecycle', () => {
   it('calls the header-actions hook with each newly rendered actions container', async () => {

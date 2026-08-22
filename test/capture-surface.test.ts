@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskCommandResult, TaskCreateSession } from '../src/tasks';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
@@ -5,6 +7,16 @@ import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver'
 import { TaskCaptureController } from '../src/ui/taskCapture/TaskCaptureController';
 import { describeTaskCreationResult } from '../src/ui/taskCommandResult';
 import { deferred, flushMicrotasks, task } from './helpers';
+
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+
+function declarationsFor(selector: string): string {
+  const uncommentedCss = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
+    (match) => match[1]?.trim() === selector,
+  );
+  return matches[matches.length - 1]?.[2] ?? '';
+}
 
 const success = (): TaskCommandResult => ({
   type: 'ok',
@@ -280,5 +292,36 @@ describe('CaptureSurface', () => {
       'Failed to create task. Please try again.',
     );
     expect(secondFocus).toHaveBeenCalledOnce();
+  });
+
+  it('styles shared capture, destination, pending, and error states with theme variables', () => {
+    const surface = declarationsFor('.abyss-capture-surface');
+    const submitting = declarationsFor('.abyss-capture-surface.is-submitting');
+    const error = declarationsFor('.abyss-capture-surface.has-error');
+
+    expect(surface).toContain('display:');
+    expect(surface).toContain('var(--');
+    expect(surface).not.toMatch(/(?:^|;)\s*(?:min-|max-)?width\s*:\s*\d/u);
+    expect(submitting).toContain('var(--');
+    expect(error).toContain('var(--text-error)');
+    expect(declarationsFor('.abyss-capture-destination')).toContain('var(--text-muted)');
+    expect(declarationsFor('.abyss-capture-pending')).toContain('var(--text-accent)');
+    expect(declarationsFor('.abyss-capture-error')).toContain('var(--text-error)');
+
+    expect(declarationsFor('.abyss-tg-quick-add')).toContain('position: absolute');
+    expect(declarationsFor('.abyss-tg-allday-quick-add')).toContain('position: absolute');
+    expect(declarationsFor('.abyss-mg-quick-add')).toContain('position: absolute');
+  });
+
+  it('disables smooth scrolling and capture/highlight animation under reduced motion', () => {
+    const reducedMotion = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/gu;
+    const rules = [...css.matchAll(reducedMotion)].map((match) => match[1] ?? '');
+    const captureRule = rules.find((rule) => rule.includes('.abyss-capture-surface')) ?? '';
+    const highlightRule = rules.find((rule) => rule.includes('.is-just-created')) ?? '';
+
+    expect(captureRule).toContain('scroll-behavior: auto');
+    expect(captureRule).toContain('animation: none');
+    expect(captureRule).not.toContain('scroll-behavior: smooth');
+    expect(highlightRule).toContain('animation: none');
   });
 });

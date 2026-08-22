@@ -195,6 +195,9 @@ function renderAllDayBody(
                 owner: callbacks.component,
                 onPickStatus: (c) => callbacks.onSetStatus(task, c),
                 onPickPriority: (p) => callbacks.onSetPriority(task, p),
+                ...(callbacks.interactionOwnership && {
+                  interactionOwnership: callbacks.interactionOwnership,
+                }),
               });
             },
           })
@@ -626,6 +629,9 @@ export function renderAllDayCell(
                   owner: callbacks.component,
                   onPickStatus: (c) => callbacks.onSetStatus(t, c),
                   onPickPriority: (p) => callbacks.onSetPriority(t, p),
+                  ...(callbacks.interactionOwnership && {
+                    interactionOwnership: callbacks.interactionOwnership,
+                  }),
                 });
               },
             })

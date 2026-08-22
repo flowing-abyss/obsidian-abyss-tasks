@@ -201,6 +201,9 @@ function renderTimedBlockControl(
         owner: callbacks.component,
         onPickStatus: (status) => callbacks.onSetStatus(task, status),
         onPickPriority: (priority) => callbacks.onSetPriority(task, priority),
+        ...(callbacks.interactionOwnership && {
+          interactionOwnership: callbacks.interactionOwnership,
+        }),
       });
     },
   });

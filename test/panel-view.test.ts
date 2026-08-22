@@ -12,6 +12,7 @@ import type {
   TaskRef,
 } from '../src/tasks';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
+import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -136,23 +137,32 @@ describe('PanelView', () => {
         changed: true,
         outcome: { type: 'task', task: created },
       };
-      const execute = vi.spyOn(taskApplication.tasks, 'execute').mockResolvedValue(result);
+      const sessionExecute = vi.fn(async () => result);
+      const captureApplication = taskApplication.tasks as TaskApplicationApi &
+        TaskCaptureApplicationApi;
+      const planCreate = vi.spyOn(captureApplication, 'planCreate').mockResolvedValue({
+        type: 'ready',
+        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+        execute: sessionExecute,
+      });
       const notice = vi.spyOn(
         Notice.prototype as unknown as {
           constructor__(message: string | DocumentFragment, duration?: number): void;
         },
         'constructor__',
       );
-      const center = (view as unknown as { center: unknown }).center as {
-        executeCreate(
-          markdownBody: string,
-          destination: { readonly type: 'configured-default' },
-        ): Promise<TaskCommandResult | undefined>;
-      };
+      view.contentEl.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+      await flushMicrotasks();
+      const input = view.contentEl.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      input.value = 'captured task';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
 
-      await center.executeCreate('captured task', { type: 'configured-default' });
-
-      expect(execute).toHaveBeenCalledOnce();
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(sessionExecute).toHaveBeenCalledOnce();
       expect(view.contentEl.querySelector('.abyss-creation-feedback')?.textContent).toBe(
         'Task added to capture.md',
       );
@@ -168,6 +178,27 @@ describe('PanelView', () => {
       await view.onClose();
 
       expect(destroy).toHaveBeenCalledOnce();
+    });
+
+    it('supplies one live interaction registry to both panels and destroys it after panel teardown', async () => {
+      const internals = view as unknown as {
+        interactionRegistry: InteractionRegistry<string>;
+        center: { interactionOwnership: unknown };
+        right: { interactionOwnership: unknown };
+      };
+      const registry = internals.interactionRegistry;
+
+      expect(registry).toBeDefined();
+      expect(internals.center.interactionOwnership).toBe(registry);
+      expect(internals.right.interactionOwnership).toBe(registry);
+      registry.acquire({ blocksShortcuts: true });
+      expect(registry.allows('navigate')).toBe(false);
+
+      await view.onClose();
+
+      expect(registry.allows('navigate')).toBe(true);
+      registry.acquire({ blocksShortcuts: true });
+      expect(registry.allows('navigate')).toBe(true);
     });
 
     it('keeps planCreate on the PanelView application wrapper', async () => {

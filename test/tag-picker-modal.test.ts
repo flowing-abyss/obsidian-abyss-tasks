@@ -79,6 +79,29 @@ afterEach(() => {
 });
 
 describe('TagPickerModal', () => {
+  it('acquires one blocking owner per open and releases it once on close', () => {
+    const app = new App();
+    (app.metadataCache as unknown as { getTags: () => Record<string, number> }).getTags =
+      () => ({});
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    const modal = new TagPickerModal(
+      app,
+      () => undefined,
+      new Set(),
+      new Set(),
+      vi.fn(),
+      interactionOwnership,
+    );
+
+    modal.onOpen();
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    modal.onClose();
+    modal.onClose();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('renders filtered tag choices as native pressed buttons with truthful bulk states', () => {
     const { modal } = makeTagPicker();
     const search = modal.contentEl.querySelector<HTMLInputElement>('.abyss-tag-picker-search')!;

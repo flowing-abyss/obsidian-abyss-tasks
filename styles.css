@@ -177,6 +177,12 @@
     outline: 2px solid var(--abyss-creation-accent);
     outline-offset: 2px;
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--abyss-creation-accent) 28%, transparent);
+    scroll-behavior: auto;
+    animation: none;
+  }
+
+  .abyss-capture-surface {
+    scroll-behavior: auto;
     animation: none;
   }
 }
@@ -3434,11 +3440,21 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-quick-capture {
   padding: 4px 4px 6px;
 }
-.abyss-quick-capture-input {
+
+.abyss-capture-surface {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--size-2-1) var(--size-4-2);
+  color: var(--text-normal);
+}
+
+.abyss-capture-input {
+  grid-column: 1 / -1;
   width: 100%;
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1.5px solid var(--interactive-accent);
+  border: 1.5px solid var(--background-modifier-border);
   background: var(--background-primary);
   color: var(--text-normal);
   font-size: 14px;
@@ -3446,8 +3462,76 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   box-shadow: var(--shadow-s);
   box-sizing: border-box;
 }
-.abyss-quick-capture-input::placeholder {
+
+.abyss-capture-input:focus-visible {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
+.abyss-capture-input::placeholder {
   color: var(--text-faint);
+}
+
+.abyss-capture-destination {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-capture-pending {
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+  white-space: nowrap;
+}
+
+.abyss-capture-error {
+  grid-column: 1 / -1;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  line-height: var(--line-height-tight);
+}
+
+.abyss-capture-surface.is-submitting {
+  color: var(--text-muted);
+}
+
+.abyss-capture-surface.is-submitting .abyss-capture-input {
+  border-color: var(--text-muted);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+}
+
+.abyss-capture-surface.has-error {
+  color: var(--text-error);
+}
+
+.abyss-capture-surface.has-error .abyss-capture-input {
+  border-color: var(--text-error);
+  box-shadow: 0 0 0 1px var(--text-error);
+}
+
+.abyss-tg-quick-add > .abyss-capture-surface,
+.abyss-tg-allday-quick-add > .abyss-capture-surface,
+.abyss-mg-quick-add > .abyss-capture-surface {
+  flex: 1 1 auto;
+  gap: var(--size-2-1) var(--size-4-1);
+  padding: 0;
+  background: transparent;
+}
+
+.abyss-tg-quick-add .abyss-capture-input,
+.abyss-tg-allday-quick-add .abyss-capture-input,
+.abyss-mg-quick-add .abyss-capture-input {
+  padding: 2px 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: inherit;
 }
 
 /* Calendar mode */

@@ -34,6 +34,7 @@ import {
   type ForecastContextMenuOwner,
 } from '../views/timegrid/renderTaskMeta';
 import { WeekView } from '../views/WeekView';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { mountAnchoredRecurrenceEditor } from './recurrence/RecurrenceEditor';
 import { showStatusMenuAt } from './statusMenu';
 import {
@@ -69,6 +70,7 @@ export class CalendarRenderer {
   private projectionDiagnosticOwner: CalendarProjectionDiagnosticOwner;
   private forecastMenuOwner: ForecastContextMenuOwner;
   private taskModal: TaskModal;
+  private taskInputModal: TaskInputModal | null = null;
 
   constructor(
     private rootEl: HTMLElement,
@@ -80,9 +82,13 @@ export class CalendarRenderer {
     private taskPrefix = '',
     private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
     private commentTimeContext?: CommentTimeContextProvider,
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {
     this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
-    this.forecastMenuOwner = createForecastContextMenuOwner(rootEl.ownerDocument);
+    this.forecastMenuOwner = createForecastContextMenuOwner(
+      rootEl.ownerDocument,
+      interactionOwnership,
+    );
     this.taskModal = new TaskModal(
       app,
       statusRegistry,
@@ -90,6 +96,7 @@ export class CalendarRenderer {
       queries,
       tasks,
       commentTimeContext,
+      interactionOwnership,
     );
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
@@ -234,6 +241,7 @@ export class CalendarRenderer {
           onClose: () => {
             if (this.statusMenuCleanup === cleanup) this.statusMenuCleanup = null;
           },
+          interactionOwnership: this.interactionOwnership,
         });
         cleanup = () => statusMenu.close();
         this.statusMenuCleanup = cleanup;
@@ -271,6 +279,7 @@ export class CalendarRenderer {
           this.recurrenceEditorCleanup = null;
         }
       },
+      interactionOwnership: this.interactionOwnership,
     });
     cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
@@ -299,6 +308,7 @@ export class CalendarRenderer {
           this.recurrenceEditorCleanup = null;
         }
       },
+      interactionOwnership: this.interactionOwnership,
     });
     cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
@@ -456,19 +466,30 @@ export class CalendarRenderer {
   }
 
   private openAddTaskModal(date: string): void {
-    new TaskInputModal(this.app, async (text) => {
-      const body = text.trim();
-      if (!body) return;
-      const prefix = this.taskPrefix.trim();
-      presentTaskCreationResult(
-        await this.tasks.execute({
-          type: 'create',
-          destination: { type: 'configured-default' },
-          markdownBody: prefix ? `${prefix} ${body}` : body,
-          initial: { due: { type: 'set', value: localDate(date) } },
-        }),
-      );
-    }).open();
+    this.dismissTaskInputModal();
+    let modal!: TaskInputModal;
+    modal = new TaskInputModal(
+      this.app,
+      async (text) => {
+        const body = text.trim();
+        if (!body) return;
+        const prefix = this.taskPrefix.trim();
+        presentTaskCreationResult(
+          await this.tasks.execute({
+            type: 'create',
+            destination: { type: 'configured-default' },
+            markdownBody: prefix ? `${prefix} ${body}` : body,
+            initial: { due: { type: 'set', value: localDate(date) } },
+          }),
+        );
+      },
+      this.interactionOwnership,
+      () => {
+        if (this.taskInputModal === modal) this.taskInputModal = null;
+      },
+    );
+    this.taskInputModal = modal;
+    modal.open();
   }
 
   destroy(): void {
@@ -476,6 +497,7 @@ export class CalendarRenderer {
     this.forecastMenuOwner.dismiss();
     this.dismissStatusMenu();
     this.dismissRecurrenceEditor();
+    this.dismissTaskInputModal();
     this.taskModal.close();
     this.unsubscribe?.();
     this.activeView?.destroy();
@@ -487,17 +509,29 @@ export class CalendarRenderer {
     this.statusMenuCleanup?.();
     this.statusMenuCleanup = null;
   }
+
+  private dismissTaskInputModal(): void {
+    const modal = this.taskInputModal;
+    this.taskInputModal = null;
+    modal?.close();
+  }
 }
 
 class TaskInputModal extends Modal {
+  private ownershipToken: { release(): void } | null = null;
+
   constructor(
     app: App,
     private onSubmit: (text: string) => Promise<void>,
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    private readonly onClosed: () => void = () => {},
   ) {
     super(app);
   }
 
   onOpen(): void {
+    this.ownershipToken?.release();
+    this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const { contentEl } = this;
     contentEl.empty();
     // eslint-disable-next-line obsidianmd/no-static-styles-assignment
@@ -530,6 +564,10 @@ class TaskInputModal extends Modal {
   }
 
   onClose(): void {
+    const ownershipToken = this.ownershipToken;
+    this.ownershipToken = null;
+    ownershipToken?.release();
     this.contentEl.empty();
+    this.onClosed();
   }
 }

@@ -22,6 +22,7 @@ import type {
   TaskResolution,
 } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
+import { InteractionRegistry } from '../ui/interactionOwnership';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
@@ -81,6 +82,7 @@ export class PanelView extends ItemView {
   private projectStoreUnsub?: () => void;
   private creationPresentation?: CreationPresentationController;
   private ownedWriteRef: TaskRef | undefined = undefined;
+  private interactionRegistry?: InteractionRegistry<string>;
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -111,6 +113,7 @@ export class PanelView extends ItemView {
     this.contentEl.addClass('abyss-panel-view');
 
     this.state = new AppState();
+    this.interactionRegistry = new InteractionRegistry<string>();
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
       getSelectedList: () => this.state.get('selectedList'),
       setSelectedList: (selection) => this.state.set('selectedList', selection),
@@ -173,6 +176,7 @@ export class PanelView extends ItemView {
       selectionTasks,
       (result, description) => this.creationPresentation?.present(result, description),
       (root) => this.creationPresentation?.afterRender(root),
+      this.interactionRegistry,
     );
     this.right = new RightPanel(
       this.state,
@@ -184,6 +188,7 @@ export class PanelView extends ItemView {
       undefined,
       (event) => this.trackOwnWrite(event),
       this.commentTimeContext,
+      this.interactionRegistry,
     );
 
     // Keep panels fresh when the project set / stats change. Only the left
@@ -288,6 +293,8 @@ export class PanelView extends ItemView {
     this.left?.destroy();
     this.center?.destroy();
     this.right?.destroy();
+    this.interactionRegistry?.destroy();
+    this.interactionRegistry = undefined;
     this.contentEl.empty();
   }
 

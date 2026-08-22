@@ -16,7 +16,15 @@ import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockE
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
-import { createAppWithFiles, makeStubStore, task, taskQueryApi, useRealMoment } from './helpers';
+import {
+  createAppWithFiles,
+  flushMicrotasks,
+  freshContainer,
+  makeStubStore,
+  task,
+  taskQueryApi,
+  useRealMoment,
+} from './helpers';
 
 useRealMoment();
 
@@ -29,6 +37,30 @@ async function readMd(app: App, path: string): Promise<string> {
 function callPrivate<T>(panel: CenterPanel, method: string, ...args: unknown[]): T {
   const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
   return fn.call(panel, ...args);
+}
+
+async function submitCapture(panel: CenterPanel, value: string): Promise<void> {
+  const mounted = (panel as unknown as { el?: HTMLElement }).el;
+  const container = mounted ?? freshContainer();
+  if (!container.isConnected) activeDocument.body.append(container);
+  if (!mounted) panel.mount(container);
+  const existing = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+  if (existing) {
+    existing.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+  }
+  container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+  await flushMicrotasks();
+  const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+  if (!input) throw new Error('capture did not open');
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+  );
+  await flushMicrotasks();
 }
 
 async function makePanel(
@@ -344,7 +376,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
     const process = vi.spyOn(app.vault, 'process');
 
     state.set('selectedList', 'today');
-    await callPrivate(panel, 'createTask', 'buy milk');
+    await submitCapture(panel, 'buy milk');
     expect(planCreate).toHaveBeenLastCalledWith({ type: 'configured-default' });
     expect(sessionExecute).toHaveBeenLastCalledWith({
       markdownBody: '#task/one-off buy milk',
@@ -352,7 +384,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
     });
 
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
-    await callPrivate(panel, 'createTask', 'project task');
+    await submitCapture(panel, 'project task');
     expect(planCreate).toHaveBeenLastCalledWith({
       type: 'explicit',
       destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
@@ -410,7 +442,7 @@ describe('CenterPanel root lifecycle API delegation', () => {
         tasks,
       );
 
-      await callPrivate(panel, 'createTask', 'captured');
+      await submitCapture(panel, 'captured');
 
       expect(planCreate).toHaveBeenCalledWith({ type: 'configured-default' });
       expect(sessionExecute).toHaveBeenCalledWith({

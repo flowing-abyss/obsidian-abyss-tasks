@@ -1559,6 +1559,35 @@ describe('forecast interaction contract', () => {
     trigger.remove();
   });
 
+  it('acquires one shortcut blocker per forecast menu and releases on replacement/dismiss', () => {
+    const source = rootSource({
+      title: 'Owned forecast',
+      recurrence: 'every day',
+      planning: { due: localDate('2026-08-08') },
+    });
+    const forecast = forecasts(source, '2026-08-09', '2026-08-09')[0]!;
+    const releases = [vi.fn(), vi.fn()];
+    const interactionOwnership = {
+      acquire: vi
+        .fn()
+        .mockReturnValueOnce({ release: releases[0] })
+        .mockReturnValueOnce({ release: releases[1] }),
+    };
+    const owner = createForecastContextMenuOwner(activeDocument, interactionOwnership);
+    const anchor = activeDocument.body.createEl('button');
+
+    owner.open(anchor, new MouseEvent('contextmenu'), forecast.occurrence, {});
+    owner.open(anchor, new MouseEvent('contextmenu'), forecast.occurrence, {});
+    expect(interactionOwnership.acquire).toHaveBeenCalledTimes(2);
+    expect(interactionOwnership.acquire).toHaveBeenNthCalledWith(1, { blocksShortcuts: true });
+    expect(releases[0]).toHaveBeenCalledOnce();
+
+    owner.dismiss();
+    owner.dismiss();
+    expect(releases[1]).toHaveBeenCalledOnce();
+    anchor.remove();
+  });
+
   it('CalendarRenderer patches and destroy close its owned forecast menu', () => {
     const sourceRoot = task({
       title: 'Legacy lifecycle source',

@@ -3,6 +3,7 @@ import { PRIORITY_LEVELS } from '../priority';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { SubtaskSnapshot, TaskPriority, TaskSnapshot } from '../tasks';
 import { renderStatusMarker } from './StatusMarker';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 export interface StatusMenuOpts {
   task: TaskSnapshot | SubtaskSnapshot;
@@ -13,6 +14,8 @@ export interface StatusMenuOpts {
   owner?: Component;
   /** Notifies a retaining consumer after this handle has fully closed, exactly once. */
   onClose?: () => void;
+  /** Panel-owned shortcut blocker; standalone consumers may omit it. */
+  interactionOwnership?: InteractionOwnershipPort;
 }
 
 export interface StatusMenuHandle {
@@ -25,6 +28,24 @@ const PRIORITY_OPTIONS: Array<{ p: TaskPriority; label: string }> = PRIORITY_LEV
   label: l.label,
 }));
 const statusPopoverClose = new WeakMap<HTMLElement, () => void>();
+
+export function registerStatusPopoverClose(element: HTMLElement, close: () => void): () => void {
+  statusPopoverClose.set(element, close);
+  let registered = true;
+  return (): void => {
+    if (!registered) return;
+    registered = false;
+    if (statusPopoverClose.get(element) === close) statusPopoverClose.delete(element);
+  };
+}
+
+export function closeStatusPopovers(ownerDocument: Document): void {
+  ownerDocument.querySelectorAll<HTMLElement>('.abyss-status-popover').forEach((element) => {
+    const closeExisting = statusPopoverClose.get(element);
+    if (closeExisting) closeExisting();
+    else element.remove();
+  });
+}
 
 /**
  * Adds the status items (grouped by open/in-progress/done/cancelled) to `sub`,
@@ -96,7 +117,15 @@ function positionPopoverAt(pop: HTMLElement, ev: MouseEvent): void {
  * float above any panel; dismissed on outside click, Escape, or after a pick.
  */
 export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMenuHandle {
-  const { task, registry, onPickStatus, onPickPriority, owner, onClose } = opts;
+  const {
+    task,
+    registry,
+    onPickStatus,
+    onPickPriority,
+    owner,
+    onClose,
+    interactionOwnership = noInteractionOwnership,
+  } = opts;
   const eventTarget = ev.currentTarget ?? ev.target;
   const targetDocument =
     eventTarget && 'ownerDocument' in eventTarget ? (eventTarget as Node).ownerDocument : null;
@@ -109,11 +138,8 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       : null;
 
   // Only one status popover at a time.
-  eventDocument.querySelectorAll<HTMLElement>('.abyss-status-popover').forEach((element) => {
-    const closeExisting = statusPopoverClose.get(element);
-    if (closeExisting) closeExisting();
-    else element.remove();
-  });
+  closeStatusPopovers(eventDocument);
+  const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
 
   const pop = eventDocument.body.createDiv({ cls: 'abyss-status-popover' });
   const ownerDocument = pop.ownerDocument;
@@ -122,6 +148,7 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
   let dismissListening = false;
   let closed = false;
   let ownerLifetime: Component | null = null;
+  let unregisterPopover = (): void => undefined;
 
   const close = (restoreFocus = false): void => {
     if (closed) return;
@@ -132,11 +159,12 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
       ownerDocument.removeEventListener('keydown', onKey, true);
     }
     pop.remove();
-    statusPopoverClose.delete(pop);
+    unregisterPopover();
     const lifetime = ownerLifetime;
     ownerLifetime = null;
     if (lifetime) owner?.removeChild(lifetime);
     if (restoreFocus && trigger?.isConnected) trigger.focus({ preventScroll: true });
+    ownershipToken.release();
     onClose?.();
   };
   const onOutside = (e: MouseEvent): void => {
@@ -149,7 +177,7 @@ export function showStatusMenuAt(ev: MouseEvent, opts: StatusMenuOpts): StatusMe
     e.stopImmediatePropagation();
     close(true);
   };
-  statusPopoverClose.set(pop, close);
+  unregisterPopover = registerStatusPopoverClose(pop, close);
   if (owner) {
     const lifetime = new Component();
     lifetime.register(() => {

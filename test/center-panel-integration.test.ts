@@ -12,6 +12,7 @@ import type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCommandResult,
+  TaskCreateSession,
   TaskIndexEvent,
   TaskQueryApi,
   TaskSnapshot,
@@ -19,12 +20,14 @@ import type {
 import { localTime } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
+import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  deferred,
   fixedToday,
   flushMicrotasks,
   freshContainer,
@@ -104,6 +107,7 @@ function makeStaticPanel(
   snapshots: readonly TaskSnapshot[],
   settings: CalendarSettings = DEFAULT_SETTINGS,
   app: App = {} as App,
+  interactionOwnership?: InteractionOwnershipPort,
 ): CenterPanel {
   return new CenterPanel(
     state,
@@ -111,6 +115,15 @@ function makeStaticPanel(
     settings,
     queryApiForSnapshots(() => snapshots),
     new StatusRegistry(settings.taskStatuses),
+    undefined,
+    null,
+    null,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    interactionOwnership,
   );
 }
 
@@ -128,6 +141,31 @@ async function readMd(app: App, path: string): Promise<string> {
 function call<T>(panel: CenterPanel, method: string, ...args: unknown[]): Promise<T> | T {
   const fn = (panel as unknown as Record<string, (...a: unknown[]) => T>)[method]!;
   return fn.call(panel, ...args);
+}
+
+async function openListCapture(container: HTMLElement): Promise<HTMLInputElement> {
+  container.querySelector<HTMLElement>('.abyss-add-task-trigger')?.click();
+  await flushMicrotasks();
+  const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+  if (!input) throw new Error('list capture did not open');
+  return input;
+}
+
+function setCaptureDraft(input: HTMLInputElement, value: string): void {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function pressCaptureKey(input: HTMLInputElement, key: string): void {
+  input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+}
+
+async function submitListCapture(container: HTMLElement, value: string): Promise<HTMLInputElement> {
+  const input = await openListCapture(container);
+  setCaptureDraft(input, value);
+  pressCaptureKey(input, 'Enter');
+  await flushMicrotasks();
+  return input;
 }
 
 /**
@@ -288,6 +326,69 @@ describe('CenterPanel list selection', () => {
       (call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[]).map((item) => item.title),
     ).toEqual(['planned']);
   });
+});
+
+describe('CenterPanel interaction ownership', () => {
+  const cases = [
+    {
+      category: 'sort/group',
+      mode: 'tasks' as const,
+      open: (container: HTMLElement) =>
+        container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click(),
+      focus: '.abyss-view-state-row-main',
+    },
+    {
+      category: 'month',
+      mode: 'calendar' as const,
+      open: (container: HTMLElement) =>
+        container.querySelector<HTMLButtonElement>('.abyss-cal-nav-month')!.click(),
+      focus: '.abyss-month-picker-btn',
+    },
+    {
+      category: 'year',
+      mode: 'calendar' as const,
+      open: (container: HTMLElement) =>
+        container.querySelector<HTMLButtonElement>('.abyss-cal-nav-year')!.click(),
+      focus: '.abyss-year-picker-btn',
+    },
+  ];
+
+  it.each(cases)(
+    'blocks semantic navigation in the $category popover and releases on full rerender',
+    ({ mode, open, focus }) => {
+      const registry = new InteractionRegistry<'navigate'>();
+      const state = new AppState();
+      state.set('mode', mode);
+      const panel = makeStaticPanel(state, [], DEFAULT_SETTINGS, {} as App, registry);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      const navigate = vi.fn();
+      const onKeydown = (event: KeyboardEvent): void => {
+        if (event.key === 'n' && registry.allows('navigate')) navigate();
+      };
+      activeDocument.addEventListener('keydown', onKeydown);
+      panel.mount(container);
+
+      try {
+        open(container);
+        const focused = container.querySelector<HTMLElement>(focus)!;
+        focused.focus();
+        focused.dispatchEvent(new KeyboardEvent('keydown', { key: 'n', bubbles: true }));
+        expect(navigate).not.toHaveBeenCalled();
+
+        panel.refresh();
+        activeDocument.body.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'n', bubbles: true }),
+        );
+        expect(navigate).toHaveBeenCalledOnce();
+      } finally {
+        activeDocument.removeEventListener('keydown', onKeydown);
+        panel.destroy();
+        registry.destroy();
+        container.remove();
+      }
+    },
+  );
 });
 
 describe('CenterPanel sort and group popover keyboard ownership', () => {
@@ -534,7 +635,211 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
   });
 });
 
-describe('CenterPanel.createTask', () => {
+describe('CenterPanel shared list capture', () => {
+  function captureHarness(implementation: () => Promise<TaskCommandResult>): {
+    readonly panel: CenterPanel;
+    readonly state: AppState;
+    readonly planCreate: ReturnType<typeof vi.fn>;
+    readonly sessionExecute: ReturnType<typeof vi.fn>;
+  } {
+    const state = new AppState();
+    const queries = taskQueryApi();
+    const sessionExecute = vi.fn(implementation);
+    const planCreate = vi.fn(async () => ({
+      type: 'ready' as const,
+      destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
+      execute: sessionExecute,
+    }));
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries,
+      planCreate,
+      execute: vi.fn(async () => ({
+        type: 'invalid' as const,
+        issues: [{ code: 'invalid-target' as const }],
+      })),
+    };
+    return {
+      panel: new CenterPanel(
+        state,
+        {} as App,
+        { ...DEFAULT_SETTINGS, taskPrefix: '' },
+        queries,
+        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+        undefined,
+        null,
+        null,
+        application,
+        undefined,
+        application,
+      ),
+      state,
+      planCreate,
+      sessionExecute,
+    };
+  }
+
+  function captureSuccess(title = 'Captured'): TaskCommandResult {
+    return {
+      type: 'ok',
+      changed: true,
+      outcome: {
+        type: 'task',
+        task: task({ title, source: { filePath: 'Capture.md', line: 0 } }),
+      },
+    };
+  }
+
+  const captureFailure = (): TaskCommandResult => ({
+    type: 'io-error',
+    cause: 'repository-error',
+    contentState: 'unknown',
+  });
+
+  it('keeps one focused session open across consecutive Enter successes', async () => {
+    const { panel, planCreate, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      input.focus();
+      setCaptureDraft(input, 'first task');
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('');
+      expect(activeDocument.activeElement).toBe(input);
+      setCaptureDraft(input, 'second task');
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(sessionExecute).toHaveBeenCalledTimes(2);
+      expect(sessionExecute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
+        'first task',
+        'second task',
+      ]);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(activeDocument.activeElement).toBe(input);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('closes after blur success without taking focus from the next control', async () => {
+    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    const next = activeDocument.body.createEl('button', { text: 'Next control' });
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'blurred task');
+      input.focus();
+      next.focus();
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(next);
+    } finally {
+      panel.destroy();
+      container.remove();
+      next.remove();
+    }
+  });
+
+  it.each(['Enter', 'blur'] as const)(
+    'preserves the exact draft and shared error state after a %s failure',
+    async (cause) => {
+      const { panel, sessionExecute } = captureHarness(async () => captureFailure());
+      const container = freshContainer();
+      const next = activeDocument.body.createEl('button', { text: 'Next control' });
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        const input = await openListCapture(container);
+        setCaptureDraft(input, '  repair this exact draft  ');
+        if (cause === 'Enter') pressCaptureKey(input, cause);
+        else {
+          input.focus();
+          next.focus();
+        }
+        await flushMicrotasks();
+
+        const current = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+        expect(sessionExecute).toHaveBeenCalledOnce();
+        expect(current).toBe(input);
+        expect(current?.value).toBe('  repair this exact draft  ');
+        expect(current?.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+        expect(current?.getAttribute('aria-invalid')).toBe('true');
+      } finally {
+        panel.destroy();
+        container.remove();
+        next.remove();
+      }
+    },
+  );
+
+  it('remounts the active draft and focus across a full CenterPanel rerender', async () => {
+    const { panel, state, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const before = await openListCapture(container);
+      setCaptureDraft(before, 'survive the render');
+      before.focus();
+
+      state.set('centerFilter', 'force full render');
+
+      const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input');
+      expect(after).not.toBe(before);
+      expect(before.isConnected).toBe(false);
+      expect(after?.value).toBe('survive the render');
+      expect(activeDocument.activeElement).toBe(after);
+      expect(sessionExecute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('keeps an escaped pending failure editable on only the remounted surface', async () => {
+    const result = deferred<TaskCommandResult>();
+    const { panel, state, sessionExecute } = captureHarness(() => result.promise);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const before = await openListCapture(container);
+      setCaptureDraft(before, 'pending repair');
+      before.focus();
+      pressCaptureKey(before, 'Enter');
+      pressCaptureKey(before, 'Escape');
+      state.set('centerFilter', 'rerender while pending');
+
+      const after = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      expect(after).not.toBe(before);
+      expect(after.readOnly).toBe(true);
+      expect(after.value).toBe('pending repair');
+      result.resolve(captureFailure());
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(before.isConnected).toBe(false);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(after);
+      expect(after.readOnly).toBe(false);
+      expect(after.value).toBe('pending repair');
+      expect(after.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('freezes the configured destination when the inline capture opens', async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
@@ -551,8 +856,8 @@ describe('CenterPanel.createTask', () => {
     await flushMicrotasks();
     settings.customFilePath = 'changed.md';
     const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
-    input.value = 'frozen target';
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    setCaptureDraft(input, 'frozen target');
+    pressCaptureKey(input, 'Enter');
 
     await vi.waitFor(async () => {
       expect(await readMd(app, 'first.md')).toContain('- [ ] frozen target');
@@ -570,7 +875,9 @@ describe('CenterPanel.createTask', () => {
     const { panel, state, app } = await makePanel({ 'inbox.md': '- [ ] existing' }, settings);
     state.set('selectedList', 'today');
     fixedToday(TODAY);
-    await call<void>(panel, 'createTask', 'buy milk');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'buy milk');
     const content = await readMd(app, 'inbox.md');
     expect(content).toContain(`- [ ] buy milk ➕ ${TODAY} 📅 ${TODAY}`);
   });
@@ -585,7 +892,9 @@ describe('CenterPanel.createTask', () => {
     const { panel, state, app } = await makePanel({ 'inbox.md': '' }, settings);
     state.set('selectedList', 'upcoming');
     fixedToday(TODAY);
-    await call<void>(panel, 'createTask', 'future task');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'future task');
     const content = await readMd(app, 'inbox.md');
     const tomorrow = moment(TODAY).add(1, 'day').format('YYYY-MM-DD');
     expect(content).toContain(`- [ ] future task ➕ ${TODAY} 📅 ${tomorrow}`);
@@ -600,7 +909,9 @@ describe('CenterPanel.createTask', () => {
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '- [ ] existing' }, settings);
     state.set('selectedList', 'inbox');
-    await call<void>(panel, 'createTask', 'new inbox task');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'new inbox task');
     const content = await readMd(app, 'Inbox.md');
     expect(content).toContain('- [ ] new inbox task #inbox');
   });
@@ -614,7 +925,9 @@ describe('CenterPanel.createTask', () => {
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '- [ ] existing' }, settings);
     state.set('selectedList', 'inbox');
-    await call<void>(panel, 'createTask', 'plain task');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'plain task');
     const content = await readMd(app, 'Inbox.md');
     expect(content).toContain('- [ ] plain task');
     expect(content).not.toContain('#inbox');
@@ -628,7 +941,9 @@ describe('CenterPanel.createTask', () => {
     };
     const { panel, state, app } = await makePanel({ 'Inbox.md': '' }, settings);
     state.set('selectedList', { type: 'tag', tag: '#work' });
-    await call<void>(panel, 'createTask', 'tagged task');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'tagged task');
     const content = await readMd(app, 'Inbox.md');
     expect(content).toContain('- [ ] tagged task #work');
   });
@@ -647,7 +962,9 @@ describe('CenterPanel.createTask', () => {
     );
     state.set('selectedList', 'inbox');
     fixedToday(TODAY);
-    await call<void>(panel, 'createTask', 'today inbox task');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'today inbox task');
     const content = await readMd(app, `periodic/daily/${TODAY}.md`);
     expect(content).toContain('- [ ] today inbox task #inbox');
   });
@@ -1277,15 +1594,17 @@ describe('CenterPanel project selection', () => {
     expect(call<string>(panel, 'getTitle')).toBe('A');
   });
 
-  it("sel={type:'project'} createTask appends into the project note", async () => {
+  it("sel={type:'project'} capture appends into the project note", async () => {
     const { panel, state, app } = await makePanel({ 'Projects/A.md': '# Project A\n' });
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
-    await call<void>(panel, 'createTask', 'write the brief');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'write the brief');
     const content = await readMd(app, 'Projects/A.md');
     expect(content).toContain('- [ ] write the brief');
   });
 
-  it("sel={type:'project'} createTask honors the project section-insertion setting", async () => {
+  it("sel={type:'project'} capture honors the project section-insertion setting", async () => {
     const settings: CalendarSettings = {
       ...DEFAULT_SETTINGS,
       // Project creation uses the project-specific insertion setting, not the global one.
@@ -1301,7 +1620,9 @@ describe('CenterPanel project selection', () => {
     );
     state.set('selectedList', { type: 'project', path: 'Projects/A.md' });
     fixedToday(TODAY);
-    await call<void>(panel, 'createTask', 'under section');
+    const container = freshContainer();
+    panel.mount(container);
+    await submitListCapture(container, 'under section');
     const content = await readMd(app, 'Projects/A.md');
     const lines = content.split('\n');
     const sectionIdx = lines.findIndex((l) => l.trim() === '## Tasks');
@@ -1368,6 +1689,96 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     // Normal tasks-mode header (title + controls) renders again.
     expect(el.querySelector('.abyss-center-header')).toBeTruthy();
     expect(el.querySelector('.abyss-center-scroll')).toBeTruthy();
+  });
+
+  it('keeps a project-dashboard capture session across success and a full panel rerender', async () => {
+    const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const queries = taskQueryApi();
+    const sessionExecute = vi.fn<TaskCreateSession['execute']>(async () => ({
+      type: 'ok' as const,
+      changed: true,
+      outcome: {
+        type: 'task' as const,
+        task: task({ title: 'Captured', source: { filePath: 'Projects/A.md', line: 1 } }),
+      },
+    }));
+    const planCreate = vi.fn(async () => ({
+      type: 'ready' as const,
+      destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
+      execute: sessionExecute,
+    }));
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries,
+      planCreate,
+      execute: vi.fn(async () => ({
+        type: 'invalid' as const,
+        issues: [{ code: 'invalid-target' as const }],
+      })),
+    };
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      rawStatus: null,
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    };
+    const projectStore = {
+      list: () => [project],
+      get: () => project,
+      activeForLeftPanel: () => [project],
+      onUpdate: () => () => {},
+      refresh: () => {},
+    } as never;
+    const panel = new CenterPanel(
+      state,
+      app,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      projectStore,
+      stubProjectManager(),
+      application,
+      undefined,
+      application,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      state.set('mode', 'projects');
+      const first = await openListCapture(container);
+      first.focus();
+      setCaptureDraft(first, 'first project task');
+      pressCaptureKey(first, 'Enter');
+      await flushMicrotasks();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(first);
+
+      state.set('centerFilter', 'force project rerender');
+      const remounted = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      expect(remounted).not.toBe(first);
+      expect(activeDocument.activeElement).toBe(remounted);
+      setCaptureDraft(remounted, 'second project task');
+      pressCaptureKey(remounted, 'Enter');
+      await flushMicrotasks();
+
+      expect(planCreate).toHaveBeenCalledOnce();
+      expect(planCreate).toHaveBeenCalledWith({
+        type: 'explicit',
+        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
+      });
+      expect(sessionExecute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
+        'first project task',
+        'second project task',
+      ]);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
   });
 });
 
@@ -2103,6 +2514,248 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     return { panel, state, el, app };
   }
 
+  type CalendarCaptureKind = 'month' | 'timed' | 'all-day';
+
+  function calendarCaptureSuccess(title = 'Captured'): TaskCommandResult {
+    return {
+      type: 'ok',
+      changed: true,
+      outcome: {
+        type: 'task',
+        task: task({ title, source: { filePath: 'Capture.md', line: 0 } }),
+      },
+    };
+  }
+
+  function sharedCalendarCaptureHarness(implementation: () => Promise<TaskCommandResult>): {
+    readonly panel: CenterPanel;
+    readonly el: HTMLElement;
+    readonly planCreate: ReturnType<typeof vi.fn>;
+    readonly sessionExecute: ReturnType<typeof vi.fn>;
+    emitQueryChange(): void;
+  } {
+    const listeners = new Set<(event: TaskIndexEvent) => void>();
+    const queries = taskQueryApi({
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    });
+    const sessionExecute = vi.fn(implementation);
+    const planCreate = vi.fn(async () => ({
+      type: 'ready' as const,
+      destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
+      execute: sessionExecute,
+    }));
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries,
+      planCreate,
+      execute: vi.fn(async () => ({
+        type: 'invalid' as const,
+        issues: [{ code: 'invalid-target' as const }],
+      })),
+    };
+    const state = new AppState();
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      { ...clickToCreateSettings },
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      application,
+      undefined,
+      application,
+    );
+    const el = freshContainer();
+    activeDocument.body.append(el);
+    panel.mount(el);
+    state.set('mode', 'calendar');
+    return {
+      panel,
+      el,
+      planCreate,
+      sessionExecute,
+      emitQueryChange: () => {
+        for (const listener of [...listeners]) {
+          listener({ type: 'changed', files: ['Capture.md'] });
+        }
+      },
+    };
+  }
+
+  async function openCalendarCapture(
+    el: HTMLElement,
+    kind: CalendarCaptureKind,
+  ): Promise<{
+    readonly input: HTMLInputElement;
+    readonly wrapper: HTMLElement;
+    readonly date: string;
+    readonly time?: string;
+  }> {
+    if (kind !== 'month') {
+      (
+        Array.from(el.querySelectorAll('.abyss-cal-view-btn')).find(
+          (button) => button.textContent === 'Day',
+        ) as HTMLElement
+      ).click();
+    }
+
+    let wrapperSelector: string;
+    let date: string;
+    let time: string | undefined;
+    if (kind === 'month') {
+      const cell = el.querySelector<HTMLElement>(
+        '.abyss-mg-cell:not(.is-outside-month)[data-mg-date]',
+      )!;
+      date = cell.dataset['mgDate']!;
+      cell.querySelector<HTMLElement>('.abyss-mg-add-btn')!.click();
+      wrapperSelector = '.abyss-mg-quick-add';
+    } else if (kind === 'all-day') {
+      const cell = el.querySelector<HTMLElement>('.abyss-tg-allday-cell[data-tg-date]')!;
+      date = cell.dataset['tgDate']!;
+      cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      wrapperSelector = '.abyss-tg-allday-quick-add';
+    } else {
+      const day = el.querySelector<HTMLElement>('.abyss-tg-day-column[data-tg-date]')!;
+      const hourColumn = day.querySelector<HTMLElement>('.abyss-tg-hour-column')!;
+      date = day.dataset['tgDate']!;
+      time = '10:00';
+      vi.spyOn(hourColumn, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        left: 0,
+      } as DOMRect);
+      hourColumn.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 480 }));
+      wrapperSelector = '.abyss-tg-quick-add';
+    }
+
+    await flushMicrotasks();
+    const wrapper = el.querySelector<HTMLElement>(wrapperSelector)!;
+    const input = wrapper?.querySelector<HTMLInputElement>('.abyss-capture-input');
+    if (!wrapper || !input) throw new Error(`${kind} shared capture did not open`);
+    return { input, wrapper, date, ...(time !== undefined && { time }) };
+  }
+
+  it.each(['month', 'timed', 'all-day'] as const)(
+    '%s capture freezes its date/time and keeps one session across consecutive Enter successes',
+    async (kind) => {
+      const { panel, el, planCreate, sessionExecute } = sharedCalendarCaptureHarness(async () =>
+        calendarCaptureSuccess(),
+      );
+      try {
+        const opened = await openCalendarCapture(el, kind);
+        opened.input.focus();
+        const frozenDate = opened.date;
+        const positionedParent = opened.wrapper.parentElement;
+        if (kind === 'timed') {
+          expect(opened.wrapper.style.top).not.toBe('');
+        }
+
+        // Change the live DOM metadata after open: the capture request must retain the
+        // placement that was selected when its controller/session was created.
+        if (kind === 'month') positionedParent!.dataset['mgDate'] = '2099-12-31';
+        else positionedParent!.dataset['tgDate'] = '2099-12-31';
+
+        setCaptureDraft(opened.input, 'first calendar task');
+        pressCaptureKey(opened.input, 'Enter');
+        await flushMicrotasks();
+        expect(opened.input.isConnected).toBe(true);
+        expect(opened.input.value).toBe('');
+        expect(activeDocument.activeElement).toBe(opened.input);
+
+        setCaptureDraft(opened.input, 'second calendar task');
+        pressCaptureKey(opened.input, 'Enter');
+        await flushMicrotasks();
+
+        expect(planCreate).toHaveBeenCalledOnce();
+        expect(sessionExecute).toHaveBeenCalledTimes(2);
+        expect(sessionExecute.mock.calls.map(([request]) => request.markdownBody)).toEqual([
+          'first calendar task',
+          'second calendar task',
+        ]);
+        for (const [request] of sessionExecute.mock.calls) {
+          expect(request.initial?.due).toEqual({ type: 'set', value: frozenDate });
+          if (kind === 'timed') {
+            expect(request.initial?.time).toEqual({ type: 'set', value: '10:00' });
+          } else {
+            expect(request.initial?.time).toBeUndefined();
+          }
+        }
+        expect(opened.wrapper.parentElement).toBe(positionedParent);
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it.each(['month', 'timed', 'all-day'] as const)(
+    '%s capture remounts pending/error state for query and full rerenders without updating the stale surface',
+    async (kind) => {
+      const result = deferred<TaskCommandResult>();
+      const { panel, el, sessionExecute, emitQueryChange } = sharedCalendarCaptureHarness(
+        () => result.promise,
+      );
+      try {
+        const opened = await openCalendarCapture(el, kind);
+        setCaptureDraft(opened.input, 'repair this calendar task');
+        opened.input.focus();
+        pressCaptureKey(opened.input, 'Enter');
+        pressCaptureKey(opened.input, 'Escape');
+        expect(opened.input.readOnly).toBe(true);
+
+        emitQueryChange();
+        const afterQuery = el.querySelector<HTMLInputElement>('.abyss-capture-input')!;
+        expect(afterQuery).not.toBe(opened.input);
+        expect(opened.input.isConnected).toBe(false);
+        expect(afterQuery.value).toBe('repair this calendar task');
+        expect(afterQuery.readOnly).toBe(true);
+
+        result.resolve({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unknown',
+        });
+        await flushMicrotasks();
+        expect(sessionExecute).toHaveBeenCalledOnce();
+        expect(el.querySelector('.abyss-capture-input')).toBe(afterQuery);
+        expect(afterQuery.readOnly).toBe(false);
+        expect(afterQuery.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+
+        panel.refresh();
+        const afterFullRender = el.querySelector<HTMLInputElement>('.abyss-capture-input')!;
+        expect(afterFullRender).not.toBe(afterQuery);
+        expect(afterQuery.isConnected).toBe(false);
+        expect(afterFullRender.value).toBe('repair this calendar task');
+        expect(afterFullRender.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it.each(['month', 'timed', 'all-day'] as const)(
+    'destroying an idle %s capture does not synthesize a blur submission',
+    async (kind) => {
+      const { panel, el, sessionExecute } = sharedCalendarCaptureHarness(async () =>
+        calendarCaptureSuccess(),
+      );
+      const opened = await openCalendarCapture(el, kind);
+      setCaptureDraft(opened.input, 'must not submit during teardown');
+      opened.input.focus();
+
+      panel.destroy();
+      await flushMicrotasks();
+
+      expect(opened.input.isConnected).toBe(false);
+      expect(sessionExecute).not.toHaveBeenCalled();
+      el.remove();
+    },
+  );
+
   it('Month quick-add relies on the task-index patch and retains the mounted grid and header', async () => {
     const { panel, el, app } = await makeClickToCreatePanel();
     const cell = el.querySelector(
@@ -2118,11 +2771,12 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     const date = cell.getAttribute('data-mg-date')!;
     const addBtn = cell.querySelector('.abyss-mg-add-btn') as HTMLElement;
     addBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushMicrotasks();
 
     const input = el.querySelector('.abyss-mg-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
-    input.value = 'water the plants';
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    setCaptureDraft(input, 'water the plants');
+    pressCaptureKey(input, 'Enter');
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
@@ -2178,12 +2832,13 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       left: 0,
     } as DOMRect);
     hourColumnEl.dispatchEvent(new MouseEvent('click', { bubbles: true, clientY: 480 })); // 480px = 10:00
+    await flushMicrotasks();
 
     const input = el.querySelector('.abyss-tg-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     expect(input.placeholder).toBe('Task at 10:00…');
-    input.value = 'stand-up';
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    setCaptureDraft(input, 'stand-up');
+    pressCaptureKey(input, 'Enter');
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
@@ -2224,11 +2879,12 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       'data-tg-date',
     )!;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushMicrotasks();
 
     const input = el.querySelector('.abyss-tg-allday-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
-    input.value = 'renew passport';
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    setCaptureDraft(input, 'renew passport');
+    pressCaptureKey(input, 'Enter');
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');
@@ -2246,11 +2902,12 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     const alldayCell = el.querySelector('.abyss-tg-allday-cell') as HTMLElement;
     const date = alldayCell.getAttribute('data-tg-date')!;
     alldayCell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    await flushMicrotasks();
 
     const input = el.querySelector('.abyss-tg-allday-quick-add-input') as HTMLInputElement;
     expect(input).toBeTruthy();
-    input.value = 'water plants';
-    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    setCaptureDraft(input, 'water plants');
+    pressCaptureKey(input, 'Enter');
     await flushMicrotasks();
 
     const content = await readMd(app, 'inbox.md');

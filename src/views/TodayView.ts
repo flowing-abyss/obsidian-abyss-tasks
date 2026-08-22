@@ -308,6 +308,9 @@ export class TodayView extends BaseView {
       ...(this.callbacks.onForecastContextMenu && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
       }),
+      ...(this.callbacks.interactionOwnership && {
+        interactionOwnership: this.callbacks.interactionOwnership,
+      }),
       statusRegistry: this.callbacks.statusRegistry,
     };
     const previewPositionFor = (
@@ -357,6 +360,9 @@ export class TodayView extends BaseView {
       }),
       ...(this.callbacks.onForecastContextMenu && {
         onForecastContextMenu: this.callbacks.onForecastContextMenu,
+      }),
+      ...(this.callbacks.interactionOwnership && {
+        interactionOwnership: this.callbacks.interactionOwnership,
       }),
       statusRegistry: this.callbacks.statusRegistry,
       onCreateAtDate: this.callbacks.onCreateAtDate,

@@ -555,6 +555,24 @@ describe('renderAllDayCell', () => {
     expect(cbs.onTaskClick).not.toHaveBeenCalled();
   });
 
+  it('passes calendar interaction ownership to the all-day status popover', () => {
+    const container = freshContainer();
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    renderAllDayCell(container, '2026-07-10', [], [task({ planning: { due: '2026-07-10' } })], [], {
+      ...callbacks(),
+      interactionOwnership,
+    });
+
+    container
+      .querySelector<HTMLElement>('.abyss-status-marker')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    document.querySelector<HTMLButtonElement>('.abyss-status-popover-flag')!.click();
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it('picking a status from the popover on a plain chip fires onSetStatus, and a priority flag fires onSetPriority', () => {
     const container = freshContainer();
     const cbs = callbacks();

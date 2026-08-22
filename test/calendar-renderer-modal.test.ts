@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskApplicationApi, TaskIndexEvent, TaskSnapshot } from '../src/tasks';
+import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { freshContainer, queryApiForTasks, resolvedConfig, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -72,6 +73,7 @@ function makeRenderer(
   store: StubStore,
   config: ReturnType<typeof resolvedConfig>,
   app: App,
+  interactionOwnership?: InteractionOwnershipPort,
 ): CalendarRenderer {
   return new CalendarRenderer(
     root,
@@ -81,6 +83,9 @@ function makeRenderer(
     { queries: store.taskQueries, execute: store.execute },
     new StatusRegistry(buildDefaultTaskStatuses()),
     '- [ ] ',
+    undefined,
+    undefined,
+    interactionOwnership,
   );
 }
 
@@ -116,6 +121,62 @@ describe('CalendarRenderer TaskInputModal submit', () => {
       (b) => b.textContent === 'Add',
     );
     expect(addBtn).not.toBeNull();
+  });
+
+  it('uses an optional ownership port for the legacy add-task modal and releases on submit', () => {
+    renderer.destroy();
+    const release = vi.fn();
+    const interactionOwnership = { acquire: vi.fn(() => ({ release })) };
+    renderer = makeRenderer(
+      root,
+      store,
+      resolvedConfig({ defaultView: 'month' }),
+      fakeApp(),
+      interactionOwnership,
+    );
+    renderer.mount();
+
+    root
+      .querySelector<HTMLElement>('.cell.currentMonth')!
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(interactionOwnership.acquire).toHaveBeenCalledOnce();
+    expect(interactionOwnership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+    const input = activeDocument.body.querySelector<HTMLInputElement>('input[type="text"]')!;
+    input.value = 'Owned capture';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('releases owned add-task modals on replacement and renderer destruction', () => {
+    renderer.destroy();
+    const releases = [vi.fn(), vi.fn()];
+    const interactionOwnership = {
+      acquire: vi
+        .fn()
+        .mockReturnValueOnce({ release: releases[0] })
+        .mockReturnValueOnce({ release: releases[1] }),
+    };
+    renderer = makeRenderer(
+      root,
+      store,
+      resolvedConfig({ defaultView: 'month' }),
+      fakeApp(),
+      interactionOwnership,
+    );
+    renderer.mount();
+    const cell = root.querySelector<HTMLElement>('.cell.currentMonth')!;
+
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    cell.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(interactionOwnership.acquire).toHaveBeenCalledTimes(2);
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(activeDocument.body.querySelectorAll('input[type="text"]')).toHaveLength(1);
+
+    renderer.destroy();
+    renderer.destroy();
+    expect(releases[1]).toHaveBeenCalledOnce();
+    expect(activeDocument.body.querySelector('input[type="text"]')).toBeNull();
   });
 
   it('Enter with text sends one configured create command with a due date', () => {

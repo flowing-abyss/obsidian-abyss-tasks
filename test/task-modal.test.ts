@@ -188,6 +188,34 @@ describe('TaskModal', () => {
   });
 
   describe('lifecycle', () => {
+    it('acquires once per open and releases on replacement, Escape, and repeated close', () => {
+      const releases = [vi.fn(), vi.fn()];
+      const interactionOwnership = {
+        acquire: vi
+          .fn()
+          .mockReturnValueOnce({ release: releases[0] })
+          .mockReturnValueOnce({ release: releases[1] }),
+      };
+      modal = new TaskModal(
+        app,
+        testStatusRegistry(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        interactionOwnership,
+      );
+
+      modal.open(task({ title: 'first' }));
+      modal.open(task({ title: 'second' }));
+      expect(interactionOwnership.acquire).toHaveBeenCalledTimes(2);
+      expect(releases[0]).toHaveBeenCalledOnce();
+
+      activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      modal.close();
+      expect(releases[1]).toHaveBeenCalledOnce();
+    });
+
     it('open twice without close → first backdrop removed, second created', () => {
       modal.open(task({ title: 'first' }));
       const firstBackdrop = activeDocument.body.querySelector(

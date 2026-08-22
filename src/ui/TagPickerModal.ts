@@ -1,4 +1,5 @@
 import { Modal, setIcon, type App } from 'obsidian';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 
 type TagState = 'checked' | 'partial' | 'removing' | 'unchecked';
 
@@ -7,6 +8,7 @@ export class TagPickerModal extends Modal {
   private searchEl!: HTMLInputElement;
   private listEl!: HTMLElement;
   private allTags: string[] = [];
+  private ownershipToken: { release(): void } | null = null;
 
   constructor(
     app: App,
@@ -14,6 +16,7 @@ export class TagPickerModal extends Modal {
     private readonly currentTags: Set<string>, // tags ALL tasks have
     private readonly partialTags: Set<string>, // tags SOME tasks have (bulk only)
     private readonly onCommit: (toAdd: string[], toRemove: string[]) => void,
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {
     super(app);
     this.modalEl.addClass('abyss-tag-picker-modal');
@@ -21,6 +24,8 @@ export class TagPickerModal extends Modal {
   }
 
   onOpen(): void {
+    this.ownershipToken?.release();
+    this.ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     const rawTags = Object.keys(
       (this.app.metadataCache as unknown as { getTags(): Record<string, number> }).getTags(),
     );
@@ -122,6 +127,9 @@ export class TagPickerModal extends Modal {
   }
 
   onClose(): void {
+    const ownershipToken = this.ownershipToken;
+    this.ownershipToken = null;
+    ownershipToken?.release();
     const toAdd = [...this.pending.entries()].filter(([, v]) => v).map(([k]) => k);
     const toRemove = [...this.pending.entries()].filter(([, v]) => !v).map(([k]) => k);
     if (toAdd.length > 0 || toRemove.length > 0) this.onCommit(toAdd, toRemove);

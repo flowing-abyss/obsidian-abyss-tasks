@@ -43,6 +43,7 @@ import { LinkEditModal } from '../ui/LinkEditModal';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
+import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { mountAnchoredRecurrenceEditor } from '../ui/recurrence/RecurrenceEditor';
@@ -53,11 +54,13 @@ import {
 import { renderTaskText } from '../ui/renderTaskText';
 import { renderSourceNoteChip, shouldShowSourceNote } from '../ui/sourceNoteChip';
 import { buildStatusSubmenu, showStatusMenuAt } from '../ui/statusMenu';
+import { CaptureSurface } from '../ui/taskCapture/CaptureSurface';
 import {
   CaptureTargetResolver,
-  commandBodyForCapture,
+  type CaptureContext,
   type CaptureTarget,
 } from '../ui/taskCapture/CaptureTargetResolver';
+import { TaskCaptureController } from '../ui/taskCapture/TaskCaptureController';
 import {
   describeTaskCreationResult,
   presentTaskCommandResult,
@@ -108,11 +111,6 @@ import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { visibleCalendarDates, type CalViewType } from './visibleCalendarDates';
 
-type CreateTaskCommand = Extract<
-  Parameters<TaskApplicationApi['execute']>[0],
-  { readonly type: 'create' }
->;
-
 interface TimedBlockFocusLocator {
   readonly filePath: string;
   readonly line: number;
@@ -126,6 +124,26 @@ interface PendingTimedBlockRestoration {
   readonly queueSequence: number;
   readonly focusSequence: number;
   readonly renderGeneration: number;
+}
+
+type CalendarCapturePlacement =
+  | { readonly type: 'calendar-timed'; readonly date: string; readonly time: string }
+  | { readonly type: 'calendar-all-day'; readonly date: string }
+  | { readonly type: 'calendar-month'; readonly date: string };
+
+type BarCapturePlacement =
+  | { readonly type: 'list' }
+  | { readonly type: 'project'; readonly path: string };
+
+type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
+
+interface PanelCaptureSession {
+  readonly requestId: number;
+  readonly placement: PanelCapturePlacement;
+  readonly controller: TaskCaptureController;
+  surface?: CaptureSurface;
+  host?: HTMLElement;
+  focusOnMount: boolean;
 }
 
 function isRealmHTMLElement(target: EventTarget | null): target is HTMLElement {
@@ -212,6 +230,8 @@ export class CenterPanel {
   private projectsPanel: ProjectsPanel | null = null;
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
+  private captureRequestId = 0;
+  private activeCapture: PanelCaptureSession | null = null;
 
   constructor(
     private state: AppState,
@@ -230,6 +250,7 @@ export class CenterPanel {
       description: CreationResultDescription,
     ) => void = () => {},
     private readonly onRenderComplete: (root: HTMLElement) => void = () => {},
+    private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -273,7 +294,10 @@ export class CenterPanel {
 
   mount(container: HTMLElement): void {
     this.el = container;
-    this.forecastMenuOwner = createForecastContextMenuOwner(container.ownerDocument);
+    this.forecastMenuOwner = createForecastContextMenuOwner(
+      container.ownerDocument,
+      this.interactionOwnership,
+    );
     this.taskModal = new TaskModal(
       this.app,
       this.statusRegistry,
@@ -281,6 +305,7 @@ export class CenterPanel {
       this.queries,
       this.tasks,
       this.commentTimeContext,
+      this.interactionOwnership,
     );
 
     // Initialize per-list state before first render
@@ -463,6 +488,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.cancelActiveCapture();
     this.cancelKeyboardInteraction();
     this.abandonTaskDateFocus();
     this.clearSearchShell();
@@ -494,43 +520,7 @@ export class CenterPanel {
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
-    const trigger = bar.createDiv({ cls: 'abyss-add-task-trigger' });
-    trigger.createEl('span', { cls: 'abyss-add-task-plus', text: '+' });
-    trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
-    bar.addEventListener('click', () => {
-      if (bar.querySelector('.abyss-quick-capture')) return;
-      const target = this.captureTargets?.resolve({ type: 'project-dashboard', path });
-      trigger.remove();
-      const form = bar.createDiv({ cls: 'abyss-quick-capture' });
-      const input = form.createEl('input', {
-        cls: 'abyss-quick-capture-input',
-        attr: { type: 'text', placeholder: 'Task name…' },
-      });
-      let committed = false;
-      const commit = (): void => {
-        if (committed) return;
-        committed = true;
-        const text = input.value.trim();
-        if (text && target) void target.then((resolved) => this.submitCapture(resolved, text));
-      };
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          commit();
-        }
-        if (e.key === 'Escape') {
-          // Cancel: block the pending blur→commit so nothing is written.
-          committed = true;
-          this.projectsPanel?.refresh();
-        }
-      });
-      input.addEventListener('blur', () => {
-        window.setTimeout(() => {
-          if (activeDocument.activeElement !== input) commit();
-        }, 150);
-      });
-      window.setTimeout(() => input.focus(), 0);
-    });
+    this.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender();
   }
 
@@ -551,6 +541,7 @@ export class CenterPanel {
 
   private armCalendarPicker(picker: HTMLElement, anchor: HTMLElement): void {
     const ownerDocument = this.el.ownerDocument;
+    const ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
     let registrationTimer: number | undefined;
     let listening = false;
     const dismiss = (event: MouseEvent): void => {
@@ -574,6 +565,7 @@ export class CenterPanel {
       picker.removeEventListener('keydown', onKeyDown);
       picker.remove();
       anchor.setAttribute('aria-expanded', 'false');
+      ownershipToken.release();
       if (this.calendarPickerCleanup === cleanup) this.calendarPickerCleanup = null;
       if (restoreFocus && anchor.isConnected) anchor.focus();
     };
@@ -592,6 +584,7 @@ export class CenterPanel {
   }
 
   private render(): void {
+    this.unmountActiveCapture();
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
     this.viewStatePopoverCleanup?.();
@@ -703,7 +696,8 @@ export class CenterPanel {
 
   private renderCalendarMode(): void {
     const forecastMenuOwner =
-      this.forecastMenuOwner ?? createForecastContextMenuOwner(this.el.ownerDocument);
+      this.forecastMenuOwner ??
+      createForecastContextMenuOwner(this.el.ownerDocument, this.interactionOwnership);
     this.forecastMenuOwner = forecastMenuOwner;
     const projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(
       this.el.ownerDocument,
@@ -948,6 +942,7 @@ export class CenterPanel {
       this.dismissRecurrenceEditor();
       forecastMenuOwner.dismiss();
       this.captureActiveTimedBlockFocus();
+      this.unmountActiveCapture();
       const pendingQueueSequence = this.pendingTimedBlockFocus?.queueSequence;
       if (pendingQueueSequence !== undefined) {
         this.restoredKeyboardSequences.delete(pendingQueueSequence);
@@ -1004,6 +999,7 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
+          interactionOwnership: this.interactionOwnership,
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -1044,6 +1040,7 @@ export class CenterPanel {
           onSetPriority: (t, priority) => {
             void this.setPriority(t, priority);
           },
+          interactionOwnership: this.interactionOwnership,
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -1083,6 +1080,7 @@ export class CenterPanel {
               .startOf('isoWeek');
             this.render();
           },
+          interactionOwnership: this.interactionOwnership,
           statusRegistry: this.statusRegistry,
           tagGroups: this.settings.tagGroups,
         });
@@ -1095,6 +1093,7 @@ export class CenterPanel {
         preservedScrollTop,
       );
       projectionDiagnosticOwner.update(viewContainer, issues);
+      this.remountActiveCapture();
       this.onRenderComplete(viewContainer);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
@@ -1113,8 +1112,10 @@ export class CenterPanel {
       }
       const renderGeneration = ++this.calendarRenderGeneration;
       const { config, issues, tasks } = currentCalendarContent();
+      this.unmountActiveCapture();
       this.calViewInstance.patch(viewContainer, tasks, config);
       projectionDiagnosticOwner.update(viewContainer, issues);
+      this.remountActiveCapture();
       this.onRenderComplete(viewContainer);
       this.deferTimedBlockFocus(viewContainer, renderGeneration);
     };
@@ -1649,6 +1650,7 @@ export class CenterPanel {
           owner: this.md,
           onPickStatus: (c) => void this.setTaskStatus(task, c),
           onPickPriority: (p) => void this.setPriority(task, p),
+          interactionOwnership: this.interactionOwnership,
         });
       },
     });
@@ -2146,6 +2148,7 @@ export class CenterPanel {
       currentTags,
       new Set(),
       handleCommit,
+      this.interactionOwnership,
     ).open();
   }
 
@@ -2164,6 +2167,7 @@ export class CenterPanel {
       currentTags,
       partialTags,
       handleBulkCommit,
+      this.interactionOwnership,
     ).open();
   }
 
@@ -2357,6 +2361,7 @@ export class CenterPanel {
       attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
     });
     const ownerDocument = popover.ownerDocument;
+    const ownershipToken = this.interactionOwnership.acquire({ blocksShortcuts: true });
 
     let dismissListening = false;
     let dismissTimer: number | undefined;
@@ -2374,6 +2379,7 @@ export class CenterPanel {
       }
       popover.remove();
       if (this.viewStatePopoverCleanup === close) this.viewStatePopoverCleanup = null;
+      ownershipToken.release();
       if (restoreFocus && anchor.isConnected) anchor.focus();
     };
     this.viewStatePopoverCleanup = close;
@@ -2654,177 +2660,233 @@ export class CenterPanel {
     }, 0);
   }
 
-  /**
-   * Click-to-create quick-add for the hour grid (Today/Week): an inline input positioned
-   * absolutely inside `hourColumnEl`, at the same `top` a timed block for `time` would use
-   * (mirrors renderTimedBlocksForDay's own `block.style.top` positioning — the technique Task 1
-   * fixed for the month/year pickers: an absolutely-positioned child anchored via inline
-   * top/left inside a `position: relative`/`position: absolute` container, not one that shoves
-   * surrounding layout). On Enter, sends the body plus typed due/time initial fields through
-   * TaskApplicationApi; the shared task pipeline owns Markdown encoding and persistence.
-   */
-  private showTimeGridQuickAdd(hourColumnEl: HTMLElement, date: string, time: string): void {
-    hourColumnEl.querySelectorAll('.abyss-tg-quick-add').forEach((el) => el.remove());
-    const pop = hourColumnEl.createDiv({ cls: 'abyss-tg-quick-add' });
-    pop.style.top = `${minutesToPixels(timeStringToMinutes(time))}px`;
-    const input = pop.createEl('input', {
-      cls: 'abyss-tg-quick-add-input',
-      attr: { type: 'text', placeholder: `Task at ${time}…` },
-    });
-
-    let committed = false;
-    const commit = (): void => {
-      if (committed) return;
-      committed = true;
-      const text = input.value.trim();
-      pop.remove();
-      if (text) {
-        void this.executeCreate(
-          this.withDefaultTaskPrefix(text),
-          { type: 'configured-default' },
-          {
-            due: { type: 'set', value: localDate(date) },
-            time: { type: 'set', value: localTime(time) },
-          },
-        );
-      }
-    };
-    const cancel = (): void => {
-      committed = true;
-      pop.remove();
-    };
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        cancel();
-      }
-    });
-    input.addEventListener('blur', () => {
-      window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) commit();
-      }, 150);
-    });
-    window.setTimeout(() => input.focus(), 0);
+  /** Keep the positioned calendar wrapper while delegating capture state and submission. */
+  private showTimeGridQuickAdd(_hourColumnEl: HTMLElement, date: string, time: string): void {
+    this.openCapture(
+      { type: 'calendar-timed', date, time },
+      { type: 'default', source: 'calendar' },
+    );
   }
 
-  /**
-   * Click-to-create quick-add that fills a cell (`inset: 2px`-style, matching the cell's own
-   * padding, so it never gets clipped by the cell's `overflow: hidden`) — same
-   * anchored-absolute-child-of-a-positioned-container technique as showTimeGridQuickAdd/Task 1's
-   * month-year picker fix, just sized to the cell instead of offset below it. Shared by Month's
-   * day-cell "+" button and the all-day/"no-time" row's empty-space click-to-create (Task 18) —
-   * both just need a plain (untimed) task name typed against a given date, so only the CSS class
-   * (for each cell shape's own styling) varies between callers.
-   */
-  private showFillCellQuickAdd(cell: HTMLElement, date: string, popCls: string): void {
-    cell.querySelectorAll(`.${popCls}`).forEach((el) => el.remove());
-    const pop = cell.createDiv({ cls: popCls });
-    const input = pop.createEl('input', {
-      cls: `${popCls}-input`,
-      attr: { type: 'text', placeholder: 'Task name…' },
-    });
-
-    let committed = false;
-    const commit = (): void => {
-      if (committed) return;
-      committed = true;
-      const text = input.value.trim();
-      pop.remove();
-      if (text) {
-        void this.executeCreate(
-          this.withDefaultTaskPrefix(text),
-          { type: 'configured-default' },
-          {
-            due: { type: 'set', value: localDate(date) },
-          },
-        );
-      }
-    };
-    const cancel = (): void => {
-      committed = true;
-      pop.remove();
-    };
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        cancel();
-      }
-    });
-    input.addEventListener('blur', () => {
-      window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) commit();
-      }, 150);
-    });
-    window.setTimeout(() => input.focus(), 0);
+  /** Month and all-day cells share capture behavior but retain their existing geometry wrappers. */
+  private showFillCellQuickAdd(_cell: HTMLElement, date: string, popCls: string): void {
+    const placement: CalendarCapturePlacement =
+      popCls === 'abyss-mg-quick-add'
+        ? { type: 'calendar-month', date }
+        : { type: 'calendar-all-day', date };
+    this.openCapture(placement, { type: 'default', source: 'calendar' });
   }
 
   private renderAddTaskBar(): void {
     const bar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
-    const trigger = bar.createDiv({ cls: 'abyss-add-task-trigger' });
+    this.renderCaptureHost(bar, { type: 'list' });
+  }
+
+  private renderCaptureHost(host: HTMLElement, placement: BarCapturePlacement): void {
+    host.dataset['abyssCaptureHost'] = placement.type;
+    if (placement.type === 'project') host.dataset['abyssCapturePath'] = placement.path;
+    const active = this.activeCapture;
+    if (active && this.sameCapturePlacement(active.placement, placement)) {
+      this.mountCaptureSurface(active, host);
+      return;
+    }
+
+    const trigger = host.createDiv({ cls: 'abyss-add-task-trigger' });
     trigger.createEl('span', { cls: 'abyss-add-task-plus', text: '+' });
     trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
-    bar.addEventListener('click', () => {
-      if (bar.querySelector('.abyss-quick-capture')) return;
-      trigger.remove();
-      this.showQuickCapture(bar);
+    trigger.addEventListener('click', () => {
+      const context: CaptureContext =
+        placement.type === 'project'
+          ? { type: 'project-dashboard', path: placement.path }
+          : { type: 'list', selection: this.state.get('selectedList') };
+      this.openCapture(placement, context);
     });
   }
 
-  private showQuickCapture(container: HTMLElement): void {
-    const target = this.captureTargets?.resolve({
-      type: 'list',
-      selection: this.state.get('selectedList'),
-    });
-    const form = container.createDiv({ cls: 'abyss-quick-capture' });
-    const input = form.createEl('input', {
-      cls: 'abyss-quick-capture-input',
-      attr: { type: 'text', placeholder: 'Task name…' },
-    });
-
-    let committed = false;
-    const commit = (): void => {
-      if (committed) return;
-      committed = true;
-      const text = input.value.trim();
-      if (text && target) {
-        void target
-          .then((resolved) => this.submitCapture(resolved, text))
-          .then(() => this.render());
-      } else this.render();
-    };
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      }
-      if (e.key === 'Escape') this.render();
-    });
-    input.addEventListener('blur', () => {
-      window.setTimeout(() => {
-        if (activeDocument.activeElement !== input) commit();
-      }, 150);
-    });
-    window.setTimeout(() => input.focus(), 0);
-  }
-
-  private async createTask(text: string): Promise<void> {
+  private openCapture(placement: PanelCapturePlacement, context: CaptureContext): void {
     if (!this.captureTargets) return;
-    const target = await this.captureTargets.resolve({
-      type: 'list',
-      selection: this.state.get('selectedList'),
+    this.cancelActiveCapture();
+    const requestId = ++this.captureRequestId;
+    void this.captureTargets.resolve(context).then((resolvedTarget) => {
+      if (requestId !== this.captureRequestId) return;
+      const target = this.targetForCapturePlacement(resolvedTarget, placement);
+      let session!: PanelCaptureSession;
+      const controller = new TaskCaptureController({
+        target,
+        describe: describeTaskCreationResult,
+        onResult: (result, description) => this.onCreationResult(result, description),
+        onRequestClose: () => this.closeCapture(session),
+      });
+      session = {
+        requestId,
+        placement,
+        controller,
+        focusOnMount: true,
+      };
+      this.activeCapture = session;
+      this.remountActiveCapture();
     });
-    await this.submitCapture(target, text);
+  }
+
+  private remountActiveCapture(): void {
+    const active = this.activeCapture;
+    if (!active) return;
+    if (this.isCalendarCapturePlacement(active.placement)) {
+      const host = this.calendarCaptureHost(active.placement);
+      if (host) this.mountCaptureSurface(active, host);
+      return;
+    }
+    const host = [...this.el.querySelectorAll<HTMLElement>('[data-abyss-capture-host]')].find(
+      (candidate) =>
+        active.placement.type === 'project'
+          ? candidate.dataset['abyssCaptureHost'] === 'project' &&
+            candidate.dataset['abyssCapturePath'] === active.placement.path
+          : candidate.dataset['abyssCaptureHost'] === 'list',
+    );
+    if (host) this.mountCaptureSurface(active, host);
+  }
+
+  private targetForCapturePlacement(
+    target: CaptureTarget,
+    placement: PanelCapturePlacement,
+  ): CaptureTarget {
+    if (!this.isCalendarCapturePlacement(placement)) return target;
+    const initial = {
+      ...target.initial,
+      due: { type: 'set' as const, value: localDate(placement.date) },
+      ...(placement.type === 'calendar-timed'
+        ? { time: { type: 'set' as const, value: localTime(placement.time) } }
+        : {}),
+    };
+    return { ...target, initial };
+  }
+
+  private calendarCaptureHost(placement: CalendarCapturePlacement): HTMLElement | null {
+    if (placement.type === 'calendar-timed') {
+      const day = [...this.el.querySelectorAll<HTMLElement>('.abyss-tg-day-column')].find(
+        (candidate) => candidate.dataset['tgDate'] === placement.date,
+      );
+      const hourColumn = day?.querySelector<HTMLElement>('.abyss-tg-hour-column');
+      if (!hourColumn) return null;
+      const host = this.captureWrapper(hourColumn, 'abyss-tg-quick-add');
+      host.style.top = `${minutesToPixels(timeStringToMinutes(placement.time))}px`;
+      host.dataset['abyssCaptureHost'] = placement.type;
+      host.dataset['abyssCaptureDate'] = placement.date;
+      host.dataset['abyssCaptureTime'] = placement.time;
+      return host;
+    }
+
+    const selector =
+      placement.type === 'calendar-month' ? '.abyss-mg-cell' : '.abyss-tg-allday-cell';
+    const dateKey = placement.type === 'calendar-month' ? 'mgDate' : 'tgDate';
+    const cell = [...this.el.querySelectorAll<HTMLElement>(selector)].find(
+      (candidate) => candidate.dataset[dateKey] === placement.date,
+    );
+    if (!cell) return null;
+    const wrapperClass =
+      placement.type === 'calendar-month' ? 'abyss-mg-quick-add' : 'abyss-tg-allday-quick-add';
+    const host = this.captureWrapper(cell, wrapperClass);
+    host.dataset['abyssCaptureHost'] = placement.type;
+    host.dataset['abyssCaptureDate'] = placement.date;
+    return host;
+  }
+
+  private captureWrapper(parent: HTMLElement, className: string): HTMLElement {
+    const current = [...parent.children].find(
+      (candidate): candidate is HTMLElement =>
+        candidate.instanceOf(parent.ownerDocument.defaultView!.HTMLElement) &&
+        candidate.classList.contains(className),
+    );
+    return current ?? parent.createDiv({ cls: className });
+  }
+
+  private mountCaptureSurface(active: PanelCaptureSession, host: HTMLElement): void {
+    if (this.activeCapture !== active) return;
+    if (active.surface?.element.isConnected && active.host === host) return;
+    this.unmountActiveCapture();
+    host.empty();
+    const options =
+      active.placement.type === 'calendar-timed'
+        ? { placeholder: `Task at ${active.placement.time}…` }
+        : undefined;
+    const surface = new CaptureSurface(host, active.controller, options);
+    const legacyInputClass = this.calendarCaptureInputClass(active.placement);
+    if (legacyInputClass) surface.input.addClass(legacyInputClass);
+    active.surface = surface;
+    active.host = host;
+    if (active.focusOnMount) {
+      active.focusOnMount = false;
+      surface.focus();
+    }
+  }
+
+  private unmountActiveCapture(): void {
+    const active = this.activeCapture;
+    const surface = active?.surface;
+    if (!active || !surface) return;
+    active.focusOnMount =
+      active.focusOnMount || surface.input.ownerDocument.activeElement === surface.input;
+    active.surface = undefined;
+    active.host = undefined;
+    surface.destroy();
+  }
+
+  private closeCapture(active: PanelCaptureSession): void {
+    if (this.activeCapture !== active) return;
+    const host = active.host;
+    const placement = active.placement;
+    this.unmountActiveCapture();
+    active.controller.destroy();
+    this.activeCapture = null;
+    if (host?.isConnected) {
+      if (this.isCalendarCapturePlacement(placement)) host.remove();
+      else {
+        host.empty();
+        this.renderCaptureHost(host, placement);
+      }
+    }
+  }
+
+  private cancelActiveCapture(): void {
+    this.captureRequestId++;
+    const active = this.activeCapture;
+    if (!active) return;
+    const host = active.host;
+    const placement = active.placement;
+    this.unmountActiveCapture();
+    active.controller.destroy();
+    this.activeCapture = null;
+    if (host?.isConnected && this.isCalendarCapturePlacement(placement)) host.remove();
+  }
+
+  private sameCapturePlacement(left: PanelCapturePlacement, right: PanelCapturePlacement): boolean {
+    if (left.type !== right.type) return false;
+    if (left.type === 'project') return right.type === 'project' && left.path === right.path;
+    if (left.type === 'calendar-timed') {
+      return (
+        right.type === 'calendar-timed' && left.date === right.date && left.time === right.time
+      );
+    }
+    if (left.type === 'calendar-all-day') {
+      return right.type === 'calendar-all-day' && left.date === right.date;
+    }
+    if (left.type === 'calendar-month') {
+      return right.type === 'calendar-month' && left.date === right.date;
+    }
+    return right.type === 'list';
+  }
+
+  private isCalendarCapturePlacement(
+    placement: PanelCapturePlacement,
+  ): placement is CalendarCapturePlacement {
+    return placement.type.startsWith('calendar-');
+  }
+
+  private calendarCaptureInputClass(placement: PanelCapturePlacement): string | undefined {
+    if (placement.type === 'calendar-timed') return 'abyss-tg-quick-add-input';
+    if (placement.type === 'calendar-all-day') return 'abyss-tg-allday-quick-add-input';
+    if (placement.type === 'calendar-month') return 'abyss-mg-quick-add-input';
+    return undefined;
   }
 
   private async deleteTask(task: TaskSnapshot): Promise<void> {
@@ -2838,41 +2900,6 @@ export class CenterPanel {
     if (current && this.sameTaskRef(current, ref)) {
       this.state.set('taskStack', []);
     }
-  }
-
-  private async createInProject(path: string, markdownBody: string): Promise<void> {
-    if (!this.captureTargets) return;
-    const target = await this.captureTargets.resolve({ type: 'project-dashboard', path });
-    await this.submitCapture(target, markdownBody);
-  }
-
-  private async submitCapture(target: CaptureTarget, markdownBody: string): Promise<void> {
-    const result = await target.session.execute({
-      markdownBody: commandBodyForCapture(target, markdownBody),
-      ...(target.initial !== undefined && { initial: target.initial }),
-    });
-    this.onCreationResult(result, describeTaskCreationResult(result));
-  }
-
-  private withDefaultTaskPrefix(markdownBody: string): string {
-    const prefix = this.settings.taskPrefix.trim();
-    return prefix ? `${prefix} ${markdownBody}` : markdownBody;
-  }
-
-  private async executeCreate(
-    markdownBody: string,
-    destination: CreateTaskCommand['destination'],
-    initial?: CreateTaskCommand['initial'],
-  ): Promise<TaskCommandResult | undefined> {
-    if (!this.tasks) return undefined;
-    const result = await this.tasks.execute({
-      type: 'create',
-      destination,
-      markdownBody,
-      ...(initial !== undefined && { initial }),
-    });
-    this.onCreationResult(result, describeTaskCreationResult(result));
-    return result;
   }
 
   private sameTaskRef(left: TaskRef, right: TaskRef): boolean {
@@ -3177,6 +3204,7 @@ export class CenterPanel {
         }).then(presentTaskCommandResult);
       },
       task.source.filePath,
+      this.interactionOwnership,
     ).open();
   }
 
@@ -3234,6 +3262,7 @@ export class CenterPanel {
       owner: this.el,
       anchor,
       boundary: this.el,
+      interactionOwnership: this.interactionOwnership,
       ...(initialValue !== undefined && { initialValue }),
       onPick: (inputValue) => {
         try {
@@ -3534,6 +3563,7 @@ export class CenterPanel {
           this.recurrenceEditorCleanup = null;
         }
       },
+      interactionOwnership: this.interactionOwnership,
     });
     cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
@@ -3570,6 +3600,7 @@ export class CenterPanel {
           this.recurrenceEditorCleanup = null;
         }
       },
+      interactionOwnership: this.interactionOwnership,
     });
     cleanup = () => handle.dismiss();
     this.recurrenceEditorCleanup = cleanup;
