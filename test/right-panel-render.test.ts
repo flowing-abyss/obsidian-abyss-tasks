@@ -1549,6 +1549,87 @@ describe('RightPanel popovers', () => {
     measure.mockRestore();
   });
 
+  it.each([
+    ['date', '.tc-chips-row .tc-chip', '.tc-date-popover', 180],
+    ['time and duration', '.tc-chip-time', '.tc-time-popover', 180],
+    ['priority', '.tc-priority-chip', '.tc-priority-popover', 180],
+    ['add date', '.tc-chip-add-date', '.tc-add-date-menu', 180],
+    ['task actions', '[aria-label="More actions"]', '.tc-task-context-menu', 88],
+  ] as const)(
+    'anchors every floating task surface to its actual containing block: %s',
+    async (_surface, triggerSelector, popoverSelector, expectedLeft) => {
+      const { panel, state, el } = await makePanel();
+      const containingBlock = el.ownerDocument.createElement('div');
+      el.ownerDocument.body.append(containingBlock);
+      containingBlock.append(el);
+      state.set('taskStack', [
+        task({
+          title: 'Anchored',
+          priority: 'B',
+          planning: { due: '2026-07-14', time: '09:15', duration: 45 },
+        }),
+      ]);
+      Object.defineProperties(el, {
+        clientLeft: { configurable: true, value: 3 },
+        clientTop: { configurable: true, value: 5 },
+        scrollLeft: { configurable: true, value: 11 },
+        scrollTop: { configurable: true, value: 13 },
+      });
+      Object.defineProperty(el, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(100, 50, 300, 240),
+      });
+      Object.defineProperties(containingBlock, {
+        clientLeft: { configurable: true, value: 7 },
+        clientTop: { configurable: true, value: 4 },
+        scrollLeft: { configurable: true, value: 17 },
+        scrollTop: { configurable: true, value: 19 },
+      });
+      Object.defineProperty(containingBlock, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(30, 20, 500, 400),
+      });
+      const trigger = el.querySelector<HTMLElement>(triggerSelector)!;
+      Object.defineProperty(trigger, 'getBoundingClientRect', {
+        configurable: true,
+        value: () => rect(200, 100, 20, 20),
+      });
+      const realRect = HTMLElement.prototype.getBoundingClientRect;
+      const measure = vi
+        .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.matches(popoverSelector)) return rect(0, 0, 120, 80);
+          return realRect.call(this);
+        });
+      const offsetParent = vi
+        .spyOn(HTMLElement.prototype, 'offsetParent', 'get')
+        .mockImplementation(function (this: HTMLElement) {
+          if (this.matches('.tc-popover-anchored')) return containingBlock;
+          return null;
+        });
+
+      try {
+        click(trigger);
+
+        const popover = el.querySelector<HTMLElement>(popoverSelector)!;
+        expect(popover.offsetParent).toBe(containingBlock);
+        expect(popover.offsetParent).not.toBe(el);
+        expect(popover.style.getPropertyValue('--tc-pop-left')).toBe(`${expectedLeft}px`);
+        expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('119px');
+
+        // `--tc-popover-anchor-gap: 0.25rem` resolves to the configured 4px gap.
+        const viewportTop =
+          Number.parseFloat(popover.style.getPropertyValue('--tc-pop-top')) + 20 + 4 - 19;
+        expect(viewportTop - 120).toBe(4);
+      } finally {
+        offsetParent.mockRestore();
+        measure.mockRestore();
+        panel.destroy();
+        containingBlock.remove();
+      }
+    },
+  );
+
   it('removes anchored-surface resize and scroll listeners when the panel is destroyed', async () => {
     const { panel, state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'P', priority: 'B' })]);

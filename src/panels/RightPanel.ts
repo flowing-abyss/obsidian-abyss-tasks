@@ -1705,13 +1705,19 @@ export class RightPanel {
         edgeGap,
         preferred,
       });
+      // Placement is expressed in viewport coordinates, while the CSS custom
+      // properties are interpreted by the popover's actual containing block.
+      // The panel remains the clipping boundary above; it is not necessarily
+      // the element that establishes the popover's offset coordinates.
+      const containingBlock = popover.offsetParent ?? this.el;
+      const containingRect = containingBlock.getBoundingClientRect();
       popover.style.setProperty(
         '--tc-pop-top',
-        `${placement.top - boundary.top - this.el.clientTop + this.el.scrollTop}px`,
+        `${placement.top - containingRect.top - containingBlock.clientTop + containingBlock.scrollTop}px`,
       );
       popover.style.setProperty(
         '--tc-pop-left',
-        `${placement.left - boundary.left - this.el.clientLeft + this.el.scrollLeft}px`,
+        `${placement.left - containingRect.left - containingBlock.clientLeft + containingBlock.scrollLeft}px`,
       );
       popover.dataset['side'] = placement.side;
     };

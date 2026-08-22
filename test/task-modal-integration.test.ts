@@ -25,6 +25,10 @@ function click(element: HTMLElement): void {
   element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
+}
+
 describe('TaskModal with real RightPanel', () => {
   let modal: TaskModal | undefined;
 
@@ -1169,6 +1173,105 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.tc-modal .tc-priority-popover')).toBeNull();
     expect(activeDocument.querySelector('.tc-modal-backdrop')).not.toBeNull();
     expect(activeDocument.activeElement).toBe(chip);
+  });
+
+  it('anchors modal task popovers to their containing block and repositions on scroll and resize', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal position ⏫\n' });
+    const current = task({
+      title: 'Modal position',
+      priority: 'B',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Modal position ⏫',
+        originalBlock: '- [ ] Modal position ⏫',
+      },
+    });
+    const queries = taskQueryApi({
+      list: () => [current],
+      resolve: () => ({ type: 'exact', task: current, basis: { observed: current } }),
+    });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(current);
+    const modalEl = activeDocument.querySelector<HTMLElement>('.tc-modal')!;
+    const panelEl = activeDocument.querySelector<HTMLElement>('.tc-modal-body')!;
+    const chip = panelEl.querySelector<HTMLElement>('.tc-priority-chip')!;
+    let containingLeft = 30;
+    let scrollLeft = 17;
+    let scrollTop = 19;
+    let panelLeft = 100;
+    let panelTop = 50;
+    let anchorLeft = 200;
+    let anchorTop = 100;
+    Object.defineProperties(panelEl, {
+      clientLeft: { configurable: true, value: 3 },
+      clientTop: { configurable: true, value: 5 },
+      scrollLeft: { configurable: true, value: 11 },
+      scrollTop: { configurable: true, value: 13 },
+    });
+    Object.defineProperty(panelEl, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(panelLeft, panelTop, 300, 240),
+    });
+    Object.defineProperties(modalEl, {
+      clientLeft: { configurable: true, value: 7 },
+      clientTop: { configurable: true, value: 4 },
+      scrollLeft: { configurable: true, get: () => scrollLeft },
+      scrollTop: { configurable: true, get: () => scrollTop },
+    });
+    Object.defineProperty(modalEl, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(containingLeft, 20, 500, 400),
+    });
+    Object.defineProperty(chip, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => rect(anchorLeft, anchorTop, 20, 20),
+    });
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    const measure = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.matches('.tc-priority-popover')) return rect(0, 0, 120, 80);
+        return realRect.call(this);
+      });
+    const offsetParent = vi
+      .spyOn(HTMLElement.prototype, 'offsetParent', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.matches('.tc-priority-popover')) return modalEl;
+        return null;
+      });
+
+    try {
+      click(chip);
+      const popover = panelEl.querySelector<HTMLElement>('.tc-priority-popover')!;
+      expect(popover.offsetParent).toBe(modalEl);
+      expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('180px');
+      expect(popover.style.getPropertyValue('--tc-pop-top')).toBe('119px');
+
+      scrollLeft = 31;
+      scrollTop = 29;
+      panelLeft = 86;
+      panelTop = 40;
+      anchorLeft = 186;
+      anchorTop = 90;
+      modalEl.dispatchEvent(new Event('scroll'));
+      const scrolledViewportLeft =
+        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-left')) + 30 + 7 - scrollLeft;
+      const scrolledViewportTop =
+        Number.parseFloat(popover.style.getPropertyValue('--tc-pop-top')) + 20 + 4 - scrollTop;
+      expect(scrolledViewportLeft).toBe(anchorLeft);
+      expect(scrolledViewportTop - (anchorTop + 20)).toBe(4);
+
+      containingLeft = 40;
+      activeDocument.defaultView!.dispatchEvent(new Event('resize'));
+      expect(popover.style.getPropertyValue('--tc-pop-left')).toBe('170px');
+    } finally {
+      offsetParent.mockRestore();
+      measure.mockRestore();
+    }
   });
 
   it.each([
