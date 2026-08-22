@@ -266,6 +266,20 @@ export function task(overrides: TaskFixtureInput = {}): TaskSnapshot {
   };
 }
 
+export interface Deferred<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+/** Control an asynchronous result without timers so pending-state tests stay deterministic. */
+export function deferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 /** Build a render-test snapshot from the real markdown codec's title/link projection. */
 export function taskFromCodecLine(
   sourceLine: string,
