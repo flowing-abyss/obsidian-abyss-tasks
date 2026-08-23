@@ -1,4 +1,4 @@
-import { ItemView, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Platform, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
@@ -7,6 +7,7 @@ import { RightPanel } from '../panels/RightPanel';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
+import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
@@ -23,6 +24,13 @@ import type {
 } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
 import { InteractionRegistry } from '../ui/interactionOwnership';
+import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
+import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
+import {
+  CaptureTargetResolver,
+  type CaptureContext,
+} from '../ui/taskCapture/CaptureTargetResolver';
+import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
@@ -83,7 +91,9 @@ export class PanelView extends ItemView {
   private projectStoreUnsub?: () => void;
   private creationPresentation?: CreationPresentationController;
   private ownedWriteRef: TaskRef | undefined = undefined;
-  private interactionRegistry?: InteractionRegistry<string>;
+  private interactionRegistry?: InteractionRegistry<ShortcutActionId>;
+  private quickCapture?: QuickCaptureCoordinator;
+  private shortcutRouter?: PanelShortcutRouter;
   private panelNavigation!: PanelNavigator;
   constructor(
     leaf: WorkspaceLeaf,
@@ -115,14 +125,14 @@ export class PanelView extends ItemView {
     this.contentEl.addClass('abyss-panel-view');
 
     this.state = new AppState();
-    this.interactionRegistry = new InteractionRegistry<string>();
+    this.interactionRegistry = new InteractionRegistry<ShortcutActionId>();
     this.panelNavigation = new PanelNavigator(
       this.state,
       this.settings,
       {
         calendarView: () => this.center.calendarView(),
         setCalendarView: (view) => this.center.setCalendarView(view),
-        openQuickCapture: () => this.center.openQuickCapture(),
+        openQuickCapture: () => this.quickCapture?.openOrFocus(),
       },
       this.onSaveSettings,
     );
@@ -146,6 +156,7 @@ export class PanelView extends ItemView {
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
     const centerEl = layout.createDiv({ cls: 'abyss-center' });
     const rightEl = layout.createDiv({ cls: 'abyss-right' });
+    const quickCaptureHost = layout.createDiv({ cls: 'abyss-quick-capture-host' });
     const creationFeedback = layout.createDiv({ cls: 'abyss-creation-feedback' });
     this.creationPresentation = new CreationPresentationController({
       host: creationFeedback,
@@ -261,6 +272,25 @@ export class PanelView extends ItemView {
     this.center.mount(centerEl);
     this.right.mount(rightEl);
 
+    const captureTargets = new CaptureTargetResolver(selectionTasks, this.settings);
+    this.quickCapture = new QuickCaptureCoordinator({
+      host: quickCaptureHost,
+      context: () => this.quickCaptureContext(),
+      resolveTarget: (context) => captureTargets.resolve(context),
+      interactionOwnership: this.interactionRegistry,
+      onResult: (result, description) => this.creationPresentation?.present(result, description),
+    });
+    const ownerDocument = layout.ownerDocument;
+    this.shortcutRouter = new PanelShortcutRouter({
+      ownerDocument,
+      isActive: () => this.ownsPanelShortcuts(),
+      settings: () => this.settings.shortcuts,
+      platform: { mod: Platform.isMacOS ? 'meta' : 'ctrl' },
+      actions: this.panelNavigation,
+      registry: this.interactionRegistry,
+      nativeHostBlocks: () => nativeInteractionBlocksPanelShortcuts(ownerDocument),
+    });
+
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
@@ -295,6 +325,10 @@ export class PanelView extends ItemView {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async onClose(): Promise<void> {
+    this.shortcutRouter?.destroy();
+    this.shortcutRouter = undefined;
+    this.quickCapture?.destroy();
+    this.quickCapture = undefined;
     this.modeUnsub?.();
     this.selectionUnsub?.();
     this.selectedListRenameUnsub?.();
@@ -310,6 +344,35 @@ export class PanelView extends ItemView {
     this.interactionRegistry?.destroy();
     this.interactionRegistry = undefined;
     this.contentEl.empty();
+  }
+
+  private quickCaptureContext(): CaptureContext {
+    const mode = this.state.get('mode');
+    if (mode === 'tasks') {
+      return { type: 'list', selection: this.state.get('selectedList') };
+    }
+    if (mode === 'projects') {
+      const projectsPanel = this.state.get('projectsPanel');
+      if (projectsPanel.view === 'dashboard') {
+        return { type: 'project-dashboard', path: projectsPanel.path };
+      }
+    }
+    return { type: 'default', source: mode };
+  }
+
+  private ownsPanelShortcuts(): boolean {
+    if (this.app.workspace.getActiveViewOfType(PanelView) !== this || !this.contentEl.isConnected) {
+      return false;
+    }
+    const ownerWindow = this.contentEl.ownerDocument.defaultView;
+    let current: HTMLElement | null = this.contentEl;
+    while (current) {
+      if (current.hidden) return false;
+      const style = ownerWindow?.getComputedStyle(current);
+      if (style?.display === 'none' || style?.visibility === 'hidden') return false;
+      current = current.parentElement;
+    }
+    return true;
   }
 
   private affects(event: TaskIndexEvent, path: string): boolean {

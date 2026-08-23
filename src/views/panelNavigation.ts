@@ -67,7 +67,6 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   openQuickCapture(): void {
-    this.openTasks();
     this.center.openQuickCapture();
   }
 

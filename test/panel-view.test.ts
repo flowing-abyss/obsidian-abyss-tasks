@@ -2,6 +2,7 @@ import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
 import type {
   TaskApplicationApi,
@@ -26,9 +27,9 @@ import {
   useRealMoment,
 } from './helpers';
 
-function makeTagManager(app: App): TagManager {
+function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS): TagManager {
   const save = vi.fn().mockResolvedValue(undefined);
-  return new TagManager(app, DEFAULT_SETTINGS, save);
+  return new TagManager(app, settings, save);
 }
 
 useRealMoment();
@@ -49,27 +50,34 @@ describe('PanelView', () => {
     let leaf: WorkspaceLeaf;
     let view: PanelView;
     let tagManager: TagManager;
+    let settings: CalendarSettings;
 
     beforeEach(async () => {
       app = await createAppWithFiles({});
-      taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      settings = structuredClone(DEFAULT_SETTINGS);
+      taskApplication = configuredTaskApplication(app, settings);
       await taskApplication.index.initialize();
       await flushMicrotasks();
       leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
-      tagManager = makeTagManager(app);
+      tagManager = makeTagManager(app, settings);
       view = new PanelView(
         leaf,
-        DEFAULT_SETTINGS,
+        settings,
         tagManager,
         taskApplication.index,
         taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
         taskApplication.statusRegistry,
+      );
+      vi.spyOn(app.workspace, 'getActiveViewOfType').mockImplementation((type) =>
+        type === PanelView && app.workspace.activeLeaf === leaf ? (view as never) : null,
       );
       await view.onOpen();
     });
 
     afterEach(async () => {
       await view.onClose();
+      view.containerEl.remove();
+      app.workspace.activeLeaf = null;
       taskApplication.index.destroy();
     });
 
@@ -95,6 +103,197 @@ describe('PanelView', () => {
       expect(feedback?.getAttribute('aria-live')).toBe('polite');
       expect(feedback?.getAttribute('aria-atomic')).toBe('true');
       expect(layout?.querySelectorAll('.abyss-creation-feedback')).toHaveLength(1);
+    });
+
+    it('owns one stable Quick Capture host outside every renderable panel zone', () => {
+      const layout = view.contentEl.querySelector('.abyss-layout')!;
+      const host = layout.querySelector('.abyss-quick-capture-host');
+
+      expect(host).not.toBeNull();
+      expect(layout.querySelectorAll('.abyss-quick-capture-host')).toHaveLength(1);
+      expect(host?.closest('.abyss-rail, .abyss-left, .abyss-center, .abyss-right')).toBeNull();
+
+      const internals = view as unknown as { panelNavigation: PanelNavigator };
+      internals.panelNavigation.openCalendar();
+      internals.panelNavigation.openSearch();
+      internals.panelNavigation.openProjects();
+      internals.panelNavigation.openTasks();
+
+      expect(layout.querySelector('.abyss-quick-capture-host')).toBe(host);
+    });
+
+    it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
+      const internals = view as unknown as { panelNavigation: PanelNavigator };
+      const openQuickCapture = vi
+        .spyOn(internals.panelNavigation, 'openQuickCapture')
+        .mockImplementation(() => undefined);
+      app.workspace.activeLeaf = leaf;
+
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openQuickCapture).not.toHaveBeenCalled();
+
+      document.body.appendChild(view.containerEl);
+      app.workspace.activeLeaf = null;
+      view.contentEl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openQuickCapture).not.toHaveBeenCalled();
+
+      app.workspace.activeLeaf = leaf;
+      view.containerEl.style.display = 'none';
+      view.contentEl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openQuickCapture).not.toHaveBeenCalled();
+
+      view.containerEl.style.display = '';
+      view.contentEl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'й',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openQuickCapture).toHaveBeenCalledOnce();
+
+      await view.onClose();
+      document.body.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(openQuickCapture).toHaveBeenCalledOnce();
+    });
+
+    it('applies shortcut settings edits immediately without recreating the PanelView', () => {
+      document.body.appendChild(view.containerEl);
+      app.workspace.activeLeaf = leaf;
+      const internals = view as unknown as { panelNavigation: PanelNavigator };
+      const openSearch = vi.spyOn(internals.panelNavigation, 'openSearch');
+
+      view.contentEl.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 's',
+          code: 'KeyS',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      settings.shortcuts.openSearch = 'E';
+      const stale = new KeyboardEvent('keydown', {
+        key: 's',
+        code: 'KeyS',
+        bubbles: true,
+        cancelable: true,
+      });
+      view.contentEl.dispatchEvent(stale);
+      const current = new KeyboardEvent('keydown', {
+        key: 'e',
+        code: 'KeyE',
+        bubbles: true,
+        cancelable: true,
+      });
+      view.contentEl.dispatchEvent(current);
+
+      expect(openSearch).toHaveBeenCalledTimes(2);
+      expect(stale.defaultPrevented).toBe(false);
+      expect(current.defaultPrevented).toBe(true);
+    });
+
+    it('opens and owns Quick Capture without changing mode, then refocuses only from panel chrome', async () => {
+      document.body.appendChild(view.containerEl);
+      app.workspace.activeLeaf = leaf;
+      const application = taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi;
+      const execute = vi.fn().mockResolvedValue({
+        type: 'ok',
+        changed: true,
+        outcome: {
+          type: 'task',
+          task: task({ source: { filePath: 'capture.md', line: 0 } }),
+        },
+      } satisfies TaskCommandResult);
+      vi.spyOn(application, 'planCreate').mockResolvedValue({
+        type: 'ready',
+        destination: { filePath: 'capture.md', insertion: { type: 'append' } },
+        execute,
+      });
+      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
+      internals.panelNavigation.openSearch();
+      await flushMicrotasks(0);
+      const chrome = view.contentEl.querySelector<HTMLElement>('.abyss-rail')!;
+      chrome.tabIndex = 0;
+      chrome.focus();
+
+      const openEvent = new KeyboardEvent('keydown', {
+        key: 'q',
+        code: 'KeyQ',
+        bubbles: true,
+        cancelable: true,
+      });
+      chrome.dispatchEvent(openEvent);
+      await flushMicrotasks(0);
+      const input = view.contentEl.querySelector<HTMLInputElement>(
+        '.abyss-quick-capture-host .abyss-quick-capture-input',
+      )!;
+
+      expect(openEvent.defaultPrevented).toBe(true);
+      expect(internals.state.get('mode')).toBe('search');
+      expect(document.activeElement).toBe(input);
+      const navigation = new KeyboardEvent('keydown', {
+        key: 'c',
+        code: 'KeyC',
+        bubbles: true,
+        cancelable: true,
+      });
+      chrome.dispatchEvent(navigation);
+      expect(navigation.defaultPrevented).toBe(false);
+      expect(internals.state.get('mode')).toBe('search');
+
+      chrome.focus();
+      chrome.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      expect(document.activeElement).toBe(input);
+
+      const typedQ = new KeyboardEvent('keydown', {
+        key: 'q',
+        code: 'KeyQ',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(typedQ);
+      input.value = 'q';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+
+      expect(typedQ.defaultPrevented).toBe(false);
+      expect(input.value).toBe('q');
+      expect(view.contentEl.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
     });
 
     it('reports complete list, project, search, calendar mount, and calendar patch boundaries', () => {

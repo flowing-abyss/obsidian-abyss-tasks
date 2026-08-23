@@ -3,6 +3,7 @@ import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureContro
 export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly placeholder?: string;
+  readonly submitOnBlur?: boolean;
 }
 
 let nextCaptureSurfaceId = 0;
@@ -66,7 +67,7 @@ export class CaptureSurface {
       }
     };
     const onBlur = (): void => {
-      void this.controller.submit('blur');
+      if (options.submitOnBlur !== false) void this.controller.submit('blur');
     };
 
     this.input.addEventListener('input', onInput);

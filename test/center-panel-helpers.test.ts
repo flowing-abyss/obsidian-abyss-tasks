@@ -603,7 +603,11 @@ describe('CenterPanel pure helpers', () => {
       const { state, panel } = makePanel([], settings);
       const container = document.createElement('div');
       panel.mount(container);
-      new PanelNavigator(state, settings, panel).openList('inbox');
+      new PanelNavigator(state, settings, {
+        calendarView: () => panel.calendarView(),
+        setCalendarView: (view) => panel.setCalendarView(view),
+        openQuickCapture: () => undefined,
+      }).openList('inbox');
       const vs = state.get('centerListViewState');
       expect(vs.groupBy).toBe('none');
     });

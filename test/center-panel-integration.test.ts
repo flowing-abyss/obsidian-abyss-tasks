@@ -330,6 +330,14 @@ describe('CenterPanel list selection', () => {
 });
 
 describe('CenterPanel semantic navigation render boundary', () => {
+  it('does not expose or forward the PanelView-owned Quick Capture action', () => {
+    const panel = makeStaticPanel(new AppState(), [], structuredClone(DEFAULT_SETTINGS));
+
+    expect('openQuickCapture' in panel).toBe(false);
+
+    panel.destroy();
+  });
+
   it('keeps direct selectedList notification bookkeeping-only', () => {
     const state = new AppState();
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -357,8 +365,12 @@ describe('CenterPanel semantic navigation render boundary', () => {
     const panel = makeStaticPanel(state, [], settings);
     panel.mount(freshContainer());
     const render = vi.spyOn(panel as unknown as { render(): void }, 'render');
-    const openQuickCapture = vi.spyOn(panel, 'openQuickCapture');
-    const navigator = new PanelNavigator(state, settings, panel);
+    const openQuickCapture = vi.fn();
+    const navigator = new PanelNavigator(state, settings, {
+      calendarView: () => panel.calendarView(),
+      setCalendarView: (view) => panel.setCalendarView(view),
+      openQuickCapture,
+    });
 
     const once = (run: () => void): void => {
       render.mockClear();
@@ -392,8 +404,12 @@ describe('CenterPanel semantic navigation render boundary', () => {
 
     once(() => navigator.openTasks());
 
-    once(() => navigator.openQuickCapture());
+    navigator.openSearch();
+    render.mockClear();
+    navigator.openQuickCapture();
     expect(openQuickCapture).toHaveBeenCalledOnce();
+    expect(state.get('mode')).toBe('search');
+    expect(render).not.toHaveBeenCalled();
 
     panel.destroy();
   });
@@ -408,7 +424,11 @@ describe('CenterPanel semantic navigation render boundary', () => {
     const commits = vi.fn();
     state.on('selectedList', () => state.set('centerFilter', 'listener-final'));
     state.onCommit(commits);
-    const navigator = new PanelNavigator(state, settings, panel);
+    const navigator = new PanelNavigator(state, settings, {
+      calendarView: () => panel.calendarView(),
+      setCalendarView: (view) => panel.setCalendarView(view),
+      openQuickCapture: () => undefined,
+    });
 
     let thrown: unknown;
     try {

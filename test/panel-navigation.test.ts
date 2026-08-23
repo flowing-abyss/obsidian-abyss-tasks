@@ -139,15 +139,18 @@ describe('PanelNavigator', () => {
     expect(search.state.get('mode')).toBe('search');
   });
 
-  it('opens Quick Capture on the preserved Tasks list through its port', () => {
+  it('opens Quick Capture through its port without changing the active mode or list', () => {
     const selection = { type: 'tag', tag: '#next' } as const;
     const { state, center, navigator } = harness({ mode: 'search', selection });
+    const commits = vi.fn();
+    state.onCommit(commits);
 
     navigator.openQuickCapture();
 
-    expect(state.get('mode')).toBe('tasks');
+    expect(state.get('mode')).toBe('search');
     expect(state.get('selectedList')).toEqual(selection);
     expect(center.openQuickCapture).toHaveBeenCalledOnce();
+    expect(commits).not.toHaveBeenCalled();
   });
 
   it.each(['calendar', 'search', 'projects'] as const)(
@@ -226,7 +229,6 @@ describe('PanelNavigator', () => {
     ['openCalendarView', { mode: 'calendar' }],
     ['openProjects', {}],
     ['openSearch', {}],
-    ['openQuickCapture', { mode: 'search' }],
   ] as const)('%s emits exactly one outer commit', (action, options) => {
     const { state, navigator } = harness(options);
     const commits = vi.fn();

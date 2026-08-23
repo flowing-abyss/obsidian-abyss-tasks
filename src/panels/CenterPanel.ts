@@ -263,7 +263,18 @@ export class CenterPanel {
     this.captureTargets = this.captureApplication
       ? new CaptureTargetResolver(this.captureApplication, settings)
       : null;
-    this.navigation = navigation ?? new PanelNavigator(state, settings, this, onSaveSettings);
+    this.navigation =
+      navigation ??
+      new PanelNavigator(
+        state,
+        settings,
+        {
+          calendarView: () => this.calendarView(),
+          setCalendarView: (view) => this.setCalendarView(view),
+          openQuickCapture: () => undefined,
+        },
+        onSaveSettings,
+      );
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
         onCommitted: (task, intent, sequence, changed) => {
@@ -498,10 +509,6 @@ export class CenterPanel {
     if (view === 'week') this.calDate = window.moment().startOf('isoWeek');
     else if (view === 'today') this.calDate = window.moment();
     else this.calDate = window.moment().date(1);
-  }
-
-  openQuickCapture(): void {
-    this.openCapture({ type: 'list' }, { type: 'list', selection: this.state.get('selectedList') });
   }
 
   destroy(): void {

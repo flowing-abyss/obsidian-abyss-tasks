@@ -153,6 +153,34 @@
   opacity: 0;
 }
 
+.abyss-quick-capture-host {
+  --abyss-quick-capture-edge: var(--size-4-4, 1rem);
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  inset-block-start: calc(var(--abyss-shell-top-inset, 0px) + var(--size-4-3, 0.75rem));
+  inset-inline-start: 50%;
+  inline-size: min(
+    36rem,
+    calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge))
+  );
+  max-inline-size: calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.abyss-quick-capture-host:not(:empty) {
+  pointer-events: auto;
+}
+
+.abyss-quick-capture-host > .abyss-capture-surface {
+  box-sizing: border-box;
+  padding: var(--size-4-2) var(--size-4-3);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-l);
+}
+
 .is-just-created {
   --abyss-creation-accent: var(--abyss-tag-color, var(--task-color, var(--interactive-accent)));
   outline: 2px solid var(--abyss-creation-accent);
