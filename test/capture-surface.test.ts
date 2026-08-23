@@ -402,16 +402,14 @@ describe('CaptureSurface', () => {
   });
 
   it('wraps narrow calendar controls and clears capture feedback above mobile chrome', () => {
-    const compact = lastAtRuleBlock('@media (max-width: 480px)');
+    const compact = lastAtRuleBlock('@container abyss-task-list (max-width: 30rem)');
+    const phone = lastAtRuleBlock('@media (max-width: 480px)');
     const nav = declarationsForSource(compact, '.abyss-cal-nav');
     const calendarFeedback = declarationsForSource(
       compact,
       '.abyss-center .abyss-calendar-capture-feedback',
     );
-    const globalFeedback = declarationsForSource(
-      compact,
-      'body.is-mobile .abyss-creation-feedback',
-    );
+    const globalFeedback = declarationsForSource(phone, 'body.is-mobile .abyss-creation-feedback');
 
     expect(nav).toContain('flex-wrap: wrap');
     expect(calendarFeedback).toContain('inset-block-start:');

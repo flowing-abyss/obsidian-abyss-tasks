@@ -6293,8 +6293,8 @@ body.abyss-modal-open .popover.hover-popover {
   border: 0;
 }
 
-/* Keep the complete calendar toolbar and both feedback layers visible on phone-width panels. */
-@media (max-width: 480px) {
+/* Keep the complete calendar toolbar and its portal visible in narrow center panes. */
+@container abyss-task-list (max-width: 30rem) {
   .abyss-cal-nav {
     flex-wrap: wrap;
     align-content: flex-start;
@@ -6314,7 +6314,10 @@ body.abyss-modal-open .popover.hover-popover {
       var(--size-4-16, 4rem) + var(--size-4-12, 3rem) + var(--size-4-4, 1rem)
     );
   }
+}
 
+/* Seat global results above Obsidian's floating navigation on phone-sized mobile windows. */
+@media (max-width: 480px) {
   body.is-mobile .abyss-creation-feedback {
     inset-block-end: calc(
       env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
