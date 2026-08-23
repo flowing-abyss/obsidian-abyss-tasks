@@ -464,6 +464,162 @@ describe('RightPanel interaction ownership', () => {
       }
     },
   );
+
+  const statusReplacementCases = [
+    {
+      category: 'action',
+      open: (el: HTMLElement) =>
+        click(el.querySelector<HTMLElement>('[aria-label="More actions"]')!),
+      surface: '.abyss-task-context-menu',
+    },
+    {
+      category: 'add-date',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-add-date')!),
+      surface: '.abyss-add-date-menu',
+    },
+    {
+      category: 'date',
+      open: (el: HTMLElement) =>
+        click(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+            (candidate) => candidate.textContent?.startsWith('📅'),
+          )!,
+        ),
+      surface: '.abyss-date-popover',
+    },
+    {
+      category: 'priority',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-priority-chip')!),
+      surface: '.abyss-priority-popover',
+    },
+    {
+      category: 'time/duration',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-chip-time')!),
+      surface: '.abyss-time-popover',
+    },
+    {
+      category: 'recurrence',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('.abyss-repeat-chip')!),
+      surface: '.abyss-recurrence-popover',
+    },
+    {
+      category: 'tag input',
+      open: (el: HTMLElement) => click(el.querySelector<HTMLElement>('[aria-label="Add tag"]')!),
+      surface: '.abyss-tag-dropdown-wrap',
+    },
+  ] as const;
+
+  it.each(statusReplacementCases)(
+    'releases and removes the $category surface before opening a status menu',
+    async ({ open, surface }) => {
+      const releases = [vi.fn(), vi.fn()];
+      const acquire = vi
+        .fn()
+        .mockReturnValueOnce({ release: releases[0] })
+        .mockReturnValueOnce({ release: releases[1] });
+      const { panel, state, app, el } = await makePanel(
+        {},
+        undefined,
+        testStatusRegistry(),
+        undefined,
+        undefined,
+        { acquire },
+      );
+      (app.metadataCache as unknown as { getTags(): Record<string, number> }).getTags = () => ({
+        '#owned': 1,
+      });
+      activeDocument.body.append(el);
+      state.set('taskStack', [
+        task({
+          title: 'Replace owned surface',
+          priority: 'B',
+          recurrence: 'every day',
+          planning: { due: '2026-08-11', time: '09:15', duration: 45 },
+        }),
+      ]);
+
+      try {
+        open(el);
+        expect(el.querySelector(surface)).not.toBeNull();
+
+        const statusMarker = el.querySelector<HTMLElement>(
+          '.abyss-right-header > .abyss-status-marker',
+        )!;
+        statusMarker.focus();
+        statusMarker.dispatchEvent(
+          new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+        );
+
+        expect(el.querySelector(surface)).toBeNull();
+        expect(
+          activeDocument
+            .querySelector<HTMLElement>('.abyss-status-popover')
+            ?.contains(activeDocument.activeElement),
+        ).toBe(true);
+        expect(releases[0]).toHaveBeenCalledOnce();
+        expect(releases[1]).not.toHaveBeenCalled();
+        expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
+        expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
+          acquire.mock.invocationCallOrder[1]!,
+        );
+
+        panel.destroy();
+        expect(releases[0]).toHaveBeenCalledOnce();
+        expect(releases[1]).toHaveBeenCalledOnce();
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it('uses the same replacement path for a sub-task status marker', async () => {
+    const releases = [vi.fn(), vi.fn()];
+    const acquire = vi
+      .fn()
+      .mockReturnValueOnce({ release: releases[0] })
+      .mockReturnValueOnce({ release: releases[1] });
+    const child = subtask({ title: 'Owned child' });
+    const root = task({ title: 'Owned root', priority: 'B', subtasks: [child] });
+    const { panel, state, el } = await makePanel(
+      {},
+      undefined,
+      testStatusRegistry(),
+      undefined,
+      undefined,
+      { acquire },
+    );
+    activeDocument.body.append(el);
+    state.set('taskStack', [root]);
+
+    try {
+      click(el.querySelector<HTMLElement>('.abyss-priority-chip')!);
+      expect(el.querySelector('.abyss-priority-popover')).not.toBeNull();
+
+      const statusMarker = el.querySelector<HTMLElement>(
+        '.abyss-subtask-row .abyss-status-marker',
+      )!;
+      statusMarker.focus();
+      statusMarker.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+
+      expect(el.querySelector('.abyss-priority-popover')).toBeNull();
+      expect(
+        activeDocument
+          .querySelector<HTMLElement>('.abyss-status-popover')
+          ?.contains(activeDocument.activeElement),
+      ).toBe(true);
+      expect(releases[0]).toHaveBeenCalledOnce();
+      expect(releases[1]).not.toHaveBeenCalled();
+      expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
+        acquire.mock.invocationCallOrder[1]!,
+      );
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
 });
 
 describe('RightPanel render lifecycle', () => {

@@ -795,14 +795,7 @@ export class RightPanel {
       onLeftClick: () => void this.toggleTaskLike(task),
       onContextMenu: (event) => {
         event.stopPropagation();
-        showStatusMenuAt(event, {
-          task,
-          registry: this.statusRegistry,
-          owner: this.md,
-          onPickStatus: (symbol) => void this.setStatus(task, symbol),
-          onPickPriority: (priority) => void this.updatePriority(task, priority),
-          interactionOwnership: this.interactionOwnership,
-        });
+        this.openStatusMenu(event, task);
       },
     });
     this.renderTitleBlock(header, task);
@@ -1153,14 +1146,7 @@ export class RightPanel {
       onLeftClick: () => void this.toggleSubTask(sub),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        showStatusMenuAt(ev, {
-          task: sub,
-          registry: this.statusRegistry,
-          owner: this.md,
-          onPickStatus: (c) => void this.setStatus(sub, c),
-          onPickPriority: (p) => void this.updatePriority(sub, p),
-          interactionOwnership: this.interactionOwnership,
-        });
+        this.openStatusMenu(ev, sub);
       },
     });
 
@@ -1558,6 +1544,18 @@ export class RightPanel {
     }
     this.anchoredSurfaceCleanups.clear();
     this.recurrenceDraftEditor = undefined;
+  }
+
+  private openStatusMenu(event: MouseEvent, task: TaskLike): void {
+    this.clearAnchoredSurfaces();
+    showStatusMenuAt(event, {
+      task,
+      registry: this.statusRegistry,
+      owner: this.md,
+      onPickStatus: (symbol) => void this.setStatus(task, symbol),
+      onPickPriority: (priority) => void this.updatePriority(task, priority),
+      interactionOwnership: this.interactionOwnership,
+    });
   }
 
   /**

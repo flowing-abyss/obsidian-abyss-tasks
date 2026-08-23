@@ -1644,14 +1644,7 @@ export class CenterPanel {
       onLeftClick: () => void this.toggleTask(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        showStatusMenuAt(ev, {
-          task,
-          registry: this.statusRegistry,
-          owner: this.md,
-          onPickStatus: (c) => void this.setTaskStatus(task, c),
-          onPickPriority: (p) => void this.setPriority(task, p),
-          interactionOwnership: this.interactionOwnership,
-        });
+        this.openStatusMenu(ev, task);
       },
     });
 
@@ -3494,6 +3487,20 @@ export class CenterPanel {
     });
     if (!command || !this.tasks) return;
     presentTaskCommandResult(await this.tasks.execute(command));
+  }
+
+  private openStatusMenu(event: MouseEvent, task: TaskSnapshot): void {
+    this.clearTaskDatePicker();
+    this.dismissRecurrenceEditor();
+    this.viewStatePopoverCleanup?.();
+    showStatusMenuAt(event, {
+      task,
+      registry: this.statusRegistry,
+      owner: this.md,
+      onPickStatus: (symbol) => void this.setTaskStatus(task, symbol),
+      onPickPriority: (priority) => void this.setPriority(task, priority),
+      interactionOwnership: this.interactionOwnership,
+    });
   }
 
   private toggleTask(task: TaskSnapshot): Promise<void> {

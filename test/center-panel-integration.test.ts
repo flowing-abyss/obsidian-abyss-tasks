@@ -389,6 +389,58 @@ describe('CenterPanel interaction ownership', () => {
       }
     },
   );
+
+  it('releases and removes the sort/group popover before opening a task status menu', () => {
+    const releases = [vi.fn(), vi.fn()];
+    const acquire = vi
+      .fn()
+      .mockReturnValueOnce({ release: releases[0] })
+      .mockReturnValueOnce({ release: releases[1] });
+    const state = new AppState();
+    state.set('mode', 'tasks');
+    state.set('selectedList', 'today');
+    const panel = makeStaticPanel(
+      state,
+      [task({ title: 'Replace sort surface', planning: { due: TODAY } })],
+      DEFAULT_SETTINGS,
+      {} as App,
+      { acquire },
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+
+    try {
+      container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+      expect(container.querySelector('.abyss-view-state-popover')).not.toBeNull();
+
+      const statusMarker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
+      statusMarker.focus();
+      statusMarker.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+
+      expect(container.querySelector('.abyss-view-state-popover')).toBeNull();
+      expect(
+        activeDocument
+          .querySelector<HTMLElement>('.abyss-status-popover')
+          ?.contains(activeDocument.activeElement),
+      ).toBe(true);
+      expect(releases[0]).toHaveBeenCalledOnce();
+      expect(releases[1]).not.toHaveBeenCalled();
+      expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
+      expect(releases[0]!.mock.invocationCallOrder[0]).toBeLessThan(
+        acquire.mock.invocationCallOrder[1]!,
+      );
+
+      panel.destroy();
+      expect(releases[0]).toHaveBeenCalledOnce();
+      expect(releases[1]).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
 });
 
 describe('CenterPanel sort and group popover keyboard ownership', () => {
