@@ -481,6 +481,14 @@ describe('CaptureSurface', () => {
     expect(globalFeedback).toContain('env(safe-area-inset-bottom');
   });
 
+  it('keeps desktop creation feedback above fixed host status UI', () => {
+    const globalFeedback = declarationsFor('.abyss-creation-feedback');
+
+    expect(globalFeedback).toContain('inset-block-end: calc(');
+    expect(globalFeedback).toContain('var(--size-4-8');
+    expect(globalFeedback).toContain('var(--size-4-4');
+  });
+
   it('disables smooth scrolling and capture/highlight animation under reduced motion', () => {
     const reducedMotion = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/gu;
     const rules = [...css.matchAll(reducedMotion)].map((match) => match[1] ?? '');

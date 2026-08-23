@@ -135,7 +135,7 @@
   position: absolute;
   z-index: var(--layer-popover, 30);
   inset-inline-end: 16px;
-  inset-block-end: 16px;
+  inset-block-end: calc(var(--size-4-8, 2rem) + var(--size-4-4, 1rem));
   max-width: min(360px, calc(100% - 32px));
   padding: 8px 12px;
   border: 1px solid var(--background-modifier-border);
