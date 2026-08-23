@@ -297,6 +297,61 @@ describe('PanelView', () => {
       expect(internals.state.get('mode')).toBe('calendar');
     });
 
+    it.each(['CenterPanel', 'RightPanel'] as const)(
+      'releases the live recurrence dialog owner when PanelView tears down the %s path',
+      async (path) => {
+        const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
+        const internals = view as unknown as {
+          center: { toggleTask(task: typeof invalidDelete): Promise<void> };
+          right: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
+          interactionRegistry: InteractionRegistry<string>;
+        };
+        const completion =
+          path === 'CenterPanel'
+            ? internals.center.toggleTask(invalidDelete)
+            : internals.right.toggleTaskLike(invalidDelete);
+        const registry = internals.interactionRegistry;
+        const surface = activeDocument.querySelector<HTMLElement>(
+          '.abyss-recurrence-delete-confirm',
+        )!;
+
+        expect(registry.allows('openCalendar')).toBe(false);
+        await view.onClose();
+        await completion;
+
+        expect(surface.isConnected).toBe(false);
+        expect(registry.allows('openCalendar')).toBe(true);
+      },
+    );
+
+    it('keeps TaskModal ownership layered after its RightPanel recurrence dialog closes', async () => {
+      const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
+      const internals = view as unknown as {
+        center: {
+          taskModal: {
+            open(task: typeof invalidDelete): void;
+            close(): void;
+            innerPanel: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
+          };
+        };
+        interactionRegistry: InteractionRegistry<string>;
+      };
+      const modal = internals.center.taskModal;
+      modal.open(invalidDelete);
+      const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+
+      expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+      surface.querySelector<HTMLButtonElement>('button')?.click();
+      await completion;
+      expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+
+      modal.close();
+      expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+    });
+
     it.each([
       ['zero-area bounds', (element: HTMLElement) => setGeometry(element, rect(20, 20, 0, 480))],
       [

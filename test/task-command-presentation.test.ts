@@ -25,6 +25,23 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   return { promise: new Promise<void>((done) => (resolve = done)), resolve: () => resolve() };
 }
 
+function secondaryDocument(): {
+  readonly frame: HTMLIFrameElement;
+  readonly ownerDocument: Document;
+} {
+  const frame = activeDocument.createElement('iframe');
+  activeDocument.body.append(frame);
+  const ownerDocument = frame.contentDocument;
+  if (!ownerDocument?.defaultView) throw new Error('secondary document unavailable');
+  for (const method of ['createDiv', 'createEl'] as const) {
+    Object.defineProperty(ownerDocument.defaultView.HTMLElement.prototype, method, {
+      configurable: true,
+      value: HTMLElement.prototype[method],
+    });
+  }
+  return { frame, ownerDocument };
+}
+
 const invalidDeleteTask = {
   status: 'open',
   recurrence: 'tomorrow',
@@ -156,6 +173,99 @@ describe('task command result presentation', () => {
       ?.click();
     await second;
     expect(secondOwnership.release).toHaveBeenCalledOnce();
+  });
+
+  it('does not dismiss a live alertdialog for an already-aborted replacement request', async () => {
+    const liveOwnership = ownershipHarness();
+    const staleOwnership = ownershipHarness();
+    const live = requestTaskCompletion(invalidDeleteTask, vi.fn(), liveOwnership.port);
+    const liveSurface = activeDocument.querySelector<HTMLElement>(
+      '.abyss-recurrence-delete-confirm',
+    )!;
+    const staleController = new AbortController();
+    staleController.abort();
+
+    await requestTaskCompletion(
+      invalidDeleteTask,
+      vi.fn(),
+      staleOwnership.port,
+      staleController.signal,
+    );
+
+    expect(liveSurface.isConnected).toBe(true);
+    expect(liveOwnership.release).not.toHaveBeenCalled();
+    expect(staleOwnership.acquire).not.toHaveBeenCalled();
+    liveSurface.querySelector<HTMLButtonElement>('button')?.click();
+    await live;
+    expect(liveOwnership.release).toHaveBeenCalledOnce();
+  });
+
+  it('cleans up in the opening document realm after activeDocument changes', async () => {
+    const originalActiveDocument = activeDocument;
+    const { frame, ownerDocument } = secondaryDocument();
+    const ownerWindow = ownerDocument.defaultView!;
+    const ownership = ownershipHarness();
+    try {
+      vi.stubGlobal('activeDocument', ownerDocument);
+      const trigger = ownerDocument.createElement('button');
+      ownerDocument.body.append(trigger);
+      trigger.focus();
+      const completion = requestTaskCompletion(invalidDeleteTask, vi.fn(), ownership.port);
+      const surface = ownerDocument.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm')!;
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+
+      ownerDocument.dispatchEvent(
+        new ownerWindow.KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      await completion;
+
+      expect(surface.isConnected).toBe(false);
+      expect(ownerDocument.activeElement).toBe(trigger);
+      expect(ownership.release).toHaveBeenCalledOnce();
+      const afterCleanup = new ownerWindow.KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      ownerDocument.dispatchEvent(afterCleanup);
+      expect(afterCleanup.defaultPrevented).toBe(false);
+    } finally {
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+      frame.remove();
+    }
+  });
+
+  it('removes the old document listener when a second-document alertdialog replaces it', async () => {
+    const originalActiveDocument = activeDocument;
+    const { frame, ownerDocument } = secondaryDocument();
+    const ownerWindow = ownerDocument.defaultView!;
+    try {
+      vi.stubGlobal('activeDocument', ownerDocument);
+      const first = requestTaskCompletion(invalidDeleteTask, vi.fn());
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+
+      const second = requestTaskCompletion(invalidDeleteTask, vi.fn());
+      await first;
+      activeDocument
+        .querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm button')
+        ?.click();
+      await second;
+
+      const afterReplacement = new ownerWindow.KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      ownerDocument.dispatchEvent(afterReplacement);
+      expect(afterReplacement.defaultPrevented).toBe(false);
+    } finally {
+      vi.stubGlobal('activeDocument', originalActiveDocument);
+      frame.remove();
+    }
   });
 
   it('removes and releases an alertdialog idempotently on external teardown', async () => {

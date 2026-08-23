@@ -150,13 +150,14 @@ export class QuickCaptureCoordinator {
         return;
       }
       const controller = this.controller;
-      if (!controller) return;
+      const surface = this.surface;
+      if (!controller || !surface) return;
       const snapshot = controller.snapshot();
       if (snapshot.phase === 'submitting') {
         controller.escape();
       } else if (snapshot.draft.trim().length === 0) {
         controller.escape();
-      } else {
+      } else if (ownerDocument.activeElement === surface.input) {
         void controller.submit('blur');
       }
     };

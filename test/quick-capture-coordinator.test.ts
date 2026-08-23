@@ -125,22 +125,34 @@ function phase(h: Harness): QuickCapturePhase {
 
 describe('QuickCaptureCoordinator', () => {
   it('keeps the stable host out of flow and width-clamped with theme-token styling', () => {
+    const layoutRules = declarationsFor('.abyss-layout');
     const shellRules = declarationsFor('.abyss-center-shell');
     const hostRules = declarationsFor('.abyss-quick-capture-host');
     const activeRules = declarationsFor('.abyss-quick-capture-host:not(:empty)');
     const surfaceRules = declarationsFor('.abyss-quick-capture-host > .abyss-capture-surface');
 
+    expect(layoutRules).toMatch(/container-type:\s*inline-size/u);
+    expect(layoutRules).toMatch(/container-name:\s*abyss-panel-layout/u);
     expect(shellRules).toMatch(/position:\s*relative/u);
     expect(shellRules).toMatch(/display:\s*flex/u);
     expect(shellRules).toMatch(/min-inline-size:\s*0/u);
     expect(hostRules).toMatch(/position:\s*absolute/u);
-    expect(hostRules).toMatch(/inline-size:\s*min\(/u);
-    expect(hostRules).toMatch(/calc\(100%/u);
+    expect(hostRules).toMatch(/inset-inline:\s*var\(--abyss-quick-capture-edge\)/u);
+    expect(hostRules).toMatch(/inline-size:\s*auto/u);
+    expect(hostRules).toMatch(/max-inline-size:\s*36rem/u);
+    expect(hostRules).toMatch(/margin-inline:\s*auto/u);
+    expect(hostRules).not.toMatch(/translateX/u);
     expect(hostRules).toMatch(/pointer-events:\s*none/u);
     expect(activeRules).toMatch(/pointer-events:\s*auto/u);
     expect(surfaceRules).toContain('var(--background-primary)');
     expect(surfaceRules).toContain('var(--background-modifier-border)');
     expect(surfaceRules).not.toMatch(/#[\da-f]{3,8}|(?:rgb|hsl)a?\(/iu);
+    expect(css).toMatch(
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*64rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-right\s*\{[\s\S]*?display:\s*none/u,
+    );
+    expect(css).toMatch(
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*48rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-left\s*\{[\s\S]*?display:\s*none/u,
+    );
   });
 
   it('owns one closed → resolving → open transition and focuses the mounted surface', async () => {
@@ -281,6 +293,20 @@ describe('QuickCaptureCoordinator', () => {
     expect(input.getAttribute('aria-invalid')).toBe('true');
     expect(document.activeElement).toBe(outside);
     expect(h.release).not.toHaveBeenCalled();
+
+    const laterOutside = document.body.appendChild(document.createElement('button'));
+    mounted.push(laterOutside);
+    laterOutside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    laterOutside.focus();
+    await flushMicrotasks(0);
+    expect(execute).toHaveBeenCalledOnce();
+
+    h.coordinator.openOrFocus();
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks(0);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it('treats an outside pointer during Enter submission as blur intent without duplicating', async () => {

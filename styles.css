@@ -125,6 +125,8 @@
   display: flex;
   height: 100%;
   overflow: hidden;
+  container-type: inline-size;
+  container-name: abyss-panel-layout;
   background: var(--background-primary);
   font-family: var(--font-interface);
 }
@@ -158,13 +160,10 @@
   position: absolute;
   z-index: var(--layer-popover, 30);
   inset-block-start: calc(var(--abyss-shell-top-inset, 0px) + var(--size-4-3, 0.75rem));
-  inset-inline-start: 50%;
-  inline-size: min(
-    36rem,
-    max(0px, calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge)))
-  );
-  max-inline-size: 100%;
-  transform: translateX(-50%);
+  inset-inline: var(--abyss-quick-capture-edge);
+  inline-size: auto;
+  max-inline-size: 36rem;
+  margin-inline: auto;
   pointer-events: none;
 }
 
@@ -223,6 +222,19 @@
 .abyss-layout--projects .abyss-left,
 .abyss-layout--projects .abyss-right {
   display: none;
+}
+
+/* Preserve a usable center pane as the task layout loses horizontal room. */
+@container abyss-panel-layout (max-width: 64rem) {
+  .abyss-layout--tasks > .abyss-right {
+    display: none;
+  }
+}
+
+@container abyss-panel-layout (max-width: 48rem) {
+  .abyss-layout--tasks > .abyss-left {
+    display: none;
+  }
 }
 
 /* Rail */

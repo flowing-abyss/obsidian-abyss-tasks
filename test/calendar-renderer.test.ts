@@ -17,6 +17,7 @@ import { TaskRefAuthority } from '../src/tasks/infrastructure/TaskRefAuthority';
 import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
 import { CalendarRenderer } from '../src/ui/CalendarRenderer';
+import { InteractionRegistry } from '../src/ui/interactionOwnership';
 import * as statusMenu from '../src/ui/statusMenu';
 import {
   calendarMutationTarget,
@@ -977,6 +978,47 @@ describe('CalendarRenderer', () => {
       expect(configured.tasks.queries.list()).toHaveLength(1);
       expect(configured.tasks.queries.list()[0]?.subtasks).toHaveLength(1);
       r.destroy();
+      configured.index.destroy();
+    });
+
+    it('releases CalendarRenderer recurrence-dialog ownership on renderer teardown', async () => {
+      const todayStr = window.moment().format('YYYY-MM-DD');
+      const app = await createAppWithFiles({
+        'repeat-destroy.md': `- [ ] Invalid repeat 🔁 tomorrow 🏁 delete 📅 ${todayStr}\n`,
+      });
+      const configured = configuredTaskApplication(app, DEFAULT_SETTINGS);
+      await configured.index.initialize();
+      const registry = new InteractionRegistry<string>();
+      const root = freshContainer();
+      const renderer = new CalendarRenderer(
+        root,
+        resolvedConfig({ defaultView: 'month' }),
+        app,
+        configured.tasks.queries,
+        configured.tasks,
+        configured.statusRegistry,
+        '',
+        { removeScheduledDate: false },
+        undefined,
+        registry,
+      );
+      renderer.mount();
+
+      root
+        .querySelector<HTMLElement>('.task .abyss-status-marker')!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      const confirmation = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+      expect(registry.allows('navigate')).toBe(false);
+
+      renderer.destroy();
+      await flushMicrotasks();
+
+      expect(confirmation.isConnected).toBe(false);
+      expect(registry.allows('navigate')).toBe(true);
+      expect(configured.tasks.queries.list()).toHaveLength(1);
+      registry.destroy();
       configured.index.destroy();
     });
   });
