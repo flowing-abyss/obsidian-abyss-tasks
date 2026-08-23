@@ -44,6 +44,10 @@ export class QuickCaptureCoordinator {
     return this.currentPhase;
   }
 
+  get isSubmitting(): boolean {
+    return this.currentPhase === 'open' && this.controller?.snapshot().phase === 'submitting';
+  }
+
   openOrFocus(): void {
     if (this.destroyed || this.currentPhase === 'resolving') return;
     if (this.currentPhase === 'open') {

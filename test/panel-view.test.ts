@@ -8,12 +8,15 @@ import type {
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCommandResult,
+  TaskCreateSession,
   TaskIndexEvent,
   TaskQueryApi,
   TaskRef,
 } from '../src/tasks';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
+import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
+import type { QuickCaptureCoordinator } from '../src/ui/taskCapture/QuickCaptureCoordinator';
 import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
@@ -22,6 +25,7 @@ import type { PanelNavigator } from '../src/views/panelNavigation';
 import {
   configuredTaskApplication,
   createAppWithFiles,
+  deferred,
   flushMicrotasks,
   seedTaskCache,
   task,
@@ -34,6 +38,31 @@ function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS)
 }
 
 useRealMoment();
+
+function panelCaptureTarget(execute: TaskCreateSession['execute']): CaptureTarget {
+  return {
+    label: 'Test destination',
+    context: { type: 'list', selection: 'today' },
+    session: {
+      type: 'ready',
+      destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+      execute,
+    },
+    markdownPrefix: '',
+    markdownSuffixes: [],
+  };
+}
+
+function successfulCaptureResult(): TaskCommandResult {
+  return {
+    type: 'ok',
+    changed: true,
+    outcome: {
+      type: 'task',
+      task: task({ title: 'Captured', source: { filePath: 'Capture.md', line: 0 } }),
+    },
+  };
+}
 
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return new DOMRect(left, top, width, height);
@@ -174,6 +203,24 @@ describe('PanelView', () => {
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
 
+      setGeometry(layout, rect(0, 0, 1200, 480));
+      window.dispatchEvent(new Event('resize'));
+      details.focus();
+      internals.state.set('taskStack', [task()]);
+      const desktopEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      activeDocument.dispatchEvent(desktopEscape);
+      expect(desktopEscape.defaultPrevented).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(activeDocument.activeElement).toBe(details);
+
+      internals.state.set('taskStack', []);
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+
       lists.click();
       expect(left.classList.contains('is-compact-open')).toBe(true);
       expect(lists.getAttribute('aria-expanded')).toBe('true');
@@ -188,6 +235,38 @@ describe('PanelView', () => {
       expect(lists.getAttribute('aria-label')).toBe('Show task lists');
       expect(details.getAttribute('aria-label')).toBe('Hide task details');
       expect(activeDocument.activeElement).toBe(right);
+
+      const composingEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+      activeDocument.dispatchEvent(composingEscape);
+      expect(composingEscape.defaultPrevented).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+
+      const legacyComposingEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(legacyComposingEscape, 'keyCode', { value: 229 });
+      activeDocument.dispatchEvent(legacyComposingEscape);
+      expect(legacyComposingEscape.defaultPrevented).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+
+      const nativeMenu = activeDocument.body.createDiv({ cls: 'menu' });
+      setGeometry(nativeMenu, rect(20, 20, 180, 80));
+      const nativeEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      activeDocument.dispatchEvent(nativeEscape);
+      expect(nativeEscape.defaultPrevented).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      nativeMenu.remove();
 
       const escape = new KeyboardEvent('keydown', {
         key: 'Escape',
@@ -210,6 +289,218 @@ describe('PanelView', () => {
       expect(right.classList.contains('is-compact-open')).toBe(false);
       expect(lists.getAttribute('aria-expanded')).toBe('false');
       expect(details.getAttribute('aria-expanded')).toBe('false');
+
+      internals.state.set('taskStack', []);
+      internals.state.set('taskStack', [task()]);
+      const calendarEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      activeDocument.dispatchEvent(calendarEscape);
+      expect(calendarEscape.defaultPrevented).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    });
+
+    it.each(['resolving', 'open'] as const)(
+      'does not destroy a %s Quick Capture generation when a compact pane is requested',
+      (phase) => {
+        const internals = view as unknown as { quickCapture: QuickCaptureCoordinator };
+        const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+        const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+        const details = layout.querySelector<HTMLButtonElement>(
+          '[aria-label="Show task details"]',
+        )!;
+        setGeometry(layout, rect(0, 0, 390, 480));
+        window.dispatchEvent(new Event('resize'));
+        const close = vi.spyOn(internals.quickCapture, 'close');
+        vi.spyOn(internals.quickCapture, 'phase', 'get').mockReturnValue(phase);
+
+        details.click();
+
+        expect(close).not.toHaveBeenCalled();
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+        expect(details.getAttribute('aria-expanded')).toBe('false');
+      },
+    );
+
+    it('reconciles compact-pane ownership at the exact 58rem and 38rem boundaries', () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+      const left = layout.querySelector<HTMLElement>('.abyss-left')!;
+      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+      const lists = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--left')!;
+      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      const resizeTo = (width: number): void => {
+        setGeometry(layout, rect(0, 0, width, 480));
+        window.dispatchEvent(new Event('resize'));
+      };
+
+      resizeTo(929);
+      details.click();
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+
+      resizeTo(928);
+      details.click();
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      details.click();
+      lists.click();
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+
+      resizeTo(608);
+      lists.click();
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      resizeTo(609);
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+      expect(lists.getAttribute('aria-expanded')).toBe('false');
+
+      details.click();
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      resizeTo(929);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(details.getAttribute('aria-expanded')).toBe('false');
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      activeDocument.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(false);
+    });
+
+    it.each(['left control', 'right control', 'task selection'] as const)(
+      'preserves an exact pending-blur failure through a compact %s conflict',
+      async (trigger) => {
+        activeDocument.body.appendChild(view.containerEl);
+        const internals = view as unknown as {
+          state: AppState;
+          quickCapture: QuickCaptureCoordinator;
+          creationPresentation: CreationPresentationController;
+          interactionRegistry: InteractionRegistry<string>;
+        };
+        const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+        const left = layout.querySelector<HTMLElement>('.abyss-left')!;
+        const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+        const leftButton = layout.querySelector<HTMLButtonElement>(
+          '.abyss-compact-pane-button--left',
+        )!;
+        const rightButton = layout.querySelector<HTMLButtonElement>(
+          '.abyss-compact-pane-button--right',
+        )!;
+        setGeometry(layout, rect(0, 0, 390, 480));
+        window.dispatchEvent(new Event('resize'));
+
+        const pending = deferred<TaskCommandResult>();
+        const execute = vi.fn(() => pending.promise);
+        const options = (
+          internals.quickCapture as unknown as {
+            options: { resolveTarget: () => Promise<CaptureTarget> };
+          }
+        ).options;
+        options.resolveTarget = async () => panelCaptureTarget(execute);
+        const present = vi
+          .spyOn(internals.creationPresentation, 'present')
+          .mockImplementation(() => undefined);
+
+        internals.quickCapture.openOrFocus();
+        await flushMicrotasks(0);
+        const input = layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+        input.value = '  exact failed draft  ';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        const conflictTarget =
+          trigger === 'left control'
+            ? leftButton
+            : trigger === 'right control'
+              ? rightButton
+              : layout;
+        conflictTarget.dispatchEvent(
+          new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
+        );
+        if (trigger === 'task selection') internals.state.set('taskStack', [task()]);
+        else conflictTarget.click();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(internals.quickCapture.phase).toBe('open');
+        expect(input.readOnly).toBe(true);
+        expect(left.classList.contains('is-compact-open')).toBe(false);
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+
+        const failure: TaskCommandResult = {
+          type: 'invalid',
+          issues: [{ code: 'invalid-title', field: 'title' }],
+        };
+        pending.resolve(failure);
+        await flushMicrotasks(0);
+
+        expect(internals.quickCapture.phase).toBe('open');
+        expect(input.value).toBe('  exact failed draft  ');
+        expect(input.getAttribute('aria-invalid')).toBe('true');
+        expect(layout.querySelector('.abyss-capture-error')?.textContent).toBe(
+          'The new task is invalid and was not created.',
+        );
+        expect(present).toHaveBeenCalledOnce();
+        expect(present).toHaveBeenCalledWith(failure, expect.objectContaining({ kind: 'error' }));
+        expect(internals.interactionRegistry.allows('openCalendar')).toBe(false);
+
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+        expect(internals.quickCapture.phase).toBe('closed');
+        expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+      },
+    );
+
+    it('delivers a pending-blur success before allowing the requested compact pane', async () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const internals = view as unknown as {
+        quickCapture: QuickCaptureCoordinator;
+        creationPresentation: CreationPresentationController;
+        interactionRegistry: InteractionRegistry<string>;
+      };
+      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      setGeometry(layout, rect(0, 0, 390, 480));
+      window.dispatchEvent(new Event('resize'));
+
+      const pending = deferred<TaskCommandResult>();
+      const execute = vi.fn(() => pending.promise);
+      const options = (
+        internals.quickCapture as unknown as {
+          options: { resolveTarget: () => Promise<CaptureTarget> };
+        }
+      ).options;
+      options.resolveTarget = async () => panelCaptureTarget(execute);
+      const present = vi
+        .spyOn(internals.creationPresentation, 'present')
+        .mockImplementation(() => undefined);
+
+      internals.quickCapture.openOrFocus();
+      await flushMicrotasks(0);
+      const input = layout.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      input.value = 'captured once';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      details.dispatchEvent(
+        new Event('pointerdown', { bubbles: true, cancelable: true, composed: true }),
+      );
+      details.click();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+
+      const result = successfulCaptureResult();
+      pending.resolve(result);
+      await flushMicrotasks(0);
+
+      expect(internals.quickCapture.phase).toBe('closed');
+      expect(layout.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(present).toHaveBeenCalledOnce();
+      expect(present).toHaveBeenCalledWith(result, expect.objectContaining({ kind: 'success' }));
+      expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
     });
 
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {

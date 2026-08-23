@@ -42,6 +42,8 @@ import { PanelNavigator } from './panelNavigation';
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
 
 let panelViewInstanceSequence = 0;
+const COMPACT_RIGHT_MAX_REM = 58;
+const COMPACT_LEFT_MAX_REM = 38;
 
 type CompactPane = 'left' | 'right';
 
@@ -50,6 +52,11 @@ interface CompactPaneElements {
   readonly right: HTMLElement;
   readonly leftButton: HTMLButtonElement;
   readonly rightButton: HTMLButtonElement;
+}
+
+interface PendingCompactPane {
+  readonly pane: CompactPane;
+  readonly moveFocus: boolean;
 }
 
 function rootRefOfNode(target: TaskNodeRef): TaskRef {
@@ -143,6 +150,9 @@ export class PanelView extends ItemView {
   private compactPaneCleanup?: () => void;
   private compactPaneOpen: CompactPane | null = null;
   private compactTaskSelectionKey: string | undefined = undefined;
+  private compactLeftCollapsed = false;
+  private compactRightCollapsed = false;
+  private pendingCompactPane: PendingCompactPane | undefined = undefined;
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -181,6 +191,7 @@ export class PanelView extends ItemView {
         calendarView: () => this.center.calendarView(),
         setCalendarView: (view) => this.center.setCalendarView(view),
         openQuickCapture: () => {
+          this.pendingCompactPane = undefined;
           this.closeCompactPane(false);
           this.quickCapture?.openOrFocus();
         },
@@ -355,7 +366,16 @@ export class PanelView extends ItemView {
       context: () => this.quickCaptureContext(),
       resolveTarget: (context) => captureTargets.resolve(context),
       interactionOwnership: this.interactionRegistry,
-      onResult: (result, description) => this.creationPresentation?.present(result, description),
+      onResult: (result, description) => {
+        this.creationPresentation?.present(result, description);
+        const pendingPane = this.pendingCompactPane;
+        this.pendingCompactPane = undefined;
+        if (description.kind === 'success' && pendingPane) {
+          void Promise.resolve().then(() => {
+            this.openCompactPane(pendingPane.pane, pendingPane.moveFocus);
+          });
+        }
+      },
     });
     const ownerDocument = layout.ownerDocument;
     this.shortcutRouter = new PanelShortcutRouter({
@@ -371,7 +391,12 @@ export class PanelView extends ItemView {
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
-      if (mode !== 'tasks') this.closeCompactPane(false);
+      if (mode !== 'tasks') {
+        this.pendingCompactPane = undefined;
+        this.closeCompactPane(false);
+      } else if (this.compactRightCollapsed && this.state.get('taskStack').length > 0) {
+        this.openCompactPane('right', false);
+      }
     });
     this.selectionUnsub = this.state.on('taskStack', (stack) => {
       const selected = stack[0];
@@ -379,7 +404,12 @@ export class PanelView extends ItemView {
       const selectionKey = selectedRef
         ? `${selectedRef.filePath}\u0000${String(selectedRef.line)}`
         : undefined;
-      if (selectionKey && selectionKey !== this.compactTaskSelectionKey) {
+      if (
+        selectionKey &&
+        selectionKey !== this.compactTaskSelectionKey &&
+        this.state.get('mode') === 'tasks' &&
+        this.compactRightCollapsed
+      ) {
         this.openCompactPane('right', false);
       } else if (!selectionKey && this.compactPaneOpen === 'right') {
         this.closeCompactPane(false);
@@ -419,6 +449,9 @@ export class PanelView extends ItemView {
     this.closeCompactPane(false);
     this.compactPaneElements = undefined;
     this.compactTaskSelectionKey = undefined;
+    this.compactLeftCollapsed = false;
+    this.compactRightCollapsed = false;
+    this.pendingCompactPane = undefined;
     this.shortcutRouter?.destroy();
     this.shortcutRouter = undefined;
     this.quickCapture?.destroy();
@@ -463,12 +496,26 @@ export class PanelView extends ItemView {
     const toggleLeft = (): void => this.toggleCompactPane('left');
     const toggleRight = (): void => this.toggleCompactPane('right');
     const ownerDocument = layout.ownerDocument;
+    const ownerWindow = ownerDocument.defaultView;
+    const updateCompactWidth = (width?: number): void => {
+      const measuredWidth = width ?? layout.getBoundingClientRect().width;
+      this.updateCompactPaneAvailability(
+        measuredWidth > 0 && Number.isFinite(measuredWidth) ? measuredWidth : Infinity,
+        ownerWindow,
+      );
+    };
+    const onWindowResize = (): void => updateCompactWidth();
     const onKeyDown = (event: KeyboardEvent): void => {
       if (
         event.key !== 'Escape' ||
+        event.isComposing ||
+        // eslint-disable-next-line @typescript-eslint/no-deprecated -- Chromium can expose IME ownership only through the legacy 229 sentinel.
+        event.keyCode === 229 ||
         event.defaultPrevented ||
         this.compactPaneOpen === null ||
-        this.interactionRegistry?.allows('openCalendar') === false
+        !this.isCompactPaneCollapsed(this.compactPaneOpen) ||
+        this.interactionRegistry?.allows('openCalendar') === false ||
+        nativeInteractionBlocksPanelShortcuts(ownerDocument)
       ) {
         return;
       }
@@ -478,7 +525,12 @@ export class PanelView extends ItemView {
     const onPointerDown = (event: PointerEvent): void => {
       const elements = this.compactPaneElements;
       const pane = this.compactPaneOpen;
-      if (!elements || !pane || this.interactionRegistry?.allows('openCalendar') === false) {
+      if (
+        !elements ||
+        !pane ||
+        !this.isCompactPaneCollapsed(pane) ||
+        this.interactionRegistry?.allows('openCalendar') === false
+      ) {
         return;
       }
       const path = event.composedPath();
@@ -496,11 +548,23 @@ export class PanelView extends ItemView {
     rightButton.addEventListener('click', toggleRight);
     ownerDocument.addEventListener('keydown', onKeyDown);
     ownerDocument.addEventListener('pointerdown', onPointerDown, true);
+    ownerWindow?.addEventListener('resize', onWindowResize);
+    const OwnerResizeObserver = ownerWindow?.ResizeObserver;
+    const resizeObserver = OwnerResizeObserver
+      ? new OwnerResizeObserver((entries) => {
+          const entry = entries.find((candidate) => candidate.target === layout);
+          updateCompactWidth(entry?.contentRect.width);
+        })
+      : null;
+    resizeObserver?.observe(layout);
+    updateCompactWidth();
     this.compactPaneCleanup = () => {
       leftButton.removeEventListener('click', toggleLeft);
       rightButton.removeEventListener('click', toggleRight);
       ownerDocument.removeEventListener('keydown', onKeyDown);
       ownerDocument.removeEventListener('pointerdown', onPointerDown, true);
+      ownerWindow?.removeEventListener('resize', onWindowResize);
+      resizeObserver?.disconnect();
     };
   }
 
@@ -514,8 +578,14 @@ export class PanelView extends ItemView {
 
   private openCompactPane(pane: CompactPane, moveFocus: boolean): void {
     const elements = this.compactPaneElements;
-    if (!elements) return;
-    this.quickCapture?.close();
+    if (!elements || !this.isCompactPaneCollapsed(pane) || this.state.get('mode') !== 'tasks') {
+      return;
+    }
+    const quickCapture = this.quickCapture;
+    if (quickCapture && quickCapture.phase !== 'closed') {
+      if (quickCapture.isSubmitting) this.pendingCompactPane = { pane, moveFocus };
+      return;
+    }
     const activePane = pane === 'left' ? elements.left : elements.right;
     const inactivePane = pane === 'left' ? elements.right : elements.left;
     activePane.addClass('is-compact-open');
@@ -551,6 +621,36 @@ export class PanelView extends ItemView {
     button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     button.setAttribute('aria-label', description);
     button.setAttribute('title', description);
+  }
+
+  private updateCompactPaneAvailability(width: number, ownerWindow: Window | null): void {
+    const rootFontSize = Number.parseFloat(
+      ownerWindow?.getComputedStyle(this.contentEl.ownerDocument.documentElement).fontSize ?? '',
+    );
+    const rem = Number.isFinite(rootFontSize) && rootFontSize > 0 ? rootFontSize : 16;
+    const wasRightCollapsed = this.compactRightCollapsed;
+    this.compactRightCollapsed = width <= COMPACT_RIGHT_MAX_REM * rem;
+    this.compactLeftCollapsed = width <= COMPACT_LEFT_MAX_REM * rem;
+
+    const pendingPane = this.pendingCompactPane;
+    if (pendingPane && !this.isCompactPaneCollapsed(pendingPane.pane)) {
+      this.pendingCompactPane = undefined;
+    }
+
+    const pane = this.compactPaneOpen;
+    if (pane && !this.isCompactPaneCollapsed(pane)) this.closeCompactPane(false);
+    if (
+      !wasRightCollapsed &&
+      this.compactRightCollapsed &&
+      this.state.get('mode') === 'tasks' &&
+      this.state.get('taskStack').length > 0
+    ) {
+      this.openCompactPane('right', false);
+    }
+  }
+
+  private isCompactPaneCollapsed(pane: CompactPane): boolean {
+    return pane === 'left' ? this.compactLeftCollapsed : this.compactRightCollapsed;
   }
 
   private quickCaptureContext(): CaptureContext {
