@@ -62,6 +62,20 @@ describe('parseShortcut', () => {
     });
   });
 
+  it.each([
+    ['Mod Ctrl Q', other, false],
+    ['Mod Meta Q', mac, false],
+    ['Mod Ctrl Q', mac, true],
+    ['Mod Meta Q', other, true],
+  ] as const)(
+    'resolves modifier aliases before rejecting physical duplicates: %s',
+    (value, platform, valid) => {
+      const parsed = parseShortcut('openQuickCapture', value, platform);
+
+      expect(parsed === undefined).toBe(!valid);
+    },
+  );
+
   it('treats blank input as a disabled shortcut', () => {
     expect(parseShortcut('openQuickCapture', '', mac)).toBeUndefined();
     expect(parseShortcut('openQuickCapture', '   ', mac)).toBeUndefined();

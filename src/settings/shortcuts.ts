@@ -69,28 +69,15 @@ export function parseShortcut(
   if (!code) return undefined;
 
   const modifiers = emptyModifiers();
-  const seen = new Set<string>();
+  const seen = new Set<keyof ShortcutModifiers>();
   for (const token of tokens) {
     const modifier = token.toLowerCase();
-    if (!MODIFIER_NAMES.has(modifier) || seen.has(modifier)) return undefined;
-    seen.add(modifier);
-    switch (modifier) {
-      case 'alt':
-        modifiers.alt = true;
-        break;
-      case 'ctrl':
-        modifiers.ctrl = true;
-        break;
-      case 'meta':
-        modifiers.meta = true;
-        break;
-      case 'shift':
-        modifiers.shift = true;
-        break;
-      case 'mod':
-        modifiers[platform.mod] = true;
-        break;
-    }
+    if (!MODIFIER_NAMES.has(modifier)) return undefined;
+    const physicalModifier =
+      modifier === 'mod' ? platform.mod : (modifier as keyof ShortcutModifiers);
+    if (seen.has(physicalModifier)) return undefined;
+    seen.add(physicalModifier);
+    modifiers[physicalModifier] = true;
   }
 
   return { action, code, modifiers };

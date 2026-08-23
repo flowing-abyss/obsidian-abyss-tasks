@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import type { CalendarSettings } from '../src/settings/types';
-import { useRealMoment } from './helpers';
+import { deferred, useRealMoment } from './helpers';
 
 useRealMoment();
 
@@ -61,7 +61,7 @@ function patchSetting(captured: CapturedComp[]): () => void {
 
 function makeTab(
   settingsOverrides: Partial<CalendarSettings> = {},
-  opts: { expand?: boolean } = {},
+  opts: { expand?: boolean; saveSettings?: StubPlugin['saveSettings'] } = {},
 ): {
   tab: CalendarSettingsTab;
   plugin: StubPlugin;
@@ -74,7 +74,7 @@ function makeTab(
   (app as unknown as Record<string, unknown>).plugins = { getPlugin: () => null };
   (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
-  const saveSettings = vi.fn().mockResolvedValue(undefined);
+  const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
   const plugin: StubPlugin = { app, settings, saveSettings };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
@@ -249,6 +249,74 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(plugin.settings.shortcuts.openQuickCapture).toBe('');
     expect(input.getAttribute('aria-invalid')).not.toBe('true');
     expect(input.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('coalesces rapid hotkey saves so out-of-order persistence cannot regress the final value', async () => {
+    let settings: CalendarSettings | undefined;
+    const persisted: string[] = [];
+    const saves: Array<{ value: string; completion: ReturnType<typeof deferred<void>> }> = [];
+    const saveSettings = vi.fn(() => {
+      const completion = deferred<void>();
+      const value = settings!.shortcuts.openQuickCapture;
+      saves.push({ value, completion });
+      void completion.promise.then(() => persisted.push(value));
+      return completion.promise;
+    });
+    const { tab, plugin } = makeTab({}, { saveSettings });
+    settings = plugin.settings;
+    const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
+    document.body.appendChild(tab.containerEl);
+    input.focus();
+
+    for (const value of ['Q', 'W', 'E']) {
+      input.value = value;
+      input.setSelectionRange(1, 1);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    expect(saveSettings).toHaveBeenCalledOnce();
+    expect(saves.map((save) => save.value)).toEqual(['Q']);
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(1);
+
+    saves[0]!.completion.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(saves.map((save) => save.value)).toEqual(['Q', 'E']);
+    saves[1]!.completion.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(persisted).toEqual(['Q', 'E']);
+    expect(plugin.settings.shortcuts.openQuickCapture).toBe('E');
+    tab.containerEl.remove();
+  });
+
+  it('contains a failed hotkey save after the tab is hidden', async () => {
+    let rejectSave!: (reason: Error) => void;
+    const saveSettings = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectSave = reject;
+        }),
+    );
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { tab } = makeTab({}, { saveSettings });
+      const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
+
+      input.value = 'W';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      tab.hide();
+      rejectSave(new Error('storage failed'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
   });
 });
 

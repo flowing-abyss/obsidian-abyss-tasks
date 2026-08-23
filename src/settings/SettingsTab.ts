@@ -52,6 +52,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private expandedCards = new Set<string>();
   /** Status id → its collapsed-card header preview chip host, so an icon edit can refresh it live. */
   private statusHeaderPreviewEls = new Map<string, HTMLElement>();
+  /** A Hotkeys edit waits for the active write, then persists only the latest pending value. */
+  private shortcutSaveInFlight: Promise<void> | undefined = undefined;
+  private shortcutSaveQueued = false;
 
   constructor(
     app: App,
@@ -469,11 +472,33 @@ export class CalendarSettingsTab extends PluginSettingTab {
       input.addEventListener('input', () => {
         this.plugin.settings.shortcuts[action.id] = input.value;
         this.updateShortcutIssues(inputEls, issueEls);
-        void this.plugin.saveSettings();
+        this.queueShortcutSave();
       });
     }
 
     this.updateShortcutIssues(inputEls, issueEls);
+  }
+
+  private queueShortcutSave(): void {
+    this.shortcutSaveQueued = true;
+    if (this.shortcutSaveInFlight) return;
+    this.shortcutSaveInFlight = this.flushShortcutSaves();
+  }
+
+  private async flushShortcutSaves(): Promise<void> {
+    try {
+      while (this.shortcutSaveQueued) {
+        this.shortcutSaveQueued = false;
+        try {
+          await this.plugin.saveSettings();
+        } catch (error) {
+          console.error('[task-calendar] Could not save shortcut settings', error);
+        }
+      }
+    } finally {
+      this.shortcutSaveInFlight = undefined;
+      if (this.shortcutSaveQueued) this.queueShortcutSave();
+    }
   }
 
   private updateShortcutIssues(
