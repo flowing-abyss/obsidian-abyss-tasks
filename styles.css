@@ -2505,13 +2505,20 @@ body:not(.is-mobile) .tasksCalendar .task:hover {
   transition: opacity 0.1s;
 }
 
-.abyss-mg-cell:hover .abyss-mg-add-btn {
+.abyss-mg-cell:hover .abyss-mg-add-btn,
+.abyss-mg-cell:focus-within .abyss-mg-add-btn,
+.abyss-mg-add-btn:focus-visible {
   opacity: 1;
 }
 
 .abyss-mg-add-btn:hover {
   background: var(--interactive-accent);
   color: var(--text-on-accent);
+}
+
+.abyss-mg-add-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
 }
 
 /* Inline quick-add: fills the cell (inset matches the cell's own padding) rather than
@@ -2927,15 +2934,26 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-settings-section-header {
   display: flex;
   align-items: center;
+  width: 100%;
   padding: 12px 16px;
+  border: 0;
+  border-radius: 0;
   cursor: pointer;
   user-select: none;
   background: var(--background-modifier-form-field);
+  color: inherit;
+  font: inherit;
+  text-align: start;
   gap: 8px;
 }
 
 .abyss-settings-section-header:hover {
   background: var(--background-modifier-hover);
+}
+
+.abyss-settings-section-header:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 
 .abyss-settings-section-icon {
@@ -2984,8 +3002,19 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: var(--background-primary);
 }
 
+.abyss-settings-section-body[hidden] {
+  display: none;
+}
+
 .abyss-settings-section.is-open .abyss-settings-section-body {
   max-height: 2000px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .abyss-settings-section-chevron,
+  .abyss-settings-section-body {
+    transition: none;
+  }
 }
 
 /* Configurable local shortcut inputs. */
@@ -2993,6 +3022,23 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: grid;
   gap: 8px;
   padding: 12px;
+}
+
+.abyss-shortcut-validation-status:empty,
+.abyss-shortcut-save-feedback:has(.abyss-shortcut-save-status:empty) {
+  margin: 0;
+}
+
+.abyss-shortcut-save-feedback {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding-inline: 12px;
+  color: var(--text-error);
+}
+
+.abyss-shortcut-save-retry[hidden] {
+  display: none;
 }
 
 .abyss-shortcut-row {
@@ -3493,12 +3539,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-add-task-trigger {
   display: flex;
   align-items: center;
+  width: 100%;
   gap: 8px;
   padding: 8px 10px;
+  border: none;
   border-radius: 6px;
+  background: transparent;
   cursor: pointer;
   color: var(--text-muted);
+  font-family: inherit;
   font-size: 13px;
+  text-align: start;
   transition:
     background 0.1s,
     color 0.1s;
@@ -3506,6 +3557,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-add-task-trigger:hover {
   color: var(--interactive-accent);
   background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.08);
+}
+.abyss-add-task-trigger:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
 }
 .abyss-add-task-plus {
   font-size: 16px;
@@ -3608,6 +3663,43 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   background: transparent;
   box-shadow: none;
   font-size: inherit;
+}
+
+:is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add)
+  .abyss-capture-input:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+
+:is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add)
+  .abyss-capture-surface.has-error
+  .abyss-capture-input:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  box-shadow: inset 0 0 0 1px var(--text-error);
+}
+
+.abyss-calendar-capture-feedback {
+  position: absolute;
+  z-index: var(--layer-popover, 30);
+  inset-inline: var(--size-4-3, 0.75rem);
+  inset-block-start: calc(var(--size-4-12, 3rem) + var(--size-4-3, 0.75rem));
+  inline-size: min(28rem, calc(100% - var(--size-4-6, 1.5rem)));
+  max-inline-size: calc(100% - var(--size-4-6, 1.5rem));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--size-2-1) var(--size-4-2);
+  padding: var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+  pointer-events: none;
+}
+
+.abyss-calendar-capture-feedback .abyss-capture-error {
+  overflow-wrap: anywhere;
 }
 
 /* Calendar mode */

@@ -331,4 +331,101 @@ describe('QuickCaptureCoordinator', () => {
     expect(escape.defaultPrevented).toBe(true);
     expect(phase(h)).toBe('closed');
   });
+
+  it.each(['task card', 'rail control'] as const)(
+    'restores the connected %s origin after Escape dismissal',
+    async (kind) => {
+      const origin = document.body.appendChild(document.createElement('button'));
+      origin.className = kind === 'task card' ? 'abyss-task-card' : 'abyss-rail-btn';
+      mounted.push(origin);
+      origin.focus();
+      const h = harness();
+      const input = await open(h);
+
+      input.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+
+      expect(phase(h)).toBe('closed');
+      expect(document.activeElement).toBe(origin);
+    },
+  );
+
+  it('does not restore a disconnected origin after Escape dismissal', async () => {
+    const origin = document.body.appendChild(document.createElement('button'));
+    origin.focus();
+    const h = harness();
+    const input = await open(h);
+    origin.remove();
+
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+
+    expect(phase(h)).toBe('closed');
+    expect(document.activeElement).not.toBe(origin);
+  });
+
+  it('restores the origin when Escape requests close during a successful pending submit', async () => {
+    const pending = deferred<TaskCommandResult>();
+    const origin = document.body.appendChild(document.createElement('button'));
+    mounted.push(origin);
+    origin.focus();
+    const h = harness(async (context) => target(context, 'Pending target', () => pending.promise));
+    const input = await open(h);
+    input.value = 'pending capture';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+
+    expect(phase(h)).toBe('open');
+    pending.resolve(success());
+    await flushMicrotasks(0);
+
+    expect(phase(h)).toBe('closed');
+    expect(document.activeElement).toBe(origin);
+  });
+
+  it('does not steal focus back when the user moves elsewhere after pending Escape', async () => {
+    const pending = deferred<TaskCommandResult>();
+    const origin = document.body.appendChild(document.createElement('button'));
+    const elsewhere = document.body.appendChild(document.createElement('button'));
+    mounted.push(origin, elsewhere);
+    origin.focus();
+    const h = harness(async (context) => target(context, 'Pending target', () => pending.promise));
+    const input = await open(h);
+    input.value = 'pending capture';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    elsewhere.focus();
+
+    pending.resolve(success());
+    await flushMicrotasks(0);
+
+    expect(phase(h)).toBe('closed');
+    expect(document.activeElement).toBe(elsewhere);
+  });
+
+  it('does not restore focus during destroy teardown', async () => {
+    const origin = document.body.appendChild(document.createElement('button'));
+    const elsewhere = document.body.appendChild(document.createElement('button'));
+    mounted.push(origin, elsewhere);
+    origin.focus();
+    const h = harness();
+    await open(h);
+    elsewhere.focus();
+
+    h.coordinator.destroy();
+
+    expect(document.activeElement).toBe(elsewhere);
+  });
 });

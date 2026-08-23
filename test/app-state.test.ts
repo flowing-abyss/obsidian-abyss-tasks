@@ -115,22 +115,28 @@ describe('AppState', () => {
     expect(s.get('selectedList')).toEqual(sel);
   });
 
-  it('propagates a standalone listener error immediately and skips siblings and commit', () => {
+  it('finishes standalone siblings and one commit before rethrowing a listener error', () => {
     const s = new AppState();
     const trace: string[] = [];
+    const commits: ReadonlySet<keyof AppStateData>[] = [];
     s.on('mode', () => {
       trace.push('throwing');
       throw new Error('boom');
     });
     s.on('mode', () => trace.push('sibling'));
-    s.onCommit(() => trace.push('commit'));
+    s.onCommit((changed) => {
+      trace.push('commit');
+      commits.push(changed);
+    });
 
     expect(() => s.set('mode', 'calendar')).toThrow('boom');
-    expect(trace).toEqual(['throwing']);
+    expect(trace).toEqual(['throwing', 'sibling', 'commit']);
     expect(s.get('mode')).toBe('calendar');
+    expect(commits).toEqual([new Set(['mode'])]);
+    expect(Object.isFrozen(commits[0])).toBe(true);
   });
 
-  it('uses live listener membership during standalone key delivery', () => {
+  it('snapshots listener membership during standalone key delivery', () => {
     const s = new AppState();
     const trace: string[] = [];
     const added = (): void => {
@@ -145,11 +151,29 @@ describe('AppState', () => {
     removeSibling = s.on('mode', () => trace.push('removed'));
 
     s.set('mode', 'calendar');
-    expect(trace).toEqual(['first', 'added']);
+    expect(trace).toEqual(['first', 'removed']);
 
     trace.length = 0;
     s.set('mode', 'search');
     expect(trace).toEqual(['first', 'added']);
+  });
+
+  it('rejects a standalone listener write before mutation and still commits once', () => {
+    const s = new AppState();
+    const sibling = vi.fn();
+    const commits: ReadonlySet<keyof AppStateData>[] = [];
+    s.on('mode', () => s.set('centerFilter', 'listener-write'));
+    s.on('mode', sibling);
+    s.onCommit((changed) => commits.push(changed));
+
+    expect(() => s.set('mode', 'calendar')).toThrow(
+      'Cannot set AppState.centerFilter during notification delivery',
+    );
+
+    expect(s.get('mode')).toBe('calendar');
+    expect(s.get('centerFilter')).toBe('');
+    expect(sibling).toHaveBeenCalledOnce();
+    expect(commits).toEqual([new Set(['mode'])]);
   });
 
   it('unsubscribe is idempotent (safe to call twice)', () => {

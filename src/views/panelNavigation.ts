@@ -71,10 +71,6 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   rebaseListIdentity(selection: ListSelection): void {
-    if (this.state.get('mode') === 'tasks') {
-      this.openList(selection);
-      return;
-    }
     this.state.batch(() => {
       const previous = this.lastTasksList;
       this.storeListState(previous);

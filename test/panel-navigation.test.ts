@@ -183,6 +183,49 @@ describe('PanelNavigator', () => {
     },
   );
 
+  it.each([
+    [
+      'tag',
+      { type: 'tag', tag: '#work' } as const,
+      { type: 'tag', tag: '#focus' } as const,
+      'tag:#work',
+      'tag:#focus',
+    ],
+    [
+      'project',
+      { type: 'project', path: 'Projects/Before.md' } as const,
+      { type: 'project', path: 'Projects/After.md' } as const,
+      'project:Projects/Before.md',
+      'project:Projects/After.md',
+    ],
+  ])(
+    'migrates an active %s list identity without losing its view state',
+    (_kind, previous, renamed, previousKey, renamedKey) => {
+      const current = listState('priority');
+      const calendarSettings = settings({ listViewStates: { [previousKey]: current } });
+      const { state, navigator, save } = harness({
+        mode: 'tasks',
+        selection: previous,
+        settings: calendarSettings,
+      });
+      state.set('centerListViewState', current);
+      state.set('centerFilter', 'needle');
+      const commits = vi.fn();
+      state.onCommit(commits);
+
+      navigator.rebaseListIdentity(renamed);
+
+      expect(state.get('mode')).toBe('tasks');
+      expect(state.get('selectedList')).toEqual(renamed);
+      expect(state.get('centerListViewState')).toBe(current);
+      expect(state.get('centerFilter')).toBe('');
+      expect(calendarSettings.listViewStates?.[previousKey]).toBeUndefined();
+      expect(calendarSettings.listViewStates?.[renamedKey]).toBe(current);
+      expect(save).toHaveBeenCalledOnce();
+      expect(commits).toHaveBeenCalledOnce();
+    },
+  );
+
   it('preserves the complete foreground Tasks transition when rebasing identity', () => {
     const current = listState('priority');
     const inbox = listState('status');

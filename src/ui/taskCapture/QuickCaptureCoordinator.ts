@@ -33,6 +33,8 @@ export class QuickCaptureCoordinator {
   private ownershipToken: { release(): void } | null = null;
   private controller: TaskCaptureController | null = null;
   private surface: CaptureSurface | null = null;
+  private focusOrigin: HTMLElement | null = null;
+  private restoreFocusOnClose = false;
   private destroyed = false;
 
   constructor(private readonly options: QuickCaptureCoordinatorOptions) {}
@@ -50,6 +52,8 @@ export class QuickCaptureCoordinator {
 
     const context = frozenContext(this.options.context());
     const generation = ++this.generation;
+    this.focusOrigin = this.currentFocusOrigin();
+    this.restoreFocusOnClose = false;
     this.currentPhase = 'resolving';
     this.ownershipToken = this.options.interactionOwnership.acquire({
       blocksShortcuts: true,
@@ -61,7 +65,7 @@ export class QuickCaptureCoordinator {
 
   close(): void {
     if (this.destroyed || this.currentPhase === 'closed') return;
-    this.releaseCurrentGeneration();
+    this.releaseCurrentGeneration(false);
   }
 
   destroy(): void {
@@ -88,17 +92,27 @@ export class QuickCaptureCoordinator {
       describe: describeTaskCreationResult,
       onResult: (result, description) => {
         if (this.generation === generation && this.controller === controller) {
+          if (description.kind !== 'success') this.restoreFocusOnClose = false;
           this.options.onResult?.(result, description);
         }
       },
       onRequestClose: () => {
-        if (this.generation === generation && this.controller === controller) this.close();
+        if (this.generation === generation && this.controller === controller) {
+          this.releaseCurrentGeneration(this.restoreFocusOnClose);
+        }
       },
     });
 
     let surface: CaptureSurface;
     try {
-      surface = new CaptureSurface(this.options.host, controller, { submitOnBlur: false });
+      surface = new CaptureSurface(this.options.host, controller, {
+        submitOnBlur: false,
+        onEscape: () => {
+          if (this.generation === generation && this.controller === controller) {
+            this.restoreFocusOnClose = true;
+          }
+        },
+      });
     } catch {
       controller.destroy();
       this.closeGeneration(generation);
@@ -122,20 +136,45 @@ export class QuickCaptureCoordinator {
 
   private closeGeneration(generation: number): void {
     if (this.generation !== generation || this.currentPhase !== 'resolving') return;
-    this.releaseCurrentGeneration();
+    this.releaseCurrentGeneration(false);
   }
 
-  private releaseCurrentGeneration(): void {
+  private releaseCurrentGeneration(restoreFocus = false): void {
     ++this.generation;
     this.currentPhase = 'closed';
     const surface = this.surface;
     const controller = this.controller;
     const ownershipToken = this.ownershipToken;
+    const focusOrigin = this.focusOrigin;
+    const captureOwnedFocus =
+      surface !== null && surface.input.ownerDocument.activeElement === surface.input;
     this.surface = null;
     this.controller = null;
     this.ownershipToken = null;
+    this.focusOrigin = null;
+    this.restoreFocusOnClose = false;
     surface?.destroy();
     controller?.destroy();
     ownershipToken?.release();
+    if (restoreFocus && captureOwnedFocus && focusOrigin && this.canRestoreFocus(focusOrigin)) {
+      focusOrigin.focus({ preventScroll: true });
+    }
+  }
+
+  private currentFocusOrigin(): HTMLElement | null {
+    const ownerDocument = this.options.host.ownerDocument;
+    const active = ownerDocument.activeElement;
+    const ownerWindow = ownerDocument.defaultView;
+    return ownerWindow && active instanceof ownerWindow.HTMLElement ? active : null;
+  }
+
+  private canRestoreFocus(element: HTMLElement): boolean {
+    if (!element.isConnected) return false;
+    const ownerWindow = element.ownerDocument.defaultView;
+    if (!ownerWindow) return false;
+    const style = ownerWindow.getComputedStyle(element);
+    return (
+      style.display !== 'none' && style.visibility !== 'hidden' && style.visibility !== 'collapse'
+    );
   }
 }

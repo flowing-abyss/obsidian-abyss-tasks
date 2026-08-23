@@ -61,6 +61,28 @@ describe('CalendarSettingsTab sections', () => {
     expect(open).toHaveLength(0);
   });
 
+  it('uses native disclosure buttons and removes collapsed bodies from interaction', () => {
+    const tab = makeTab();
+    const header = tab.containerEl.querySelector<HTMLButtonElement>(
+      '.abyss-settings-section-header',
+    )!;
+    const controlled = header.getAttribute('aria-controls');
+    const body = tab.containerEl.querySelector<HTMLElement>(`#${controlled}`)!;
+
+    expect(header.tagName).toBe('BUTTON');
+    expect(header.type).toBe('button');
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(body.hidden).toBe(true);
+
+    header.click();
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(body.hidden).toBe(false);
+
+    header.click();
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(body.hidden).toBe(true);
+  });
+
   it('clicking a header adds is-open to that section', () => {
     const tab = makeTab();
     const header = tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header');
@@ -121,5 +143,11 @@ describe('CalendarSettingsTab sections', () => {
     expect(sections[1]!.classList.contains('is-open')).toBe(true);
     expect(sections[2]!.classList.contains('is-open')).toBe(true);
     expect(sections[3]!.classList.contains('is-open')).toBe(false);
+    expect(
+      sections[1]!.querySelector('.abyss-settings-section-header')?.getAttribute('aria-expanded'),
+    ).toBe('true');
+    expect(sections[1]!.querySelector<HTMLElement>('.abyss-settings-section-body')?.hidden).toBe(
+      false,
+    );
   });
 });

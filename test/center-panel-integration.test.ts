@@ -806,14 +806,17 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
 });
 
 describe('CenterPanel shared list capture', () => {
-  function captureHarness(implementation: () => Promise<TaskCommandResult>): {
+  function captureHarness(
+    implementation: () => Promise<TaskCommandResult>,
+    snapshots: readonly TaskSnapshot[] = [],
+  ): {
     readonly panel: CenterPanel;
     readonly state: AppState;
     readonly planCreate: ReturnType<typeof vi.fn>;
     readonly sessionExecute: ReturnType<typeof vi.fn>;
   } {
     const state = new AppState();
-    const queries = taskQueryApi();
+    const queries = taskQueryApi({ list: () => snapshots });
     const sessionExecute = vi.fn(implementation);
     const planCreate = vi.fn(async () => ({
       type: 'ready' as const,
@@ -892,6 +895,71 @@ describe('CenterPanel shared list capture', () => {
       ]);
       expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
       expect(activeDocument.activeElement).toBe(input);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('uses a native named Add task trigger and restores it only after Escape dismissal', async () => {
+    const { panel } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      expect(trigger.tagName).toBe('BUTTON');
+      expect(trigger.type).toBe('button');
+      expect(trigger.textContent).toContain('Add task');
+      trigger.focus();
+
+      trigger.click();
+      await flushMicrotasks();
+      const input = container.querySelector<HTMLInputElement>('.abyss-quick-capture-input')!;
+      expect(activeDocument.activeElement).toBe(input);
+      expect(trigger.isConnected).toBe(true);
+      expect(trigger.hidden).toBe(true);
+
+      pressCaptureKey(input, 'Escape');
+
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(trigger.hidden).toBe(false);
+      expect(activeDocument.activeElement).toBe(trigger);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('closes on Escape without clearing the current multi-selection', async () => {
+    const snapshots = [
+      task({
+        title: 'First selected task',
+        tags: ['#task/inbox'],
+        source: { filePath: 'Capture.md', line: 0 },
+      }),
+      task({
+        title: 'Second selected task',
+        tags: ['#task/inbox'],
+        source: { filePath: 'Capture.md', line: 1 },
+      }),
+    ];
+    const { panel, state } = captureHarness(async () => captureSuccess(), snapshots);
+    state.set('selectedList', 'inbox');
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const cards = container.querySelectorAll<HTMLElement>('.abyss-task-card');
+      cards[0]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      cards[1]!.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+      expect(container.querySelectorAll('.abyss-task-card.abyss-multi-selected')).toHaveLength(2);
+
+      const input = await openListCapture(container);
+      pressCaptureKey(input, 'Escape');
+
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(container.querySelectorAll('.abyss-task-card.abyss-multi-selected')).toHaveLength(2);
     } finally {
       panel.destroy();
       container.remove();
@@ -2854,6 +2922,42 @@ describe('CenterPanel calendar mode — click-to-create', () => {
           }
         }
         expect(opened.wrapper.parentElement).toBe(positionedParent);
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it.each(['month', 'timed', 'all-day'] as const)(
+    '%s capture portals destination, pending, and error feedback outside the clipping calendar cell',
+    async (kind) => {
+      const result = deferred<TaskCommandResult>();
+      const { panel, el } = sharedCalendarCaptureHarness(() => result.promise);
+      try {
+        const opened = await openCalendarCapture(el, kind);
+        const feedback = el.querySelector<HTMLElement>('.abyss-calendar-capture-feedback')!;
+        expect(feedback).not.toBeNull();
+        expect(opened.wrapper.contains(feedback)).toBe(false);
+        expect(feedback.querySelector('.abyss-capture-destination')).not.toBeNull();
+        expect(feedback.querySelector('.abyss-capture-pending')).not.toBeNull();
+        expect(feedback.querySelector('.abyss-capture-error')).not.toBeNull();
+        expect(opened.input.getAttribute('aria-describedby')).toContain(
+          feedback.querySelector<HTMLElement>('.abyss-capture-destination')!.id,
+        );
+
+        setCaptureDraft(opened.input, 'pending calendar task');
+        pressCaptureKey(opened.input, 'Enter');
+        expect(feedback.querySelector<HTMLElement>('.abyss-capture-pending')?.hidden).toBe(false);
+
+        result.resolve({
+          type: 'io-error',
+          cause: 'repository-error',
+          contentState: 'unknown',
+        });
+        await flushMicrotasks();
+        expect(feedback.querySelector<HTMLElement>('.abyss-capture-error')?.hidden).toBe(false);
+        expect(feedback.textContent).toContain('Failed to create task');
       } finally {
         panel.destroy();
         el.remove();

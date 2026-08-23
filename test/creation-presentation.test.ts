@@ -693,6 +693,42 @@ describe('CreationPresentationController', () => {
     observer.disconnect();
   });
 
+  it.each([
+    ['success', successfulCreation(task({ source: { filePath: 'capture.md' } }))],
+    ['error', failedCreation()],
+  ] as const)('clears %s visual feedback after its bounded display timeout', (_kind, result) => {
+    const created = task({ source: { filePath: 'capture.md' } });
+    const harness = controllerHarness(exact(created));
+    harness.controller.present(result, describeTaskCreationResult(result));
+
+    expect(harness.host.textContent).not.toBe('');
+    vi.advanceTimersByTime(3_999);
+    expect(harness.host.textContent).not.toBe('');
+    vi.advanceTimersByTime(1);
+
+    expect(harness.host.textContent).toBe('');
+    expect(harness.host.hasAttribute('data-result-kind')).toBe(false);
+    expect(harness.host.hasAttribute('data-requires-recovery')).toBe(false);
+    expect(harness.host.getAttribute('role')).toBe('status');
+  });
+
+  it('restarts one guarded visual feedback timeout for each newer result', () => {
+    const created = task({ source: { filePath: 'capture.md' } });
+    const success = successfulCreation(created);
+    const error = failedCreation();
+    const harness = controllerHarness(exact(created));
+    harness.controller.present(success, describeTaskCreationResult(success));
+    vi.advanceTimersByTime(3_000);
+
+    harness.controller.present(error, describeTaskCreationResult(error));
+    vi.advanceTimersByTime(1_000);
+    expect(harness.host.textContent).toBe('Failed to create task. Please try again.');
+    vi.advanceTimersByTime(2_999);
+    expect(harness.host.textContent).toBe('Failed to create task. Please try again.');
+    vi.advanceTimersByTime(1);
+    expect(harness.host.textContent).toBe('');
+  });
+
   it('releases queued, highlighted, live-host, and query resources on destroy', () => {
     const created = task({ source: { filePath: 'capture.md', line: 2 } });
     const result = successfulCreation(created);

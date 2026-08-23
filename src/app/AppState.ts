@@ -93,8 +93,7 @@ export class AppState {
       else this.pendingChanges.set(key, { prev, value });
       return;
     }
-    this.notifyStandaloneKey(key, value, prev);
-    this.publishStandaloneCommit(immutableChangedSet([key]));
+    this.publishStandaloneChange(key, value, prev);
   }
 
   batch(run: () => void): void {
@@ -133,12 +132,6 @@ export class AppState {
     this.throwDeliveryErrors(errors);
   }
 
-  private notifyStandaloneKey(key: keyof AppStateData, value: unknown, prev: unknown): void {
-    const bucket = this.listeners.get(key);
-    if (!bucket) return;
-    for (const cb of bucket) cb(value, prev);
-  }
-
   private notifyBatchKey(
     key: keyof AppStateData,
     value: unknown,
@@ -156,11 +149,12 @@ export class AppState {
     }
   }
 
-  private publishStandaloneCommit(changed: ReadonlySet<keyof AppStateData>): void {
+  private publishStandaloneChange(key: keyof AppStateData, value: unknown, prev: unknown): void {
     const errors: unknown[] = [];
     this.delivering = true;
     try {
-      this.notifyCommit(changed, errors);
+      this.notifyBatchKey(key, value, prev, errors);
+      this.notifyCommit(immutableChangedSet([key]), errors);
     } finally {
       this.delivering = false;
     }

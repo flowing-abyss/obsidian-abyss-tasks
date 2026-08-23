@@ -4,6 +4,8 @@ export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly placeholder?: string;
   readonly submitOnBlur?: boolean;
+  readonly feedbackHost?: HTMLElement;
+  readonly onEscape?: () => void;
 }
 
 let nextCaptureSurfaceId = 0;
@@ -15,6 +17,7 @@ export class CaptureSurface {
   private readonly destination: HTMLElement;
   private readonly pending: HTMLElement;
   private readonly error: HTMLElement;
+  private readonly feedbackHost: HTMLElement | undefined;
   private readonly cleanup: Array<() => void> = [];
   private appliedFocusEpoch: number;
   private destroyed = false;
@@ -26,6 +29,7 @@ export class CaptureSurface {
   ) {
     const ownerDocument = host.ownerDocument;
     const id = ++nextCaptureSurfaceId;
+    this.feedbackHost = options.feedbackHost;
     this.appliedFocusEpoch = controller.snapshot().focusEpoch;
 
     this.element = ownerDocument.createElement('div');
@@ -50,7 +54,10 @@ export class CaptureSurface {
     this.error.className = 'abyss-capture-error';
     this.error.id = `abyss-capture-error-${id}`;
 
-    this.element.append(this.input, this.destination, this.pending, this.error);
+    this.element.append(this.input);
+    const feedbackHost = this.feedbackHost ?? this.element;
+    if (feedbackHost !== this.element) feedbackHost.classList.add('abyss-capture-feedback-layer');
+    feedbackHost.append(this.destination, this.pending, this.error);
     host.appendChild(this.element);
 
     const onInput = (): void => {
@@ -60,9 +67,12 @@ export class CaptureSurface {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Enter') {
         event.preventDefault();
+        event.stopPropagation();
         void this.controller.submit('enter');
       } else if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
+        options.onEscape?.();
         this.controller.escape();
       }
     };
@@ -92,6 +102,13 @@ export class CaptureSurface {
     this.destroyed = true;
     for (const release of this.cleanup.splice(0).reverse()) release();
     this.element.remove();
+    this.destination.remove();
+    this.pending.remove();
+    this.error.remove();
+    const feedbackHost = this.feedbackHost;
+    if (feedbackHost?.childElementCount === 0) {
+      feedbackHost.classList.remove('abyss-capture-feedback-layer');
+    }
   }
 
   private render(snapshot: CaptureSnapshot): void {

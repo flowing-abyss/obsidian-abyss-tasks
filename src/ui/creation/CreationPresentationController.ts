@@ -10,6 +10,7 @@ import { renderedTaskElements } from '../taskPresentationIdentity';
 
 const MAX_PENDING_PRESENTATIONS = 20;
 const PRESENTATION_TIMEOUT_MS = 3_000;
+const ANNOUNCEMENT_TIMEOUT_MS = 4_000;
 const NORMAL_HIGHLIGHT_MS = 1_100;
 const REDUCED_HIGHLIGHT_MS = 800;
 
@@ -118,6 +119,8 @@ export class CreationPresentationController {
   private readonly unsubscribe: () => void;
   private renderRoot: HTMLElement | undefined;
   private nextId = 0;
+  private announcementGeneration = 0;
+  private announcementTimeout = 0;
   private destroyed = false;
 
   constructor(
@@ -183,6 +186,9 @@ export class CreationPresentationController {
     this.unsubscribe();
     const entries = this.pending.splice(0);
     for (const entry of entries) this.clearTimeout(entry.timeout);
+    this.clearTimeout(this.announcementTimeout);
+    this.announcementTimeout = 0;
+    ++this.announcementGeneration;
     for (const entry of entries) entry.highlightedElement?.classList.remove('is-just-created');
     this.renderRoot = undefined;
     this.options.host.textContent = '';
@@ -193,10 +199,25 @@ export class CreationPresentationController {
   }
 
   private announce(description: CreationResultDescription): void {
+    const generation = ++this.announcementGeneration;
+    this.clearTimeout(this.announcementTimeout);
     this.options.host.setAttribute('aria-live', description.ariaLive);
     this.options.host.toggleAttribute('data-requires-recovery', description.requiresRecovery);
     this.options.host.dataset['resultKind'] = description.kind;
     this.options.host.textContent = description.message;
+    this.announcementTimeout = this.setTimeout(
+      () => this.clearAnnouncement(generation),
+      ANNOUNCEMENT_TIMEOUT_MS,
+    );
+  }
+
+  private clearAnnouncement(generation: number): void {
+    if (this.destroyed || generation !== this.announcementGeneration) return;
+    this.announcementTimeout = 0;
+    this.options.host.textContent = '';
+    this.options.host.removeAttribute('data-requires-recovery');
+    delete this.options.host.dataset['resultKind'];
+    this.options.host.setAttribute('aria-live', 'polite');
   }
 
   private resolve(entry: PendingPresentation): void {

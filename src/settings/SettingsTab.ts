@@ -30,6 +30,8 @@ interface TaskCalendarPlugin extends Plugin {
   saveSettings(): Promise<void>;
 }
 
+let nextSettingsTabScope = 0;
+
 /** Returns an error message if `symbol` is invalid for a status, else null. */
 export function validateStatusSymbol(
   symbol: string,
@@ -55,6 +57,11 @@ export class CalendarSettingsTab extends PluginSettingTab {
   /** A Hotkeys edit waits for the active write, then persists only the latest pending value. */
   private shortcutSaveInFlight: Promise<void> | undefined = undefined;
   private shortcutSaveQueued = false;
+  private shortcutSaveFailed = false;
+  private shortcutSaveStatusEl: HTMLElement | undefined;
+  private shortcutSaveRetryEl: HTMLButtonElement | undefined;
+  private readonly openSections = new Set<string>();
+  private readonly sectionScope = ++nextSettingsTabScope;
 
   constructor(
     app: App,
@@ -166,11 +173,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
 
-    const openIndices = new Set<number>();
-    containerEl.querySelectorAll('.abyss-settings-section').forEach((el, i) => {
-      if (el.classList.contains('is-open')) openIndices.add(i);
-    });
-
     containerEl.empty();
 
     this.addSection(containerEl, 'General', 'sliders-horizontal', (body) =>
@@ -193,10 +195,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
     this.addSection(containerEl, 'Hotkeys', 'keyboard', (body) =>
       this.renderShortcutSettings(body),
     );
-
-    containerEl.querySelectorAll('.abyss-settings-section').forEach((el, i) => {
-      if (openIndices.has(i)) el.classList.add('is-open');
-    });
   }
 
   private addSection(
@@ -205,9 +203,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
     icon: string,
     renderFn: (bodyEl: HTMLElement) => void,
   ): void {
-    const section = containerEl.createDiv({ cls: 'abyss-settings-section' });
+    const isOpen = this.openSections.has(title);
+    const section = containerEl.createDiv({
+      cls: `abyss-settings-section${isOpen ? ' is-open' : ''}`,
+    });
+    const bodyId = `abyss-settings-section-${this.sectionScope}-${title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/gu, '-')}`;
 
-    const header = section.createDiv({ cls: 'abyss-settings-section-header' });
+    const header = section.createEl('button', {
+      cls: 'abyss-settings-section-header',
+      attr: {
+        type: 'button',
+        'aria-expanded': String(isOpen),
+        'aria-controls': bodyId,
+      },
+    });
 
     const iconEl = header.createDiv({ cls: 'abyss-settings-section-icon' });
     setIcon(iconEl, icon);
@@ -217,11 +228,20 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const chevronEl = header.createDiv({ cls: 'abyss-settings-section-chevron' });
     setIcon(chevronEl, 'chevron-right');
 
-    const body = section.createDiv({ cls: 'abyss-settings-section-body' });
+    const body = section.createDiv({
+      cls: 'abyss-settings-section-body',
+      attr: { id: bodyId },
+    });
+    body.hidden = !isOpen;
     renderFn(body);
 
     header.addEventListener('click', () => {
-      section.classList.toggle('is-open');
+      const opening = !section.classList.contains('is-open');
+      section.classList.toggle('is-open', opening);
+      header.setAttribute('aria-expanded', String(opening));
+      body.hidden = !opening;
+      if (opening) this.openSections.add(title);
+      else this.openSections.delete(title);
     });
   }
 
@@ -439,6 +459,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderShortcutSettings(containerEl: HTMLElement): void {
     const inputEls = new Map<ShortcutActionId, HTMLInputElement>();
     const issueEls = new Map<ShortcutActionId, HTMLElement>();
+    const validationStatus = containerEl.createDiv({
+      cls: 'abyss-shortcut-validation-status',
+      attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+    });
+    const saveFeedback = containerEl.createDiv({ cls: 'abyss-shortcut-save-feedback' });
+    this.shortcutSaveStatusEl = saveFeedback.createSpan({
+      cls: 'abyss-shortcut-save-status',
+      attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+    });
+    this.shortcutSaveRetryEl = saveFeedback.createEl('button', {
+      cls: 'abyss-shortcut-save-retry',
+      attr: { type: 'button' },
+      text: 'Retry',
+    });
+    this.shortcutSaveRetryEl.addEventListener('click', () => this.queueShortcutSave());
+    this.updateShortcutSavePresentation();
     const list = containerEl.createDiv({ cls: 'abyss-shortcuts-list' });
 
     for (const actionId of SHORTCUT_ACTION_IDS) {
@@ -463,7 +499,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       input.value = this.plugin.settings.shortcuts[action.id];
       const issue = row.createDiv({
         cls: 'abyss-shortcut-issue',
-        attr: { id: `abyss-shortcut-issue-${action.id}`, role: 'alert' },
+        attr: { id: `abyss-shortcut-issue-${this.sectionScope}-${action.id}` },
       });
       issue.hidden = true;
       inputEls.set(action.id, input);
@@ -471,12 +507,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
       input.addEventListener('input', () => {
         this.plugin.settings.shortcuts[action.id] = input.value;
-        this.updateShortcutIssues(inputEls, issueEls);
+        this.updateShortcutIssues(inputEls, issueEls, validationStatus, false);
         this.queueShortcutSave();
+      });
+      input.addEventListener('blur', () => {
+        this.updateShortcutIssues(inputEls, issueEls, validationStatus, true);
       });
     }
 
-    this.updateShortcutIssues(inputEls, issueEls);
+    this.updateShortcutIssues(inputEls, issueEls, validationStatus, false);
   }
 
   private queueShortcutSave(): void {
@@ -486,26 +525,38 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private async flushShortcutSaves(): Promise<void> {
+    let failed = false;
     try {
       while (this.shortcutSaveQueued) {
         this.shortcutSaveQueued = false;
         try {
           await this.plugin.saveSettings();
+          this.shortcutSaveFailed = false;
+          this.updateShortcutSavePresentation();
         } catch (error) {
           console.error('[task-calendar] Could not save shortcut settings', error);
+          this.shortcutSaveQueued = true;
+          this.shortcutSaveFailed = true;
+          this.updateShortcutSavePresentation();
+          failed = true;
+          break;
         }
       }
     } finally {
       this.shortcutSaveInFlight = undefined;
-      if (this.shortcutSaveQueued) this.queueShortcutSave();
+      if (this.shortcutSaveQueued && !failed) this.queueShortcutSave();
     }
   }
 
   private updateShortcutIssues(
     inputEls: ReadonlyMap<ShortcutActionId, HTMLInputElement>,
     issueEls: ReadonlyMap<ShortcutActionId, HTMLElement>,
+    announcementEl: HTMLElement,
+    announce: boolean,
   ): void {
     const { issues } = validateShortcuts(this.plugin.settings.shortcuts, this.shortcutPlatform());
+    const messages = new Set<string>();
+    if (!announce) announcementEl.empty();
     for (const action of SHORTCUT_ACTIONS) {
       const input = inputEls.get(action.id);
       const issueEl = issueEls.get(action.id);
@@ -521,13 +572,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
       input.setAttribute('aria-invalid', 'true');
       input.setAttribute('aria-describedby', issueEl.id);
-      issueEl.setText(
+      const message =
         issue === 'invalid'
           ? 'Enter a valid letter or digit with optional Alt, Ctrl, Meta, Shift, or Mod modifiers.'
-          : 'This shortcut conflicts with another action.',
-      );
+          : 'This shortcut conflicts with another action.';
+      issueEl.setText(message);
       issueEl.hidden = false;
+      messages.add(message);
     }
+    if (announce) announcementEl.setText([...messages].join(' '));
+  }
+
+  private updateShortcutSavePresentation(): void {
+    if (this.shortcutSaveStatusEl) {
+      this.shortcutSaveStatusEl.setText(
+        this.shortcutSaveFailed ? 'Shortcut changes were not saved.' : '',
+      );
+    }
+    if (this.shortcutSaveRetryEl) this.shortcutSaveRetryEl.hidden = !this.shortcutSaveFailed;
   }
 
   private renderInboxSettings(containerEl: HTMLElement): void {

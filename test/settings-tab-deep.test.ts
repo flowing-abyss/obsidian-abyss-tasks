@@ -2,6 +2,7 @@ import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
+import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
 import { deferred, useRealMoment } from './helpers';
 
@@ -215,6 +216,50 @@ describe('CalendarSettingsTab Hotkeys', () => {
     const describedBy = input.getAttribute('aria-describedby');
     expect(describedBy).not.toBeNull();
     expect(tab.containerEl.querySelector(`#${describedBy}`)?.textContent).toContain('valid');
+    expect(tab.containerEl.querySelector(`#${describedBy}`)?.getAttribute('role')).toBeNull();
+    expect(tab.containerEl.querySelectorAll('[role="alert"]')).toHaveLength(0);
+  });
+
+  it('keeps collapsed Hotkeys inputs out of sequential focus and exposes disclosure state', () => {
+    const { tab } = makeTab();
+    const section = tab.containerEl.querySelectorAll<HTMLElement>('.abyss-settings-section')[7]!;
+    const header = section.querySelector<HTMLButtonElement>('.abyss-settings-section-header')!;
+    const body = section.querySelector<HTMLElement>('.abyss-settings-section-body')!;
+
+    expect(header.tagName).toBe('BUTTON');
+    expect(header.getAttribute('aria-expanded')).toBe('false');
+    expect(header.getAttribute('aria-controls')).toBe(body.id);
+    expect(body.hidden).toBe(true);
+    expect(body.querySelectorAll('input')).toHaveLength(SHORTCUT_ACTION_IDS.length);
+
+    header.click();
+    expect(header.getAttribute('aria-expanded')).toBe('true');
+    expect(body.hidden).toBe(false);
+  });
+
+  it('uses one atomic polite status for settled validation instead of duplicate alerts', () => {
+    const { tab } = makeTab();
+    const body = hotkeysBody(tab);
+    const tasks = shortcutInput(body, 'openTasks');
+    const status = body.querySelector<HTMLElement>('.abyss-shortcut-validation-status')!;
+
+    for (const value of ['C', 'Ct', 'Ctr', 'Ctrl', 'Q']) {
+      tasks.value = value;
+      tasks.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    expect(status.textContent).toBe('');
+    tasks.dispatchEvent(new FocusEvent('blur'));
+
+    expect(status.getAttribute('role')).toBe('status');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.getAttribute('aria-atomic')).toBe('true');
+    expect(status.textContent).toBe('This shortcut conflicts with another action.');
+    expect(body.querySelectorAll('[role="alert"]')).toHaveLength(0);
+
+    tasks.value = '';
+    tasks.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(tasks.getAttribute('aria-invalid')).toBeNull();
+    expect(status.textContent).toBe('');
   });
 
   it('keeps the active input and its caret while conflict feedback updates every affected row', () => {
@@ -314,6 +359,43 @@ describe('CalendarSettingsTab Hotkeys', () => {
       await Promise.resolve();
 
       expect(error).toHaveBeenCalled();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('retains a failed save and exposes a retry that clears the unsaved state on success', async () => {
+    let rejectFirst!: (reason: Error) => void;
+    const first = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    const saveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => first)
+      .mockResolvedValueOnce(undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const { tab } = makeTab({}, { saveSettings });
+      const body = hotkeysBody(tab);
+      const input = shortcutInput(body, 'openQuickCapture');
+      input.value = 'W';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      rejectFirst(new Error('storage failed'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const status = body.querySelector<HTMLElement>('.abyss-shortcut-save-status')!;
+      const retry = body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry')!;
+      expect(status.textContent).toContain('not saved');
+      expect(retry.hidden).toBe(false);
+
+      retry.click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(saveSettings).toHaveBeenCalledTimes(2);
+      expect(status.textContent).toBe('');
+      expect(retry.hidden).toBe(true);
     } finally {
       error.mockRestore();
     }

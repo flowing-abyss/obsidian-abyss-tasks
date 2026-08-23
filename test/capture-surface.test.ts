@@ -12,8 +12,9 @@ const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8
 
 function declarationsFor(selector: string): string {
   const uncommentedCss = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  const normalize = (value: string): string => value.trim().replace(/\s+/gu, ' ');
   const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
-    (match) => match[1]?.trim() === selector,
+    (match) => normalize(match[1] ?? '') === normalize(selector),
   );
   return matches[matches.length - 1]?.[2] ?? '';
 }
@@ -106,6 +107,28 @@ describe('CaptureSurface', () => {
     expect(surface.element.querySelector('[aria-live]')).toBeNull();
   });
 
+  it('can portal calendar feedback outside a clipping positioning host without breaking descriptions', () => {
+    const { controller } = harness();
+    const positioningHost = host();
+    const feedbackHost = host();
+
+    const surface = new CaptureSurface(positioningHost, controller, { feedbackHost });
+    const destination = feedbackHost.querySelector<HTMLElement>('.abyss-capture-destination')!;
+    const pending = feedbackHost.querySelector<HTMLElement>('.abyss-capture-pending')!;
+    const error = feedbackHost.querySelector<HTMLElement>('.abyss-capture-error')!;
+
+    expect(surface.element.parentElement).toBe(positioningHost);
+    expect(surface.element.querySelector('.abyss-capture-destination')).toBeNull();
+    expect(feedbackHost.classList).toContain('abyss-capture-feedback-layer');
+    expect(destination.textContent).toBe('Inbox · #inbox');
+    expect(surface.input.getAttribute('aria-describedby')).toBe(destination.id);
+    expect(pending.hidden).toBe(true);
+    expect(error.hidden).toBe(true);
+
+    surface.destroy();
+    expect(feedbackHost.childElementCount).toBe(0);
+  });
+
   it('updates stable nodes for pending and mapped error state', async () => {
     const pendingResult = deferred<TaskCommandResult>();
     const { controller } = harness(() => pendingResult.promise);
@@ -174,6 +197,34 @@ describe('CaptureSurface', () => {
     expect(escapeEvent.defaultPrevented).toBe(true);
     expect(escaped.execute).not.toHaveBeenCalled();
     expect(escaped.onRequestClose).toHaveBeenCalledOnce();
+  });
+
+  it('reports Escape ownership before the controller requests close', () => {
+    const escaped = harness();
+    const trace: string[] = [];
+    escaped.onRequestClose.mockImplementation(() => trace.push('close'));
+    const surface = new CaptureSurface(host(), escaped.controller, {
+      onEscape: () => trace.push('escape'),
+    });
+
+    key(surface, 'Escape');
+
+    expect(trace).toEqual(['escape', 'close']);
+  });
+
+  it.each(['Enter', 'Escape'] as const)('keeps %s owned by the capture surface', async (value) => {
+    const current = harness();
+    const parent = host();
+    const parentKeydown = vi.fn();
+    parent.addEventListener('keydown', parentKeydown);
+    const surface = new CaptureSurface(parent, current.controller);
+    if (value === 'Enter') type(surface, 'owned submission');
+
+    const event = key(surface, value);
+    await flushMicrotasks(0);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(parentKeydown).not.toHaveBeenCalled();
   });
 
   it('focuses once for a new focusEpoch and never for blur-origin completion', async () => {
@@ -311,6 +362,25 @@ describe('CaptureSurface', () => {
     expect(declarationsFor('.abyss-tg-quick-add')).toContain('position: absolute');
     expect(declarationsFor('.abyss-tg-allday-quick-add')).toContain('position: absolute');
     expect(declarationsFor('.abyss-mg-quick-add')).toContain('position: absolute');
+  });
+
+  it('keeps calendar focus paint visible and portals compact feedback outside clipped cells', () => {
+    const focusSelector =
+      ':is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) .abyss-capture-input:focus-visible';
+    const errorFocusSelector =
+      ':is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) .abyss-capture-surface.has-error .abyss-capture-input:focus-visible';
+    const focus = declarationsFor(focusSelector);
+    const errorFocus = declarationsFor(errorFocusSelector);
+    const feedback = declarationsFor('.abyss-calendar-capture-feedback');
+
+    expect(focus).toContain('outline:');
+    expect(focus).toContain('var(--interactive-accent)');
+    expect(errorFocus).toContain('var(--text-error)');
+    expect(feedback).toContain('position: absolute');
+    expect(feedback).toMatch(/inline-size:\s*min\(/u);
+    expect(feedback).toContain('z-index:');
+    expect(feedback).toContain('inset-block-start:');
+    expect(feedback).not.toContain('inset-block-end:');
   });
 
   it('disables smooth scrolling and capture/highlight animation under reduced motion', () => {
