@@ -314,6 +314,34 @@ describe('PanelShortcutRouter', () => {
     expect(event.defaultPrevented).toBe(false);
   });
 
+  it.each([
+    [
+      'settings getter exception',
+      (): ShortcutSettings => {
+        throw new Error('settings unavailable');
+      },
+    ],
+    ['malformed runtime snapshot', (): ShortcutSettings => ({}) as ShortcutSettings],
+  ])('fails closed without consuming when %s occurs', (_reason, settings) => {
+    const h = harness();
+    h.router.destroy();
+    const router = new PanelShortcutRouter({
+      ownerDocument: document,
+      isActive: () => true,
+      settings,
+      platform: { mod: 'ctrl' },
+      actions: h.actions,
+      registry: h.registry,
+      nativeHostBlocks: h.nativeHostBlocks,
+    });
+    liveRouters.push(router);
+
+    const event = keydown(h.panel, 'KeyQ');
+
+    expect(h.actions.openQuickCapture).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it('ignores inactive, hidden, disconnected, and destroyed panel ownership', () => {
     const h = harness();
     h.setActive(false);

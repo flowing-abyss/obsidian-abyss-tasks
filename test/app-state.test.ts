@@ -314,6 +314,22 @@ describe('AppState', () => {
       expect(cb).toHaveBeenCalledWith(new Set());
     });
 
+    it('omits a net-zero key while still committing the outer batch', () => {
+      const s = new AppState();
+      const keyListener = vi.fn();
+      const commits: Array<ReadonlySet<keyof AppStateData>> = [];
+      s.on('mode', keyListener);
+      s.onCommit((changed) => commits.push(changed));
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        s.set('mode', 'tasks');
+      });
+
+      expect(keyListener).not.toHaveBeenCalled();
+      expect(commits).toEqual([new Set()]);
+    });
+
     it('fires one commit callback for a changed standalone set', () => {
       const s = new AppState();
       const cb = vi.fn();

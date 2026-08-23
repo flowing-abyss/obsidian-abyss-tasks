@@ -105,7 +105,12 @@ export class PanelShortcutRouter {
 
   private route(event: KeyboardEvent): void {
     if (this.destroyed || !this.options.isActive()) return;
-    const current = validateShortcuts(this.options.settings(), this.options.platform);
+    let current: ReturnType<typeof validateShortcuts>;
+    try {
+      current = validateShortcuts(this.options.settings(), this.options.platform);
+    } catch {
+      return;
+    }
     if (
       event.defaultPrevented ||
       event.repeat ||

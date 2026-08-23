@@ -116,7 +116,9 @@ export class AppState {
 
   private flushPendingChanges(forceCommit = false): void {
     if (this.delivering || (!forceCommit && this.pendingChanges.size === 0)) return;
-    const changes = this.pendingChanges;
+    const changes = new Map(
+      [...this.pendingChanges].filter(([, change]) => change.prev !== change.value),
+    );
     this.pendingChanges = new Map();
     this.delivering = true;
     const errors: unknown[] = [];
