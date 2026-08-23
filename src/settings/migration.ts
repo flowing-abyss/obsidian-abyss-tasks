@@ -1,5 +1,6 @@
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
+import { migrateShortcuts } from './shortcuts';
 
 const DONE_CANCELLED_STATUS_GROUPS = TYPE_ORDER.filter(
   (t) => !(ACTIVE_STATUS_GROUPS as string[]).includes(t),
@@ -173,4 +174,5 @@ export function migrateSettings(raw: Record<string, unknown>): void {
   migrateListViewStates(raw);
   migrateTaskLifecycle(raw);
   migrateRecurrence(raw);
+  migrateShortcuts(raw);
 }

@@ -1,4 +1,5 @@
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
+import type { ShortcutSettings } from './shortcuts';
 
 export interface TaskStatusDef {
   id: string;
@@ -96,6 +97,7 @@ export interface CalendarSettings {
     newOccurrencePlacement: 'before' | 'after';
     removeScheduledDate: boolean;
   };
+  shortcuts: ShortcutSettings;
 }
 
 // Params parsed from a task-calendar code block (all optional overrides of ViewConfig)

@@ -193,6 +193,65 @@ describe('CalendarSettingsTab renderGeneralSettings', () => {
   });
 });
 
+describe('CalendarSettingsTab Hotkeys', () => {
+  function hotkeysBody(tab: CalendarSettingsTab): HTMLElement {
+    return openSection(tab, 7);
+  }
+
+  function shortcutInput(body: HTMLElement, action: string): HTMLInputElement {
+    return body.querySelector<HTMLInputElement>(`[data-shortcut-action="${action}"]`)!;
+  }
+
+  it('persists raw invalid values and announces the row-level issue', () => {
+    const { tab, plugin } = makeTab();
+    const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
+
+    input.value = 'Ctrl+Q';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(plugin.settings.shortcuts.openQuickCapture).toBe('Ctrl+Q');
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    const describedBy = input.getAttribute('aria-describedby');
+    expect(describedBy).not.toBeNull();
+    expect(tab.containerEl.querySelector(`#${describedBy}`)?.textContent).toContain('valid');
+  });
+
+  it('keeps the active input and its caret while conflict feedback updates every affected row', () => {
+    const { tab, plugin } = makeTab();
+    const body = hotkeysBody(tab);
+    const quickCapture = shortcutInput(body, 'openQuickCapture');
+    const tasks = shortcutInput(body, 'openTasks');
+    document.body.appendChild(tab.containerEl);
+    tasks.focus();
+    tasks.setSelectionRange(1, 1);
+
+    tasks.value = 'Q';
+    tasks.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(plugin.settings.shortcuts.openTasks).toBe('Q');
+    expect(plugin.saveSettings).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(tasks);
+    expect(tasks.selectionStart).toBe(1);
+    expect(tasks.getAttribute('aria-invalid')).toBe('true');
+    expect(quickCapture.getAttribute('aria-invalid')).toBe('true');
+    expect(tasks.isConnected).toBe(true);
+    tab.containerEl.remove();
+  });
+
+  it('keeps blank shortcut values as disabled without an issue', () => {
+    const { tab, plugin } = makeTab();
+    const input = shortcutInput(hotkeysBody(tab), 'openQuickCapture');
+
+    input.value = '';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(plugin.settings.shortcuts.openQuickCapture).toBe('');
+    expect(input.getAttribute('aria-invalid')).not.toBe('true');
+    expect(input.getAttribute('aria-describedby')).toBeNull();
+  });
+});
+
 describe('CalendarSettingsTab renderTagGroupSettings', () => {
   it('inbox source dropdown has tag/untagged options', () => {
     const { tab } = makeTab({

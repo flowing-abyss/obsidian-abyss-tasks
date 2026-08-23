@@ -2960,6 +2960,54 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   max-height: 2000px;
 }
 
+/* Configurable local shortcut inputs. */
+.abyss-shortcuts-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.abyss-shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(9rem, 14rem);
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-primary-alt);
+}
+
+.abyss-shortcut-label {
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+}
+
+.abyss-shortcut-input {
+  width: 100%;
+  color: var(--text-normal);
+  background: var(--background-modifier-form-field);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  font-family: var(--font-monospace);
+}
+
+.abyss-shortcut-input[aria-invalid='true'] {
+  border-color: var(--text-error);
+}
+
+.abyss-shortcut-issue {
+  grid-column: 1 / -1;
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+}
+
+@media (max-width: 480px) {
+  .abyss-shortcut-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---- Center Panel ---- */
 .abyss-center-header {
   padding: 12px 16px;

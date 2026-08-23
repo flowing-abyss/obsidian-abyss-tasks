@@ -1,8 +1,60 @@
 import { describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { migrateSettings } from '../src/settings/migration';
+import { defaultShortcuts } from '../src/settings/shortcuts';
 
 describe('migrateSettings', () => {
+  it('creates a complete shortcut collection when legacy settings have none', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    expect(raw['shortcuts']).toEqual(defaultShortcuts());
+  });
+
+  it('deep-fills missing shortcut actions while preserving blank and invalid string choices', () => {
+    const raw: Record<string, unknown> = {
+      shortcuts: { openQuickCapture: '', openTasks: 'Ctrl+L', openInbox: 'Shift I' },
+    };
+
+    migrateSettings(raw);
+
+    expect(raw['shortcuts']).toEqual({
+      ...defaultShortcuts(),
+      openQuickCapture: '',
+      openTasks: 'Ctrl+L',
+      openInbox: 'Shift I',
+    });
+  });
+
+  it('heals malformed shortcut values, drops unknown actions, and is idempotent', () => {
+    const raw: Record<string, unknown> = {
+      shortcuts: {
+        openQuickCapture: 9,
+        openTasks: 'not a supported binding',
+        unknownAction: 'Q',
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    expect(raw['shortcuts']).toEqual({
+      ...defaultShortcuts(),
+      openTasks: 'not a supported binding',
+    });
+  });
+
+  it('replaces a malformed shortcut collection with fresh defaults', () => {
+    const raw: Record<string, unknown> = { shortcuts: ['Q'] };
+
+    migrateSettings(raw);
+
+    expect(raw['shortcuts']).toEqual(defaultShortcuts());
+  });
+
   it('adds lifecycle and recurrence defaults without persisting during migration', () => {
     const raw: Record<string, unknown> = {};
 

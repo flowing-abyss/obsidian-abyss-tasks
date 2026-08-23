@@ -2,6 +2,7 @@ import { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
+import { SHORTCUT_ACTIONS } from '../src/settings/shortcuts';
 import type { CalendarSettings } from '../src/settings/types';
 import { useRealMoment } from './helpers';
 
@@ -41,10 +42,17 @@ describe('CalendarSettingsTab sections', () => {
     expect(tab.containerEl.textContent).toContain('Remove scheduled date');
   });
 
-  it('renders exactly 6 sections', () => {
+  it('renders a Hotkeys section with one row per supported action', () => {
     const tab = makeTab();
     const sections = tab.containerEl.querySelectorAll('.abyss-settings-section');
-    expect(sections).toHaveLength(7);
+    expect(sections).toHaveLength(8);
+
+    const hotkeys = sections[7]!;
+    hotkeys.querySelector<HTMLElement>('.abyss-settings-section-header')!.click();
+    expect(hotkeys.textContent).toContain('Hotkeys');
+    expect(hotkeys.querySelectorAll('.abyss-shortcut-row')).toHaveLength(SHORTCUT_ACTIONS.length);
+    expect(hotkeys.textContent).toContain('Quick capture');
+    expect(hotkeys.textContent).toContain('Calendar: month');
   });
 
   it('all sections start collapsed (no is-open)', () => {
@@ -84,19 +92,20 @@ describe('CalendarSettingsTab sections', () => {
       'Tag groups',
       'Projects',
       'Custom statuses',
+      'Hotkeys',
     ]);
   });
 
   it('each section header has an icon element', () => {
     const tab = makeTab();
     const icons = tab.containerEl.querySelectorAll('.abyss-settings-section-icon');
-    expect(icons).toHaveLength(7);
+    expect(icons).toHaveLength(8);
   });
 
   it('each section header has a chevron element', () => {
     const tab = makeTab();
     const chevrons = tab.containerEl.querySelectorAll('.abyss-settings-section-chevron');
-    expect(chevrons).toHaveLength(7);
+    expect(chevrons).toHaveLength(8);
   });
 
   it('open sections stay open after display() re-render', () => {

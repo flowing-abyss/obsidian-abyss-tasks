@@ -1,10 +1,26 @@
-import { App, getIconIds, Notice, Plugin, PluginSettingTab, setIcon, Setting } from 'obsidian';
+import {
+  App,
+  getIconIds,
+  Notice,
+  Platform,
+  Plugin,
+  PluginSettingTab,
+  setIcon,
+  Setting,
+} from 'obsidian';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
 import type { TagManager } from '../tags/TagManager';
 import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
+import {
+  SHORTCUT_ACTION_IDS,
+  SHORTCUT_ACTIONS,
+  type ShortcutActionId,
+  type ShortcutPlatform,
+  validateShortcuts,
+} from './shortcuts';
 import type { CalendarSettings, TaskStatusDef } from './types';
 
 interface TaskCalendarPlugin extends Plugin {
@@ -170,6 +186,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
     );
     this.addSection(containerEl, 'Custom statuses', 'list-checks', (body) =>
       this.renderTaskStatusesSettings(body),
+    );
+    this.addSection(containerEl, 'Hotkeys', 'keyboard', (body) =>
+      this.renderShortcutSettings(body),
     );
 
     containerEl.querySelectorAll('.abyss-settings-section').forEach((el, i) => {
@@ -407,6 +426,82 @@ export class CalendarSettingsTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
+    }
+  }
+
+  private shortcutPlatform(): ShortcutPlatform {
+    return { mod: Platform.isMacOS ? 'meta' : 'ctrl' };
+  }
+
+  private renderShortcutSettings(containerEl: HTMLElement): void {
+    const inputEls = new Map<ShortcutActionId, HTMLInputElement>();
+    const issueEls = new Map<ShortcutActionId, HTMLElement>();
+    const list = containerEl.createDiv({ cls: 'abyss-shortcuts-list' });
+
+    for (const actionId of SHORTCUT_ACTION_IDS) {
+      const action = SHORTCUT_ACTIONS.find((candidate) => candidate.id === actionId);
+      if (!action) continue;
+      const row = list.createDiv({ cls: 'abyss-shortcut-row' });
+      const label = row.createEl('label', {
+        cls: 'abyss-shortcut-label',
+        text: action.label,
+      });
+      const input = row.createEl('input', {
+        cls: 'abyss-shortcut-input',
+        attr: {
+          id: `abyss-shortcut-${action.id}`,
+          type: 'text',
+          autocomplete: 'off',
+          spellcheck: 'false',
+          'data-shortcut-action': action.id,
+        },
+      });
+      label.htmlFor = input.id;
+      input.value = this.plugin.settings.shortcuts[action.id];
+      const issue = row.createDiv({
+        cls: 'abyss-shortcut-issue',
+        attr: { id: `abyss-shortcut-issue-${action.id}`, role: 'alert' },
+      });
+      issue.hidden = true;
+      inputEls.set(action.id, input);
+      issueEls.set(action.id, issue);
+
+      input.addEventListener('input', () => {
+        this.plugin.settings.shortcuts[action.id] = input.value;
+        this.updateShortcutIssues(inputEls, issueEls);
+        void this.plugin.saveSettings();
+      });
+    }
+
+    this.updateShortcutIssues(inputEls, issueEls);
+  }
+
+  private updateShortcutIssues(
+    inputEls: ReadonlyMap<ShortcutActionId, HTMLInputElement>,
+    issueEls: ReadonlyMap<ShortcutActionId, HTMLElement>,
+  ): void {
+    const { issues } = validateShortcuts(this.plugin.settings.shortcuts, this.shortcutPlatform());
+    for (const action of SHORTCUT_ACTIONS) {
+      const input = inputEls.get(action.id);
+      const issueEl = issueEls.get(action.id);
+      if (!input || !issueEl) continue;
+      const issue = issues.get(action.id);
+      if (!issue) {
+        input.removeAttribute('aria-invalid');
+        input.removeAttribute('aria-describedby');
+        issueEl.empty();
+        issueEl.hidden = true;
+        continue;
+      }
+
+      input.setAttribute('aria-invalid', 'true');
+      input.setAttribute('aria-describedby', issueEl.id);
+      issueEl.setText(
+        issue === 'invalid'
+          ? 'Enter a valid letter or digit with optional Alt, Ctrl, Meta, Shift, or Mod modifiers.'
+          : 'This shortcut conflicts with another action.',
+      );
+      issueEl.hidden = false;
     }
   }
 

@@ -1,4 +1,5 @@
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
+import { defaultShortcuts } from './shortcuts';
 import type {
   CalendarSettings,
   ListViewState,
@@ -126,6 +127,7 @@ export const DEFAULT_SETTINGS: CalendarSettings = {
   taskStatuses: buildDefaultTaskStatuses(),
   taskLifecycle: { addCreatedDate: true, addCompletionDate: true },
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+  shortcuts: defaultShortcuts(),
 };
 
 export function getListViewDefaults(listKey: string): ListViewState {
