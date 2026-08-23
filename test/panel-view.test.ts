@@ -368,6 +368,36 @@ describe('PanelView', () => {
       expect(escape.defaultPrevented).toBe(false);
     });
 
+    it('reconciles rem-based pane ownership on css-change without a width change', () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+      const root = activeDocument.documentElement;
+      const previousFontSize = root.style.fontSize;
+      setGeometry(layout, rect(0, 0, 950, 480));
+
+      try {
+        root.style.fontSize = '16px';
+        window.dispatchEvent(new Event('resize'));
+        details.click();
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+
+        root.style.fontSize = '17px';
+        app.workspace.trigger('css-change');
+        details.click();
+        expect(right.classList.contains('is-compact-open')).toBe(true);
+
+        root.style.fontSize = '16px';
+        app.workspace.trigger('css-change');
+        expect(right.classList.contains('is-compact-open')).toBe(false);
+        expect(details.getAttribute('aria-expanded')).toBe('false');
+      } finally {
+        root.style.fontSize = previousFontSize;
+        app.workspace.trigger('css-change');
+      }
+    });
+
     it.each(['left control', 'right control', 'task selection'] as const)(
       'preserves an exact pending-blur failure through a compact %s conflict',
       async (trigger) => {

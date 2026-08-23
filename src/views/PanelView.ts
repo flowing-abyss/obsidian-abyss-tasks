@@ -148,6 +148,7 @@ export class PanelView extends ItemView {
   private panelNavigation!: PanelNavigator;
   private compactPaneElements?: CompactPaneElements;
   private compactPaneCleanup?: () => void;
+  private compactPaneRefresh?: () => void;
   private compactPaneOpen: CompactPane | null = null;
   private compactTaskSelectionKey: string | undefined = undefined;
   private compactLeftCollapsed = false;
@@ -324,6 +325,7 @@ export class PanelView extends ItemView {
     // against the new background so it doesn't stay stuck on a stale light/dark decision.
     this.registerEvent(
       this.app.workspace.on('css-change', () => {
+        this.compactPaneRefresh?.();
         this.center.refresh();
       }),
     );
@@ -446,6 +448,7 @@ export class PanelView extends ItemView {
   async onClose(): Promise<void> {
     this.compactPaneCleanup?.();
     this.compactPaneCleanup = undefined;
+    this.compactPaneRefresh = undefined;
     this.closeCompactPane(false);
     this.compactPaneElements = undefined;
     this.compactTaskSelectionKey = undefined;
@@ -505,6 +508,7 @@ export class PanelView extends ItemView {
       );
     };
     const onWindowResize = (): void => updateCompactWidth();
+    this.compactPaneRefresh = onWindowResize;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (
         event.key !== 'Escape' ||
@@ -565,6 +569,7 @@ export class PanelView extends ItemView {
       ownerDocument.removeEventListener('pointerdown', onPointerDown, true);
       ownerWindow?.removeEventListener('resize', onWindowResize);
       resizeObserver?.disconnect();
+      if (this.compactPaneRefresh === onWindowResize) this.compactPaneRefresh = undefined;
     };
   }
 
