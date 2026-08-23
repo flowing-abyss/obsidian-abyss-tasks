@@ -11,12 +11,30 @@ import { deferred, flushMicrotasks, task } from './helpers';
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
 function declarationsFor(selector: string): string {
-  const uncommentedCss = css.replace(/\/\*[\s\S]*?\*\//gu, '');
+  return declarationsForSource(css, selector);
+}
+
+function declarationsForSource(source: string, selector: string): string {
+  const uncommentedCss = source.replace(/\/\*[\s\S]*?\*\//gu, '');
   const normalize = (value: string): string => value.trim().replace(/\s+/gu, ' ');
   const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
     (match) => normalize(match[1] ?? '') === normalize(selector),
   );
   return matches[matches.length - 1]?.[2] ?? '';
+}
+
+function lastAtRuleBlock(header: string): string {
+  const start = css.lastIndexOf(header);
+  if (start < 0) return '';
+  const opening = css.indexOf('{', start + header.length);
+  if (opening < 0) return '';
+  let depth = 0;
+  for (let index = opening; index < css.length; index += 1) {
+    if (css[index] === '{') depth += 1;
+    if (css[index] === '}') depth -= 1;
+    if (depth === 0) return css.slice(opening + 1, index);
+  }
+  return '';
 }
 
 const success = (): TaskCommandResult => ({
@@ -381,6 +399,27 @@ describe('CaptureSurface', () => {
     expect(feedback).toContain('z-index:');
     expect(feedback).toContain('inset-block-start:');
     expect(feedback).not.toContain('inset-block-end:');
+  });
+
+  it('wraps narrow calendar controls and clears capture feedback above mobile chrome', () => {
+    const compact = lastAtRuleBlock('@media (max-width: 480px)');
+    const nav = declarationsForSource(compact, '.abyss-cal-nav');
+    const calendarFeedback = declarationsForSource(
+      compact,
+      '.abyss-center .abyss-calendar-capture-feedback',
+    );
+    const globalFeedback = declarationsForSource(
+      compact,
+      'body.is-mobile .abyss-creation-feedback',
+    );
+
+    expect(nav).toContain('flex-wrap: wrap');
+    expect(calendarFeedback).toContain('inset-block-start:');
+    expect(calendarFeedback).toContain('var(--size-4-16');
+    expect(calendarFeedback).toContain('var(--size-4-12');
+    expect(calendarFeedback).toContain('var(--size-4-4');
+    expect(globalFeedback).toContain('inset-block-end:');
+    expect(globalFeedback).toContain('env(safe-area-inset-bottom');
   });
 
   it('disables smooth scrolling and capture/highlight animation under reduced motion', () => {

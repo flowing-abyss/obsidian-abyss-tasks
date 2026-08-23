@@ -6292,3 +6292,32 @@ body.abyss-modal-open .popover.hover-popover {
   white-space: nowrap;
   border: 0;
 }
+
+/* Keep the complete calendar toolbar and both feedback layers visible on phone-width panels. */
+@media (max-width: 480px) {
+  .abyss-cal-nav {
+    flex-wrap: wrap;
+    align-content: flex-start;
+  }
+
+  .abyss-cal-nav-left,
+  .abyss-cal-nav-right {
+    max-width: 100%;
+  }
+
+  .abyss-cal-nav-right {
+    margin-inline-start: auto;
+  }
+
+  .abyss-center .abyss-calendar-capture-feedback {
+    inset-block-start: calc(
+      var(--size-4-16, 4rem) + var(--size-4-12, 3rem) + var(--size-4-4, 1rem)
+    );
+  }
+
+  body.is-mobile .abyss-creation-feedback {
+    inset-block-end: calc(
+      env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
+    );
+  }
+}
