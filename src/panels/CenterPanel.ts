@@ -184,6 +184,7 @@ function getSubmenu(item: MenuItem): Menu {
 }
 
 export class CenterPanel {
+  private readonly completionConfirmationAbortController = new AbortController();
   private el!: HTMLElement;
   private offs: Array<() => void> = [];
   private calViewType: CalViewType = 'month';
@@ -220,6 +221,7 @@ export class CenterPanel {
   private calendarRenderGeneration = 0;
   private taskModal: TaskModal | null = null;
   private selectedTaskKeys = new Set<string>();
+  private lastAnnouncedSelectionCount = 0;
   private selectionAnchorKey: string | null = null;
   private selectionFocusKey: string | null = null;
   private filterDebounce = 0;
@@ -515,6 +517,7 @@ export class CenterPanel {
   }
 
   destroy(): void {
+    this.completionConfirmationAbortController.abort();
     this.cancelActiveCapture();
     this.cancelKeyboardInteraction();
     this.abandonTaskDateFocus();
@@ -3566,7 +3569,10 @@ export class CenterPanel {
         attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
       });
     const count = this.selectedTaskKeys.size;
-    live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;
+    if (count !== this.lastAnnouncedSelectionCount) {
+      this.lastAnnouncedSelectionCount = count;
+      live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;
+    }
   }
 
   private async setPriority(
@@ -3597,7 +3603,12 @@ export class CenterPanel {
 
   private toggleTask(task: TaskSnapshot): Promise<void> {
     if (isForecastCalendarTask(task)) return Promise.resolve();
-    return requestTaskCompletion(task, () => this.commitTaskToggle(task));
+    return requestTaskCompletion(
+      task,
+      () => this.commitTaskToggle(task),
+      this.interactionOwnership,
+      this.completionConfirmationAbortController.signal,
+    );
   }
 
   private async commitTaskToggle(task: TaskSnapshot): Promise<void> {
@@ -3614,7 +3625,12 @@ export class CenterPanel {
   private setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
     if (isForecastCalendarTask(task)) return Promise.resolve();
     if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
-      return requestTaskCompletion(task, () => this.commitTaskStatus(task, symbol));
+      return requestTaskCompletion(
+        task,
+        () => this.commitTaskStatus(task, symbol),
+        this.interactionOwnership,
+        this.completionConfirmationAbortController.signal,
+      );
     }
     return this.commitTaskStatus(task, symbol);
   }

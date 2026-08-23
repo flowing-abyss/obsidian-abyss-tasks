@@ -14,6 +14,7 @@ import type {
 } from '../src/tasks';
 import type { CreationPresentationController } from '../src/ui/creation/CreationPresentationController';
 import type { InteractionRegistry } from '../src/ui/interactionOwnership';
+import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
@@ -130,13 +131,20 @@ describe('PanelView', () => {
       expect(layout?.querySelectorAll('.abyss-creation-feedback')).toHaveLength(1);
     });
 
-    it('owns one stable Quick Capture host outside every renderable panel zone', () => {
+    it('owns one stable Quick Capture host in the center shell across every mode rerender', () => {
       const layout = view.contentEl.querySelector('.abyss-layout')!;
       const host = layout.querySelector('.abyss-quick-capture-host');
+      const shell = layout.querySelector('.abyss-center-shell');
+      const center = layout.querySelector('.abyss-center');
 
       expect(host).not.toBeNull();
+      expect(shell).not.toBeNull();
+      expect(center).not.toBeNull();
       expect(layout.querySelectorAll('.abyss-quick-capture-host')).toHaveLength(1);
-      expect(host?.closest('.abyss-rail, .abyss-left, .abyss-center, .abyss-right')).toBeNull();
+      expect(host?.parentElement).toBe(shell);
+      expect(center?.parentElement).toBe(shell);
+      expect(host?.closest('.abyss-center-shell')).toBe(shell);
+      expect(host?.closest('.abyss-rail, .abyss-left, .abyss-right')).toBeNull();
 
       const internals = view as unknown as { panelNavigation: PanelNavigator };
       internals.panelNavigation.openCalendar();
@@ -145,6 +153,9 @@ describe('PanelView', () => {
       internals.panelNavigation.openTasks();
 
       expect(layout.querySelector('.abyss-quick-capture-host')).toBe(host);
+      expect(layout.querySelector('.abyss-center-shell')).toBe(shell);
+      expect(layout.querySelector('.abyss-center')).toBe(center);
+      expect(host?.parentElement).toBe(shell);
     });
 
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
@@ -209,6 +220,81 @@ describe('PanelView', () => {
         }),
       );
       expect(openQuickCapture).toHaveBeenCalledOnce();
+    });
+
+    it('gives the recurrence-delete alertdialog modal precedence in the live panel router', async () => {
+      document.body.appendChild(view.containerEl);
+      app.workspace.activeLeaf = leaf;
+      document.body.tabIndex = -1;
+      document.body.focus();
+      const internals = view as unknown as {
+        state: AppState;
+        interactionRegistry: InteractionRegistry<string>;
+      };
+      const before = {
+        mode: internals.state.get('mode'),
+        selectedList: internals.state.get('selectedList'),
+        taskStack: internals.state.get('taskStack'),
+        searchQuery: internals.state.get('searchQuery'),
+      };
+      const completion = requestTaskCompletion(
+        { status: 'open', recurrence: 'tomorrow', onCompletion: 'delete' },
+        vi.fn(),
+        internals.interactionRegistry,
+      );
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent === 'Cancel',
+      )!;
+      cancel.blur();
+      document.body.focus();
+
+      const suppressed = [
+        new KeyboardEvent('keydown', {
+          key: 'c',
+          code: 'KeyC',
+          bubbles: true,
+          cancelable: true,
+        }),
+        new KeyboardEvent('keydown', {
+          key: 'l',
+          code: 'KeyL',
+          bubbles: true,
+          cancelable: true,
+        }),
+        new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        }),
+      ];
+      suppressed.forEach((event) => document.body.dispatchEvent(event));
+      await flushMicrotasks(0);
+
+      suppressed.forEach((event) => expect(event.defaultPrevented).toBe(false));
+      expect({
+        mode: internals.state.get('mode'),
+        selectedList: internals.state.get('selectedList'),
+        taskStack: internals.state.get('taskStack'),
+        searchQuery: internals.state.get('searchQuery'),
+      }).toEqual(before);
+      expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBe(surface);
+      expect(view.contentEl.querySelector('.abyss-capture-surface')).toBeNull();
+
+      cancel.click();
+      await completion;
+      const afterDismissal = new KeyboardEvent('keydown', {
+        key: 'c',
+        code: 'KeyC',
+        bubbles: true,
+        cancelable: true,
+      });
+      document.body.dispatchEvent(afterDismissal);
+      expect(afterDismissal.defaultPrevented).toBe(true);
+      expect(internals.state.get('mode')).toBe('calendar');
     });
 
     it.each([

@@ -3,7 +3,7 @@ import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureContro
 export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly placeholder?: string;
-  readonly submitOnBlur?: boolean;
+  readonly closeOnEmptyBlur?: boolean;
   readonly feedbackHost?: HTMLElement;
   readonly onEscape?: () => void;
 }
@@ -65,6 +65,8 @@ export class CaptureSurface {
       this.render(this.controller.snapshot());
     };
     const onKeyDown = (event: KeyboardEvent): void => {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- Chromium can expose IME ownership only through the legacy 229 sentinel.
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === 'Enter') {
         event.preventDefault();
         event.stopPropagation();
@@ -77,7 +79,13 @@ export class CaptureSurface {
       }
     };
     const onBlur = (): void => {
-      if (options.submitOnBlur !== false) void this.controller.submit('blur');
+      if (
+        options.closeOnEmptyBlur === false &&
+        this.controller.snapshot().draft.trim().length === 0
+      ) {
+        return;
+      }
+      void this.controller.submit('blur');
     };
 
     this.input.addEventListener('input', onInput);

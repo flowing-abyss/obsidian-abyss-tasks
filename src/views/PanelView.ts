@@ -187,9 +187,10 @@ export class PanelView extends ItemView {
     const layout = this.contentEl.createDiv({ cls: 'abyss-layout abyss-layout--tasks' });
     const railEl = layout.createDiv({ cls: 'abyss-rail' });
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
-    const centerEl = layout.createDiv({ cls: 'abyss-center' });
+    const centerShell = layout.createDiv({ cls: 'abyss-center-shell' });
+    const centerEl = centerShell.createDiv({ cls: 'abyss-center' });
+    const quickCaptureHost = centerShell.createDiv({ cls: 'abyss-quick-capture-host' });
     const rightEl = layout.createDiv({ cls: 'abyss-right' });
-    const quickCaptureHost = layout.createDiv({ cls: 'abyss-quick-capture-host' });
     const creationFeedback = layout.createDiv({ cls: 'abyss-creation-feedback' });
     this.creationPresentation = new CreationPresentationController({
       host: creationFeedback,

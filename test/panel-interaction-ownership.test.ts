@@ -7,6 +7,7 @@ import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { mountAnchoredRecurrenceEditor } from '../src/ui/recurrence/RecurrenceEditor';
 import { showStatusMenuAt } from '../src/ui/statusMenu';
 import { TagPickerModal } from '../src/ui/TagPickerModal';
+import { requestTaskCompletion } from '../src/ui/taskCommandResult';
 import { TaskModal } from '../src/ui/TaskModal';
 import type { CalendarOccurrence } from '../src/views/calendarOccurrences';
 import { createForecastContextMenuOwner } from '../src/views/timegrid/renderTaskMeta';
@@ -21,6 +22,29 @@ const categories: ReadonlyArray<{
   readonly category: string;
   open(registry: InteractionRegistry<'navigate'>): OwnedSurface;
 }> = [
+  {
+    category: 'recurrence-delete alertdialog',
+    open: (registry) => {
+      const completion = requestTaskCompletion(
+        { status: 'open', recurrence: 'tomorrow', onCompletion: 'delete' },
+        vi.fn(),
+        registry,
+      );
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent === 'Cancel',
+      )!;
+      return {
+        control: surface.querySelector<HTMLElement>('.abyss-recurrence-delete-confirm-dialog')!,
+        close: () => {
+          cancel.click();
+          void completion;
+        },
+      };
+    },
+  },
   {
     category: 'custom status menu',
     open: (registry) => {

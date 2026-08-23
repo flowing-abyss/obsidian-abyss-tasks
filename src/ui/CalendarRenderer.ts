@@ -55,6 +55,7 @@ const VIEWS: ViewEntry[] = [
 type ActiveView = 'month' | 'week' | 'list';
 
 export class CalendarRenderer {
+  private readonly completionConfirmationAbortController = new AbortController();
   private toolbar: Toolbar | null = null;
   private activeView: BaseView | null = null;
   private activeViewType: ActiveView;
@@ -194,8 +195,14 @@ export class CalendarRenderer {
         if (isForecastCalendarTask(task)) return;
         const target = calendarMutationTarget(task);
         if (!target) return;
-        void requestTaskCompletion(task, () =>
-          this.tasks.execute({ type: 'toggle-completion', target }).then(presentTaskCommandResult),
+        void requestTaskCompletion(
+          task,
+          () =>
+            this.tasks
+              .execute({ type: 'toggle-completion', target })
+              .then(presentTaskCommandResult),
+          this.interactionOwnership,
+          this.completionConfirmationAbortController.signal,
         );
       },
       onCellClick: (date: string) => this.openAddTaskModal(date),
@@ -227,7 +234,12 @@ export class CalendarRenderer {
                 .execute({ type: 'set-status', target, symbol })
                 .then(presentTaskCommandResult);
             if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
-              void requestTaskCompletion(task, apply);
+              void requestTaskCompletion(
+                task,
+                apply,
+                this.interactionOwnership,
+                this.completionConfirmationAbortController.signal,
+              );
             } else {
               void apply();
             }
@@ -493,6 +505,7 @@ export class CalendarRenderer {
   }
 
   destroy(): void {
+    this.completionConfirmationAbortController.abort();
     this.projectionDiagnosticOwner.destroy();
     this.forecastMenuOwner.dismiss();
     this.dismissStatusMenu();

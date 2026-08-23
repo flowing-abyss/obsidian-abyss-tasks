@@ -143,6 +143,7 @@ function commentRefOf(comment: TaskCommentSnapshot): CommentRef {
 }
 
 export class RightPanel {
+  private readonly completionConfirmationAbortController = new AbortController();
   private el!: HTMLElement;
   private off?: () => void;
   private draggingSub: SubtaskSnapshot | null = null;
@@ -187,6 +188,7 @@ export class RightPanel {
   }
 
   destroy(): void {
+    this.completionConfirmationAbortController.abort();
     this.off?.();
     if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
     this.clearAnchoredSurfaces();
@@ -1844,7 +1846,12 @@ export class RightPanel {
   }
 
   private toggleTaskLike(task: TaskLike): Promise<void> {
-    return requestTaskCompletion(task, () => this.commitTaskToggle(task));
+    return requestTaskCompletion(
+      task,
+      () => this.commitTaskToggle(task),
+      this.interactionOwnership,
+      this.completionConfirmationAbortController.signal,
+    );
   }
 
   private async commitTaskToggle(task: TaskLike): Promise<void> {
@@ -2037,7 +2044,12 @@ export class RightPanel {
 
   private setStatus(task: TaskLike, symbol: string): Promise<void> {
     if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
-      return requestTaskCompletion(task, () => this.commitStatus(task, symbol));
+      return requestTaskCompletion(
+        task,
+        () => this.commitStatus(task, symbol),
+        this.interactionOwnership,
+        this.completionConfirmationAbortController.signal,
+      );
     }
     return this.commitStatus(task, symbol);
   }

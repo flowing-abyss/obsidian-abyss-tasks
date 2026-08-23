@@ -140,11 +140,14 @@ describe('Panel shell top rhythm', () => {
     ['.abyss-layout > .abyss-rail', '8px'],
     ['.abyss-layout > .abyss-left > .abyss-left-section:first-child', '12px'],
     [
-      '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
+      '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
       '12px',
     ],
-    ['.abyss-layout--calendar > .abyss-center > .abyss-cal-nav', '8px'],
-    ['.abyss-layout--projects > .abyss-center .abyss-projects-toolbar', '12px'],
+    ['.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav', '8px'],
+    [
+      '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
+      '12px',
+    ],
     ['.abyss-layout > .abyss-right > .abyss-right-header:first-child', '12px'],
     ['.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child', '18px'],
   ])('adds the inset to the approved top-level surface %s', (selector, existingTopPadding) => {
@@ -163,7 +166,7 @@ describe('Panel shell top rhythm', () => {
         5 +
         8,
       supplementalTopPaddingPx(
-        '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
+        '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
       ) + 14,
     ];
 
@@ -178,9 +181,9 @@ describe('Panel shell top rhythm', () => {
     expect(insetSelectors).toEqual([
       '.abyss-layout > .abyss-rail',
       '.abyss-layout > .abyss-left > .abyss-left-section:first-child',
-      '.abyss-layout--tasks > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center > .abyss-center-header',
-      '.abyss-layout--calendar > .abyss-center > .abyss-cal-nav',
-      '.abyss-layout--projects > .abyss-center .abyss-projects-toolbar',
+      '.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header, .abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header',
+      '.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav',
+      '.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar',
       '.abyss-layout > .abyss-right > .abyss-right-header:first-child',
       '.abyss-layout > .abyss-right > .abyss-breadcrumb:first-child',
     ]);

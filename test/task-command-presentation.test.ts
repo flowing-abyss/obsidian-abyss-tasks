@@ -2,6 +2,7 @@ import type { App } from 'obsidian';
 import { Notice } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
+import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import {
   describeTaskCreationResult,
   presentTaskCommandResult,
@@ -29,6 +30,16 @@ const invalidDeleteTask = {
   recurrence: 'tomorrow',
   onCompletion: 'delete',
 } as const;
+
+function ownershipHarness(): {
+  readonly port: InteractionOwnershipPort;
+  readonly acquire: ReturnType<typeof vi.fn>;
+  readonly release: ReturnType<typeof vi.fn>;
+} {
+  const release = vi.fn();
+  const acquire = vi.fn(() => ({ release }));
+  return { port: { acquire }, acquire, release };
+}
 
 describe('task command result presentation', () => {
   beforeEach(() => {
@@ -73,6 +84,115 @@ describe('task command result presentation', () => {
       expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
     },
   );
+
+  it.each(['Cancel', 'Escape', 'backdrop'] as const)(
+    'owns the invalid Delete alertdialog until %s and releases exactly once',
+    async (dismissal) => {
+      const ownership = ownershipHarness();
+      const completion = requestTaskCompletion(invalidDeleteTask, vi.fn(), ownership.port);
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+      const cancel = Array.from(surface.querySelectorAll<HTMLButtonElement>('button')).find(
+        (candidate) => candidate.textContent === 'Cancel',
+      )!;
+
+      expect(ownership.acquire).toHaveBeenCalledOnce();
+      expect(ownership.acquire).toHaveBeenCalledWith({ blocksShortcuts: true });
+      expect(ownership.release).not.toHaveBeenCalled();
+
+      if (dismissal === 'Cancel') {
+        cancel.click();
+      } else if (dismissal === 'Escape') {
+        activeDocument.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+        );
+      } else {
+        surface.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      }
+      await completion;
+
+      cancel.click();
+      activeDocument.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(ownership.release).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('releases the alertdialog owner once before a confirmed mutation settles', async () => {
+    const ownership = ownershipHarness();
+    const pending = deferred();
+    const mutation = vi.fn().mockReturnValue(pending.promise);
+    const completion = requestTaskCompletion(invalidDeleteTask, mutation, ownership.port);
+    const confirm = activeDocument.querySelector<HTMLButtonElement>(
+      '.abyss-recurrence-delete-confirm-button',
+    )!;
+
+    confirm.click();
+    confirm.click();
+    await Promise.resolve();
+
+    expect(ownership.release).toHaveBeenCalledOnce();
+    expect(mutation).toHaveBeenCalledOnce();
+    pending.resolve();
+    await completion;
+    expect(ownership.release).toHaveBeenCalledOnce();
+  });
+
+  it('releases the previous owner when a newer alertdialog replaces it', async () => {
+    const firstOwnership = ownershipHarness();
+    const secondOwnership = ownershipHarness();
+    const first = requestTaskCompletion(invalidDeleteTask, vi.fn(), firstOwnership.port);
+    const second = requestTaskCompletion(invalidDeleteTask, vi.fn(), secondOwnership.port);
+
+    await first;
+    expect(firstOwnership.release).toHaveBeenCalledOnce();
+    expect(secondOwnership.acquire).toHaveBeenCalledOnce();
+    expect(secondOwnership.release).not.toHaveBeenCalled();
+
+    activeDocument
+      .querySelector<HTMLButtonElement>('.abyss-recurrence-delete-confirm button')
+      ?.click();
+    await second;
+    expect(secondOwnership.release).toHaveBeenCalledOnce();
+  });
+
+  it('removes and releases an alertdialog idempotently on external teardown', async () => {
+    const ownership = ownershipHarness();
+    const controller = new AbortController();
+    const mutation = vi.fn();
+    const completion = requestTaskCompletion(
+      invalidDeleteTask,
+      mutation,
+      ownership.port,
+      controller.signal,
+    );
+    let settled = false;
+    void completion.then(() => {
+      settled = true;
+    });
+
+    controller.abort();
+    controller.abort();
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    expect(mutation).not.toHaveBeenCalled();
+    expect(activeDocument.querySelector('.abyss-recurrence-delete-confirm')).toBeNull();
+    expect(ownership.release).toHaveBeenCalledOnce();
+  });
+
+  it('does not acquire an owner when no confirmation surface is needed', async () => {
+    const ownership = ownershipHarness();
+    const mutation = vi.fn();
+
+    await requestTaskCompletion({ status: 'open', onCompletion: 'keep' }, mutation, ownership.port);
+
+    expect(mutation).toHaveBeenCalledOnce();
+    expect(ownership.acquire).not.toHaveBeenCalled();
+    expect(ownership.release).not.toHaveBeenCalled();
+  });
 
   it('contains bidirectional Tab focus and restores the trigger on Escape', async () => {
     const trigger = activeDocument.body.createEl('button', { text: 'Complete task' });

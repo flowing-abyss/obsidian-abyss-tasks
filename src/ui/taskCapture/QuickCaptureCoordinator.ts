@@ -33,6 +33,7 @@ export class QuickCaptureCoordinator {
   private ownershipToken: { release(): void } | null = null;
   private controller: TaskCaptureController | null = null;
   private surface: CaptureSurface | null = null;
+  private outsidePointerCleanup: (() => void) | null = null;
   private focusOrigin: HTMLElement | null = null;
   private restoreFocusOnClose = false;
   private destroyed = false;
@@ -59,6 +60,7 @@ export class QuickCaptureCoordinator {
       blocksShortcuts: true,
       allowActions: ['openQuickCapture'],
     });
+    this.armOutsidePointerPolicy(generation);
 
     void this.resolveGeneration(generation, context);
   }
@@ -106,7 +108,7 @@ export class QuickCaptureCoordinator {
     let surface: CaptureSurface;
     try {
       surface = new CaptureSurface(this.options.host, controller, {
-        submitOnBlur: false,
+        closeOnEmptyBlur: false,
         onEscape: () => {
           if (this.generation === generation && this.controller === controller) {
             this.restoreFocusOnClose = true;
@@ -130,6 +132,39 @@ export class QuickCaptureCoordinator {
     surface.focus();
   }
 
+  private armOutsidePointerPolicy(generation: number): void {
+    const ownerDocument = this.options.host.ownerDocument;
+    const onOutsidePointerDown = (event: Event): void => {
+      if (
+        this.destroyed ||
+        this.generation !== generation ||
+        this.currentPhase === 'closed' ||
+        event.composedPath().includes(this.options.host)
+      ) {
+        return;
+      }
+
+      this.restoreFocusOnClose = false;
+      if (this.currentPhase === 'resolving') {
+        this.releaseCurrentGeneration(false);
+        return;
+      }
+      const controller = this.controller;
+      if (!controller) return;
+      const snapshot = controller.snapshot();
+      if (snapshot.phase === 'submitting') {
+        controller.escape();
+      } else if (snapshot.draft.trim().length === 0) {
+        controller.escape();
+      } else {
+        void controller.submit('blur');
+      }
+    };
+    ownerDocument.addEventListener('pointerdown', onOutsidePointerDown, true);
+    this.outsidePointerCleanup = () =>
+      ownerDocument.removeEventListener('pointerdown', onOutsidePointerDown, true);
+  }
+
   private ownsResolvingGeneration(generation: number): boolean {
     return !this.destroyed && this.generation === generation && this.currentPhase === 'resolving';
   }
@@ -145,14 +180,17 @@ export class QuickCaptureCoordinator {
     const surface = this.surface;
     const controller = this.controller;
     const ownershipToken = this.ownershipToken;
+    const outsidePointerCleanup = this.outsidePointerCleanup;
     const focusOrigin = this.focusOrigin;
     const captureOwnedFocus =
       surface !== null && surface.input.ownerDocument.activeElement === surface.input;
     this.surface = null;
     this.controller = null;
     this.ownershipToken = null;
+    this.outsidePointerCleanup = null;
     this.focusOrigin = null;
     this.restoreFocusOnClose = false;
+    outsidePointerCleanup?.();
     surface?.destroy();
     controller?.destroy();
     ownershipToken?.release();

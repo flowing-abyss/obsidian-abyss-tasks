@@ -125,10 +125,14 @@ function phase(h: Harness): QuickCapturePhase {
 
 describe('QuickCaptureCoordinator', () => {
   it('keeps the stable host out of flow and width-clamped with theme-token styling', () => {
+    const shellRules = declarationsFor('.abyss-center-shell');
     const hostRules = declarationsFor('.abyss-quick-capture-host');
     const activeRules = declarationsFor('.abyss-quick-capture-host:not(:empty)');
     const surfaceRules = declarationsFor('.abyss-quick-capture-host > .abyss-capture-surface');
 
+    expect(shellRules).toMatch(/position:\s*relative/u);
+    expect(shellRules).toMatch(/display:\s*flex/u);
+    expect(shellRules).toMatch(/min-inline-size:\s*0/u);
     expect(hostRules).toMatch(/position:\s*absolute/u);
     expect(hostRules).toMatch(/inline-size:\s*min\(/u);
     expect(hostRules).toMatch(/calc\(100%/u);
@@ -161,6 +165,22 @@ describe('QuickCaptureCoordinator', () => {
     expect(h.host.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
   });
 
+  it('cancels a resolving generation on an outside pointer and ignores its late target', async () => {
+    const pending = deferred<CaptureTarget>();
+    const h = harness(() => pending.promise);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+    h.coordinator.openOrFocus();
+
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    pending.resolve(target({ type: 'list', selection: 'today' }));
+    await flushMicrotasks(0);
+
+    expect(phase(h)).toBe('closed');
+    expect(h.host.childElementCount).toBe(0);
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+
   it('makes repeated Q idempotent while resolving and refocuses without resolving again when open', async () => {
     const pending = deferred<CaptureTarget>();
     const h = harness(() => pending.promise);
@@ -183,6 +203,143 @@ describe('QuickCaptureCoordinator', () => {
     expect(document.activeElement).toBe(input);
     expect(h.resolveTarget).toHaveBeenCalledOnce();
     expect(h.host.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
+  });
+
+  it('closes an empty capture only for an outside pointer and releases its owner once', async () => {
+    const h = harness();
+    await open(h);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+    const pointer = new MouseEvent('pointerdown', { bubbles: true, cancelable: true });
+
+    outside.dispatchEvent(pointer);
+
+    expect(pointer.defaultPrevented).toBe(false);
+    expect(phase(h)).toBe('closed');
+    expect(h.host.childElementCount).toBe(0);
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an empty programmatic blur open so repeated Q can refocus the same surface', async () => {
+    const h = harness();
+    const input = await open(h);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+
+    input.blur();
+    expect(phase(h)).toBe('open');
+    expect(h.release).not.toHaveBeenCalled();
+
+    outside.focus();
+    h.coordinator.openOrFocus();
+
+    expect(document.activeElement).toBe(input);
+    expect(h.resolveTarget).toHaveBeenCalledOnce();
+    expect(h.host.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
+  });
+
+  it('submits one frozen draft on non-empty outside blur and closes without focus theft', async () => {
+    const execute = vi.fn<TaskCreateSession['execute']>(async () => success());
+    const h = harness(async (context) => target(context, 'Frozen blur target', execute));
+    const input = await open(h);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+    input.value = '  pointer blur draft  ';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    outside.focus();
+    await flushMicrotasks(0);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith({ markdownBody: 'pointer blur draft' });
+    expect(phase(h)).toBe('closed');
+    expect(document.activeElement).toBe(outside);
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+
+  it('preserves the exact draft and error after one failed outside-blur submission', async () => {
+    const execute = vi.fn<TaskCreateSession['execute']>(async () => ({
+      type: 'io-error',
+      cause: 'repository-error',
+      contentState: 'unknown',
+    }));
+    const h = harness(async (context) => target(context, 'Failed blur target', execute));
+    const input = await open(h);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+    input.value = '  exact failed draft  ';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    outside.focus();
+    await flushMicrotasks(0);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(phase(h)).toBe('open');
+    expect(input.value).toBe('  exact failed draft  ');
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(document.activeElement).toBe(outside);
+    expect(h.release).not.toHaveBeenCalled();
+  });
+
+  it('treats an outside pointer during Enter submission as blur intent without duplicating', async () => {
+    const pending = deferred<TaskCommandResult>();
+    const execute = vi.fn<TaskCreateSession['execute']>(() => pending.promise);
+    const h = harness(async (context) => target(context, 'Pending pointer target', execute));
+    const input = await open(h);
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+    input.value = 'pending once';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    outside.focus();
+    pending.resolve(success());
+    await flushMicrotasks(0);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(phase(h)).toBe('closed');
+    expect(document.activeElement).toBe(outside);
+    expect(h.release).toHaveBeenCalledOnce();
+  });
+
+  it('removes the outside-pointer policy from closed, stale, and destroyed generations', async () => {
+    const firstExecute = vi.fn<TaskCreateSession['execute']>(async () => success());
+    const secondExecute = vi.fn<TaskCreateSession['execute']>(async () => success());
+    let request = 0;
+    const h = harness(async (context) =>
+      target(
+        context,
+        request++ === 0 ? 'First' : 'Second',
+        request === 1 ? firstExecute : secondExecute,
+      ),
+    );
+    const first = await open(h);
+    first.value = 'stale draft';
+    first.dispatchEvent(new Event('input', { bubbles: true }));
+    h.coordinator.close();
+    const second = await open(h);
+    second.value = 'winning draft';
+    second.dispatchEvent(new Event('input', { bubbles: true }));
+    const outside = document.body.appendChild(document.createElement('button'));
+    mounted.push(outside);
+
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    outside.focus();
+    await flushMicrotasks(0);
+
+    expect(firstExecute).not.toHaveBeenCalled();
+    expect(secondExecute).toHaveBeenCalledOnce();
+    expect(h.release).toHaveBeenCalledTimes(2);
+
+    h.coordinator.destroy();
+    outside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    expect(secondExecute).toHaveBeenCalledOnce();
+    expect(h.release).toHaveBeenCalledTimes(2);
   });
 
   it('freezes a mutable navigation context before target resolution awaits', async () => {

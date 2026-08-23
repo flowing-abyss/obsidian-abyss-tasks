@@ -245,6 +245,68 @@ describe('CaptureSurface', () => {
     expect(parentKeydown).not.toHaveBeenCalled();
   });
 
+  it.each(['Enter', 'Escape'] as const)(
+    'leaves composing %s fully owned by the IME',
+    async (value) => {
+      const current = harness();
+      const parent = host();
+      const parentKeydown = vi.fn();
+      const onEscape = vi.fn();
+      parent.addEventListener('keydown', parentKeydown);
+      const surface = new CaptureSurface(parent, current.controller, { onEscape });
+      type(surface, 'exact composing draft');
+      const before = current.controller.snapshot();
+      const event = new KeyboardEvent('keydown', {
+        key: value,
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+
+      surface.input.dispatchEvent(event);
+      await flushMicrotasks(0);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(parentKeydown).toHaveBeenCalledOnce();
+      expect(current.execute).not.toHaveBeenCalled();
+      expect(current.onRequestClose).not.toHaveBeenCalled();
+      expect(onEscape).not.toHaveBeenCalled();
+      expect(surface.input.value).toBe('exact composing draft');
+      expect(current.controller.snapshot()).toEqual(before);
+    },
+  );
+
+  it.each(['Enter', 'Escape'] as const)(
+    'treats Chromium legacy keyCode 229 %s as composing and leaves it untouched',
+    async (value) => {
+      const current = harness();
+      const parent = host();
+      const parentKeydown = vi.fn();
+      const onEscape = vi.fn();
+      parent.addEventListener('keydown', parentKeydown);
+      const surface = new CaptureSurface(parent, current.controller, { onEscape });
+      type(surface, 'legacy composition draft');
+      const before = current.controller.snapshot();
+      const event = new KeyboardEvent('keydown', {
+        key: value,
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(event, 'keyCode', { configurable: true, value: 229 });
+
+      surface.input.dispatchEvent(event);
+      await flushMicrotasks(0);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(parentKeydown).toHaveBeenCalledOnce();
+      expect(current.execute).not.toHaveBeenCalled();
+      expect(current.onRequestClose).not.toHaveBeenCalled();
+      expect(onEscape).not.toHaveBeenCalled();
+      expect(surface.input.value).toBe('legacy composition draft');
+      expect(current.controller.snapshot()).toEqual(before);
+    },
+  );
+
   it('focuses once for a new focusEpoch and never for blur-origin completion', async () => {
     const entered = harness();
     const enterSurface = new CaptureSurface(host(), entered.controller);

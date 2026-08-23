@@ -108,6 +108,64 @@ describe('CenterPanel multi-selection', () => {
     expect(cards[1]!.classList.contains('abyss-multi-selected')).toBe(false);
   });
 
+  it('creates the selection live region without an initial announcement', () => {
+    const { el } = makeCenter([t1, t2]);
+
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('');
+  });
+
+  it('does not mutate the live region for plain activation, refresh, or a no-op visual update', () => {
+    const { el, panel } = makeCenter([t1, t2]);
+    const live = el.querySelector<HTMLElement>('.abyss-selection-live')!;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(el, { childList: true, characterData: true, subtree: true });
+    const liveMutations = (): MutationRecord[] =>
+      observer
+        .takeRecords()
+        .filter(
+          (record) =>
+            record.target instanceof HTMLElement &&
+            record.target.classList.contains('abyss-selection-live'),
+        );
+
+    click(cards(el)[0]!);
+    expect(liveMutations()).toHaveLength(0);
+
+    (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
+    expect(liveMutations()).toHaveLength(0);
+
+    panel.refresh();
+    expect(liveMutations()).toHaveLength(0);
+    expect(el.querySelector('.abyss-selection-live')?.textContent).toBe('');
+    observer.disconnect();
+    expect(live.isConnected).toBe(false);
+  });
+
+  it('mutates the live region once for each real 0 to 1 to 2 to 1 to 0 count transition', () => {
+    const { el, panel } = makeCenter([t1, t2]);
+    const live = el.querySelector<HTMLElement>('.abyss-selection-live')!;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(live, { childList: true, characterData: true, subtree: true });
+    const expectAnnouncement = (message: string): void => {
+      const mutations = observer.takeRecords();
+      expect(mutations).toHaveLength(1);
+      expect(live.textContent).toBe(message);
+    };
+
+    click(cards(el)[0]!, { ctrlKey: true });
+    expectAnnouncement('1 task selected');
+    (panel as unknown as { updateSelectionVisuals(): void }).updateSelectionVisuals();
+    expect(observer.takeRecords()).toHaveLength(0);
+
+    click(cards(el)[1]!, { ctrlKey: true });
+    expectAnnouncement('2 tasks selected');
+    click(cards(el)[1]!, { ctrlKey: true });
+    expectAnnouncement('1 task selected');
+    click(cards(el)[0]!, { ctrlKey: true });
+    expectAnnouncement('0 tasks selected');
+    observer.disconnect();
+  });
+
   it('Ctrl+Click adds card to multi-selection', () => {
     const { el } = makeCenter([t1, t2]);
     const cards = el.querySelectorAll<HTMLElement>('.abyss-task-card');

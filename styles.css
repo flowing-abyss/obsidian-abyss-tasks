@@ -161,9 +161,9 @@
   inset-inline-start: 50%;
   inline-size: min(
     36rem,
-    calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge))
+    max(0px, calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge)))
   );
-  max-inline-size: calc(100% - var(--abyss-quick-capture-edge) - var(--abyss-quick-capture-edge));
+  max-inline-size: 100%;
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -252,6 +252,14 @@
 }
 
 /* Center panel */
+.abyss-center-shell {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
 .abyss-center {
   flex: 1;
   min-width: 0;
@@ -6202,16 +6210,16 @@ body.abyss-modal-open .popover.hover-popover {
   padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.abyss-layout--tasks > .abyss-center > .abyss-center-header,
-.abyss-layout--search > .abyss-center > .abyss-center-header {
+.abyss-layout--tasks > .abyss-center-shell > .abyss-center > .abyss-center-header,
+.abyss-layout--search > .abyss-center-shell > .abyss-center > .abyss-center-header {
   padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 
-.abyss-layout--calendar > .abyss-center > .abyss-cal-nav {
+.abyss-layout--calendar > .abyss-center-shell > .abyss-center > .abyss-cal-nav {
   padding-top: calc(8px + var(--abyss-shell-top-inset));
 }
 
-.abyss-layout--projects > .abyss-center .abyss-projects-toolbar {
+.abyss-layout--projects > .abyss-center-shell > .abyss-center .abyss-projects-toolbar {
   padding-top: calc(12px + var(--abyss-shell-top-inset));
 }
 

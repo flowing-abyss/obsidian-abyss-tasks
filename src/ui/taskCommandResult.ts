@@ -5,6 +5,7 @@ import {
   type TaskCommandResult,
   type TaskSnapshot,
 } from '../tasks';
+import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 import { TaskMoveRecoveryModal } from './TaskMoveRecoveryModal';
 
 interface CompletionConfirmationTask {
@@ -18,6 +19,8 @@ let dismissActiveCompletionConfirmation: (() => void) | undefined;
 export function requestTaskCompletion(
   task: CompletionConfirmationTask,
   onConfirm: () => void | Promise<unknown>,
+  interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+  teardownSignal?: AbortSignal,
 ): Promise<void> {
   const recurrence = task.recurrence;
   if (
@@ -35,8 +38,12 @@ export function requestTaskCompletion(
 
   return new Promise<void>((resolve, reject) => {
     dismissActiveCompletionConfirmation?.();
-    activeDocument.querySelector('.abyss-recurrence-delete-confirm')?.remove();
+    if (teardownSignal?.aborted) {
+      resolve();
+      return;
+    }
     const previousFocus = activeDocument.activeElement;
+    const ownershipToken = interactionOwnership.acquire({ blocksShortcuts: true });
     const surface = activeDocument.body.createDiv({
       cls: 'abyss-recurrence-delete-confirm',
       attr: {
@@ -65,18 +72,26 @@ export function requestTaskCompletion(
       attr: { type: 'button' },
     });
 
-    const remove = (): void => {
+    let removed = false;
+    const remove = (): boolean => {
+      if (removed) return false;
+      removed = true;
       surface.remove();
       activeDocument.removeEventListener('keydown', onKeyDown, true);
-      dismissActiveCompletionConfirmation = undefined;
+      teardownSignal?.removeEventListener('abort', onTeardown);
+      ownershipToken.release();
+      if (dismissActiveCompletionConfirmation === dismiss) {
+        dismissActiveCompletionConfirmation = undefined;
+      }
+      return true;
     };
     const cancelCompletion = (restoreFocus: boolean): void => {
-      remove();
+      if (!remove()) return;
       if (restoreFocus && previousFocus instanceof HTMLElement) previousFocus.focus();
       resolve();
     };
     const confirmCompletion = (): void => {
-      remove();
+      if (!remove()) return;
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
       Promise.resolve()
         .then(onConfirm)
@@ -102,13 +117,16 @@ export function requestTaskCompletion(
         cancelCompletion(true);
       }
     };
+    const dismiss = (): void => cancelCompletion(false);
+    const onTeardown = (): void => dismiss();
     cancel.addEventListener('click', () => cancelCompletion(true));
     confirm.addEventListener('click', confirmCompletion);
     surface.addEventListener('click', (event) => {
       if (event.target === surface) cancelCompletion(true);
     });
     activeDocument.addEventListener('keydown', onKeyDown, true);
-    dismissActiveCompletionConfirmation = () => cancelCompletion(false);
+    teardownSignal?.addEventListener('abort', onTeardown, { once: true });
+    dismissActiveCompletionConfirmation = dismiss;
     cancel.focus();
   });
 }
