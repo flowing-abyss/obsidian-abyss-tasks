@@ -6316,11 +6316,9 @@ body.abyss-modal-open .popover.hover-popover {
   }
 }
 
-/* Seat global results above Obsidian's floating navigation on phone-sized mobile windows. */
-@media (max-width: 480px) {
-  body.is-mobile .abyss-creation-feedback {
-    inset-block-end: calc(
-      env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
-    );
-  }
+/* Seat global results above Obsidian's floating navigation in either phone orientation. */
+body.is-phone.is-mobile .abyss-creation-feedback {
+  inset-block-end: calc(
+    env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
+  );
 }
