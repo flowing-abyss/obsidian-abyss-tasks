@@ -36,6 +36,29 @@ function keydown(
   return event;
 }
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
+}
+
+function rectList(rectangles: readonly DOMRect[]): DOMRectList {
+  const values = [...rectangles];
+  return Object.assign(values, {
+    item: (index: number) => values[index] ?? null,
+  }) as unknown as DOMRectList;
+}
+
+function setGeometry(
+  element: Element,
+  bounds: DOMRect,
+  clientRects: readonly DOMRect[] = [bounds],
+): void {
+  const list = rectList(clientRects);
+  Object.defineProperties(element, {
+    getBoundingClientRect: { configurable: true, value: () => bounds },
+    getClientRects: { configurable: true, value: () => list },
+  });
+}
+
 interface RouterHarness {
   readonly actions: PanelNavigationActions;
   readonly registry: InteractionRegistry<ShortcutActionId>;
@@ -96,6 +119,7 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
     (className) => {
       const nativeSurface = document.createElement('div');
       nativeSurface.className = className;
+      setGeometry(nativeSurface, rect(20, 20, 180, 80));
       document.body.appendChild(nativeSurface);
 
       expect(nativeInteractionBlocksPanelShortcuts(document)).toBe(true);
@@ -104,6 +128,68 @@ describe('nativeInteractionBlocksPanelShortcuts', () => {
       expect(nativeInteractionBlocksPanelShortcuts(document)).toBe(false);
     },
   );
+
+  it.each([
+    [
+      'hidden attribute',
+      (surface: HTMLElement): void => {
+        surface.hidden = true;
+      },
+    ],
+    [
+      'aria-hidden state',
+      (surface: HTMLElement): void => {
+        surface.setAttribute('aria-hidden', 'true');
+      },
+    ],
+    [
+      'display:none',
+      (surface: HTMLElement): void => {
+        surface.style.display = 'none';
+      },
+    ],
+    [
+      'visibility:hidden',
+      (surface: HTMLElement): void => {
+        surface.style.visibility = 'hidden';
+      },
+    ],
+    [
+      'disconnection',
+      (surface: HTMLElement): void => {
+        surface.remove();
+      },
+    ],
+    ['zero area', (surface: HTMLElement): void => setGeometry(surface, rect(20, 20, 0, 80))],
+    [
+      'no rendered client rectangles',
+      (surface: HTMLElement): void => setGeometry(surface, rect(20, 20, 180, 80), []),
+    ],
+    [
+      'offscreen geometry',
+      (surface: HTMLElement): void =>
+        setGeometry(surface, rect(window.innerWidth + 20, 20, 180, 80)),
+    ],
+  ] as const)('ignores a retained native surface with %s', (_reason, hideSurface) => {
+    const nativeSurface = document.createElement('div');
+    nativeSurface.className = 'menu';
+    setGeometry(nativeSurface, rect(20, 20, 180, 80));
+    document.body.appendChild(nativeSurface);
+    hideSurface(nativeSurface);
+
+    expect(nativeInteractionBlocksPanelShortcuts(document)).toBe(false);
+  });
+
+  it('keeps partially onscreen animated native surfaces blocking', () => {
+    const nativeSurface = document.createElement('div');
+    nativeSurface.className = 'suggestion-container';
+    nativeSurface.style.opacity = '0';
+    nativeSurface.style.transform = 'translateX(-10px)';
+    setGeometry(nativeSurface, rect(-20, 20, 80, 80));
+    document.body.appendChild(nativeSurface);
+
+    expect(nativeInteractionBlocksPanelShortcuts(document)).toBe(true);
+  });
 
   it('does not treat plugin popovers or similar class names as native blockers', () => {
     const pluginPopover = document.createElement('div');

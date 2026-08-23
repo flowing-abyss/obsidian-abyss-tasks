@@ -77,6 +77,39 @@ function commandRootRef(command: TaskCommand): TaskRef | undefined {
   return command.ref;
 }
 
+function positiveRenderedArea(element: HTMLElement): DOMRect | null {
+  const bounds = element.getBoundingClientRect();
+  if (
+    !Number.isFinite(bounds.left) ||
+    !Number.isFinite(bounds.top) ||
+    !Number.isFinite(bounds.width) ||
+    !Number.isFinite(bounds.height) ||
+    bounds.width <= 0 ||
+    bounds.height <= 0
+  ) {
+    return null;
+  }
+  const rects = element.getClientRects();
+  for (let index = 0; index < rects.length; index++) {
+    const rect = rects[index];
+    if (rect && rect.width > 0 && rect.height > 0) return bounds;
+  }
+  return null;
+}
+
+function intersectsOwnerViewport(bounds: DOMRect, ownerWindow: Window | null): boolean {
+  if (!ownerWindow) return true;
+  const width = ownerWindow.innerWidth;
+  const height = ownerWindow.innerHeight;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return true;
+  return bounds.right > 0 && bounds.bottom > 0 && bounds.left < width && bounds.top < height;
+}
+
+function hasPresentedPanelGeometry(element: HTMLElement, ownerWindow: Window | null): boolean {
+  const bounds = positiveRenderedArea(element);
+  return bounds !== null && intersectsOwnerViewport(bounds, ownerWindow);
+}
+
 export class PanelView extends ItemView {
   private state!: AppState;
   private rail!: RailPanel;
@@ -372,7 +405,10 @@ export class PanelView extends ItemView {
       if (style?.display === 'none' || style?.visibility === 'hidden') return false;
       current = current.parentElement;
     }
-    return true;
+    return (
+      hasPresentedPanelGeometry(this.containerEl, ownerWindow ?? null) &&
+      hasPresentedPanelGeometry(this.contentEl, ownerWindow ?? null)
+    );
   }
 
   private affects(event: TaskIndexEvent, path: string): boolean {

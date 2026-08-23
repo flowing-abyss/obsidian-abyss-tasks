@@ -34,6 +34,29 @@ function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS)
 
 useRealMoment();
 
+function rect(left: number, top: number, width: number, height: number): DOMRect {
+  return new DOMRect(left, top, width, height);
+}
+
+function rectList(rectangles: readonly DOMRect[]): DOMRectList {
+  const values = [...rectangles];
+  return Object.assign(values, {
+    item: (index: number) => values[index] ?? null,
+  }) as unknown as DOMRectList;
+}
+
+function setGeometry(
+  element: Element,
+  bounds: DOMRect,
+  clientRects: readonly DOMRect[] = [bounds],
+): void {
+  const list = rectList(clientRects);
+  Object.defineProperties(element, {
+    getBoundingClientRect: { configurable: true, value: () => bounds },
+    getClientRects: { configurable: true, value: () => list },
+  });
+}
+
 function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
   const source = queries as unknown as {
     listeners: Array<(published: TaskIndexEvent) => void>;
@@ -72,6 +95,8 @@ describe('PanelView', () => {
         type === PanelView && app.workspace.activeLeaf === leaf ? (view as never) : null,
       );
       await view.onOpen();
+      setGeometry(view.containerEl, rect(20, 20, 640, 480));
+      setGeometry(view.contentEl, rect(20, 20, 640, 480));
     });
 
     afterEach(async () => {
@@ -185,6 +210,36 @@ describe('PanelView', () => {
       );
       expect(openQuickCapture).toHaveBeenCalledOnce();
     });
+
+    it.each([
+      ['zero-area bounds', (element: HTMLElement) => setGeometry(element, rect(20, 20, 0, 480))],
+      [
+        'no rendered client rectangles',
+        (element: HTMLElement) => setGeometry(element, rect(20, 20, 640, 480), []),
+      ],
+      [
+        'offscreen bounds',
+        (element: HTMLElement) => setGeometry(element, rect(window.innerWidth + 20, 20, 640, 480)),
+      ],
+    ] as const)(
+      'does not route shortcuts from an active connected pane with %s',
+      (_reason, hide) => {
+        document.body.appendChild(view.containerEl);
+        app.workspace.activeLeaf = leaf;
+        hide(view.contentEl);
+        const event = new KeyboardEvent('keydown', {
+          key: 'q',
+          code: 'KeyQ',
+          bubbles: true,
+          cancelable: true,
+        });
+
+        view.contentEl.dispatchEvent(event);
+
+        expect(event.defaultPrevented).toBe(false);
+        expect(view.contentEl.querySelector('.abyss-quick-capture-host')?.children).toHaveLength(0);
+      },
+    );
 
     it('applies shortcut settings edits immediately without recreating the PanelView', () => {
       document.body.appendChild(view.containerEl);
