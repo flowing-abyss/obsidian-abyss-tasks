@@ -1,6 +1,6 @@
 import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AppState } from '../src/app/AppState';
+import { AppState, type ListSelection } from '../src/app/AppState';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { TagManager } from '../src/tags/TagManager';
 import type {
@@ -243,6 +243,7 @@ describe('PanelView', () => {
       const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
       const openCalendar = vi.spyOn(internals.panelNavigation, 'openCalendar');
       const openList = vi.spyOn(internals.panelNavigation, 'openList');
+      const rebaseListIdentity = vi.spyOn(internals.panelNavigation, 'rebaseListIdentity');
 
       view.contentEl
         .querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]')!
@@ -253,10 +254,9 @@ describe('PanelView', () => {
       expect(openList).toHaveBeenCalledWith('inbox');
 
       internals.state.set('selectedList', { type: 'tag', tag: '#work' });
-      openList.mockClear();
       await tagManager.renameTagExact('#work', '#focus');
 
-      expect(openList).toHaveBeenCalledWith({ type: 'tag', tag: '#focus' });
+      expect(rebaseListIdentity).toHaveBeenCalledWith({ type: 'tag', tag: '#focus' });
     });
 
     it('mode change to calendar updates layout class', () => {
@@ -292,6 +292,56 @@ describe('PanelView', () => {
         }
 
         expect(state.get('selectedList')).toEqual({ type: 'tag', tag: expected });
+      },
+    );
+
+    it.each([
+      ['calendar', 'tag rename'],
+      ['search', 'tag rename'],
+      ['projects', 'tag rename'],
+      ['calendar', 'project rename'],
+      ['search', 'project rename'],
+      ['projects', 'project rename'],
+      ['calendar', 'project delete'],
+      ['search', 'project delete'],
+      ['projects', 'project delete'],
+    ] as const)(
+      'keeps %s active during background %s identity maintenance',
+      async (mode, event) => {
+        const internals = view as unknown as {
+          state: AppState;
+          panelNavigation: PanelNavigator;
+        };
+        const rebase = vi.spyOn(internals.panelNavigation, 'rebaseListIdentity');
+        let expected: ListSelection;
+
+        if (event === 'tag rename') {
+          internals.panelNavigation.openList({ type: 'tag', tag: '#work' });
+          if (mode === 'calendar') internals.panelNavigation.openCalendar();
+          else if (mode === 'search') internals.panelNavigation.openSearch();
+          else internals.panelNavigation.openProjects();
+          rebase.mockClear();
+          await tagManager.renameTagExact('#work', '#focus');
+          expected = { type: 'tag', tag: '#focus' };
+        } else {
+          const file = await app.vault.create('Project.md', '');
+          internals.panelNavigation.openList({ type: 'project', path: file.path });
+          if (mode === 'calendar') internals.panelNavigation.openCalendar();
+          else if (mode === 'search') internals.panelNavigation.openSearch();
+          else internals.panelNavigation.openProjects();
+          rebase.mockClear();
+          if (event === 'project rename') {
+            await app.vault.rename(file, 'Renamed.md');
+            expected = { type: 'project', path: 'Renamed.md' };
+          } else {
+            await app.vault.delete(file);
+            expected = 'today';
+          }
+        }
+
+        expect(rebase).toHaveBeenCalledWith(expected);
+        expect(internals.state.get('mode')).toBe(mode);
+        expect(internals.state.get('selectedList')).toEqual(expected);
       },
     );
 

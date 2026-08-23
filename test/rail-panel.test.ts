@@ -14,6 +14,7 @@ describe('RailPanel', () => {
       openProjects: vi.fn(),
       openSearch: vi.fn(),
       openQuickCapture: vi.fn(),
+      rebaseListIdentity: vi.fn(),
     };
   }
 

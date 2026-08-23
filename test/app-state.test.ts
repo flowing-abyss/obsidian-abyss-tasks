@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AppState } from '../src/app/AppState';
+import { AppState, type AppStateData } from '../src/app/AppState';
 import { task } from './helpers';
 
 describe('AppState', () => {
@@ -115,15 +115,19 @@ describe('AppState', () => {
     expect(s.get('selectedList')).toEqual(sel);
   });
 
-  it('a throwing listener halts siblings and rethrows from set (CURRENT BEHAVIOR, follow-up FU-7)', () => {
+  it('rethrows a listener error only after sibling and commit delivery complete', () => {
     const s = new AppState();
+    const trace: string[] = [];
     s.on('mode', () => {
+      trace.push('throwing');
       throw new Error('boom');
     });
-    const sibling = vi.fn();
-    s.on('mode', sibling);
+    s.on('mode', () => trace.push('sibling'));
+    s.onCommit(() => trace.push('commit'));
+
     expect(() => s.set('mode', 'calendar')).toThrow('boom');
-    expect(sibling).not.toHaveBeenCalled();
+    expect(trace).toEqual(['throwing', 'sibling', 'commit']);
+    expect(s.get('mode')).toBe('calendar');
   });
 
   it('unsubscribe is idempotent (safe to call twice)', () => {
@@ -310,6 +314,137 @@ describe('AppState', () => {
 
       expect(keyListener).not.toHaveBeenCalled();
       expect(commitListener).not.toHaveBeenCalled();
+    });
+
+    it('folds a listener update to a pending key into one final notification and commit', () => {
+      const s = new AppState();
+      const filter = vi.fn((next: string) => {
+        expect(next).toBe(s.get('centerFilter'));
+      });
+      const commits = vi.fn();
+      s.on('mode', () => s.set('centerFilter', 'listener-final'));
+      s.on('centerFilter', filter);
+      s.onCommit(commits);
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        s.set('centerFilter', 'queued');
+      });
+
+      expect(filter).toHaveBeenCalledOnce();
+      expect(filter).toHaveBeenCalledWith('listener-final', '');
+      expect(commits).toHaveBeenCalledOnce();
+      expect(commits).toHaveBeenCalledWith(new Set(['mode', 'centerFilter']));
+    });
+
+    it('delivers a reentrant write to the current key in a final wave before one commit', () => {
+      const s = new AppState();
+      const notifications: Array<[string, string]> = [];
+      const commits = vi.fn();
+      s.on('mode', (next, prev) => {
+        notifications.push([next, prev]);
+        if (next === 'calendar') s.set('mode', 'search');
+      });
+      s.onCommit(commits);
+
+      s.batch(() => s.set('mode', 'calendar'));
+
+      expect(notifications).toEqual([
+        ['calendar', 'tasks'],
+        ['search', 'calendar'],
+      ]);
+      expect(s.get('mode')).toBe('search');
+      expect(commits).toHaveBeenCalledOnce();
+      expect(commits).toHaveBeenCalledWith(new Set(['mode']));
+    });
+
+    it('continues later key notifications and the outer commit before rethrowing', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      s.on('mode', () => {
+        trace.push('mode:throw');
+        throw new Error('mode failed');
+      });
+      s.on('mode', () => trace.push('mode:sibling'));
+      s.on('centerFilter', () => trace.push('centerFilter'));
+      s.onCommit(() => trace.push('commit'));
+
+      expect(() =>
+        s.batch(() => {
+          s.set('mode', 'calendar');
+          s.set('centerFilter', 'final');
+        }),
+      ).toThrow('mode failed');
+
+      expect(trace).toEqual(['mode:throw', 'mode:sibling', 'centerFilter', 'commit']);
+      expect(s.get('centerFilter')).toBe('final');
+    });
+
+    it('snapshots key listeners for add and remove mutations during delivery', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      const added = (): void => {
+        trace.push('added');
+      };
+      let removeSibling = (): void => {};
+      s.on('mode', () => {
+        trace.push('first');
+        removeSibling();
+        s.on('mode', added);
+      });
+      removeSibling = s.on('mode', () => trace.push('removed'));
+
+      s.set('mode', 'calendar');
+      expect(trace).toEqual(['first', 'removed']);
+
+      trace.length = 0;
+      s.set('mode', 'search');
+      expect(trace).toEqual(['first', 'added']);
+    });
+
+    it('snapshots commit listeners for add and remove mutations during delivery', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      const added = (): void => {
+        trace.push('added');
+      };
+      let removeSibling = (): void => {};
+      s.onCommit(() => {
+        trace.push('first');
+        removeSibling();
+        s.onCommit(added);
+      });
+      removeSibling = s.onCommit(() => trace.push('removed'));
+
+      s.set('mode', 'calendar');
+      expect(trace).toEqual(['first', 'removed']);
+
+      trace.length = 0;
+      s.set('mode', 'search');
+      expect(trace).toEqual(['first', 'added']);
+    });
+
+    it('gives commit listeners an immutable snapshot that stays stable across later commits', () => {
+      const s = new AppState();
+      const snapshots: ReadonlySet<string>[] = [];
+      let mutationError: unknown;
+      s.onCommit((changed) => {
+        snapshots.push(changed);
+        if (snapshots.length !== 1) return;
+        try {
+          (changed as Set<keyof AppStateData>).add('searchQuery');
+        } catch (error) {
+          mutationError = error;
+        }
+      });
+
+      s.set('mode', 'calendar');
+      s.set('centerFilter', 'next');
+
+      expect(mutationError).toBeInstanceOf(TypeError);
+      expect(Object.isFrozen(snapshots[0])).toBe(true);
+      expect([...snapshots[0]!]).toEqual(['mode']);
+      expect([...snapshots[1]!]).toEqual(['centerFilter']);
     });
   });
 });

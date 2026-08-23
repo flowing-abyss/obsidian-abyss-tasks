@@ -128,7 +128,7 @@ export class PanelView extends ItemView {
     );
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
       getSelectedList: () => this.state.get('selectedList'),
-      setSelectedList: (selection) => this.panelNavigation.openList(selection),
+      setSelectedList: (selection) => this.panelNavigation.rebaseListIdentity(selection),
     });
     const selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries: this.tasks.queries,
@@ -235,7 +235,7 @@ export class PanelView extends ItemView {
         if (!(file instanceof TFile)) return;
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === oldPath) {
-          this.panelNavigation.openList({ type: 'project', path: file.path });
+          this.panelNavigation.rebaseListIdentity({ type: 'project', path: file.path });
         }
         const panel = this.state.get('projectsPanel');
         if (panel.view === 'dashboard' && panel.path === oldPath) {
@@ -247,7 +247,7 @@ export class PanelView extends ItemView {
       this.app.vault.on('delete', (file) => {
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === file.path) {
-          this.panelNavigation.openList('today');
+          this.panelNavigation.rebaseListIdentity('today');
         }
         const panel = this.state.get('projectsPanel');
         if (panel.view === 'dashboard' && panel.path === file.path) {

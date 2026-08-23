@@ -397,6 +397,29 @@ describe('CenterPanel semantic navigation render boundary', () => {
 
     panel.destroy();
   });
+
+  it('renders once after a key listener rewrites another pending navigation key', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    state.set('centerFilter', 'before');
+    const panel = makeStaticPanel(state, [], settings);
+    panel.mount(freshContainer());
+    const render = vi.spyOn(panel as unknown as { render(): void }, 'render');
+    const commits = vi.fn();
+    state.on('selectedList', () => state.set('centerFilter', 'listener-final'));
+    state.onCommit(commits);
+    const navigator = new PanelNavigator(state, settings, panel);
+
+    navigator.openList('inbox');
+
+    expect(state.get('centerFilter')).toBe('listener-final');
+    expect(panel['el'].querySelector<HTMLInputElement>('.abyss-center-search')?.value).toBe(
+      'listener-final',
+    );
+    expect(commits).toHaveBeenCalledOnce();
+    expect(render).toHaveBeenCalledOnce();
+    panel.destroy();
+  });
 });
 
 describe('CenterPanel interaction ownership', () => {

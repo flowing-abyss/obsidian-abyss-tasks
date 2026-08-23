@@ -13,6 +13,7 @@ export interface PanelNavigationActions {
   openProjects(): void;
   openSearch(): void;
   openQuickCapture(): void;
+  rebaseListIdentity(selection: ListSelection): void;
 }
 
 export interface PanelNavigationCenterPort {
@@ -70,6 +71,23 @@ export class PanelNavigator implements PanelNavigationActions {
     this.center.openQuickCapture();
   }
 
+  rebaseListIdentity(selection: ListSelection): void {
+    if (this.state.get('mode') === 'tasks') {
+      this.openList(selection);
+      return;
+    }
+    this.state.batch(() => {
+      const previous = this.lastTasksList;
+      this.storeListState(previous);
+      this.moveListStateIdentity(previous, selection);
+      this.lastTasksList = selection;
+      this.state.set('selectedList', selection);
+      this.state.set('centerListViewState', this.listState(selection));
+      this.state.set('centerFilter', '');
+      void this.onSaveSettings();
+    });
+  }
+
   private openMode(mode: ViewMode, prepare: () => void = () => {}): void {
     this.state.batch(() => {
       if (this.state.get('mode') === 'tasks') this.persistListState(this.lastTasksList);
@@ -79,10 +97,27 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   private persistListState(selection: ListSelection): void {
+    this.storeListState(selection);
+    void this.onSaveSettings();
+  }
+
+  private storeListState(selection: ListSelection): void {
     const key = listSelectionToKey(selection);
     const current = this.state.get('centerListViewState');
     this.listViewStates()[key] = current;
-    void this.onSaveSettings();
+  }
+
+  private moveListStateIdentity(previous: ListSelection, next: ListSelection): void {
+    if (typeof previous !== 'object' || typeof next !== 'object' || previous.type !== next.type) {
+      return;
+    }
+    const previousKey = listSelectionToKey(previous);
+    const nextKey = listSelectionToKey(next);
+    if (previousKey === nextKey) return;
+    const states = this.listViewStates();
+    const previousState = states[previousKey];
+    if (previousState) states[nextKey] = previousState;
+    delete states[previousKey];
   }
 
   private listState(selection: ListSelection): ListViewState {

@@ -150,6 +150,75 @@ describe('PanelNavigator', () => {
     expect(center.openQuickCapture).toHaveBeenCalledOnce();
   });
 
+  it.each(['calendar', 'search', 'projects'] as const)(
+    'rebases a renamed list identity in %s without opening Tasks',
+    (mode) => {
+      const previous = { type: 'tag', tag: '#work' } as const;
+      const renamed = { type: 'tag', tag: '#focus' } as const;
+      const current = listState('priority');
+      const calendarSettings = settings({ listViewStates: { 'tag:#work': current } });
+      const { state, navigator, save } = harness({
+        mode,
+        selection: previous,
+        settings: calendarSettings,
+      });
+      state.set('centerListViewState', current);
+      state.set('centerFilter', 'needle');
+      const commits = vi.fn();
+      state.onCommit(commits);
+
+      navigator.rebaseListIdentity(renamed);
+
+      expect(state.get('mode')).toBe(mode);
+      expect(state.get('selectedList')).toEqual(renamed);
+      expect(state.get('centerListViewState')).toBe(current);
+      expect(state.get('centerFilter')).toBe('');
+      expect(calendarSettings.listViewStates?.['tag:#work']).toBeUndefined();
+      expect(calendarSettings.listViewStates?.['tag:#focus']).toBe(current);
+      expect(save).toHaveBeenCalledOnce();
+      expect(commits).toHaveBeenCalledOnce();
+    },
+  );
+
+  it('preserves the complete foreground Tasks transition when rebasing identity', () => {
+    const current = listState('priority');
+    const inbox = listState('status');
+    const calendarSettings = settings({ listViewStates: { inbox } });
+    const { state, navigator, save } = harness({ settings: calendarSettings });
+    state.set('centerListViewState', current);
+    state.set('centerFilter', 'needle');
+
+    navigator.rebaseListIdentity('inbox');
+
+    expect(state.get('mode')).toBe('tasks');
+    expect(state.get('selectedList')).toBe('inbox');
+    expect(state.get('centerListViewState')).toBe(inbox);
+    expect(state.get('centerFilter')).toBe('');
+    expect(calendarSettings.listViewStates?.['today']).toBe(current);
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it('restores the fallback list state instead of migrating a deleted project state', () => {
+    const project = { type: 'project', path: 'Projects/Gone.md' } as const;
+    const projectState = listState('priority');
+    const todayState = listState('date');
+    const calendarSettings = settings({ listViewStates: { today: todayState } });
+    const { state, navigator } = harness({
+      mode: 'calendar',
+      selection: project,
+      settings: calendarSettings,
+    });
+    state.set('centerListViewState', projectState);
+
+    navigator.rebaseListIdentity('today');
+
+    expect(state.get('mode')).toBe('calendar');
+    expect(state.get('selectedList')).toBe('today');
+    expect(state.get('centerListViewState')).toBe(todayState);
+    expect(calendarSettings.listViewStates?.['project:Projects/Gone.md']).toBe(projectState);
+    expect(calendarSettings.listViewStates?.['today']).toBe(todayState);
+  });
+
   it.each([
     ['openTasks', { mode: 'search' }],
     ['openList', { mode: 'calendar' }],
