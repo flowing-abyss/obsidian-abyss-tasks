@@ -36,6 +36,13 @@ interface PendingChange {
   value: unknown;
 }
 
+class AppStateReentrantMutationError extends Error {
+  constructor(readonly key: keyof AppStateData) {
+    super(`Cannot set AppState.${String(key)} during notification delivery`);
+    this.name = 'AppStateReentrantMutationError';
+  }
+}
+
 function immutableChangedSet(
   values: Iterable<keyof AppStateData>,
 ): ReadonlySet<keyof AppStateData> {
@@ -78,11 +85,16 @@ export class AppState {
   set<K extends keyof AppStateData>(key: K, value: AppStateData[K]): void {
     const prev = this.data[key];
     if (prev === value) return;
+    if (this.delivering) throw new AppStateReentrantMutationError(key);
     this.data[key] = value;
-    const pending = this.pendingChanges.get(key);
-    if (pending) pending.value = value;
-    else this.pendingChanges.set(key, { prev, value });
-    if (this.batchDepth === 0 && !this.delivering) this.flushPendingChanges();
+    if (this.batchDepth > 0) {
+      const pending = this.pendingChanges.get(key);
+      if (pending) pending.value = value;
+      else this.pendingChanges.set(key, { prev, value });
+      return;
+    }
+    this.notifyStandaloneKey(key, value, prev);
+    this.publishStandaloneCommit(immutableChangedSet([key]));
   }
 
   batch(run: () => void): void {
@@ -104,36 +116,28 @@ export class AppState {
 
   private flushPendingChanges(forceCommit = false): void {
     if (this.delivering || (!forceCommit && this.pendingChanges.size === 0)) return;
+    const changes = this.pendingChanges;
+    this.pendingChanges = new Map();
     this.delivering = true;
-    const changed = new Set<keyof AppStateData>();
     const errors: unknown[] = [];
     try {
-      while (this.pendingChanges.size > 0) {
-        const next = this.pendingChanges.entries().next();
-        if (next.done) break;
-        const [key, change] = next.value;
-        this.pendingChanges.delete(key);
-        changed.add(key);
-        this.notifyKey(key, change.value, change.prev, errors);
+      for (const [key, change] of changes) {
+        this.notifyBatchKey(key, change.value, change.prev, errors);
       }
-      this.notifyCommit(immutableChangedSet(changed), errors);
+      this.notifyCommit(immutableChangedSet(changes.keys()), errors);
     } finally {
       this.delivering = false;
-    }
-
-    // A commit listener writes after the current boundary is already observable, so it begins a
-    // follow-up standalone boundary. Key-listener writes are drained above before the one commit.
-    if (this.pendingChanges.size > 0) {
-      try {
-        this.flushPendingChanges();
-      } catch (error) {
-        errors.push(error);
-      }
     }
     this.throwDeliveryErrors(errors);
   }
 
-  private notifyKey(
+  private notifyStandaloneKey(key: keyof AppStateData, value: unknown, prev: unknown): void {
+    const bucket = this.listeners.get(key);
+    if (!bucket) return;
+    for (const cb of bucket) cb(value, prev);
+  }
+
+  private notifyBatchKey(
     key: keyof AppStateData,
     value: unknown,
     prev: unknown,
@@ -148,6 +152,17 @@ export class AppState {
         errors.push(error);
       }
     }
+  }
+
+  private publishStandaloneCommit(changed: ReadonlySet<keyof AppStateData>): void {
+    const errors: unknown[] = [];
+    this.delivering = true;
+    try {
+      this.notifyCommit(changed, errors);
+    } finally {
+      this.delivering = false;
+    }
+    this.throwDeliveryErrors(errors);
   }
 
   private notifyCommit(changed: ReadonlySet<keyof AppStateData>, errors: unknown[]): void {

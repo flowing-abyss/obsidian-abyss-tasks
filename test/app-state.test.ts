@@ -115,7 +115,7 @@ describe('AppState', () => {
     expect(s.get('selectedList')).toEqual(sel);
   });
 
-  it('rethrows a listener error only after sibling and commit delivery complete', () => {
+  it('propagates a standalone listener error immediately and skips siblings and commit', () => {
     const s = new AppState();
     const trace: string[] = [];
     s.on('mode', () => {
@@ -126,8 +126,30 @@ describe('AppState', () => {
     s.onCommit(() => trace.push('commit'));
 
     expect(() => s.set('mode', 'calendar')).toThrow('boom');
-    expect(trace).toEqual(['throwing', 'sibling', 'commit']);
+    expect(trace).toEqual(['throwing']);
     expect(s.get('mode')).toBe('calendar');
+  });
+
+  it('uses live listener membership during standalone key delivery', () => {
+    const s = new AppState();
+    const trace: string[] = [];
+    const added = (): void => {
+      trace.push('added');
+    };
+    let removeSibling = (): void => {};
+    s.on('mode', () => {
+      trace.push('first');
+      removeSibling();
+      s.on('mode', added);
+    });
+    removeSibling = s.on('mode', () => trace.push('removed'));
+
+    s.set('mode', 'calendar');
+    expect(trace).toEqual(['first', 'added']);
+
+    trace.length = 0;
+    s.set('mode', 'search');
+    expect(trace).toEqual(['first', 'added']);
   });
 
   it('unsubscribe is idempotent (safe to call twice)', () => {
@@ -316,46 +338,83 @@ describe('AppState', () => {
       expect(commitListener).not.toHaveBeenCalled();
     });
 
-    it('folds a listener update to a pending key into one final notification and commit', () => {
+    it('rejects a listener write to another pending key before mutation and commits once', () => {
       const s = new AppState();
-      const filter = vi.fn((next: string) => {
-        expect(next).toBe(s.get('centerFilter'));
+      const trace: string[] = [];
+      const mutator = vi.fn(() => {
+        trace.push('mutator');
+        s.set('centerFilter', 'listener-final');
       });
-      const commits = vi.fn();
-      s.on('mode', () => s.set('centerFilter', 'listener-final'));
+      const sibling = vi.fn((next: string) => {
+        trace.push(`sibling:${next}:${s.get('mode')}`);
+      });
+      const filter = vi.fn((next: string, prev: string) => {
+        trace.push(`filter:${prev}->${next}:${s.get('centerFilter')}`);
+      });
+      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      s.on('mode', mutator);
+      s.on('mode', sibling);
       s.on('centerFilter', filter);
-      s.onCommit(commits);
-
-      s.batch(() => {
-        s.set('mode', 'calendar');
-        s.set('centerFilter', 'queued');
+      s.onCommit((changed) => {
+        trace.push('commit');
+        commits.push(changed);
       });
 
+      let thrown: unknown;
+      try {
+        s.batch(() => {
+          s.set('mode', 'calendar');
+          s.set('centerFilter', 'queued');
+        });
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toMatchObject({
+        name: 'AppStateReentrantMutationError',
+        message: 'Cannot set AppState.centerFilter during notification delivery',
+      });
+      expect(mutator).toHaveBeenCalledOnce();
+      expect(sibling).toHaveBeenCalledOnce();
       expect(filter).toHaveBeenCalledOnce();
-      expect(filter).toHaveBeenCalledWith('listener-final', '');
-      expect(commits).toHaveBeenCalledOnce();
-      expect(commits).toHaveBeenCalledWith(new Set(['mode', 'centerFilter']));
+      expect(filter).toHaveBeenCalledWith('queued', '');
+      expect(s.get('centerFilter')).toBe('queued');
+      expect(trace).toEqual([
+        'mutator',
+        'sibling:calendar:calendar',
+        'filter:->queued:queued',
+        'commit',
+      ]);
+      expect(commits).toHaveLength(1);
+      expect(commits[0]).toEqual(new Set(['mode', 'centerFilter']));
+      expect(Object.isFrozen(commits[0])).toBe(true);
     });
 
-    it('delivers a reentrant write to the current key in a final wave before one commit', () => {
+    it('rejects a listener rewrite of the current key without a second notification', () => {
       const s = new AppState();
-      const notifications: Array<[string, string]> = [];
-      const commits = vi.fn();
-      s.on('mode', (next, prev) => {
-        notifications.push([next, prev]);
-        if (next === 'calendar') s.set('mode', 'search');
+      const mutator = vi.fn(() => s.set('mode', 'search'));
+      const siblingObservations: Array<[string, string, string]> = [];
+      const sibling = vi.fn((next: string, prev: string) => {
+        siblingObservations.push([next, prev, s.get('mode')]);
       });
-      s.onCommit(commits);
+      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      s.on('mode', mutator);
+      s.on('mode', sibling);
+      s.onCommit((changed) => commits.push(changed));
 
-      s.batch(() => s.set('mode', 'calendar'));
+      let thrown: unknown;
+      try {
+        s.batch(() => s.set('mode', 'calendar'));
+      } catch (error) {
+        thrown = error;
+      }
 
-      expect(notifications).toEqual([
-        ['calendar', 'tasks'],
-        ['search', 'calendar'],
-      ]);
-      expect(s.get('mode')).toBe('search');
-      expect(commits).toHaveBeenCalledOnce();
-      expect(commits).toHaveBeenCalledWith(new Set(['mode']));
+      expect(thrown).toMatchObject({ name: 'AppStateReentrantMutationError' });
+      expect(mutator).toHaveBeenCalledOnce();
+      expect(sibling).toHaveBeenCalledOnce();
+      expect(siblingObservations).toEqual([['calendar', 'tasks', 'calendar']]);
+      expect(s.get('mode')).toBe('calendar');
+      expect(commits).toEqual([new Set(['mode'])]);
     });
 
     it('continues later key notifications and the outer commit before rethrowing', () => {
@@ -380,7 +439,7 @@ describe('AppState', () => {
       expect(s.get('centerFilter')).toBe('final');
     });
 
-    it('snapshots key listeners for add and remove mutations during delivery', () => {
+    it('snapshots batched key listeners for add and remove mutations during delivery', () => {
       const s = new AppState();
       const trace: string[] = [];
       const added = (): void => {
@@ -394,15 +453,15 @@ describe('AppState', () => {
       });
       removeSibling = s.on('mode', () => trace.push('removed'));
 
-      s.set('mode', 'calendar');
+      s.batch(() => s.set('mode', 'calendar'));
       expect(trace).toEqual(['first', 'removed']);
 
       trace.length = 0;
-      s.set('mode', 'search');
+      s.batch(() => s.set('mode', 'search'));
       expect(trace).toEqual(['first', 'added']);
     });
 
-    it('snapshots commit listeners for add and remove mutations during delivery', () => {
+    it('snapshots batched commit listeners for add and remove mutations during delivery', () => {
       const s = new AppState();
       const trace: string[] = [];
       const added = (): void => {
@@ -416,12 +475,41 @@ describe('AppState', () => {
       });
       removeSibling = s.onCommit(() => trace.push('removed'));
 
-      s.set('mode', 'calendar');
+      s.batch(() => s.set('mode', 'calendar'));
       expect(trace).toEqual(['first', 'removed']);
 
       trace.length = 0;
-      s.set('mode', 'search');
+      s.batch(() => s.set('mode', 'search'));
       expect(trace).toEqual(['first', 'added']);
+    });
+
+    it('rejects commit-listener mutation and finishes one immutable commit snapshot', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      const commits: ReadonlySet<keyof AppStateData>[] = [];
+      s.onCommit((changed) => {
+        trace.push('mutator');
+        commits.push(changed);
+        s.set('centerFilter', 'blocked');
+      });
+      s.onCommit(() => trace.push('sibling'));
+
+      let thrown: unknown;
+      try {
+        s.batch(() => s.set('mode', 'calendar'));
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toMatchObject({
+        name: 'AppStateReentrantMutationError',
+        message: 'Cannot set AppState.centerFilter during notification delivery',
+      });
+      expect(trace).toEqual(['mutator', 'sibling']);
+      expect(s.get('centerFilter')).toBe('');
+      expect(commits).toHaveLength(1);
+      expect(commits[0]).toEqual(new Set(['mode']));
+      expect(Object.isFrozen(commits[0])).toBe(true);
     });
 
     it('gives commit listeners an immutable snapshot that stays stable across later commits', () => {
