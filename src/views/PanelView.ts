@@ -1,4 +1,4 @@
-import { ItemView, Platform, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
@@ -40,6 +40,17 @@ import {
 import { PanelNavigator } from './panelNavigation';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
+
+let panelViewInstanceSequence = 0;
+
+type CompactPane = 'left' | 'right';
+
+interface CompactPaneElements {
+  readonly left: HTMLElement;
+  readonly right: HTMLElement;
+  readonly leftButton: HTMLButtonElement;
+  readonly rightButton: HTMLButtonElement;
+}
 
 function rootRefOfNode(target: TaskNodeRef): TaskRef {
   let current = target;
@@ -128,6 +139,10 @@ export class PanelView extends ItemView {
   private quickCapture?: QuickCaptureCoordinator;
   private shortcutRouter?: PanelShortcutRouter;
   private panelNavigation!: PanelNavigator;
+  private compactPaneElements?: CompactPaneElements;
+  private compactPaneCleanup?: () => void;
+  private compactPaneOpen: CompactPane | null = null;
+  private compactTaskSelectionKey: string | undefined = undefined;
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -165,7 +180,10 @@ export class PanelView extends ItemView {
       {
         calendarView: () => this.center.calendarView(),
         setCalendarView: (view) => this.center.setCalendarView(view),
-        openQuickCapture: () => this.quickCapture?.openOrFocus(),
+        openQuickCapture: () => {
+          this.closeCompactPane(false);
+          this.quickCapture?.openOrFocus();
+        },
       },
       this.onSaveSettings,
     );
@@ -188,9 +206,34 @@ export class PanelView extends ItemView {
     const railEl = layout.createDiv({ cls: 'abyss-rail' });
     const leftEl = layout.createDiv({ cls: 'abyss-left' });
     const centerShell = layout.createDiv({ cls: 'abyss-center-shell' });
+    const compactPaneControls = centerShell.createDiv({
+      cls: 'abyss-compact-pane-controls',
+      attr: { role: 'toolbar', 'aria-label': 'Task panes' },
+    });
+    const compactLeftButton = compactPaneControls.createEl('button', {
+      cls: 'abyss-compact-pane-button abyss-compact-pane-button--left',
+      attr: {
+        type: 'button',
+        'aria-label': 'Show task lists',
+        title: 'Show task lists',
+        'aria-expanded': 'false',
+      },
+    });
+    setIcon(compactLeftButton, 'panel-left');
+    const compactRightButton = compactPaneControls.createEl('button', {
+      cls: 'abyss-compact-pane-button abyss-compact-pane-button--right',
+      attr: {
+        type: 'button',
+        'aria-label': 'Show task details',
+        title: 'Show task details',
+        'aria-expanded': 'false',
+      },
+    });
+    setIcon(compactRightButton, 'panel-right');
     const centerEl = centerShell.createDiv({ cls: 'abyss-center' });
     const quickCaptureHost = centerShell.createDiv({ cls: 'abyss-quick-capture-host' });
     const rightEl = layout.createDiv({ cls: 'abyss-right' });
+    this.mountCompactPaneAccess(layout, leftEl, rightEl, compactLeftButton, compactRightButton);
     const creationFeedback = layout.createDiv({ cls: 'abyss-creation-feedback' });
     this.creationPresentation = new CreationPresentationController({
       host: creationFeedback,
@@ -328,8 +371,20 @@ export class PanelView extends ItemView {
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
+      if (mode !== 'tasks') this.closeCompactPane(false);
     });
     this.selectionUnsub = this.state.on('taskStack', (stack) => {
+      const selected = stack[0];
+      const selectedRef = selected ? rootTaskRef(selected) : undefined;
+      const selectionKey = selectedRef
+        ? `${selectedRef.filePath}\u0000${String(selectedRef.line)}`
+        : undefined;
+      if (selectionKey && selectionKey !== this.compactTaskSelectionKey) {
+        this.openCompactPane('right', false);
+      } else if (!selectionKey && this.compactPaneOpen === 'right') {
+        this.closeCompactPane(false);
+      }
+      this.compactTaskSelectionKey = selectionKey;
       if (!this.ownedWriteRef) return;
       const ref = stack[0] ? rootTaskRef(stack[0]) : undefined;
       if (!ref || !this.sameRef(ref, this.ownedWriteRef)) this.ownedWriteRef = undefined;
@@ -359,6 +414,11 @@ export class PanelView extends ItemView {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async onClose(): Promise<void> {
+    this.compactPaneCleanup?.();
+    this.compactPaneCleanup = undefined;
+    this.closeCompactPane(false);
+    this.compactPaneElements = undefined;
+    this.compactTaskSelectionKey = undefined;
     this.shortcutRouter?.destroy();
     this.shortcutRouter = undefined;
     this.quickCapture?.destroy();
@@ -378,6 +438,119 @@ export class PanelView extends ItemView {
     this.interactionRegistry?.destroy();
     this.interactionRegistry = undefined;
     this.contentEl.empty();
+  }
+
+  private mountCompactPaneAccess(
+    layout: HTMLElement,
+    left: HTMLElement,
+    right: HTMLElement,
+    leftButton: HTMLButtonElement,
+    rightButton: HTMLButtonElement,
+  ): void {
+    const instanceId = ++panelViewInstanceSequence;
+    left.id = `abyss-task-lists-${String(instanceId)}`;
+    right.id = `abyss-task-details-${String(instanceId)}`;
+    left.tabIndex = -1;
+    right.tabIndex = -1;
+    left.setAttribute('role', 'region');
+    left.setAttribute('aria-label', 'Task lists');
+    right.setAttribute('role', 'region');
+    right.setAttribute('aria-label', 'Task details');
+    leftButton.setAttribute('aria-controls', left.id);
+    rightButton.setAttribute('aria-controls', right.id);
+    this.compactPaneElements = { left, right, leftButton, rightButton };
+
+    const toggleLeft = (): void => this.toggleCompactPane('left');
+    const toggleRight = (): void => this.toggleCompactPane('right');
+    const ownerDocument = layout.ownerDocument;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (
+        event.key !== 'Escape' ||
+        event.defaultPrevented ||
+        this.compactPaneOpen === null ||
+        this.interactionRegistry?.allows('openCalendar') === false
+      ) {
+        return;
+      }
+      event.preventDefault();
+      this.closeCompactPane(true);
+    };
+    const onPointerDown = (event: PointerEvent): void => {
+      const elements = this.compactPaneElements;
+      const pane = this.compactPaneOpen;
+      if (!elements || !pane || this.interactionRegistry?.allows('openCalendar') === false) {
+        return;
+      }
+      const path = event.composedPath();
+      const activePane = pane === 'left' ? elements.left : elements.right;
+      if (
+        path.includes(activePane) ||
+        path.includes(elements.leftButton) ||
+        path.includes(elements.rightButton)
+      ) {
+        return;
+      }
+      this.closeCompactPane(false);
+    };
+    leftButton.addEventListener('click', toggleLeft);
+    rightButton.addEventListener('click', toggleRight);
+    ownerDocument.addEventListener('keydown', onKeyDown);
+    ownerDocument.addEventListener('pointerdown', onPointerDown, true);
+    this.compactPaneCleanup = () => {
+      leftButton.removeEventListener('click', toggleLeft);
+      rightButton.removeEventListener('click', toggleRight);
+      ownerDocument.removeEventListener('keydown', onKeyDown);
+      ownerDocument.removeEventListener('pointerdown', onPointerDown, true);
+    };
+  }
+
+  private toggleCompactPane(pane: CompactPane): void {
+    if (this.compactPaneOpen === pane) {
+      this.closeCompactPane(true);
+      return;
+    }
+    this.openCompactPane(pane, true);
+  }
+
+  private openCompactPane(pane: CompactPane, moveFocus: boolean): void {
+    const elements = this.compactPaneElements;
+    if (!elements) return;
+    this.quickCapture?.close();
+    const activePane = pane === 'left' ? elements.left : elements.right;
+    const inactivePane = pane === 'left' ? elements.right : elements.left;
+    activePane.addClass('is-compact-open');
+    inactivePane.removeClass('is-compact-open');
+    this.setCompactPaneButtonState(elements.leftButton, 'task lists', pane === 'left');
+    this.setCompactPaneButtonState(elements.rightButton, 'task details', pane === 'right');
+    this.compactPaneOpen = pane;
+    if (moveFocus) activePane.focus({ preventScroll: true });
+  }
+
+  private closeCompactPane(restoreFocus: boolean): void {
+    const elements = this.compactPaneElements;
+    const pane = this.compactPaneOpen;
+    this.compactPaneOpen = null;
+    if (!elements) return;
+    elements.left.removeClass('is-compact-open');
+    elements.right.removeClass('is-compact-open');
+    this.setCompactPaneButtonState(elements.leftButton, 'task lists', false);
+    this.setCompactPaneButtonState(elements.rightButton, 'task details', false);
+    if (restoreFocus && pane) {
+      const button = pane === 'left' ? elements.leftButton : elements.rightButton;
+      if (button.isConnected) button.focus({ preventScroll: true });
+    }
+  }
+
+  private setCompactPaneButtonState(
+    button: HTMLButtonElement,
+    label: string,
+    expanded: boolean,
+  ): void {
+    const action = expanded ? 'Hide' : 'Show';
+    const description = `${action} ${label}`;
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    button.setAttribute('aria-label', description);
+    button.setAttribute('title', description);
   }
 
   private quickCaptureContext(): CaptureContext {

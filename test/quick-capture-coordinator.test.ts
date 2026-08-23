@@ -148,10 +148,16 @@ describe('QuickCaptureCoordinator', () => {
     expect(surfaceRules).toContain('var(--background-modifier-border)');
     expect(surfaceRules).not.toMatch(/#[\da-f]{3,8}|(?:rgb|hsl)a?\(/iu);
     expect(css).toMatch(
-      /@container\s+abyss-panel-layout\s*\(max-width:\s*64rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-right\s*\{[\s\S]*?display:\s*none/u,
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-right:not\(\.is-compact-open\)\s*\{[\s\S]*?display:\s*none/u,
     );
     expect(css).toMatch(
-      /@container\s+abyss-panel-layout\s*\(max-width:\s*48rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-left\s*\{[\s\S]*?display:\s*none/u,
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*38rem\)[\s\S]*?\.abyss-layout--tasks\s*>\s*\.abyss-left:not\(\.is-compact-open\)\s*\{[\s\S]*?display:\s*none/u,
+    );
+    expect(css).toMatch(
+      /\.abyss-layout--tasks\s*>\s*\.abyss-(?:left|right)\.is-compact-open\s*\{[\s\S]*?position:\s*absolute[\s\S]*?z-index:/u,
+    );
+    expect(css).toMatch(
+      /@container\s+abyss-panel-layout\s*\(max-width:\s*58rem\)[\s\S]*?\.abyss-compact-pane-controls\s*\{[\s\S]*?display:\s*flex/u,
     );
   });
 

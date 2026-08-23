@@ -158,6 +158,60 @@ describe('PanelView', () => {
       expect(host?.parentElement).toBe(shell);
     });
 
+    it('keeps collapsed Tasks panes reachable through keyboard-native compact controls', () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
+      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+      const left = layout.querySelector<HTMLElement>('.abyss-left')!;
+      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+      const lists = layout.querySelector<HTMLButtonElement>('[aria-label="Show task lists"]')!;
+      const details = layout.querySelector<HTMLButtonElement>('[aria-label="Show task details"]')!;
+
+      expect(lists.tagName).toBe('BUTTON');
+      expect(details.tagName).toBe('BUTTON');
+      expect(lists.getAttribute('aria-controls')).toBe(left.id);
+      expect(details.getAttribute('aria-controls')).toBe(right.id);
+      expect(lists.getAttribute('aria-expanded')).toBe('false');
+      expect(details.getAttribute('aria-expanded')).toBe('false');
+
+      lists.click();
+      expect(left.classList.contains('is-compact-open')).toBe(true);
+      expect(lists.getAttribute('aria-expanded')).toBe('true');
+      expect(lists.getAttribute('aria-label')).toBe('Hide task lists');
+      expect(activeDocument.activeElement).toBe(left);
+
+      details.click();
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(lists.getAttribute('aria-expanded')).toBe('false');
+      expect(details.getAttribute('aria-expanded')).toBe('true');
+      expect(lists.getAttribute('aria-label')).toBe('Show task lists');
+      expect(details.getAttribute('aria-label')).toBe('Hide task details');
+      expect(activeDocument.activeElement).toBe(right);
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      activeDocument.dispatchEvent(escape);
+      expect(escape.defaultPrevented).toBe(true);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(details.getAttribute('aria-expanded')).toBe('false');
+      expect(details.getAttribute('aria-label')).toBe('Show task details');
+      expect(activeDocument.activeElement).toBe(details);
+
+      internals.state.set('taskStack', [task()]);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(details.getAttribute('aria-expanded')).toBe('true');
+
+      internals.panelNavigation.openCalendar();
+      expect(left.classList.contains('is-compact-open')).toBe(false);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(lists.getAttribute('aria-expanded')).toBe('false');
+      expect(details.getAttribute('aria-expanded')).toBe('false');
+    });
+
     it('routes shortcuts only for its connected visible active leaf and detaches on close', async () => {
       const internals = view as unknown as { panelNavigation: PanelNavigator };
       const openQuickCapture = vi
@@ -350,6 +404,43 @@ describe('PanelView', () => {
 
       modal.close();
       expect(internals.interactionRegistry.allows('openCalendar')).toBe(true);
+    });
+
+    it('settles a live recurrence dialog and releases both owners when TaskModal closes', async () => {
+      const invalidDelete = task({ recurrence: 'tomorrow', onCompletion: 'delete' });
+      const internals = view as unknown as {
+        center: {
+          taskModal: {
+            open(task: typeof invalidDelete): void;
+            close(): void;
+            innerPanel: { toggleTaskLike(task: typeof invalidDelete): Promise<void> };
+          };
+        };
+        interactionRegistry: InteractionRegistry<string>;
+      };
+      const modal = internals.center.taskModal;
+      const releaseModal = vi.fn();
+      const releaseDialog = vi.fn();
+      const acquire = vi
+        .spyOn(internals.interactionRegistry, 'acquire')
+        .mockReturnValueOnce({ release: releaseModal })
+        .mockReturnValueOnce({ release: releaseDialog });
+
+      modal.open(invalidDelete);
+      const completion = modal.innerPanel.toggleTaskLike(invalidDelete);
+      const surface = activeDocument.querySelector<HTMLElement>(
+        '.abyss-recurrence-delete-confirm',
+      )!;
+      expect(surface.isConnected).toBe(true);
+      expect(acquire).toHaveBeenCalledTimes(2);
+
+      modal.close();
+      await completion;
+      modal.close();
+
+      expect(surface.isConnected).toBe(false);
+      expect(releaseModal).toHaveBeenCalledOnce();
+      expect(releaseDialog).toHaveBeenCalledOnce();
     });
 
     it.each([

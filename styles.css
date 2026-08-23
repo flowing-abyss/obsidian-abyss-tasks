@@ -224,16 +224,53 @@
   display: none;
 }
 
-/* Preserve a usable center pane as the task layout loses horizontal room. */
-@container abyss-panel-layout (max-width: 64rem) {
-  .abyss-layout--tasks > .abyss-right {
+/* Preserve a usable center pane without stranding either side pane. Once the
+   three columns would squeeze the center below 320px, the affected side pane
+   becomes a keyboard-reachable overlay controlled from the center toolbar. */
+@container abyss-panel-layout (max-width: 58rem) {
+  .abyss-layout--tasks > .abyss-right:not(.is-compact-open) {
     display: none;
+  }
+
+  .abyss-layout--tasks > .abyss-right.is-compact-open {
+    position: absolute;
+    z-index: calc(var(--layer-popover, 30) - 1);
+    inset-block: 0;
+    inset-inline-end: 0;
+    inline-size: min(20rem, calc(100cqi - 48px));
+    box-shadow: var(--shadow-l);
+  }
+
+  .abyss-layout--tasks > .abyss-center-shell {
+    --abyss-shell-top-inset: 44px;
+  }
+
+  .abyss-layout--tasks .abyss-compact-pane-controls {
+    display: flex;
+    justify-content: flex-end;
   }
 }
 
-@container abyss-panel-layout (max-width: 48rem) {
-  .abyss-layout--tasks > .abyss-left {
+@container abyss-panel-layout (max-width: 38rem) {
+  .abyss-layout--tasks > .abyss-left:not(.is-compact-open) {
     display: none;
+  }
+
+  .abyss-layout--tasks > .abyss-left.is-compact-open {
+    position: absolute;
+    z-index: calc(var(--layer-popover, 30) - 1);
+    inset-block: 0;
+    inset-inline-start: 48px;
+    inline-size: min(15rem, calc(100cqi - 48px));
+    box-shadow: var(--shadow-l);
+  }
+
+  .abyss-layout--tasks .abyss-compact-pane-controls {
+    justify-content: space-between;
+  }
+
+  .abyss-layout--tasks .abyss-compact-pane-button--left {
+    display: inline-flex;
   }
 }
 
@@ -267,13 +304,58 @@
 .abyss-center-shell {
   position: relative;
   display: flex;
+  flex-direction: column;
   flex: 1;
   min-inline-size: 0;
   overflow: hidden;
 }
 
+.abyss-compact-pane-controls {
+  position: relative;
+  z-index: var(--layer-popover, 30);
+  display: none;
+  flex: 0 0 44px;
+  align-items: center;
+  padding-inline: var(--size-4-2, 0.5rem);
+  border-block-end: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.abyss-compact-pane-button {
+  display: inline-flex;
+  inline-size: 32px;
+  block-size: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--interactive-normal);
+  color: var(--text-muted);
+}
+
+.abyss-compact-pane-button--left {
+  display: none;
+}
+
+.abyss-compact-pane-button:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.abyss-compact-pane-button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.abyss-compact-pane-button[aria-expanded='true'] {
+  border-color: var(--interactive-accent);
+  color: var(--interactive-accent);
+}
+
 .abyss-center {
   flex: 1;
+  min-height: 0;
   min-width: 0;
   container-type: inline-size;
   container-name: abyss-task-list;
