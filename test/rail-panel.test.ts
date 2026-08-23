@@ -1,9 +1,31 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RailPanel } from '../src/panels/RailPanel';
+import type { PanelNavigationActions } from '../src/views/panelNavigation';
 import { freshContainer } from './helpers';
 
 describe('RailPanel', () => {
+  function navigationActions(): PanelNavigationActions {
+    return {
+      openTasks: vi.fn(),
+      openList: vi.fn(),
+      openCalendar: vi.fn(),
+      openCalendarView: vi.fn(),
+      openProjects: vi.fn(),
+      openSearch: vi.fn(),
+      openQuickCapture: vi.fn(),
+    };
+  }
+
+  function stateNavigationActions(state: AppState): PanelNavigationActions {
+    const actions = navigationActions();
+    actions.openTasks = vi.fn(() => state.set('mode', 'tasks'));
+    actions.openCalendar = vi.fn(() => state.set('mode', 'calendar'));
+    actions.openProjects = vi.fn(() => state.set('mode', 'projects'));
+    actions.openSearch = vi.fn(() => state.set('mode', 'search'));
+    return actions;
+  }
+
   function foreignSettingsHarness() {
     const iframe = activeDocument.createElement('iframe');
     activeDocument.body.appendChild(iframe);
@@ -85,7 +107,7 @@ describe('RailPanel', () => {
 
   it('mode buttons have correct aria-labels, Calendar in 2nd position', () => {
     const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const labels = Array.from(panel['el'].querySelectorAll('button')).map((b) =>
       b.getAttribute('aria-label'),
@@ -95,7 +117,7 @@ describe('RailPanel', () => {
 
   it('click Projects button sets mode to projects', () => {
     const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const btn = Array.from(panel['el'].querySelectorAll('button')).find(
       (b) => b.getAttribute('aria-label') === 'Projects',
@@ -104,10 +126,29 @@ describe('RailPanel', () => {
     expect(state.get('mode')).toBe('projects');
   });
 
+  it('routes mode buttons through semantic navigation actions', () => {
+    const state = new AppState();
+    const navigation = navigationActions();
+    const panel = new RailPanel(state, { setting: {} }, navigation);
+    panel.mount(freshContainer());
+
+    for (const [label, action] of [
+      ['Tasks', navigation.openTasks],
+      ['Calendar', navigation.openCalendar],
+      ['Projects', navigation.openProjects],
+      ['Search', navigation.openSearch],
+    ] as const) {
+      panel['el'].querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click();
+      expect(action).toHaveBeenCalledOnce();
+    }
+
+    expect(state.get('mode')).toBe('tasks');
+  });
+
   it('active mode button has is-active class', () => {
     const state = new AppState();
     state.set('mode', 'calendar');
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const active = panel['el'].querySelector('.abyss-rail-btn.is-active');
     expect(active?.getAttribute('aria-label')).toBe('Calendar');
@@ -116,7 +157,7 @@ describe('RailPanel', () => {
   it('click Tasks button sets mode to tasks', () => {
     const state = new AppState();
     state.set('mode', 'calendar');
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const btn = Array.from(panel['el'].querySelectorAll('button')).find(
       (b) => b.getAttribute('aria-label') === 'Tasks',
@@ -127,7 +168,7 @@ describe('RailPanel', () => {
 
   it('click Calendar button sets mode to calendar', () => {
     const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const btn = Array.from(panel['el'].querySelectorAll('button')).find(
       (b) => b.getAttribute('aria-label') === 'Calendar',
@@ -138,7 +179,7 @@ describe('RailPanel', () => {
 
   it('click Search button sets mode to search', () => {
     const state = new AppState();
-    const panel = new RailPanel(state, { setting: {} });
+    const panel = new RailPanel(state, { setting: {} }, stateNavigationActions(state));
     panel.mount(freshContainer());
     const btn = Array.from(panel['el'].querySelectorAll('button')).find(
       (b) => b.getAttribute('aria-label') === 'Search',

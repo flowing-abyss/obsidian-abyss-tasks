@@ -1,0 +1,172 @@
+import { describe, expect, it, vi } from 'vitest';
+import { AppState, type ListSelection } from '../src/app/AppState';
+import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
+import type { CalendarSettings, ListViewState } from '../src/settings/types';
+import {
+  PanelNavigator,
+  type CalViewType,
+  type PanelNavigationCenterPort,
+} from '../src/views/panelNavigation';
+
+function settings(overrides: Partial<CalendarSettings> = {}): CalendarSettings {
+  return { ...structuredClone(DEFAULT_SETTINGS), ...overrides };
+}
+
+function listState(groupBy: ListViewState['groupBy']): ListViewState {
+  return {
+    groupBy,
+    sortBy: { field: 'title', dir: 'desc' },
+    filters: [],
+    statusGroups: ['todo'],
+  };
+}
+
+function harness(
+  options: {
+    mode?: 'tasks' | 'calendar' | 'projects' | 'search';
+    selection?: ListSelection;
+    calendarView?: CalViewType;
+    settings?: CalendarSettings;
+  } = {},
+) {
+  const state = new AppState();
+  if (options.mode) state.set('mode', options.mode);
+  if (options.selection) state.set('selectedList', options.selection);
+  let calendarView = options.calendarView ?? 'month';
+  const center: PanelNavigationCenterPort = {
+    calendarView: vi.fn(() => calendarView),
+    setCalendarView: vi.fn((view) => {
+      calendarView = view;
+    }),
+    openQuickCapture: vi.fn(),
+  };
+  const save = vi.fn().mockResolvedValue(undefined);
+  const navigator = new PanelNavigator(state, options.settings ?? settings(), center, save);
+  return { state, center, navigator, save };
+}
+
+describe('PanelNavigator', () => {
+  it('opens a list atomically after saving outgoing state and restoring incoming state', () => {
+    const todayState = listState('priority');
+    const inboxState = listState('status');
+    const calendarSettings = settings({ listViewStates: { inbox: inboxState } });
+    const { state, navigator, save } = harness({ settings: calendarSettings });
+    const commits: Array<{
+      changed: ReadonlySet<string>;
+      mode: string;
+      selection: ListSelection;
+      viewState: ListViewState;
+      filter: string;
+    }> = [];
+    state.set('centerListViewState', todayState);
+    state.set('centerFilter', 'needle');
+    state.onCommit((changed) =>
+      commits.push({
+        changed: new Set(changed),
+        mode: state.get('mode'),
+        selection: state.get('selectedList'),
+        viewState: state.get('centerListViewState'),
+        filter: state.get('centerFilter'),
+      }),
+    );
+
+    navigator.openList('inbox');
+
+    expect(calendarSettings.listViewStates?.['today']).toBe(todayState);
+    expect(save).toHaveBeenCalledOnce();
+    expect(commits).toEqual([
+      {
+        changed: new Set(['selectedList', 'centerListViewState', 'centerFilter']),
+        mode: 'tasks',
+        selection: 'inbox',
+        viewState: inboxState,
+        filter: '',
+      },
+    ]);
+  });
+
+  it('restores defaults for a list without saved state', () => {
+    const { state, navigator } = harness();
+
+    navigator.openList({ type: 'tag', tag: '#work' });
+
+    expect(state.get('centerListViewState')).toEqual(getListViewDefaults('tag:#work'));
+  });
+
+  it('preserves the last Tasks list across other modes', () => {
+    const selection = { type: 'project', path: 'Projects/A.md' } as const;
+    const { state, navigator } = harness();
+
+    navigator.openList(selection);
+    navigator.openCalendar();
+    navigator.openSearch();
+    navigator.openTasks();
+
+    expect(state.get('mode')).toBe('tasks');
+    expect(state.get('selectedList')).toEqual(selection);
+  });
+
+  it('preserves and normalizes the current Calendar view when opening Calendar', () => {
+    const { state, center, navigator } = harness({ calendarView: 'week' });
+
+    navigator.openCalendar();
+
+    expect(center.calendarView).toHaveBeenCalledOnce();
+    expect(center.setCalendarView).toHaveBeenCalledWith('week');
+    expect(state.get('mode')).toBe('calendar');
+  });
+
+  it.each(['today', 'week', 'month'] as const)(
+    'opens and normalizes the explicit %s Calendar view',
+    (view) => {
+      const { state, center, navigator } = harness({ mode: 'calendar' });
+
+      navigator.openCalendarView(view);
+
+      expect(center.setCalendarView).toHaveBeenCalledWith(view);
+      expect(state.get('mode')).toBe('calendar');
+    },
+  );
+
+  it('opens Projects and Search through complete semantic transitions', () => {
+    const projects = harness();
+    const search = harness();
+
+    projects.navigator.openProjects();
+    search.navigator.openSearch();
+
+    expect(projects.state.get('mode')).toBe('projects');
+    expect(search.state.get('mode')).toBe('search');
+  });
+
+  it('opens Quick Capture on the preserved Tasks list through its port', () => {
+    const selection = { type: 'tag', tag: '#next' } as const;
+    const { state, center, navigator } = harness({ mode: 'search', selection });
+
+    navigator.openQuickCapture();
+
+    expect(state.get('mode')).toBe('tasks');
+    expect(state.get('selectedList')).toEqual(selection);
+    expect(center.openQuickCapture).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ['openTasks', { mode: 'search' }],
+    ['openList', { mode: 'calendar' }],
+    ['openCalendar', {}],
+    ['openCalendarView', { mode: 'calendar' }],
+    ['openProjects', {}],
+    ['openSearch', {}],
+    ['openQuickCapture', { mode: 'search' }],
+  ] as const)('%s emits exactly one outer commit', (action, options) => {
+    const { state, navigator } = harness(options);
+    const commits = vi.fn();
+    state.onCommit(commits);
+
+    if (action === 'openList') navigator.openList('upcoming');
+    else if (action === 'openCalendarView') navigator.openCalendarView('today');
+    else navigator[action]();
+
+    expect(commits).toHaveBeenCalledOnce();
+  });
+});

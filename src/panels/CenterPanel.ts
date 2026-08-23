@@ -87,6 +87,11 @@ import {
   type CalendarProjectionIssue,
   type CalendarTaskSource,
 } from '../views/calendarOccurrences';
+import {
+  PanelNavigator,
+  type CalViewType,
+  type PanelNavigationActions,
+} from '../views/panelNavigation';
 import type { InteractiveSpanBoundaryTarget, SpanMoveTarget } from '../views/spanInteractions';
 import {
   groupTasksByDate,
@@ -109,7 +114,7 @@ import {
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { ProjectsPanel } from './projects/ProjectsPanel';
-import { visibleCalendarDates, type CalViewType } from './visibleCalendarDates';
+import { visibleCalendarDates } from './visibleCalendarDates';
 
 interface TimedBlockFocusLocator {
   readonly filePath: string;
@@ -214,7 +219,6 @@ export class CenterPanel {
   private selectedTaskKeys = new Set<string>();
   private selectionAnchorKey: string | null = null;
   private selectionFocusKey: string | null = null;
-  private currentListKey: string = 'today';
   private filterDebounce = 0;
   private refocusSearch = false;
   // Set true while a status-group toggle click is in flight, so that the
@@ -232,6 +236,7 @@ export class CenterPanel {
   private readonly captureTargets: CaptureTargetResolver | null;
   private captureRequestId = 0;
   private activeCapture: PanelCaptureSession | null = null;
+  private readonly navigation: PanelNavigationActions;
 
   constructor(
     private state: AppState,
@@ -251,12 +256,14 @@ export class CenterPanel {
     ) => void = () => {},
     private readonly onRenderComplete: (root: HTMLElement) => void = () => {},
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    navigation?: PanelNavigationActions,
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
     this.captureTargets = this.captureApplication
       ? new CaptureTargetResolver(this.captureApplication, settings)
       : null;
+    this.navigation = navigation ?? new PanelNavigator(state, settings, this, onSaveSettings);
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
         onCommitted: (task, intent, sequence, changed) => {
@@ -310,38 +317,19 @@ export class CenterPanel {
 
     // Initialize per-list state before first render
     const initialKey = listSelectionToKey(this.state.get('selectedList'));
-    this.currentListKey = initialKey;
     const initialVs: ListViewState =
       this.settings.listViewStates?.[initialKey] ?? getListViewDefaults(initialKey);
     this.state.set('centerListViewState', initialVs);
 
     this.offs.push(
-      this.state.on('selectedList', (newSel) => {
-        // Save current state for the old list key
-        const oldKey = this.currentListKey;
-        const currentVs = this.state.get('centerListViewState');
-        if (!this.settings.listViewStates) this.settings.listViewStates = {};
-        this.settings.listViewStates[oldKey] = currentVs;
-        void this.onSaveSettings();
-
-        // Load state for new list
-        const newKey = listSelectionToKey(newSel);
-        this.currentListKey = newKey;
-        const saved = this.settings.listViewStates?.[newKey];
-        const nextVs = saved ?? getListViewDefaults(newKey);
-        this.state.set('centerListViewState', nextVs);
-        this.state.set('centerFilter', '');
-
+      this.state.on('selectedList', () => {
         this.selectedTaskKeys.clear();
         this.selectionAnchorKey = null;
         this.selectionFocusKey = null;
       }),
-      this.state.on('centerListViewState', () => this.render()),
       this.state.on('mode', () => {
         this.cancelKeyboardInteraction();
-        this.render();
       }),
-      this.state.on('centerFilter', () => this.render()),
       this.state.on('searchQuery', (query) => this.handleSearchQueryChanged(query)),
       this.state.on('taskStack', () => {
         const stack = this.state.get('taskStack');
@@ -355,6 +343,20 @@ export class CenterPanel {
             card.dataset['line'] === String(taskNodeLine(root as TaskSnapshot, current));
           card.classList.toggle('is-selected', isSelected);
         });
+      }),
+      this.state.onCommit((changed) => {
+        if (changed.size === 0 && this.state.get('mode') === 'calendar') {
+          this.cancelKeyboardInteraction();
+        }
+        if (
+          changed.size === 0 ||
+          changed.has('selectedList') ||
+          changed.has('centerListViewState') ||
+          changed.has('centerFilter') ||
+          changed.has('mode')
+        ) {
+          this.render();
+        }
       }),
     );
     this.render();
@@ -485,6 +487,21 @@ export class CenterPanel {
       return;
     }
     this.render();
+  }
+
+  calendarView(): CalViewType {
+    return this.calViewType;
+  }
+
+  setCalendarView(view: CalViewType): void {
+    this.calViewType = view;
+    if (view === 'week') this.calDate = window.moment().startOf('isoWeek');
+    else if (view === 'today') this.calDate = window.moment();
+    else this.calDate = window.moment().date(1);
+  }
+
+  openQuickCapture(): void {
+    this.openCapture({ type: 'list' }, { type: 'list', selection: this.state.get('selectedList') });
   }
 
   destroy(): void {
@@ -739,12 +756,7 @@ export class CenterPanel {
         text: v === 'today' ? 'Day' : v.charAt(0).toUpperCase() + v.slice(1),
       });
       btn.addEventListener('click', () => {
-        this.cancelKeyboardInteraction();
-        this.calViewType = v;
-        if (v === 'week') this.calDate = window.moment().startOf('isoWeek');
-        else if (v === 'today') this.calDate = window.moment();
-        else this.calDate = window.moment().date(1);
-        this.render();
+        this.navigation.openCalendarView(v);
       });
     }
 
@@ -1502,7 +1514,6 @@ export class CenterPanel {
       !this.searchInputEl?.isConnected ||
       !this.searchResultsEl?.isConnected
     ) {
-      this.render();
       return;
     }
     if (this.searchInputEl.value !== query) this.searchInputEl.value = query;
@@ -1570,8 +1581,7 @@ export class CenterPanel {
           } else if (d && d > todayStr) {
             list = 'upcoming';
           }
-          this.state.set('selectedList', list);
-          this.state.set('mode', 'tasks');
+          this.navigation.openList(list);
           this.state.set('taskStack', [task]);
         },
         { capture: true },
@@ -2315,14 +2325,18 @@ export class CenterPanel {
 
   private updateViewState(next: ListViewState): void {
     if (!this.settings.listViewStates) this.settings.listViewStates = {};
-    this.settings.listViewStates[this.currentListKey] = next;
+    this.settings.listViewStates[this.activeListKey()] = next;
     void this.onSaveSettings();
     this.state.set('centerListViewState', next);
   }
 
+  private activeListKey(): string {
+    return listSelectionToKey(this.state.get('selectedList'));
+  }
+
   private renderViewStateButton(container: HTMLElement): void {
     const vs = this.state.get('centerListViewState');
-    const defaults = getListViewDefaults(this.currentListKey);
+    const defaults = getListViewDefaults(this.activeListKey());
     const isNonDefault =
       vs.groupBy !== defaults.groupBy ||
       vs.sortBy.field !== defaults.sortBy.field ||
@@ -2558,7 +2572,7 @@ export class CenterPanel {
       return `${effective.length} selected`;
     };
 
-    const defaults = getListViewDefaults(this.currentListKey);
+    const defaults = getListViewDefaults(this.activeListKey());
 
     makeRow(
       'layout-list',
@@ -2631,7 +2645,7 @@ export class CenterPanel {
 
     // Reset to defaults row — only shown when state differs from defaults.
     // Same predicate as the left-panel customization dot.
-    if (isListViewCustomized(vs, this.currentListKey)) {
+    if (isListViewCustomized(vs, this.activeListKey())) {
       const resetRow = popover.createDiv({ cls: 'abyss-view-state-reset' });
       const resetBtn = resetRow.createEl('button', {
         cls: 'abyss-view-state-reset-btn',
@@ -2639,7 +2653,7 @@ export class CenterPanel {
       });
       resetBtn.addEventListener('click', () => {
         close();
-        this.updateViewState(getListViewDefaults(this.currentListKey));
+        this.updateViewState(getListViewDefaults(this.activeListKey()));
       });
     }
 

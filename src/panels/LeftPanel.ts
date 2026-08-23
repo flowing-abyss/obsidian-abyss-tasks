@@ -15,6 +15,7 @@ import {
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
+import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
 
 const PROJECTS_CAP = 10;
 
@@ -37,6 +38,7 @@ export class LeftPanel {
   // When a tag is opened from the Pinned section, don't auto-expand the group
   // that contains it in the Tags tree — the pin exists precisely to avoid that.
   private tagSelectedFromPinned = false;
+  private readonly navigation: PanelNavigationActions;
 
   constructor(
     private state: AppState,
@@ -48,7 +50,21 @@ export class LeftPanel {
     private onSaveSettings: () => Promise<void> = async () => {},
     private projectStore: ProjectStore | null = null,
     private projectManager: ProjectManager | null = null,
-  ) {}
+    navigation?: PanelNavigationActions,
+  ) {
+    this.navigation =
+      navigation ??
+      new PanelNavigator(
+        state,
+        settings,
+        {
+          calendarView: () => 'month',
+          setCalendarView: () => {},
+          openQuickCapture: () => {},
+        },
+        onSaveSettings,
+      );
+  }
 
   mount(container: HTMLElement): void {
     this.el = container;
@@ -227,8 +243,7 @@ export class LeftPanel {
         row.createEl('span', { cls: 'abyss-left-count', text: String(openCount) });
       }
       row.addEventListener('click', () => {
-        this.state.set('selectedList', { type: 'project', path: project.path });
-        this.state.set('mode', 'tasks');
+        this.navigation.openList({ type: 'project', path: project.path });
       });
       row.addEventListener('contextmenu', (e) => {
         e.preventDefault();
@@ -367,8 +382,7 @@ export class LeftPanel {
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = true;
-      this.state.set('selectedList', { type: 'tag', tag });
-      this.state.set('mode', 'tasks');
+      this.navigation.openList({ type: 'tag', tag });
     });
 
     row.addEventListener('contextmenu', (e) => {
@@ -407,8 +421,7 @@ export class LeftPanel {
 
     row.addEventListener('click', () => {
       this.tagSelectedFromPinned = false;
-      this.state.set('selectedList', { type: 'tag', tag });
-      this.state.set('mode', 'tasks');
+      this.navigation.openList({ type: 'tag', tag });
     });
     row.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -442,8 +455,7 @@ export class LeftPanel {
     }
 
     row.addEventListener('click', () => {
-      this.state.set('selectedList', selection);
-      this.state.set('mode', 'tasks');
+      this.navigation.openList(selection);
     });
   }
 
@@ -521,8 +533,7 @@ export class LeftPanel {
 
     // Header click: select the group (expand/collapse is handled by the chevron above)
     header.addEventListener('click', () => {
-      this.state.set('selectedList', { type: 'group', groupId: group.id });
-      this.state.set('mode', 'tasks');
+      this.navigation.openList({ type: 'group', groupId: group.id });
     });
     header.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -557,8 +568,7 @@ export class LeftPanel {
         child.addEventListener('click', (e) => {
           e.stopPropagation();
           this.tagSelectedFromPinned = false;
-          this.state.set('selectedList', { type: 'tag', tag });
-          this.state.set('mode', 'tasks');
+          this.navigation.openList({ type: 'tag', tag });
         });
 
         child.addEventListener('contextmenu', (e) => {

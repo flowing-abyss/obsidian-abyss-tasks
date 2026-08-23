@@ -16,6 +16,7 @@ import type { InteractionRegistry } from '../src/ui/interactionOwnership';
 import { taskNodeLine } from '../src/ui/taskSelection';
 import { MonthGridView } from '../src/views/MonthGridView';
 import { PANEL_VIEW_TYPE, PanelView } from '../src/views/PanelView';
+import type { PanelNavigator } from '../src/views/panelNavigation';
 import {
   configuredTaskApplication,
   createAppWithFiles,
@@ -236,6 +237,26 @@ describe('PanelView', () => {
       expect(labels).toContain('Inbox');
       expect(labels).toContain('Today');
       expect(labels).toContain('Upcoming');
+    });
+
+    it('shares semantic navigation across Rail, Left, and tag identity bridges', async () => {
+      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
+      const openCalendar = vi.spyOn(internals.panelNavigation, 'openCalendar');
+      const openList = vi.spyOn(internals.panelNavigation, 'openList');
+
+      view.contentEl
+        .querySelector<HTMLButtonElement>('.abyss-rail [aria-label="Calendar"]')!
+        .click();
+      view.contentEl.querySelector<HTMLElement>('.abyss-left-item')!.click();
+
+      expect(openCalendar).toHaveBeenCalledOnce();
+      expect(openList).toHaveBeenCalledWith('inbox');
+
+      internals.state.set('selectedList', { type: 'tag', tag: '#work' });
+      openList.mockClear();
+      await tagManager.renameTagExact('#work', '#focus');
+
+      expect(openList).toHaveBeenCalledWith({ type: 'tag', tag: '#focus' });
     });
 
     it('mode change to calendar updates layout class', () => {

@@ -181,4 +181,135 @@ describe('AppState', () => {
     expect(state.statusGroups).toEqual(['todo', 'in-progress']);
     expect(state.filters).toEqual([]);
   });
+
+  describe('batching', () => {
+    it('updates reads synchronously while deferring key notifications until commit', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      s.on('mode', (next, prev) => trace.push(`mode:${prev}->${next}`));
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        expect(s.get('mode')).toBe('calendar');
+        expect(trace).toEqual([]);
+      });
+
+      expect(trace).toEqual(['mode:tasks->calendar']);
+    });
+
+    it('commits only after the outermost nested batch finishes', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      s.on('mode', () => trace.push('mode'));
+      s.onCommit(() => trace.push('commit'));
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        s.batch(() => {
+          s.set('mode', 'search');
+        });
+        expect(trace).toEqual([]);
+      });
+
+      expect(trace).toEqual(['mode', 'commit']);
+    });
+
+    it('notifies each key with its first previous and final next value', () => {
+      const s = new AppState();
+      const cb = vi.fn();
+      s.on('mode', cb);
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        s.set('mode', 'search');
+        s.set('mode', 'projects');
+      });
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith('projects', 'tasks');
+    });
+
+    it('notifies keys in deterministic first-write order', () => {
+      const s = new AppState();
+      const trace: string[] = [];
+      s.on('centerFilter', () => trace.push('centerFilter'));
+      s.on('mode', () => trace.push('mode'));
+      s.on('searchQuery', () => trace.push('searchQuery'));
+
+      s.batch(() => {
+        s.set('centerFilter', 'first');
+        s.set('mode', 'calendar');
+        s.set('centerFilter', 'final');
+        s.set('searchQuery', 'last');
+      });
+
+      expect(trace).toEqual(['centerFilter', 'mode', 'searchQuery']);
+    });
+
+    it('notifies a changed key only once per outer batch', () => {
+      const s = new AppState();
+      const cb = vi.fn();
+      s.on('centerFilter', cb);
+
+      s.batch(() => {
+        s.set('centerFilter', 'a');
+        s.set('centerFilter', 'b');
+        s.batch(() => s.set('centerFilter', 'c'));
+      });
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith('c', '');
+    });
+
+    it('fires one commit callback with all changed keys per outer batch', () => {
+      const s = new AppState();
+      const commits: Array<ReadonlySet<string>> = [];
+      s.onCommit((changed) => commits.push(new Set(changed)));
+
+      s.batch(() => {
+        s.set('mode', 'calendar');
+        s.batch(() => s.set('centerFilter', 'focus'));
+        s.set('mode', 'search');
+      });
+
+      expect(commits).toEqual([new Set(['mode', 'centerFilter'])]);
+    });
+
+    it('fires one commit callback with no changed keys for an empty outer batch', () => {
+      const s = new AppState();
+      const cb = vi.fn();
+      s.onCommit(cb);
+
+      s.batch(() => {
+        s.batch(() => {});
+      });
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith(new Set());
+    });
+
+    it('fires one commit callback for a changed standalone set', () => {
+      const s = new AppState();
+      const cb = vi.fn();
+      s.onCommit(cb);
+
+      s.set('mode', 'calendar');
+
+      expect(cb).toHaveBeenCalledOnce();
+      expect(cb).toHaveBeenCalledWith(new Set(['mode']));
+    });
+
+    it('preserves unchanged standalone set behavior without a commit', () => {
+      const s = new AppState();
+      const keyListener = vi.fn();
+      const commitListener = vi.fn();
+      s.on('mode', keyListener);
+      s.onCommit(commitListener);
+
+      s.set('mode', 'tasks');
+
+      expect(keyListener).not.toHaveBeenCalled();
+      expect(commitListener).not.toHaveBeenCalled();
+    });
+  });
 });

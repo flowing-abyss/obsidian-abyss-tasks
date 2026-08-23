@@ -1,5 +1,6 @@
 import { setIcon } from 'obsidian';
 import type { AppState, ViewMode } from '../app/AppState';
+import type { PanelNavigationActions } from '../views/panelNavigation';
 
 interface RailItem {
   mode: ViewMode;
@@ -32,6 +33,7 @@ export class RailPanel {
         modalEl?: HTMLElement;
       };
     },
+    private navigation?: PanelNavigationActions,
   ) {}
 
   mount(container: HTMLElement): void {
@@ -59,7 +61,7 @@ export class RailPanel {
       });
       setIcon(btn, item.icon);
       btn.addEventListener('click', () => {
-        this.state.set('mode', item.mode);
+        this.openMode(item.mode);
       });
     }
 
@@ -88,6 +90,13 @@ export class RailPanel {
       this.settingsLifecycle = { button: settingsBtn, modal, observer };
       observer.observe(modal.ownerDocument.body, { childList: true, subtree: true });
     });
+  }
+
+  private openMode(mode: ViewMode): void {
+    if (mode === 'tasks') this.navigation?.openTasks();
+    else if (mode === 'calendar') this.navigation?.openCalendar();
+    else if (mode === 'projects') this.navigation?.openProjects();
+    else this.navigation?.openSearch();
   }
 
   private disposeSettingsLifecycle(): void {

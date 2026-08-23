@@ -23,6 +23,7 @@ import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
+import { PanelNavigator } from '../src/views/panelNavigation';
 import { MIN_BLOCK_HEIGHT_PX } from '../src/views/timegrid/layout';
 import {
   configuredTaskApplication,
@@ -325,6 +326,76 @@ describe('CenterPanel list selection', () => {
     expect(
       (call<TaskSnapshot[]>(panel, 'getFilteredTasks') as TaskSnapshot[]).map((item) => item.title),
     ).toEqual(['planned']);
+  });
+});
+
+describe('CenterPanel semantic navigation render boundary', () => {
+  it('keeps direct selectedList notification bookkeeping-only', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const panel = makeStaticPanel(state, [], settings);
+    panel.mount(freshContainer());
+    const current = {
+      groupBy: 'priority' as const,
+      sortBy: { field: 'priority' as const, dir: 'desc' as const },
+      filters: [],
+      statusGroups: ['todo' as const],
+    };
+    state.set('centerListViewState', current);
+    const render = vi.spyOn(panel as unknown as { render(): void }, 'render');
+
+    state.set('selectedList', 'inbox');
+
+    expect(state.get('centerListViewState')).toBe(current);
+    expect(render).toHaveBeenCalledOnce();
+    panel.destroy();
+  });
+
+  it('performs one real full render after final state for every semantic action', () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const panel = makeStaticPanel(state, [], settings);
+    panel.mount(freshContainer());
+    const render = vi.spyOn(panel as unknown as { render(): void }, 'render');
+    const openQuickCapture = vi.spyOn(panel, 'openQuickCapture');
+    const navigator = new PanelNavigator(state, settings, panel);
+
+    const once = (run: () => void): void => {
+      render.mockClear();
+      run();
+      expect(render).toHaveBeenCalledOnce();
+    };
+
+    once(() => navigator.openCalendar());
+    expect(state.get('mode')).toBe('calendar');
+
+    const cancelKeyboardInteraction = vi.spyOn(
+      panel as unknown as { cancelKeyboardInteraction(): void },
+      'cancelKeyboardInteraction',
+    );
+    once(() => navigator.openCalendarView('week'));
+    expect(cancelKeyboardInteraction).toHaveBeenCalledOnce();
+    expect(panel.calendarView()).toBe('week');
+    expect(panel['calDate'].format('YYYY-MM-DD')).toBe(
+      window.moment().startOf('isoWeek').format('YYYY-MM-DD'),
+    );
+
+    once(() => navigator.openProjects());
+    expect(state.get('mode')).toBe('projects');
+
+    once(() => navigator.openSearch());
+    expect(state.get('mode')).toBe('search');
+
+    once(() => navigator.openList('inbox'));
+    expect(state.get('selectedList')).toBe('inbox');
+    expect(panel['el'].querySelector('.abyss-center-title')?.textContent).toBe('Inbox');
+
+    once(() => navigator.openTasks());
+
+    once(() => navigator.openQuickCapture());
+    expect(openQuickCapture).toHaveBeenCalledOnce();
+
+    panel.destroy();
   });
 });
 

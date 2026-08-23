@@ -6,6 +6,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { DEFAULT_SETTINGS, getListViewDefaults } from '../src/settings/defaults';
 import type { CalendarSettings, TagGroup } from '../src/settings/types';
 import type { TaskSnapshot } from '../src/tasks';
+import { PanelNavigator } from '../src/views/panelNavigation';
 import { fixedToday, makeCenterPanelForTest, makeStubStore, task, useRealMoment } from './helpers';
 
 const TODAY = moment().format('YYYY-MM-DD');
@@ -597,11 +598,12 @@ describe('CenterPanel pure helpers', () => {
       expect(vs.statusGroups).toEqual(['todo', 'in-progress']);
     });
 
-    it('switches to inbox defaults when selectedList changes to inbox', () => {
-      const { state, panel } = makePanel([]);
+    it('switches to inbox defaults through semantic navigation', () => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const { state, panel } = makePanel([], settings);
       const container = document.createElement('div');
       panel.mount(container);
-      state.set('selectedList', 'inbox');
+      new PanelNavigator(state, settings, panel).openList('inbox');
       const vs = state.get('centerListViewState');
       expect(vs.groupBy).toBe('none');
     });

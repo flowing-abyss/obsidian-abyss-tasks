@@ -29,6 +29,7 @@ import {
   rootTaskRef,
   type TaskSelectionNode,
 } from '../ui/taskSelection';
+import { PanelNavigator } from './panelNavigation';
 
 export const PANEL_VIEW_TYPE = 'task-calendar-panel';
 
@@ -83,6 +84,7 @@ export class PanelView extends ItemView {
   private creationPresentation?: CreationPresentationController;
   private ownedWriteRef: TaskRef | undefined = undefined;
   private interactionRegistry?: InteractionRegistry<string>;
+  private panelNavigation!: PanelNavigator;
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -114,9 +116,19 @@ export class PanelView extends ItemView {
 
     this.state = new AppState();
     this.interactionRegistry = new InteractionRegistry<string>();
+    this.panelNavigation = new PanelNavigator(
+      this.state,
+      this.settings,
+      {
+        calendarView: () => this.center.calendarView(),
+        setCalendarView: (view) => this.center.setCalendarView(view),
+        openQuickCapture: () => this.center.openQuickCapture(),
+      },
+      this.onSaveSettings,
+    );
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
       getSelectedList: () => this.state.get('selectedList'),
-      setSelectedList: (selection) => this.state.set('selectedList', selection),
+      setSelectedList: (selection) => this.panelNavigation.openList(selection),
     });
     const selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries: this.tasks.queries,
@@ -150,7 +162,7 @@ export class PanelView extends ItemView {
     this.projectStore = projectStore;
     const projectManager = new ProjectManager(this.app, this.settings, resolver, selectionTasks);
 
-    this.rail = new RailPanel(this.state, this.app as never);
+    this.rail = new RailPanel(this.state, this.app as never, this.panelNavigation);
     this.left = new LeftPanel(
       this.state,
       this.settings,
@@ -161,6 +173,7 @@ export class PanelView extends ItemView {
       this.onSaveSettings,
       projectStore,
       projectManager,
+      this.panelNavigation,
     );
     this.center = new CenterPanel(
       this.state,
@@ -177,6 +190,7 @@ export class PanelView extends ItemView {
       (result, description) => this.creationPresentation?.present(result, description),
       (root) => this.creationPresentation?.afterRender(root),
       this.interactionRegistry,
+      this.panelNavigation,
     );
     this.right = new RightPanel(
       this.state,
@@ -221,7 +235,7 @@ export class PanelView extends ItemView {
         if (!(file instanceof TFile)) return;
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === oldPath) {
-          this.state.set('selectedList', { type: 'project', path: file.path });
+          this.panelNavigation.openList({ type: 'project', path: file.path });
         }
         const panel = this.state.get('projectsPanel');
         if (panel.view === 'dashboard' && panel.path === oldPath) {
@@ -233,7 +247,7 @@ export class PanelView extends ItemView {
       this.app.vault.on('delete', (file) => {
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === file.path) {
-          this.state.set('selectedList', 'today');
+          this.panelNavigation.openList('today');
         }
         const panel = this.state.get('projectsPanel');
         if (panel.view === 'dashboard' && panel.path === file.path) {
