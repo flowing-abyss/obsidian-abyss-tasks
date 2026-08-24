@@ -16,7 +16,8 @@ function declarationsFor(selector: string): string {
 
 function declarationsForSource(source: string, selector: string): string {
   const uncommentedCss = source.replace(/\/\*[\s\S]*?\*\//gu, '');
-  const normalize = (value: string): string => value.trim().replace(/\s+/gu, ' ');
+  const normalize = (value: string): string =>
+    value.trim().replace(/\s+/gu, ' ').replace(/\(\s+/gu, '(').replace(/\s+\)/gu, ')');
   const matches = [...uncommentedCss.matchAll(/([^{}]+)\{([^}]*)\}/gu)].filter(
     (match) => normalize(match[1] ?? '') === normalize(selector),
   );
@@ -480,15 +481,18 @@ describe('CaptureSurface', () => {
     );
 
     expect(declarationsFor('.abyss-add-task-trigger[hidden]')).toContain('display: none');
-    expect(declarationsFor('.abyss-capture-surface--inline')).toContain(
-      'grid-template-columns: minmax(0, 1fr)',
-    );
+    const inlineSurface = declarationsFor('.abyss-capture-surface--inline');
+    expect(inlineSurface).toContain('position: relative');
+    expect(inlineSurface).toContain('grid-template-columns: minmax(0, 1fr)');
     expect(screenReaderOnly).toContain('position: absolute');
     expect(screenReaderOnly).toContain('width: 1px');
     expect(screenReaderOnly).toContain('height: 1px');
+    expect(screenReaderOnly).toContain('padding: 0');
+    expect(screenReaderOnly).toContain('margin: -1px');
     expect(screenReaderOnly).toContain('overflow: hidden');
     expect(screenReaderOnly).toContain('clip: rect(0 0 0 0)');
     expect(screenReaderOnly).toContain('white-space: nowrap');
+    expect(screenReaderOnly).toContain('border: 0');
     expect(screenReaderOnly).not.toContain('display: none');
     expect(screenReaderOnly).not.toContain('visibility: hidden');
     expect(declarationsFor('.abyss-capture-surface--inline .abyss-capture-pending')).toContain(

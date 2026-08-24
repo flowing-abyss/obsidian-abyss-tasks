@@ -161,6 +161,12 @@ function pressCaptureKey(input: HTMLInputElement, key: string): void {
   input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
 }
 
+function visibleChildren(element: HTMLElement): HTMLElement[] {
+  return [...element.children].filter(
+    (child): child is HTMLElement => child instanceof HTMLElement && !child.hidden,
+  );
+}
+
 async function submitListCapture(container: HTMLElement, value: string): Promise<HTMLInputElement> {
   const input = await openListCapture(container);
   setCaptureDraft(input, value);
@@ -1032,25 +1038,30 @@ describe('CenterPanel shared list capture', () => {
     try {
       const scroll = container.querySelector<HTMLElement>('.abyss-center-scroll')!;
       const card = container.querySelector<HTMLElement>('.abyss-task-card')!;
+      const bar = container.querySelector<HTMLElement>('.abyss-add-task-bar')!;
       scroll.scrollTop = 41;
-      const rect = {
-        x: 0,
-        y: 73,
-        top: 73,
-        right: 100,
-        bottom: 93,
-        left: 0,
-        width: 100,
-        height: 20,
-        toJSON: () => ({}),
-      } as DOMRect;
-      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect);
+      const rectForCurrentBar = (): DOMRect => {
+        const visibleRows = visibleChildren(bar).length;
+        return {
+          x: 0,
+          y: 73 + visibleRows * 24,
+          top: 73 + visibleRows * 24,
+          right: 100,
+          bottom: 93 + visibleRows * 24,
+          left: 0,
+          width: 100,
+          height: 20,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+      vi.spyOn(card, 'getBoundingClientRect').mockImplementation(rectForCurrentBar);
       const beforeTop = card.getBoundingClientRect().top;
 
       await openListCapture(container);
 
       expect(container.querySelector('.abyss-task-card')).toBe(card);
       expect(card.getBoundingClientRect().top).toBe(beforeTop);
+      expect(visibleChildren(bar)).toHaveLength(1);
       expect(scroll.scrollTop).toBe(41);
     } finally {
       panel.destroy();
@@ -2021,6 +2032,82 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     return { panel, state, el };
   }
 
+  function projectCaptureSuccess(): TaskCommandResult {
+    return {
+      type: 'ok',
+      changed: true,
+      outcome: {
+        type: 'task',
+        task: task({ title: 'Captured', source: { filePath: 'Projects/A.md', line: 1 } }),
+      },
+    };
+  }
+
+  async function projectCaptureHarness(
+    implementation: TaskCreateSession['execute'] = async () => projectCaptureSuccess(),
+  ): Promise<{
+    panel: CenterPanel;
+    state: AppState;
+    container: HTMLElement;
+    sessionExecute: ReturnType<typeof vi.fn<TaskCreateSession['execute']>>;
+  }> {
+    const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const queries = taskQueryApi({
+      list: () => [
+        task({ title: 'First project task', source: { filePath: 'Projects/A.md', line: 0 } }),
+      ],
+    });
+    const sessionExecute = vi.fn<TaskCreateSession['execute']>(implementation);
+    const application: TaskApplicationApi & TaskCaptureApplicationApi = {
+      queries,
+      planCreate: vi.fn(async () => ({
+        type: 'ready' as const,
+        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
+        execute: sessionExecute,
+      })),
+      execute: vi.fn(async () => ({
+        type: 'invalid' as const,
+        issues: [{ code: 'invalid-target' as const }],
+      })),
+    };
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      rawStatus: null,
+      stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
+    };
+    const projectStore = {
+      list: () => [project],
+      get: () => project,
+      activeForLeftPanel: () => [project],
+      onUpdate: () => () => {},
+      refresh: () => {},
+    } as never;
+    const panel = new CenterPanel(
+      state,
+      app,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      projectStore,
+      stubProjectManager(),
+      application,
+      undefined,
+      application,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    state.set('mode', 'projects');
+    return { panel, state, container, sessionExecute };
+  }
+
   it('mounts the projects panel on a child host, not the shared center element', async () => {
     const { state, el } = await makeProjectsPanel();
     state.set('mode', 'projects');
@@ -2041,6 +2128,125 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     // Normal tasks-mode header (title + controls) renders again.
     expect(el.querySelector('.abyss-center-header')).toBeTruthy();
     expect(el.querySelector('.abyss-center-scroll')).toBeTruthy();
+  });
+
+  it('restores project trigger on Escape and preserves blur focus semantics', async () => {
+    const { panel, container, sessionExecute } = await projectCaptureHarness();
+    const next = activeDocument.body.createEl('button', { text: 'Next project control' });
+    try {
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      const escaped = await openListCapture(container);
+      escaped.focus();
+      pressCaptureKey(escaped, 'Escape');
+
+      expect(trigger.hidden).toBe(false);
+      expect(activeDocument.activeElement).toBe(trigger);
+
+      const empty = await openListCapture(container);
+      empty.focus();
+      next.focus();
+      await flushMicrotasks();
+
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(next);
+
+      const blurred = await openListCapture(container);
+      setCaptureDraft(blurred, 'project blur task');
+      blurred.focus();
+      next.focus();
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(next);
+    } finally {
+      panel.destroy();
+      container.remove();
+      next.remove();
+    }
+  });
+
+  it('keeps a failed project Enter open and leaves composing keys to the IME', async () => {
+    const failure: TaskCommandResult = {
+      type: 'io-error',
+      cause: 'repository-error',
+      contentState: 'unknown',
+    };
+    const { panel, container, sessionExecute } = await projectCaptureHarness(async () => failure);
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'project repair draft');
+      const composingEnter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+      const legacyEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(legacyEscape, 'keyCode', { configurable: true, value: 229 });
+      input.dispatchEvent(composingEnter);
+      input.dispatchEvent(legacyEscape);
+      await flushMicrotasks();
+
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('project repair draft');
+
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      const error = input
+        .closest('.abyss-capture-surface')
+        ?.querySelector<HTMLElement>('.abyss-capture-error');
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('project repair draft');
+      expect(error?.hidden).toBe(false);
+      expect(input.getAttribute('aria-describedby')).toContain(error?.id);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('opens project inline capture without adding a visual bar row or moving its task scroll', async () => {
+    const { panel, container } = await projectCaptureHarness();
+    try {
+      const scroll = container.querySelector<HTMLElement>('.abyss-project-tasks-scroll')!;
+      const card = scroll.querySelector<HTMLElement>('.abyss-task-card')!;
+      const bar = container.querySelector<HTMLElement>('.abyss-add-task-bar')!;
+      scroll.scrollTop = 29;
+      const rectForCurrentBar = (): DOMRect => {
+        const visibleRows = visibleChildren(bar).length;
+        return {
+          x: 0,
+          y: 51 + visibleRows * 24,
+          top: 51 + visibleRows * 24,
+          right: 100,
+          bottom: 71 + visibleRows * 24,
+          left: 0,
+          width: 100,
+          height: 20,
+          toJSON: () => ({}),
+        } as DOMRect;
+      };
+      vi.spyOn(card, 'getBoundingClientRect').mockImplementation(rectForCurrentBar);
+      const beforeTop = card.getBoundingClientRect().top;
+
+      await openListCapture(container);
+
+      expect(card.getBoundingClientRect().top).toBe(beforeTop);
+      expect(visibleChildren(bar)).toHaveLength(1);
+      expect(scroll.scrollTop).toBe(29);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
   });
 
   it('keeps a project-dashboard capture session across success and a full panel rerender', async () => {
