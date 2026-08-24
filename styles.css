@@ -3663,6 +3663,9 @@ body.is-mobile .tasksCalendar .statisticPopup li {
     background 0.1s,
     color 0.1s;
 }
+.abyss-add-task-trigger[hidden] {
+  display: none;
+}
 .abyss-add-task-trigger:hover {
   color: var(--interactive-accent);
   background: hsla(var(--accent-h), var(--accent-s), var(--accent-l), 0.08);
@@ -3687,6 +3690,13 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   align-items: center;
   gap: var(--size-2-1) var(--size-4-2);
   color: var(--text-normal);
+}
+
+.abyss-capture-surface--inline {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
 }
 
 .abyss-capture-input {
@@ -3733,6 +3743,29 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-error);
   font-size: var(--font-ui-smaller);
   line-height: var(--line-height-tight);
+}
+
+:is(
+  .abyss-capture-surface--inline .abyss-capture-destination,
+  .abyss-capture-surface--inline .abyss-capture-error
+) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.abyss-capture-surface--inline .abyss-capture-pending {
+  position: absolute;
+  inset-inline-end: var(--size-4-3);
+  inset-block-start: 50%;
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 
 .abyss-capture-surface.is-submitting {

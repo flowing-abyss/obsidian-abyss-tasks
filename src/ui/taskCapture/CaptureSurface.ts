@@ -1,11 +1,14 @@
 import type { CaptureSnapshot, TaskCaptureController } from './TaskCaptureController';
 
+export type CapturePresentation = 'default' | 'inline';
+
 export interface CaptureSurfaceOptions {
   readonly inputLabel?: string;
   readonly placeholder?: string;
   readonly closeOnEmptyBlur?: boolean;
   readonly feedbackHost?: HTMLElement;
   readonly onEscape?: () => void;
+  readonly presentation?: CapturePresentation;
 }
 
 let nextCaptureSurfaceId = 0;
@@ -18,6 +21,7 @@ export class CaptureSurface {
   private readonly pending: HTMLElement;
   private readonly error: HTMLElement;
   private readonly feedbackHost: HTMLElement | undefined;
+  private readonly presentation: CapturePresentation;
   private readonly cleanup: Array<() => void> = [];
   private appliedFocusEpoch: number;
   private destroyed = false;
@@ -30,10 +34,12 @@ export class CaptureSurface {
     const ownerDocument = host.ownerDocument;
     const id = ++nextCaptureSurfaceId;
     this.feedbackHost = options.feedbackHost;
+    this.presentation = options.presentation ?? 'default';
     this.appliedFocusEpoch = controller.snapshot().focusEpoch;
 
     this.element = ownerDocument.createElement('div');
     this.element.className = 'abyss-capture-surface abyss-quick-capture';
+    this.element.classList.toggle('abyss-capture-surface--inline', this.presentation === 'inline');
 
     this.input = ownerDocument.createElement('input');
     this.input.className = 'abyss-capture-input abyss-quick-capture-input';
@@ -132,7 +138,7 @@ export class CaptureSurface {
       hasError ? `${this.destination.id} ${this.error.id}` : this.destination.id,
     );
     this.error.textContent = snapshot.error?.message ?? '';
-    this.error.hidden = !hasError;
+    this.error.hidden = this.presentation !== 'inline' && !hasError;
     this.pending.hidden = snapshot.phase !== 'submitting';
 
     this.element.classList.toggle('is-submitting', snapshot.phase === 'submitting');

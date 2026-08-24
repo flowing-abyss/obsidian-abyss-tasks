@@ -919,6 +919,12 @@ describe('CenterPanel shared list capture', () => {
       expect(activeDocument.activeElement).toBe(input);
       expect(trigger.isConnected).toBe(true);
       expect(trigger.hidden).toBe(true);
+      expect(
+        input
+          .closest('.abyss-capture-surface')
+          ?.classList.contains('abyss-capture-surface--inline'),
+      ).toBe(true);
+      expect(trigger.parentElement?.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
 
       pressCaptureKey(input, 'Escape');
 
@@ -989,6 +995,104 @@ describe('CenterPanel shared list capture', () => {
     }
   });
 
+  it('closes an empty inline capture on blur without executing or taking focus', async () => {
+    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    const next = activeDocument.body.createEl('button', { text: 'Next control' });
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      input.focus();
+      next.focus();
+      await flushMicrotasks();
+
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(next);
+    } finally {
+      panel.destroy();
+      container.remove();
+      next.remove();
+    }
+  });
+
+  it('opens inline capture without moving the first card or its scrolling container', async () => {
+    const snapshots = [
+      task({
+        title: 'First task',
+        planning: { due: TODAY },
+        source: { filePath: 'Capture.md', line: 0 },
+      }),
+    ];
+    const { panel } = captureHarness(async () => captureSuccess(), snapshots);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const scroll = container.querySelector<HTMLElement>('.abyss-center-scroll')!;
+      const card = container.querySelector<HTMLElement>('.abyss-task-card')!;
+      scroll.scrollTop = 41;
+      const rect = {
+        x: 0,
+        y: 73,
+        top: 73,
+        right: 100,
+        bottom: 93,
+        left: 0,
+        width: 100,
+        height: 20,
+        toJSON: () => ({}),
+      } as DOMRect;
+      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue(rect);
+      const beforeTop = card.getBoundingClientRect().top;
+
+      await openListCapture(container);
+
+      expect(container.querySelector('.abyss-task-card')).toBe(card);
+      expect(card.getBoundingClientRect().top).toBe(beforeTop);
+      expect(scroll.scrollTop).toBe(41);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('leaves composing inline Enter and Escape to the IME', async () => {
+    const { panel, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'composing draft');
+      const composingEnter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+      const legacyEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(legacyEscape, 'keyCode', { configurable: true, value: 229 });
+      input.dispatchEvent(composingEnter);
+      input.dispatchEvent(legacyEscape);
+      await flushMicrotasks();
+
+      expect(sessionExecute).not.toHaveBeenCalled();
+      expect(composingEnter.defaultPrevented).toBe(false);
+      expect(legacyEscape.defaultPrevented).toBe(false);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBe(input);
+      expect(input.value).toBe('composing draft');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it.each(['Enter', 'blur'] as const)(
     'preserves the exact draft and shared error state after a %s failure',
     async (cause) => {
@@ -1012,7 +1116,17 @@ describe('CenterPanel shared list capture', () => {
         expect(current).toBe(input);
         expect(current?.value).toBe('  repair this exact draft  ');
         expect(current?.closest('.abyss-capture-surface')?.classList).toContain('has-error');
+        expect(
+          current
+            ?.closest('.abyss-capture-surface')
+            ?.classList.contains('abyss-capture-surface--inline'),
+        ).toBe(true);
         expect(current?.getAttribute('aria-invalid')).toBe('true');
+        const error = current
+          ?.closest('.abyss-capture-surface')
+          ?.querySelector<HTMLElement>('.abyss-capture-error');
+        expect(error?.hidden).toBe(false);
+        expect(current?.getAttribute('aria-describedby')).toContain(error?.id);
       } finally {
         panel.destroy();
         container.remove();
@@ -1990,6 +2104,15 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     try {
       state.set('mode', 'projects');
       const first = await openListCapture(container);
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      expect(trigger.isConnected).toBe(true);
+      expect(trigger.hidden).toBe(true);
+      expect(
+        first
+          .closest('.abyss-capture-surface')
+          ?.classList.contains('abyss-capture-surface--inline'),
+      ).toBe(true);
+      expect(trigger.parentElement?.querySelectorAll('.abyss-capture-surface')).toHaveLength(1);
       first.focus();
       setCaptureDraft(first, 'first project task');
       pressCaptureKey(first, 'Enter');

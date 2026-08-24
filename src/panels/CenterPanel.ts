@@ -2863,7 +2863,11 @@ export class CenterPanel {
               active.restoreFocusOnClose = true;
             },
           };
-    const surface = new CaptureSurface(host, active.controller, options);
+    const presentation =
+      active.placement.type === 'list' || active.placement.type === 'project'
+        ? 'inline'
+        : 'default';
+    const surface = new CaptureSurface(host, active.controller, { ...options, presentation });
     const legacyInputClass = this.calendarCaptureInputClass(active.placement);
     if (legacyInputClass) surface.input.addClass(legacyInputClass);
     active.surface = surface;

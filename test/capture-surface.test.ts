@@ -125,6 +125,36 @@ describe('CaptureSurface', () => {
     expect(surface.element.querySelector('[aria-live]')).toBeNull();
   });
 
+  it('keeps inline descriptions connected and accessible without adding a visible feedback row', async () => {
+    const { controller } = harness(async () => failure());
+    const positioningHost = host();
+    document.body.appendChild(positioningHost);
+    const surface = new CaptureSurface(positioningHost, controller, {
+      presentation: 'inline',
+    });
+    const destination = surface.element.querySelector<HTMLElement>('.abyss-capture-destination')!;
+    const error = surface.element.querySelector<HTMLElement>('.abyss-capture-error')!;
+    const initialChildren = surface.element.childElementCount;
+
+    expect(surface.element.classList.contains('abyss-capture-surface--inline')).toBe(true);
+    expect(surface.input.getAttribute('aria-describedby')).toContain(destination.id);
+    expect(destination.hidden).toBe(false);
+    expect(error.hidden).toBe(false);
+
+    type(surface, 'failed inline task');
+    key(surface, 'Enter');
+    await flushMicrotasks(0);
+
+    expect(destination.isConnected).toBe(true);
+    expect(error.isConnected).toBe(true);
+    expect(error.textContent).toBe('Failed to create task. Please try again.');
+    expect(surface.input.getAttribute('aria-describedby')).toContain(error.id);
+    expect(surface.element.childElementCount).toBe(initialChildren);
+
+    surface.destroy();
+    positioningHost.remove();
+  });
+
   it('can portal calendar feedback outside a clipping positioning host without breaking descriptions', () => {
     const { controller } = harness();
     const positioningHost = host();
@@ -442,6 +472,28 @@ describe('CaptureSurface', () => {
     expect(declarationsFor('.abyss-tg-quick-add')).toContain('position: absolute');
     expect(declarationsFor('.abyss-tg-allday-quick-add')).toContain('position: absolute');
     expect(declarationsFor('.abyss-mg-quick-add')).toContain('position: absolute');
+  });
+
+  it('keeps inline capture feedback screen-reader-only and inside its one-row surface', () => {
+    const screenReaderOnly = declarationsFor(
+      ':is(.abyss-capture-surface--inline .abyss-capture-destination, .abyss-capture-surface--inline .abyss-capture-error)',
+    );
+
+    expect(declarationsFor('.abyss-add-task-trigger[hidden]')).toContain('display: none');
+    expect(declarationsFor('.abyss-capture-surface--inline')).toContain(
+      'grid-template-columns: minmax(0, 1fr)',
+    );
+    expect(screenReaderOnly).toContain('position: absolute');
+    expect(screenReaderOnly).toContain('width: 1px');
+    expect(screenReaderOnly).toContain('height: 1px');
+    expect(screenReaderOnly).toContain('overflow: hidden');
+    expect(screenReaderOnly).toContain('clip: rect(0 0 0 0)');
+    expect(screenReaderOnly).toContain('white-space: nowrap');
+    expect(screenReaderOnly).not.toContain('display: none');
+    expect(screenReaderOnly).not.toContain('visibility: hidden');
+    expect(declarationsFor('.abyss-capture-surface--inline .abyss-capture-pending')).toContain(
+      'position: absolute',
+    );
   });
 
   it('keeps calendar focus paint visible and portals compact feedback outside clipped cells', () => {
