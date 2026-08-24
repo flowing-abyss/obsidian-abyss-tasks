@@ -3,7 +3,12 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ShortcutActionId } from '../src/settings/shortcuts';
-import type { TaskCaptureApplicationApi, TaskCommandResult, TaskCreateSession } from '../src/tasks';
+import {
+  localDate,
+  type TaskCaptureApplicationApi,
+  type TaskCommandResult,
+  type TaskCreateSession,
+} from '../src/tasks';
 import type { InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { CaptureSurface } from '../src/ui/taskCapture/CaptureSurface';
 import type { CaptureContext, CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
@@ -401,12 +406,14 @@ describe('QuickCaptureCoordinator', () => {
     };
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.taskPrefix = '#frozen-prefix';
-    const resolver = new CaptureTargetResolver(application, settings);
+    let today = localDate('2026-08-24');
+    const resolver = new CaptureTargetResolver(application, settings, () => today);
     const h = harness((context) => resolver.resolve(context));
     h.setContext({ type: 'default', source: 'calendar' });
 
     h.coordinator.openOrFocus();
     settings.taskPrefix = '#changed-prefix';
+    today = localDate('2026-08-25');
     h.setContext({ type: 'list', selection: 'inbox' });
     planned.resolve(readySession(execute));
     await flushMicrotasks(0);
@@ -418,7 +425,10 @@ describe('QuickCaptureCoordinator', () => {
     );
     await flushMicrotasks(0);
 
-    expect(execute).toHaveBeenCalledWith({ markdownBody: '#frozen-prefix draft' });
+    expect(execute).toHaveBeenCalledWith({
+      markdownBody: '#frozen-prefix draft',
+      initial: { due: { type: 'set', value: localDate('2026-08-24') } },
+    });
     expect(h.resolveTarget).toHaveBeenCalledWith({ type: 'default', source: 'calendar' });
   });
 

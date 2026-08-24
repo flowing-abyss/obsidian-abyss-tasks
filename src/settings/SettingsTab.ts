@@ -507,7 +507,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       text: 'Use A–Z or 0–9 with optional Alt, Ctrl, Meta, Shift, or Mod. Separate alternatives with |, for example Q | shift 7.',
     });
     const validationStatus = containerEl.createDiv({
-      cls: 'abyss-shortcut-validation-status',
+      cls: 'abyss-shortcut-validation-status abyss-sr-only',
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
     const saveFeedback = containerEl.createDiv({ cls: 'abyss-shortcut-save-feedback' });

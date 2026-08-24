@@ -169,6 +169,21 @@ describe('TaskCaptureController', () => {
     expect(controller.snapshot().draft).toBe('keep this exact text');
   });
 
+  it('records blur intent during an Enter submission and closes after its success', async () => {
+    const pending = deferred<TaskCommandResult>();
+    const { controller, execute, onRequestClose } = harness(() => pending.promise);
+    controller.setDraft('submit once then leave');
+
+    const submission = controller.submit('enter');
+    const blur = controller.submit('blur');
+    pending.resolve(successfulResult());
+    await Promise.all([submission, blur]);
+
+    expect(execute).toHaveBeenCalledOnce();
+    expect(controller.snapshot()).toMatchObject({ phase: 'closed', draft: '', focusEpoch: 0 });
+    expect(onRequestClose).toHaveBeenCalledOnce();
+  });
+
   it('does not cross the application boundary after a pending observer destroys it', async () => {
     const { controller, execute, onResult, onRequestClose } = harness();
     controller.subscribe((snapshot) => {

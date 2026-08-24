@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -7,6 +9,14 @@ import type { CalendarSettings } from '../src/settings/types';
 import { deferred, useRealMoment } from './helpers';
 
 useRealMoment();
+
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
+
+function declarationsFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(css);
+  return match?.groups?.['body'] ?? '';
+}
 
 interface StubPlugin {
   app: App;
@@ -253,6 +263,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(status.getAttribute('role')).toBe('status');
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.getAttribute('aria-atomic')).toBe('true');
+    expect(status.classList).toContain('abyss-sr-only');
     expect(status.textContent).toBe(
       'Q conflicts with Quick capture and is disabled. No alternatives remain active.',
     );
@@ -314,12 +325,20 @@ describe('CalendarSettingsTab Hotkeys', () => {
       'Q conflicts with Search and is disabled. shift 7 remains active.',
     );
     const warning = issue.querySelector<HTMLElement>('.abyss-shortcut-warning-icon')!;
+    const status = body.querySelector<HTMLElement>('.abyss-shortcut-validation-status')!;
     expect(warning.getAttribute('aria-hidden')).toBe('true');
-    expect(
-      body
-        .querySelector<HTMLElement>('.abyss-shortcut-validation-status')
-        ?.getAttribute('aria-live'),
-    ).toBe('polite');
+    expect(issue.classList).not.toContain('abyss-sr-only');
+    expect(declarationsFor('.abyss-shortcut-issue')).toContain('display: flex');
+    expect(status.getAttribute('aria-live')).toBe('polite');
+    expect(status.classList).toContain('abyss-sr-only');
+    const screenReaderOnly = declarationsFor('.abyss-sr-only');
+    expect(screenReaderOnly).toContain('position: absolute');
+    expect(screenReaderOnly).toContain('width: 1px');
+    expect(screenReaderOnly).toContain('height: 1px');
+    expect(screenReaderOnly).toContain('margin: -1px');
+    expect(screenReaderOnly).toContain('clip: rect(0, 0, 0, 0)');
+    expect(screenReaderOnly).not.toContain('display: none');
+    expect(screenReaderOnly).not.toContain('visibility: hidden');
   });
 
   it.each([

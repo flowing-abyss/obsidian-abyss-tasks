@@ -358,6 +358,30 @@ describe('CaptureSurface', () => {
     expect(blurSurface.input.value).toBe('keep without focus theft');
   });
 
+  it('keeps connected external focus when blur follows a pending Enter success', async () => {
+    const pendingResult = deferred<TaskCommandResult>();
+    const current = harness(() => pendingResult.promise);
+    const container = document.createElement('div');
+    const positioningHost = document.createElement('div');
+    const externalFocus = document.createElement('button');
+    container.append(positioningHost, externalFocus);
+    document.body.appendChild(container);
+    const surface = new CaptureSurface(positioningHost, current.controller);
+    type(surface, 'submit once then leave');
+    surface.input.focus();
+
+    key(surface, 'Enter');
+    externalFocus.focus();
+    pendingResult.resolve(success());
+    await flushMicrotasks(0);
+
+    expect(current.execute).toHaveBeenCalledOnce();
+    expect(current.onRequestClose).toHaveBeenCalledOnce();
+    expect(document.activeElement).toBe(externalFocus);
+    surface.destroy();
+    container.remove();
+  });
+
   it('does not replay a historical focusEpoch when remounted during a later blur submission', async () => {
     const pendingResult = deferred<TaskCommandResult>();
     let submissionCount = 0;
@@ -498,6 +522,41 @@ describe('CaptureSurface', () => {
     expect(declarationsFor('.abyss-capture-surface--inline .abyss-capture-pending')).toContain(
       'position: absolute',
     );
+  });
+
+  it('reserves pending-message space without adding an inline layout row', () => {
+    const inlineSurface = declarationsFor('.abyss-capture-surface--inline');
+    const submittingInput = declarationsFor(
+      '.abyss-capture-surface--inline.is-submitting .abyss-capture-input',
+    );
+    const pending = declarationsFor('.abyss-capture-surface--inline .abyss-capture-pending');
+
+    expect(inlineSurface).toContain(
+      '--abyss-inline-capture-pending-space: calc(12ch + var(--size-4-4, 1rem))',
+    );
+    expect(submittingInput).toContain(
+      'padding-inline-end: var(--abyss-inline-capture-pending-space)',
+    );
+    expect(pending).toContain('position: absolute');
+    expect(pending).toContain('inset-inline-end: var(--size-4-3)');
+    expect(declarationsFor('.abyss-capture-pending')).toContain('white-space: nowrap');
+    expect(pending).not.toMatch(/(?:^|;)\s*(?:display:\s*(?:grid|flex)|position:\s*static)/u);
+  });
+
+  it('matches the inline capture slot to the Add task trigger with one fixed block size', () => {
+    const bar = declarationsFor('.abyss-add-task-bar');
+    const trigger = declarationsFor('.abyss-add-task-trigger');
+    const inlineSurface = declarationsFor('.abyss-capture-surface--inline');
+    const inlineInput = declarationsFor('.abyss-capture-surface--inline .abyss-capture-input');
+
+    expect(bar).toContain('--abyss-inline-capture-block-size: 2rem');
+    expect(trigger).toContain('block-size: var(--abyss-inline-capture-block-size)');
+    expect(trigger).toContain('padding-block: 0');
+    expect(inlineSurface).toContain('block-size: var(--abyss-inline-capture-block-size)');
+    expect(inlineSurface).toContain('padding: 0');
+    expect(inlineInput).toContain('block-size: 100%');
+    expect(inlineInput).toContain('min-block-size: 0');
+    expect(inlineInput).toContain('padding-block: 0');
   });
 
   it('keeps calendar focus paint visible and portals compact feedback outside clipped cells', () => {

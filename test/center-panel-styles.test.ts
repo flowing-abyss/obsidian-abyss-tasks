@@ -29,6 +29,15 @@ function atRuleBlock(header: string): string {
 }
 
 describe('CenterPanel task metadata styles', () => {
+  it('paints keyboard focus on the focusable center without a mouse-focus outline', () => {
+    const center = declarationsFor('.abyss-center');
+    const focusVisible = declarationsFor('.abyss-center:focus-visible');
+
+    expect(center).not.toContain('outline:');
+    expect(focusVisible).toContain('outline: 1px solid var(--background-modifier-border-focus)');
+    expect(focusVisible).toContain('outline-offset: -1px');
+  });
+
   it('uses one centered primary-row contract without compensating offsets', () => {
     const card = declarationsFor('.abyss-task-card');
     const mainRow = declarationsFor('.abyss-task-card-main-row');

@@ -366,6 +366,11 @@
   position: relative;
 }
 
+.abyss-center:focus-visible {
+  outline: 1px solid var(--background-modifier-border-focus);
+  outline-offset: -1px;
+}
+
 /* Right panel */
 .abyss-right {
   width: 320px;
@@ -3641,6 +3646,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Add task bar */
 .abyss-add-task-bar {
+  --abyss-inline-capture-block-size: 2rem;
+
   padding: 0 8px 8px;
   flex-shrink: 0;
   border-top: 1px solid var(--background-modifier-border);
@@ -3648,9 +3655,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-add-task-trigger {
   display: flex;
   align-items: center;
+  block-size: var(--abyss-inline-capture-block-size);
+  box-sizing: border-box;
   width: 100%;
   gap: 8px;
-  padding: 8px 10px;
+  padding-block: 0;
+  padding-inline: 10px;
   border: none;
   border-radius: 6px;
   background: transparent;
@@ -3693,10 +3703,14 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-capture-surface--inline {
+  --abyss-inline-capture-pending-space: calc(12ch + var(--size-4-4, 1rem));
+
   position: relative;
   grid-template-columns: minmax(0, 1fr);
+  block-size: var(--abyss-inline-capture-block-size);
   width: 100%;
   min-width: 0;
+  padding: 0;
 }
 
 .abyss-capture-input {
@@ -3720,6 +3734,17 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 .abyss-capture-input::placeholder {
   color: var(--text-faint);
+}
+
+.abyss-capture-surface--inline .abyss-capture-input {
+  block-size: 100%;
+  min-block-size: 0;
+  padding-block: 0;
+  padding-inline: 10px;
+}
+
+.abyss-capture-surface--inline.is-submitting .abyss-capture-input {
+  padding-inline-end: var(--abyss-inline-capture-pending-space);
 }
 
 .abyss-capture-destination {

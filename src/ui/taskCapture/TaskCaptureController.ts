@@ -81,7 +81,11 @@ export class TaskCaptureController {
   }
 
   async submit(cause: CaptureSubmitCause): Promise<void> {
-    if (this.destroyed || this.phase === 'submitting' || this.phase === 'closed') return;
+    if (this.destroyed || this.phase === 'closed') return;
+    if (this.phase === 'submitting') {
+      if (cause === 'blur') this.closeAfterSuccess = true;
+      return;
+    }
     if (this.draft.trim().length === 0) {
       if (cause === 'blur') this.close();
       return;

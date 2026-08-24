@@ -137,7 +137,7 @@ type CalendarCapturePlacement =
   | { readonly type: 'calendar-month'; readonly date: string };
 
 type BarCapturePlacement =
-  | { readonly type: 'list' }
+  | { readonly type: 'list'; readonly selectionKey: string }
   | { readonly type: 'project'; readonly path: string };
 
 type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
@@ -240,6 +240,10 @@ export class CenterPanel {
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
   private captureRequestId = 0;
+  private resolvingCapture: {
+    readonly requestId: number;
+    readonly placement: PanelCapturePlacement;
+  } | null = null;
   private activeCapture: PanelCaptureSession | null = null;
   private readonly navigation: PanelNavigationActions;
 
@@ -339,11 +343,13 @@ export class CenterPanel {
 
     this.offs.push(
       this.state.on('selectedList', () => {
+        this.cancelStaleListCapture();
         this.selectedTaskKeys.clear();
         this.selectionAnchorKey = null;
         this.selectionFocusKey = null;
       }),
       this.state.on('mode', () => {
+        this.cancelStaleListCapture();
         this.cancelKeyboardInteraction();
       }),
       this.state.on('searchQuery', (query) => this.handleSearchQueryChanged(query)),
@@ -2706,12 +2712,18 @@ export class CenterPanel {
 
   private renderAddTaskBar(): void {
     const bar = this.el.createDiv({ cls: 'abyss-add-task-bar' });
-    this.renderCaptureHost(bar, { type: 'list' });
+    this.renderCaptureHost(bar, {
+      type: 'list',
+      selectionKey: listSelectionToKey(this.state.get('selectedList')),
+    });
   }
 
   private renderCaptureHost(host: HTMLElement, placement: BarCapturePlacement): void {
     host.dataset['abyssCaptureHost'] = placement.type;
     if (placement.type === 'project') host.dataset['abyssCapturePath'] = placement.path;
+    if (placement.type === 'list') {
+      host.dataset['abyssCaptureSelection'] = placement.selectionKey;
+    }
     const trigger = host.createEl('button', {
       cls: 'abyss-add-task-trigger',
       attr: { type: 'button' },
@@ -2741,8 +2753,10 @@ export class CenterPanel {
     if (!this.captureTargets) return;
     this.cancelActiveCapture();
     const requestId = ++this.captureRequestId;
+    this.resolvingCapture = { requestId, placement };
     void this.captureTargets.resolve(context).then((resolvedTarget) => {
       if (requestId !== this.captureRequestId) return;
+      this.resolvingCapture = null;
       const target = this.targetForCapturePlacement(resolvedTarget, placement);
       let session!: PanelCaptureSession;
       const controller = new TaskCaptureController({
@@ -2770,17 +2784,19 @@ export class CenterPanel {
   private remountActiveCapture(): void {
     const active = this.activeCapture;
     if (!active) return;
-    if (this.isCalendarCapturePlacement(active.placement)) {
-      const host = this.calendarCaptureHost(active.placement);
+    const placement = active.placement;
+    if (this.isCalendarCapturePlacement(placement)) {
+      const host = this.calendarCaptureHost(placement);
       if (host) this.mountCaptureSurface(active, host);
       return;
     }
     const host = [...this.el.querySelectorAll<HTMLElement>('[data-abyss-capture-host]')].find(
       (candidate) =>
-        active.placement.type === 'project'
+        placement.type === 'project'
           ? candidate.dataset['abyssCaptureHost'] === 'project' &&
-            candidate.dataset['abyssCapturePath'] === active.placement.path
-          : candidate.dataset['abyssCaptureHost'] === 'list',
+            candidate.dataset['abyssCapturePath'] === placement.path
+          : candidate.dataset['abyssCaptureHost'] === 'list' &&
+            candidate.dataset['abyssCaptureSelection'] === placement.selectionKey,
     );
     if (host) this.mountCaptureSurface(active, host);
   }
@@ -2790,6 +2806,10 @@ export class CenterPanel {
     placement: PanelCapturePlacement,
   ): CaptureTarget {
     if (!this.isCalendarCapturePlacement(placement)) return target;
+    const label =
+      placement.type === 'calendar-timed'
+        ? `${placement.date} · ${placement.time}`
+        : `${placement.date} · all day`;
     const initial = {
       ...target.initial,
       due: { type: 'set' as const, value: localDate(placement.date) },
@@ -2797,7 +2817,7 @@ export class CenterPanel {
         ? { time: { type: 'set' as const, value: localTime(placement.time) } }
         : {}),
     };
-    return { ...target, initial };
+    return { ...target, label, initial };
   }
 
   private calendarCaptureHost(placement: CalendarCapturePlacement): HTMLElement | null {
@@ -2928,6 +2948,7 @@ export class CenterPanel {
 
   private cancelActiveCapture(): void {
     this.captureRequestId++;
+    this.resolvingCapture = null;
     const active = this.activeCapture;
     if (!active) return;
     const host = active.host;
@@ -2957,7 +2978,16 @@ export class CenterPanel {
     if (left.type === 'calendar-month') {
       return right.type === 'calendar-month' && left.date === right.date;
     }
-    return right.type === 'list';
+    return right.type === 'list' && left.selectionKey === right.selectionKey;
+  }
+
+  private cancelStaleListCapture(): void {
+    const placement = this.activeCapture?.placement ?? this.resolvingCapture?.placement;
+    if (placement?.type !== 'list') return;
+    const currentSelectionKey = listSelectionToKey(this.state.get('selectedList'));
+    if (this.state.get('mode') !== 'tasks' || placement.selectionKey !== currentSelectionKey) {
+      this.cancelActiveCapture();
+    }
   }
 
   private isCalendarCapturePlacement(

@@ -817,20 +817,24 @@ describe('CenterPanel shared list capture', () => {
   function captureHarness(
     implementation: () => Promise<TaskCommandResult>,
     snapshots: readonly TaskSnapshot[] = [],
+    plan?: () => Promise<TaskCreateSession>,
   ): {
     readonly panel: CenterPanel;
     readonly state: AppState;
     readonly planCreate: ReturnType<typeof vi.fn>;
-    readonly sessionExecute: ReturnType<typeof vi.fn>;
+    readonly sessionExecute: ReturnType<typeof vi.fn<TaskCreateSession['execute']>>;
   } {
     const state = new AppState();
     const queries = taskQueryApi({ list: () => snapshots });
-    const sessionExecute = vi.fn(implementation);
-    const planCreate = vi.fn(async () => ({
-      type: 'ready' as const,
-      destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
-      execute: sessionExecute,
-    }));
+    const sessionExecute = vi.fn<TaskCreateSession['execute']>(implementation);
+    const planCreate = vi.fn(
+      plan ??
+        (async () => ({
+          type: 'ready' as const,
+          destination: { filePath: 'Capture.md', insertion: { type: 'append' as const } },
+          execute: sessionExecute,
+        })),
+    );
     const application: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries,
       planCreate,
@@ -991,6 +995,32 @@ describe('CenterPanel shared list capture', () => {
       setCaptureDraft(input, 'blurred task');
       input.focus();
       next.focus();
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+      expect(activeDocument.activeElement).toBe(next);
+    } finally {
+      panel.destroy();
+      container.remove();
+      next.remove();
+    }
+  });
+
+  it('closes after pending Enter blur without a duplicate write or focus theft', async () => {
+    const pendingResult = deferred<TaskCommandResult>();
+    const { panel, sessionExecute } = captureHarness(() => pendingResult.promise);
+    const container = freshContainer();
+    const next = activeDocument.body.createEl('button', { text: 'Next control' });
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'submit once then leave');
+      input.focus();
+      pressCaptureKey(input, 'Enter');
+      next.focus();
+      pendingResult.resolve(captureSuccess());
       await flushMicrotasks();
 
       expect(sessionExecute).toHaveBeenCalledOnce();
@@ -1165,6 +1195,83 @@ describe('CenterPanel shared list capture', () => {
       expect(before.isConnected).toBe(false);
       expect(after?.value).toBe('survive the render');
       expect(activeDocument.activeElement).toBe(after);
+      expect(sessionExecute).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it.each([
+    {
+      name: 'selected-list',
+      navigate: (state: AppState) => state.set('selectedList', 'inbox'),
+      restore: (state: AppState) => state.set('selectedList', 'today'),
+    },
+    {
+      name: 'mode',
+      navigate: (state: AppState) => state.set('mode', 'search'),
+      restore: (state: AppState) => state.set('mode', 'tasks'),
+    },
+  ])(
+    'invalidates a deferred list capture after $name navigation',
+    async ({ navigate, restore }) => {
+      const planned = deferred<TaskCreateSession>();
+      const { panel, state, planCreate, sessionExecute } = captureHarness(
+        async () => captureSuccess(),
+        [],
+        () => planned.promise,
+      );
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!.click();
+        expect(planCreate).toHaveBeenCalledOnce();
+
+        navigate(state);
+        planned.resolve({
+          type: 'ready',
+          destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+          execute: sessionExecute,
+        });
+        await flushMicrotasks();
+        restore(state);
+
+        expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
+        expect(sessionExecute).not.toHaveBeenCalled();
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
+  it.each([
+    {
+      name: 'selected-list',
+      navigate: (state: AppState) => state.set('selectedList', 'inbox'),
+      restore: (state: AppState) => state.set('selectedList', 'today'),
+    },
+    {
+      name: 'mode',
+      navigate: (state: AppState) => state.set('mode', 'search'),
+      restore: (state: AppState) => state.set('mode', 'tasks'),
+    },
+  ])('detaches an active list capture after $name navigation', async ({ navigate, restore }) => {
+    const { panel, state, sessionExecute } = captureHarness(async () => captureSuccess());
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const input = await openListCapture(container);
+      setCaptureDraft(input, 'stale draft');
+
+      navigate(state);
+      restore(state);
+
+      expect(input.isConnected).toBe(false);
+      expect(container.querySelector('.abyss-quick-capture-input')).toBeNull();
       expect(sessionExecute).not.toHaveBeenCalled();
     } finally {
       panel.destroy();
@@ -3365,7 +3472,7 @@ describe('CenterPanel calendar mode — click-to-create', () => {
     },
   );
 
-  it('lets explicit calendar placements overwrite the calendar default due date', () => {
+  it('gives explicit calendar placements truthful labels and due/time values', () => {
     const { panel, el } = sharedCalendarCaptureHarness(async () => calendarCaptureSuccess());
     const calendarTarget: CaptureTarget = {
       label: 'Today · today',
@@ -3390,14 +3497,25 @@ describe('CenterPanel calendar mode — click-to-create', () => {
         date: '2026-09-04',
         time: '10:00',
       }) as CaptureTarget;
+      const allDay = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
+        type: 'calendar-all-day',
+        date: '2026-09-05',
+      }) as CaptureTarget;
 
+      expect(month.label).toBe('2026-09-03 · all day');
       expect(month.initial).toEqual({
         due: { type: 'set', value: localDate('2026-09-03') },
       });
+      expect(timed.label).toBe('2026-09-04 · 10:00');
       expect(timed.initial).toEqual({
         due: { type: 'set', value: localDate('2026-09-04') },
         time: { type: 'set', value: localTime('10:00') },
       });
+      expect(allDay.label).toBe('2026-09-05 · all day');
+      expect(allDay.initial).toEqual({
+        due: { type: 'set', value: localDate('2026-09-05') },
+      });
+      expect(calendarTarget.label).toBe('Today · today');
     } finally {
       panel.destroy();
       el.remove();
