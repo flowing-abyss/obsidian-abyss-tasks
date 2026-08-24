@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -7,6 +9,8 @@ import type { CalendarSettings } from '../src/settings/types';
 import { useRealMoment } from './helpers';
 
 useRealMoment();
+
+const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
 interface StubPlugin {
   app: App;
@@ -53,6 +57,15 @@ describe('CalendarSettingsTab sections', () => {
     expect(hotkeys.querySelectorAll('.abyss-shortcut-row')).toHaveLength(SHORTCUT_ACTIONS.length);
     expect(hotkeys.textContent).toContain('Quick capture');
     expect(hotkeys.textContent).toContain('Calendar: month');
+    expect(hotkeys.textContent).toContain('Separate alternatives with |');
+    expect(hotkeys.textContent).toContain('Q | shift 7');
+  });
+
+  it('styles shortcut warnings without reserving space for clean rows', () => {
+    expect(css).toMatch(
+      /\.abyss-shortcut-input\[aria-invalid='true'\]\s*\{[^}]*var\(--text-warning\)/u,
+    );
+    expect(css).toMatch(/\.abyss-shortcut-issue:empty\s*\{\s*display:\s*none/u);
   });
 
   it('all sections start collapsed (no is-open)', () => {

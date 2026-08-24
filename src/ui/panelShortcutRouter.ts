@@ -1,5 +1,5 @@
 import type {
-  ParsedShortcut,
+  ParsedShortcutAlternative,
   ShortcutActionId,
   ShortcutPlatform,
   ShortcutSettings,
@@ -30,7 +30,7 @@ function interactionPathBlocks(event: KeyboardEvent, ownerDocument: Document): b
   return event.composedPath().some((target) => closestBlockingInteraction(target) !== null);
 }
 
-function exactShortcutMatch(event: KeyboardEvent, shortcut: ParsedShortcut): boolean {
+function exactShortcutMatch(event: KeyboardEvent, shortcut: ParsedShortcutAlternative): boolean {
   const modifiers = shortcut.modifiers;
   return (
     event.code === shortcut.code &&
@@ -121,14 +121,14 @@ export class PanelShortcutRouter {
       return;
     }
 
-    const shortcut = [...current.bindings.values()].find((binding) =>
-      exactShortcutMatch(event, binding),
+    const match = [...current.bindings.entries()].find(([, bindings]) =>
+      bindings.some((binding) => exactShortcutMatch(event, binding)),
     );
-    if (!shortcut || !this.options.registry.allows(shortcut.action)) return;
+    if (!match || !this.options.registry.allows(match[0])) return;
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
-    dispatchAction(this.options.actions, shortcut.action);
+    dispatchAction(this.options.actions, match[0]);
   }
 }

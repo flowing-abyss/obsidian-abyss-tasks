@@ -3169,13 +3169,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-shortcut-input[aria-invalid='true'] {
-  border-color: var(--text-error);
+  border-color: var(--text-warning);
 }
 
 .abyss-shortcut-issue {
   grid-column: 1 / -1;
-  color: var(--text-error);
+  color: var(--text-warning);
   font-size: var(--font-ui-smaller);
+  display: flex;
+  gap: var(--size-2-2);
+  align-items: flex-start;
+}
+
+.abyss-shortcut-issue:empty {
+  display: none;
 }
 
 @media (max-width: 480px) {

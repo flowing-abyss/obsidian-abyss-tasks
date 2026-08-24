@@ -253,7 +253,9 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(status.getAttribute('role')).toBe('status');
     expect(status.getAttribute('aria-live')).toBe('polite');
     expect(status.getAttribute('aria-atomic')).toBe('true');
-    expect(status.textContent).toBe('This shortcut conflicts with another action.');
+    expect(status.textContent).toBe(
+      'Q conflicts with Quick capture and is disabled. No alternatives remain active.',
+    );
     expect(body.querySelectorAll('[role="alert"]')).toHaveLength(0);
 
     tasks.value = '';
@@ -294,6 +296,58 @@ describe('CalendarSettingsTab Hotkeys', () => {
     expect(plugin.settings.shortcuts.openQuickCapture).toBe('');
     expect(input.getAttribute('aria-invalid')).not.toBe('true');
     expect(input.getAttribute('aria-describedby')).toBeNull();
+  });
+
+  it('explains partial conflicts with an accessible row warning', () => {
+    const { tab, plugin } = makeTab();
+    plugin.settings.shortcuts.openQuickCapture = 'Q | shift 7';
+    plugin.settings.shortcuts.openSearch = 'Q | S';
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    tab.display();
+    const body = hotkeysBody(tab);
+    const quickCapture = shortcutInput(body, 'openQuickCapture');
+    const issueId = quickCapture.getAttribute('aria-describedby');
+    const issue = body.querySelector<HTMLElement>(`#${issueId}`)!;
+
+    expect(quickCapture.getAttribute('aria-invalid')).toBe('true');
+    expect(issue.textContent).toContain(
+      'Q conflicts with Search and is disabled. shift 7 remains active.',
+    );
+    const warning = issue.querySelector<HTMLElement>('.abyss-shortcut-warning-icon')!;
+    expect(warning.getAttribute('aria-hidden')).toBe('true');
+    expect(
+      body
+        .querySelector<HTMLElement>('.abyss-shortcut-validation-status')
+        ?.getAttribute('aria-live'),
+    ).toBe('polite');
+  });
+
+  it.each([
+    ['empty', 'Q | ', 'Alternative 2 is empty and is disabled. Q remains active.'],
+    ['invalid', 'Q | nope', 'nope is invalid and is disabled. Q remains active.'],
+    ['duplicate', 'Q | q', 'q duplicates Q and is disabled. Q remains active.'],
+    [
+      'duplicate plus conflict',
+      'Q | q | shift 7',
+      'q duplicates Q and is disabled. Q conflicts with Search and is disabled. shift 7 remains active.',
+    ],
+    [
+      'no remaining alternatives',
+      'nope',
+      'nope is invalid and is disabled. No alternatives remain active.',
+    ],
+  ])('formats %s shortcut issues with surviving alternatives', (_name, value, message) => {
+    const { tab, plugin } = makeTab();
+    plugin.settings.shortcuts.openQuickCapture = value;
+    if (_name === 'duplicate plus conflict') plugin.settings.shortcuts.openSearch = 'Q';
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    tab.display();
+    const body = hotkeysBody(tab);
+    const input = shortcutInput(body, 'openQuickCapture');
+    const issue = body.querySelector<HTMLElement>(`#${input.getAttribute('aria-describedby')}`)!;
+
+    expect(input.getAttribute('aria-invalid')).toBe('true');
+    expect(issue.textContent).toContain(message);
   });
 
   it('coalesces rapid hotkey saves so out-of-order persistence cannot regress the final value', async () => {
@@ -378,7 +432,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
       const { tab } = makeTab({}, { saveSettings });
       const body = hotkeysBody(tab);
       const input = shortcutInput(body, 'openQuickCapture');
-      input.value = 'W';
+      input.value = 'Q | shift 7';
       input.dispatchEvent(new Event('input', { bubbles: true }));
       rejectFirst(new Error('storage failed'));
       await Promise.resolve();
@@ -388,6 +442,7 @@ describe('CalendarSettingsTab Hotkeys', () => {
       const retry = body.querySelector<HTMLButtonElement>('.abyss-shortcut-save-retry')!;
       expect(status.textContent).toContain('not saved');
       expect(retry.hidden).toBe(false);
+      expect(input.value).toBe('Q | shift 7');
 
       retry.click();
       await Promise.resolve();

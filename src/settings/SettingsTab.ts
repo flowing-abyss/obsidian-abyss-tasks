@@ -15,9 +15,11 @@ import type { TagManager } from '../tags/TagManager';
 import type { TaskStatusType } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import {
+  type ParsedShortcutAlternative,
   SHORTCUT_ACTION_IDS,
   SHORTCUT_ACTIONS,
   type ShortcutActionId,
+  type ShortcutIssue,
   type ShortcutPlatform,
   validateShortcuts,
 } from './shortcuts';
@@ -47,6 +49,47 @@ export function validateStatusSymbol(
   if (all.some((s) => s.id !== selfId && s.symbol === symbol))
     return 'Symbol already used by another status';
   return null;
+}
+
+function describeShortcutIssues(
+  action: ShortcutActionId,
+  issues: readonly ShortcutIssue[],
+  active: readonly ParsedShortcutAlternative[],
+): string {
+  let activeText = 'No alternatives remain active.';
+  if (active.length > 0) {
+    const verb = active.length === 1 ? 'remains' : 'remain';
+    activeText = `${active.map((binding) => binding.fragment).join(' and ')} ${verb} active.`;
+  }
+  const labelFor = (actionId: ShortcutActionId): string =>
+    SHORTCUT_ACTIONS.find((candidate) => candidate.id === actionId)?.label ?? actionId;
+  const descriptions = issues.map((issue) => {
+    let message: string;
+    switch (issue.kind) {
+      case 'empty':
+        message = `Alternative ${issue.fragmentIndex + 1} is empty and is disabled.`;
+        break;
+      case 'invalid':
+        message = `${issue.fragment} is invalid and is disabled.`;
+        break;
+      case 'duplicate':
+        message = `${issue.fragment} duplicates ${issue.duplicateOf} and is disabled.`;
+        break;
+      case 'conflict':
+        message = `${issue.fragment} conflicts with ${issue.conflictingActions
+          .filter((actionId) => actionId !== action)
+          .map(labelFor)
+          .join(' and ')} and is disabled.`;
+        break;
+    }
+    return { issue, message };
+  });
+  const sortedDescriptions = [...descriptions];
+  sortedDescriptions.sort(
+    (left, right) =>
+      Number(left.issue.kind === 'conflict') - Number(right.issue.kind === 'conflict'),
+  );
+  return `${sortedDescriptions.map(({ message }) => message).join(' ')} ${activeText}`;
 }
 
 export class CalendarSettingsTab extends PluginSettingTab {
@@ -459,6 +502,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private renderShortcutSettings(containerEl: HTMLElement): void {
     const inputEls = new Map<ShortcutActionId, HTMLInputElement>();
     const issueEls = new Map<ShortcutActionId, HTMLElement>();
+    containerEl.createDiv({
+      cls: 'abyss-shortcut-help',
+      text: 'Use A–Z or 0–9 with optional Alt, Ctrl, Meta, Shift, or Mod. Separate alternatives with |, for example Q | shift 7.',
+    });
     const validationStatus = containerEl.createDiv({
       cls: 'abyss-shortcut-validation-status',
       attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
@@ -501,7 +548,6 @@ export class CalendarSettingsTab extends PluginSettingTab {
         cls: 'abyss-shortcut-issue',
         attr: { id: `abyss-shortcut-issue-${this.sectionScope}-${action.id}` },
       });
-      issue.hidden = true;
       inputEls.set(action.id, input);
       issueEls.set(action.id, issue);
 
@@ -511,7 +557,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
         this.queueShortcutSave();
       });
       input.addEventListener('blur', () => {
-        this.updateShortcutIssues(inputEls, issueEls, validationStatus, true);
+        this.updateShortcutIssues(inputEls, issueEls, validationStatus, true, action.id);
       });
     }
 
@@ -553,32 +599,36 @@ export class CalendarSettingsTab extends PluginSettingTab {
     issueEls: ReadonlyMap<ShortcutActionId, HTMLElement>,
     announcementEl: HTMLElement,
     announce: boolean,
+    announcedAction?: ShortcutActionId,
   ): void {
-    const { issues } = validateShortcuts(this.plugin.settings.shortcuts, this.shortcutPlatform());
+    const validation = validateShortcuts(this.plugin.settings.shortcuts, this.shortcutPlatform());
     const messages = new Set<string>();
     if (!announce) announcementEl.empty();
     for (const action of SHORTCUT_ACTIONS) {
       const input = inputEls.get(action.id);
       const issueEl = issueEls.get(action.id);
       if (!input || !issueEl) continue;
-      const issue = issues.get(action.id);
-      if (!issue) {
+      const issues = validation.issues.get(action.id) ?? [];
+      if (issues.length === 0) {
         input.removeAttribute('aria-invalid');
         input.removeAttribute('aria-describedby');
         issueEl.empty();
-        issueEl.hidden = true;
         continue;
       }
 
       input.setAttribute('aria-invalid', 'true');
       input.setAttribute('aria-describedby', issueEl.id);
-      const message =
-        issue === 'invalid'
-          ? 'Enter a valid letter or digit with optional Alt, Ctrl, Meta, Shift, or Mod modifiers.'
-          : 'This shortcut conflicts with another action.';
-      issueEl.setText(message);
-      issueEl.hidden = false;
-      messages.add(message);
+      const message = describeShortcutIssues(
+        action.id,
+        issues,
+        validation.bindings.get(action.id) ?? [],
+      );
+      issueEl.empty();
+      const icon = issueEl.createSpan({ cls: 'abyss-shortcut-warning-icon' });
+      setIcon(icon, 'triangle-alert');
+      icon.setAttribute('aria-hidden', 'true');
+      issueEl.appendText(message);
+      if (announce && action.id === announcedAction) messages.add(message);
     }
     if (announce) announcementEl.setText([...messages].join(' '));
   }

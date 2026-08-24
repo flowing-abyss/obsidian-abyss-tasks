@@ -238,6 +238,29 @@ describe('PanelShortcutRouter', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it('routes every valid alternative using physical codes', () => {
+    const h = harness();
+    h.settings.openQuickCapture = 'Q | shift 7';
+
+    keydown(h.panel, 'KeyQ', { key: 'й' });
+    keydown(h.panel, 'Digit7', { key: '?', shiftKey: true });
+
+    expect(h.actions.openQuickCapture).toHaveBeenCalledTimes(2);
+  });
+
+  it('blocks only a conflicting alternative', () => {
+    const h = harness();
+    h.settings.openQuickCapture = 'Q | shift 7';
+    h.settings.openSearch = 'Q | S';
+
+    keydown(h.panel, 'KeyQ', { key: 'й' });
+    keydown(h.panel, 'Digit7', { key: '?', shiftKey: true });
+    keydown(h.panel, 'KeyS', { key: 'ы' });
+
+    expect(h.actions.openQuickCapture).toHaveBeenCalledTimes(1);
+    expect(h.actions.openSearch).toHaveBeenCalledTimes(1);
+  });
+
   it('requires an exact modifier set', () => {
     const h = harness();
     h.settings.openQuickCapture = 'Ctrl Shift Q';
@@ -267,8 +290,9 @@ describe('PanelShortcutRouter', () => {
     });
     liveRouters.push(router);
 
-    keydown(h.panel, 'KeyQ');
-    h.settings.openQuickCapture = 'E';
+    h.settings.openQuickCapture = 'Q | shift 7';
+    keydown(h.panel, 'Digit7', { shiftKey: true });
+    h.settings.openQuickCapture = 'E | alt 9';
     const stale = keydown(h.panel, 'KeyQ');
     const current = keydown(h.panel, 'KeyE');
 
