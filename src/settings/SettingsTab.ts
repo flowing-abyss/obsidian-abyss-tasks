@@ -276,7 +276,8 @@ export class CalendarSettingsTab extends PluginSettingTab {
       attr: { id: bodyId },
     });
     body.hidden = !isOpen;
-    renderFn(body);
+    const bodyInner = body.createDiv({ cls: 'abyss-settings-section-body-inner' });
+    renderFn(bodyInner);
 
     header.addEventListener('click', () => {
       const opening = !section.classList.contains('is-open');

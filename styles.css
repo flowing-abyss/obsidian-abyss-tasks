@@ -3038,18 +3038,23 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   overflow: hidden;
 }
 
-.abyss-settings-section-header {
+.modal.mod-settings .abyss-settings-section > button.abyss-settings-section-header {
+  appearance: none;
   display: flex;
   align-items: center;
   width: 100%;
+  min-height: 0;
+  height: auto;
   padding: 12px 16px;
   border: 0;
   border-radius: 0;
+  box-shadow: none;
   cursor: pointer;
   user-select: none;
   background: var(--background-modifier-form-field);
   color: inherit;
   font: inherit;
+  line-height: normal;
   text-align: start;
   gap: 8px;
 }
@@ -3103,23 +3108,20 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-settings-section-body {
-  max-height: 0;
   overflow: hidden;
-  transition: max-height 150ms ease;
   background: var(--background-primary);
+}
+
+.abyss-settings-section-body-inner {
+  padding: 12px 16px 8px;
 }
 
 .abyss-settings-section-body[hidden] {
   display: none;
 }
 
-.abyss-settings-section.is-open .abyss-settings-section-body {
-  max-height: 2000px;
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .abyss-settings-section-chevron,
-  .abyss-settings-section-body {
+  .abyss-settings-section-chevron {
     transition: none;
   }
 }

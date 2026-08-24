@@ -12,6 +12,15 @@ useRealMoment();
 
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
+function expectDeclaration(source: string, property: string, value: string): void {
+  expect(source).toMatch(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*${value}\\s*(?:;|$)`, 'u'));
+}
+
+function declarationsFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u'))?.[1] ?? '';
+}
+
 interface StubPlugin {
   app: App;
   settings: CalendarSettings;
@@ -37,6 +46,49 @@ function makeTab(): CalendarSettingsTab {
 }
 
 describe('CalendarSettingsTab sections', () => {
+  it('nests each top-level section body in a padded inner wrapper', () => {
+    const tab = makeTab();
+    const sections = [...tab.containerEl.querySelectorAll(':scope > .abyss-settings-section')];
+    for (const section of sections) {
+      const body = section.querySelector(':scope > .abyss-settings-section-body')!;
+      expect(body.children).toHaveLength(1);
+      expect(body.firstElementChild?.classList.contains('abyss-settings-section-body-inner')).toBe(
+        true,
+      );
+    }
+    expect(sections[0]!.querySelector('.abyss-settings-section-body-inner')!.textContent).toContain(
+      'Task prefix',
+    );
+  });
+
+  it('uses compact theme-native settings card geometry', () => {
+    const header = declarationsFor(
+      '.modal.mod-settings .abyss-settings-section > button.abyss-settings-section-header',
+    );
+    expectDeclaration(header, 'appearance', 'none');
+    expectDeclaration(header, 'min-height', '0');
+    expectDeclaration(header, 'height', 'auto');
+    expectDeclaration(header, 'border', '0');
+    expectDeclaration(header, 'border-radius', '0');
+    expectDeclaration(header, 'box-shadow', 'none');
+    expectDeclaration(header, 'font', 'inherit');
+    expectDeclaration(header, 'line-height', 'normal');
+    expectDeclaration(header, 'width', '100%');
+    expectDeclaration(header, 'padding', '12px 16px');
+
+    const body = declarationsFor('.abyss-settings-section-body');
+    const openBody = declarationsFor(
+      '.abyss-settings-section.is-open .abyss-settings-section-body',
+    );
+    expect(body).not.toMatch(/(?:^|;)\\s*(?:max-height|transition)\\s*:/u);
+    expect(openBody).not.toMatch(/(?:^|;)\\s*max-height\\s*:/u);
+    expectDeclaration(
+      declarationsFor('.abyss-settings-section-body-inner'),
+      'padding',
+      '12px 16px 8px',
+    );
+  });
+
   it('renders lifecycle and recurrence setting rows in General', () => {
     const tab = makeTab();
     tab.containerEl.querySelector<HTMLElement>('.abyss-settings-section-header')!.click();
