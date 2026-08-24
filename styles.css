@@ -3650,9 +3650,9 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-add-task-bar {
   --abyss-inline-capture-block-size: 2rem;
 
-  padding: 0 8px 8px;
+  padding: 0;
   flex-shrink: 0;
-  border-top: 1px solid var(--background-modifier-border);
+  border: 0;
 }
 .abyss-add-task-trigger {
   display: flex;
@@ -3663,9 +3663,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   gap: 8px;
   padding-block: 0;
   padding-inline: 10px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 0;
   background: transparent;
+  box-shadow: none;
   cursor: pointer;
   color: var(--text-muted);
   font-family: inherit;
@@ -3713,6 +3714,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 100%;
   min-width: 0;
   padding: 0;
+  border: 0;
 }
 
 .abyss-capture-input {
@@ -3739,7 +3741,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 .abyss-capture-surface--inline .abyss-capture-input {
+  width: 100%;
   block-size: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  box-shadow: none;
   min-block-size: 0;
   padding-block: 0;
   padding-inline: 10px;

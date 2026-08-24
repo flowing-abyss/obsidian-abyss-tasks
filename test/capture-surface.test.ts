@@ -10,6 +10,10 @@ import { deferred, flushMicrotasks, task } from './helpers';
 
 const css = readFileSync(resolve(import.meta.dirname, '..', 'styles.css'), 'utf8');
 
+function expectDeclaration(source: string, property: string, value: string): void {
+  expect(source).toMatch(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*${value}\\s*(?:;|$)`, 'u'));
+}
+
 function declarationsFor(selector: string): string {
   return declarationsForSource(css, selector);
 }
@@ -550,11 +554,25 @@ describe('CaptureSurface', () => {
     const inlineInput = declarationsFor('.abyss-capture-surface--inline .abyss-capture-input');
 
     expect(bar).toContain('--abyss-inline-capture-block-size: 2rem');
-    expect(trigger).toContain('block-size: var(--abyss-inline-capture-block-size)');
+    expectDeclaration(bar, 'padding', '0');
+    expectDeclaration(bar, 'border', '0');
+    expectDeclaration(trigger, 'width', '100%');
+    expectDeclaration(trigger, 'block-size', 'var\\(--abyss-inline-capture-block-size\\)');
+    expectDeclaration(trigger, 'box-sizing', 'border-box');
+    expectDeclaration(trigger, 'border', '1px solid var\\(--background-modifier-border\\)');
+    expectDeclaration(trigger, 'border-radius', '0');
+    expectDeclaration(trigger, 'box-shadow', 'none');
+    expectDeclaration(inlineSurface, 'width', '100%');
+    expectDeclaration(inlineSurface, 'block-size', 'var\\(--abyss-inline-capture-block-size\\)');
+    expectDeclaration(inlineSurface, 'padding', '0');
+    expectDeclaration(inlineSurface, 'border', '0');
+    expectDeclaration(inlineInput, 'width', '100%');
+    expectDeclaration(inlineInput, 'block-size', '100%');
+    expectDeclaration(inlineInput, 'box-sizing', 'border-box');
+    expectDeclaration(inlineInput, 'border', '1px solid var\\(--background-modifier-border\\)');
+    expectDeclaration(inlineInput, 'border-radius', '0');
+    expectDeclaration(inlineInput, 'box-shadow', 'none');
     expect(trigger).toContain('padding-block: 0');
-    expect(inlineSurface).toContain('block-size: var(--abyss-inline-capture-block-size)');
-    expect(inlineSurface).toContain('padding: 0');
-    expect(inlineInput).toContain('block-size: 100%');
     expect(inlineInput).toContain('min-block-size: 0');
     expect(inlineInput).toContain('padding-block: 0');
   });
