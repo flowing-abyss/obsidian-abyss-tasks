@@ -3752,6 +3752,11 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   padding-inline: 10px;
 }
 
+.abyss-capture-surface--inline .abyss-capture-input:focus-visible {
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+}
+
 .abyss-capture-surface--inline.is-submitting .abyss-capture-input {
   padding-inline-end: var(--abyss-inline-capture-pending-space);
 }

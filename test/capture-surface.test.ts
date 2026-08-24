@@ -577,6 +577,19 @@ describe('CaptureSurface', () => {
     expect(inlineInput).toContain('padding-block: 0');
   });
 
+  it('keeps keyboard focus paint above the inline capture base geometry', () => {
+    const inlineFocus = declarationsFor(
+      '.abyss-capture-surface--inline .abyss-capture-input:focus-visible',
+    );
+
+    expectDeclaration(inlineFocus, 'border-color', 'var\\(--interactive-accent\\)');
+    expectDeclaration(
+      inlineFocus,
+      'box-shadow',
+      '0 0 0 2px var\\(--background-modifier-border-focus\\)',
+    );
+  });
+
   it('keeps calendar focus paint visible and portals compact feedback outside clipped cells', () => {
     const focusSelector =
       ':is(.abyss-tg-quick-add, .abyss-tg-allday-quick-add, .abyss-mg-quick-add) .abyss-capture-input:focus-visible';
