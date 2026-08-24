@@ -12,16 +12,20 @@ describe('migrateSettings', () => {
     expect(raw['shortcuts']).toEqual(defaultShortcuts());
   });
 
-  it('deep-fills missing shortcut actions while preserving blank and invalid string choices', () => {
+  it('deep-fills missing shortcut actions while preserving raw shortcut strings', () => {
     const raw: Record<string, unknown> = {
-      shortcuts: { openQuickCapture: '', openTasks: 'Ctrl+L', openInbox: 'Shift I' },
+      shortcuts: {
+        openQuickCapture: 'Q | shift 7',
+        openTasks: 'Ctrl+L',
+        openInbox: 'Shift I',
+      },
     };
 
     migrateSettings(raw);
 
     expect(raw['shortcuts']).toEqual({
       ...defaultShortcuts(),
-      openQuickCapture: '',
+      openQuickCapture: 'Q | shift 7',
       openTasks: 'Ctrl+L',
       openInbox: 'Shift I',
     });
