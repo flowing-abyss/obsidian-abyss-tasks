@@ -92,14 +92,14 @@ const scenarios: readonly Scenario[] = [
     context: { type: 'list', selection: 'today' },
     label: 'Today · today',
     prefix: '#base',
-    due: '2026-08-22',
+    due: '2026-08-24',
   },
   {
     name: 'upcoming-tomorrow',
     context: { type: 'list', selection: 'upcoming' },
     label: 'Upcoming · tomorrow',
     prefix: '#base',
-    due: '2026-08-23',
+    due: '2026-08-25',
   },
   {
     name: 'tag',
@@ -152,8 +152,9 @@ const scenarios: readonly Scenario[] = [
   {
     name: 'calendar',
     context: { type: 'default', source: 'calendar' },
-    label: 'Default destination',
+    label: 'Today · today',
     prefix: '#base',
+    due: '2026-08-24',
   },
   {
     name: 'search',
@@ -169,7 +170,7 @@ describe('CaptureTargetResolver', () => {
     const resolver = new CaptureTargetResolver(
       captureApplication,
       settings(scenario.settings),
-      () => localDate('2026-08-22'),
+      () => localDate('2026-08-24'),
     );
 
     const target = await resolver.resolve(scenario.context);

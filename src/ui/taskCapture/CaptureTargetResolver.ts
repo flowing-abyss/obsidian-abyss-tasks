@@ -66,6 +66,17 @@ export class CaptureTargetResolver {
       return await this.projectTarget(frozenContext, frozenContext.path);
     }
     if (frozenContext.type === 'default') {
+      if (frozenContext.source === 'calendar') {
+        const today = this.today();
+        return {
+          label: 'Today · today',
+          context: frozenContext,
+          session: await this.application.planCreate({ type: 'configured-default' }),
+          markdownPrefix: defaultPrefix,
+          markdownSuffixes: [],
+          initial: { due: { type: 'set', value: today } },
+        };
+      }
       return {
         label: 'Default destination',
         context: frozenContext,

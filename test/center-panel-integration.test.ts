@@ -17,10 +17,12 @@ import type {
   TaskQueryApi,
   TaskSnapshot,
 } from '../src/tasks';
-import { localTime } from '../src/tasks';
+import { localDate, localTime } from '../src/tasks';
 import type { TaskQuery } from '../src/tasks/application/TaskApplicationApi';
 import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
+import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
+import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import { PanelNavigator } from '../src/views/panelNavigation';
@@ -1605,6 +1607,111 @@ describe('CenterPanel.renderSearch', () => {
       window.cancelAnimationFrame = cancelAnimationFrame;
     }
   }
+
+  it('releases non-composing Escape from Search without changing the query or results', () => {
+    vi.useFakeTimers();
+    const state = new AppState();
+    const panel = makeStaticPanel(state, [
+      task({ title: 'buy milk', source: { filePath: 'a.md', line: 0 } }),
+      task({ title: 'walk dog', source: { filePath: 'b.md', line: 0 } }),
+    ]);
+    const container = freshContainer();
+    const ownerDocument = container.ownerDocument;
+    ownerDocument.body.append(container);
+    panel.mount(container);
+    panel['navigation'].openSearch();
+    vi.runOnlyPendingTimers();
+    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+    const focus = vi.spyOn(panel['el'], 'focus');
+    const router = new PanelShortcutRouter({
+      ownerDocument,
+      isActive: () => true,
+      settings: () => DEFAULT_SETTINGS.shortcuts,
+      platform: { mod: 'ctrl' },
+      actions: panel['navigation'],
+      registry: new InteractionRegistry(),
+      nativeHostBlocks: () => false,
+    });
+
+    try {
+      expect(ownerDocument.activeElement).toBe(input);
+      withQueuedAnimationFrames((flush) => {
+        input.value = 'milk';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        flush();
+      });
+      const resultText =
+        panel['el'].querySelector<HTMLElement>('.abyss-center-scroll')!.textContent;
+
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      input.dispatchEvent(escape);
+
+      expect(escape.defaultPrevented).toBe(true);
+      expect(state.get('searchQuery')).toBe('milk');
+      expect(panel['el'].querySelector<HTMLElement>('.abyss-center-scroll')!.textContent).toBe(
+        resultText,
+      );
+      expect(state.get('mode')).toBe('search');
+      expect(panel['el'].ownerDocument.activeElement).toBe(panel['el']);
+      expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+
+      const shortcut = new KeyboardEvent('keydown', {
+        code: 'KeyP',
+        key: 'p',
+        bubbles: true,
+        cancelable: true,
+      });
+      panel['el'].dispatchEvent(shortcut);
+
+      expect(shortcut.defaultPrevented).toBe(true);
+      expect(state.get('mode')).toBe('projects');
+    } finally {
+      router.destroy();
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('keeps Search input focus for composing Escape key events', () => {
+    const state = new AppState();
+    state.set('mode', 'search');
+    const panel = makeStaticPanel(state, []);
+    const container = freshContainer();
+    const ownerDocument = container.ownerDocument;
+    ownerDocument.body.append(container);
+    panel.mount(container);
+    const input = panel['el'].querySelector<HTMLInputElement>('.abyss-search-global')!;
+
+    try {
+      input.focus();
+      const composing = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true,
+      });
+      input.dispatchEvent(composing);
+      expect(composing.defaultPrevented).toBe(false);
+      expect(ownerDocument.activeElement).toBe(input);
+
+      const imeSentinel = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      });
+      Object.defineProperty(imeSentinel, 'keyCode', { value: 229 });
+      input.dispatchEvent(imeSentinel);
+      expect(imeSentinel.defaultPrevented).toBe(false);
+      expect(ownerDocument.activeElement).toBe(input);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
 
   it('renders matching task cards for a query', () => {
     const tasks = [
@@ -3257,6 +3364,45 @@ describe('CenterPanel calendar mode — click-to-create', () => {
       }
     },
   );
+
+  it('lets explicit calendar placements overwrite the calendar default due date', () => {
+    const { panel, el } = sharedCalendarCaptureHarness(async () => calendarCaptureSuccess());
+    const calendarTarget: CaptureTarget = {
+      label: 'Today · today',
+      context: { type: 'default', source: 'calendar' },
+      session: {
+        type: 'ready',
+        destination: { filePath: 'Capture.md', insertion: { type: 'append' } },
+        execute: vi.fn(),
+      },
+      markdownPrefix: '',
+      markdownSuffixes: [],
+      initial: { due: { type: 'set', value: localDate('2026-08-24') } },
+    };
+
+    try {
+      const month = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
+        type: 'calendar-month',
+        date: '2026-09-03',
+      }) as CaptureTarget;
+      const timed = call<CaptureTarget>(panel, 'targetForCapturePlacement', calendarTarget, {
+        type: 'calendar-timed',
+        date: '2026-09-04',
+        time: '10:00',
+      }) as CaptureTarget;
+
+      expect(month.initial).toEqual({
+        due: { type: 'set', value: localDate('2026-09-03') },
+      });
+      expect(timed.initial).toEqual({
+        due: { type: 'set', value: localDate('2026-09-04') },
+        time: { type: 'set', value: localTime('10:00') },
+      });
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
 
   it.each(['month', 'timed', 'all-day'] as const)(
     '%s capture portals destination, pending, and error feedback outside the clipping calendar cell',

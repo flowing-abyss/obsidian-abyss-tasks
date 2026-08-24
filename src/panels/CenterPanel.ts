@@ -1510,6 +1510,13 @@ export class CenterPanel {
     });
     input.value = this.state.get('searchQuery');
     input.addEventListener('input', () => this.state.set('searchQuery', input.value));
+    input.addEventListener('keydown', (event) => {
+      // eslint-disable-next-line @typescript-eslint/no-deprecated -- Chromium IME sentinel.
+      if (event.isComposing || event.keyCode === 229 || event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.el.isConnected) this.el.focus({ preventScroll: true });
+    });
     this.searchInputEl = input;
 
     const results = this.el.createDiv({ cls: 'abyss-center-scroll' });
