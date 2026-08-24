@@ -90,6 +90,92 @@ describe('parseShortcut', () => {
 });
 
 describe('validateShortcuts', () => {
+  it('keeps valid alternatives around an invalid fragment', () => {
+    const values = { ...defaultShortcuts(), openQuickCapture: 'Q | nope | shift 7' };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.get('openQuickCapture')).toMatchObject([
+      { code: 'KeyQ', fragment: 'Q', fragmentIndex: 0 },
+      { code: 'Digit7', fragment: 'shift 7', fragmentIndex: 2 },
+    ]);
+    expect(result.issues.get('openQuickCapture')).toEqual([
+      { kind: 'invalid', fragment: 'nope', fragmentIndex: 1 },
+    ]);
+  });
+
+  it('reports empty alternatives without disabling valid neighbors', () => {
+    const values = { ...defaultShortcuts(), openQuickCapture: 'Q || shift 7 |' };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.get('openQuickCapture')).toHaveLength(2);
+    expect(result.issues.get('openQuickCapture')).toEqual([
+      { kind: 'empty', fragment: '', fragmentIndex: 1 },
+      { kind: 'empty', fragment: '', fragmentIndex: 3 },
+    ]);
+  });
+
+  it('deduplicates within an action before cross-action conflicts', () => {
+    const values = {
+      ...defaultShortcuts(),
+      openQuickCapture: 'Q | q | shift 7',
+      openSearch: 'q | S',
+    };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.get('openQuickCapture')?.map((item) => item.fragment)).toEqual([
+      'shift 7',
+    ]);
+    expect(result.bindings.get('openSearch')?.map((item) => item.fragment)).toEqual(['S']);
+    expect(result.issues.get('openQuickCapture')?.map((issue) => issue.kind)).toEqual([
+      'conflict',
+      'duplicate',
+    ]);
+    expect(result.issues.get('openQuickCapture')).toContainEqual(
+      expect.objectContaining({ kind: 'duplicate', fragment: 'q', duplicateOf: 'Q' }),
+    );
+    expect(result.issues.get('openSearch')).toEqual([
+      expect.objectContaining({
+        kind: 'conflict',
+        fragment: 'q',
+        conflictingActions: ['openQuickCapture'],
+      }),
+    ]);
+  });
+
+  it('matches duplicate alternatives case-insensitively and regardless of modifier order', () => {
+    const values = {
+      ...defaultShortcuts(),
+      openQuickCapture: 'shift alt Q | ALT SHIFT q',
+    };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.get('openQuickCapture')?.map((item) => item.fragment)).toEqual([
+      'shift alt Q',
+    ]);
+    expect(result.issues.get('openQuickCapture')).toEqual([
+      { kind: 'duplicate', fragment: 'ALT SHIFT q', fragmentIndex: 1, duplicateOf: 'shift alt Q' },
+    ]);
+  });
+
+  it('treats a wholly blank value as disabled without an issue', () => {
+    const values = { ...defaultShortcuts(), openQuickCapture: '   ' };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.has('openQuickCapture')).toBe(false);
+    expect(result.issues.has('openQuickCapture')).toBe(false);
+  });
+
+  it('reports every empty fragment in a separator-only value', () => {
+    const values = { ...defaultShortcuts(), openQuickCapture: '|' };
+    const result = validateShortcuts(values, { mod: 'meta' });
+
+    expect(result.bindings.has('openQuickCapture')).toBe(false);
+    expect(result.issues.get('openQuickCapture')).toEqual([
+      { kind: 'empty', fragment: '', fragmentIndex: 0 },
+      { kind: 'empty', fragment: '', fragmentIndex: 1 },
+    ]);
+  });
+
   it('flags every duplicate and omits all conflicted bindings while keeping exact variants', () => {
     const values: ShortcutSettings = {
       ...defaultShortcuts(),
@@ -102,16 +188,38 @@ describe('validateShortcuts', () => {
 
     expect(result.issues).toEqual(
       new Map([
-        ['openQuickCapture', 'conflict'],
-        ['openTasks', 'conflict'],
+        [
+          'openQuickCapture',
+          [
+            {
+              kind: 'conflict',
+              fragment: 'Shift Q',
+              fragmentIndex: 0,
+              conflictingActions: ['openTasks'],
+            },
+          ],
+        ],
+        [
+          'openTasks',
+          [
+            {
+              kind: 'conflict',
+              fragment: 'shift q',
+              fragmentIndex: 0,
+              conflictingActions: ['openQuickCapture'],
+            },
+          ],
+        ],
       ]),
     );
     expect(result.bindings.has('openQuickCapture')).toBe(false);
     expect(result.bindings.has('openTasks')).toBe(false);
-    expect(result.bindings.get('openInbox')).toMatchObject({
-      code: 'KeyQ',
-      modifiers: { alt: false, ctrl: false, meta: false, shift: false },
-    });
+    expect(result.bindings.get('openInbox')).toMatchObject([
+      {
+        code: 'KeyQ',
+        modifiers: { alt: false, ctrl: false, meta: false, shift: false },
+      },
+    ]);
   });
 
   it('reports malformed nonblank input as invalid and leaves blanks unbound', () => {
@@ -123,7 +231,9 @@ describe('validateShortcuts', () => {
 
     const result = validateShortcuts(values, mac);
 
-    expect(result.issues).toEqual(new Map([['openQuickCapture', 'invalid']]));
+    expect(result.issues).toEqual(
+      new Map([['openQuickCapture', [{ kind: 'invalid', fragment: 'Ctrl+Q', fragmentIndex: 0 }]]]),
+    );
     expect(result.bindings.has('openQuickCapture')).toBe(false);
     expect(result.bindings.has('openTasks')).toBe(false);
   });
