@@ -219,8 +219,7 @@
 .abyss-layout--calendar .abyss-right,
 .abyss-layout--search .abyss-left,
 .abyss-layout--search .abyss-right,
-.abyss-layout--projects .abyss-left,
-.abyss-layout--projects .abyss-right {
+.abyss-layout--projects .abyss-left {
   display: none;
 }
 
@@ -232,7 +231,12 @@
     display: none;
   }
 
-  .abyss-layout--tasks > .abyss-right.is-compact-open {
+  .abyss-layout > .abyss-right.is-compact-collapsed:not(.is-compact-open) {
+    display: none;
+  }
+
+  .abyss-layout--tasks > .abyss-right.is-compact-open,
+  .abyss-layout > .abyss-right.is-compact-collapsed.is-compact-open {
     position: absolute;
     z-index: calc(var(--layer-popover, 30) - 1);
     inset-block: 0;
@@ -241,11 +245,13 @@
     box-shadow: var(--shadow-l);
   }
 
-  .abyss-layout--tasks > .abyss-center-shell {
+  .abyss-layout--tasks > .abyss-center-shell,
+  .abyss-layout--projects > .abyss-center-shell {
     --abyss-shell-top-inset: 44px;
   }
 
-  .abyss-layout--tasks .abyss-compact-pane-controls {
+  .abyss-layout--tasks .abyss-compact-pane-controls,
+  .abyss-layout--projects .abyss-compact-pane-controls {
     display: flex;
     justify-content: flex-end;
   }
@@ -6004,9 +6010,6 @@ body.abyss-modal-open .popover.hover-popover {
 
 /* Projects list (overview) */
 .abyss-projects-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   padding: 12px 16px;
   border-bottom: 1px solid var(--background-modifier-border);
   flex: 0 0 auto;
@@ -6017,6 +6020,29 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-projects-new {
   cursor: pointer;
+}
+.abyss-projects-view-switcher {
+  flex: 0 0 auto;
+}
+.abyss-project-status-filters {
+  display: flex;
+  min-width: 0;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.abyss-project-status-filter {
+  flex: 0 0 auto;
+  cursor: pointer;
+  opacity: 0.68;
+}
+.abyss-project-status-filter.is-active {
+  border-color: var(--interactive-accent);
+  opacity: 1;
+}
+.abyss-project-status-filter:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
 }
 .abyss-projects-scroll {
   flex: 1;
@@ -6034,6 +6060,8 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-projects-group-header {
   display: flex;
+  box-sizing: border-box;
+  block-size: 52px;
   align-items: center;
   gap: 8px;
   padding: 6px 4px;
@@ -6046,15 +6074,24 @@ body.abyss-modal-open .popover.hover-popover {
   margin-left: auto;
 }
 .abyss-project-row {
-  display: flex;
+  display: grid;
+  box-sizing: border-box;
+  block-size: 52px;
+  grid-template-columns: 8px minmax(8rem, 1fr) minmax(0, auto) auto;
   align-items: center;
+  min-width: 0;
   gap: 10px;
-  padding: 8px 10px;
+  padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
+  overflow: hidden;
 }
 .abyss-project-row:hover {
   background: var(--background-modifier-hover);
+}
+.abyss-project-row:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 .abyss-project-row-name {
   flex: 1;
@@ -6072,6 +6109,64 @@ body.abyss-modal-open .popover.hover-popover {
   font-size: var(--font-ui-smaller);
   color: var(--text-faint);
 }
+.abyss-project-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: nowrap;
+}
+.abyss-project-task-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.abyss-project-task-progress .abyss-progress-wrap {
+  min-width: 72px;
+}
+.abyss-project-work-notes {
+  color: var(--text-muted);
+}
+.abyss-project-attention {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-error);
+}
+.abyss-project-attention-icon,
+.abyss-project-attention-icon svg {
+  width: 13px;
+  height: 13px;
+}
+.abyss-project-next-action {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--interactive-accent);
+  cursor: pointer;
+}
+.abyss-project-next-action:hover {
+  background: var(--background-modifier-hover);
+}
+.abyss-project-next-action:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+.abyss-project-next-action svg {
+  width: 14px;
+  height: 14px;
+}
 .abyss-project-row-actions {
   display: flex;
   align-items: center;
@@ -6079,7 +6174,8 @@ body.abyss-modal-open .popover.hover-popover {
   opacity: 0;
   transition: opacity 0.1s ease;
 }
-.abyss-project-row:hover .abyss-project-row-actions {
+.abyss-project-row:hover .abyss-project-row-actions,
+.abyss-project-row:focus-within .abyss-project-row-actions {
   opacity: 1;
 }
 .abyss-project-status-btn,
@@ -6163,11 +6259,38 @@ body.abyss-modal-open .popover.hover-popover {
   border-top: 1px solid var(--background-modifier-border);
   padding-top: 8px;
 }
+.abyss-project-tasks-title {
+  margin: 0 0 6px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+}
 
 .abyss-projects-new-input {
   width: 100%;
   margin-bottom: 8px;
   font-size: var(--font-ui-small);
+}
+
+@container abyss-task-list (max-width: 42rem) {
+  .abyss-projects-toolbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .abyss-projects-toolbar > .abyss-center-controls {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .abyss-project-row {
+    grid-template-columns: 8px minmax(0, 1fr) minmax(0, auto) auto;
+  }
+
+  .abyss-project-row-meta {
+    max-inline-size: 55%;
+    overflow-x: auto;
+  }
 }
 
 /* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */

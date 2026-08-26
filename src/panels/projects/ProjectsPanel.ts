@@ -11,6 +11,7 @@ export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
   renderTasks?: (host: HTMLElement, path: string, tasks: ProjectWorkspaceSnapshot['tasks']) => void;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
+  onSaveSettings?: () => Promise<void>;
 }
 
 /**
@@ -23,6 +24,8 @@ export class ProjectsPanel {
   private offs: Array<() => void> = [];
   private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
+  private readonly onSaveSettings: () => Promise<void>;
+  private viewCleanup: (() => void) | null = null;
 
   constructor(
     private state: AppState,
@@ -34,6 +37,7 @@ export class ProjectsPanel {
   ) {
     this.renderTasks = opts.renderTasks ?? ((): void => {});
     this.snapshots = opts.snapshots ?? [];
+    this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
   }
 
   private async createProject(name: string): Promise<void> {
@@ -65,6 +69,8 @@ export class ProjectsPanel {
   }
 
   private render(): void {
+    this.viewCleanup?.();
+    this.viewCleanup = null;
     this.el.empty();
     this.el.addClass('abyss-projects-panel');
     const view = this.state.get('projectsPanel');
@@ -86,20 +92,20 @@ export class ProjectsPanel {
     }
 
     const container = this.el.createDiv();
-    renderProjectsList(
-      container,
-      this.snapshots.map(({ project, taskRollup }) => ({ ...project, stats: taskRollup })),
-      {
-        state: this.state,
-        settings: this.settings,
-        onCreate: (name) => this.createProject(name),
-        onSetStatus: (p, id) => this.setStatus(p, id),
-        openNote: (p) => this.openNote(p),
-      },
-    );
+    this.viewCleanup = renderProjectsList(container, this.snapshots, {
+      state: this.state,
+      settings: this.settings,
+      onSaveSettings: this.onSaveSettings,
+      onFiltersChanged: () => this.render(),
+      onCreate: (name) => this.createProject(name),
+      onSetStatus: (p, id) => this.setStatus(p, id),
+      openNote: (p) => this.openNote(p),
+    });
   }
 
   destroy(): void {
+    this.viewCleanup?.();
+    this.viewCleanup = null;
     this.offs.forEach((f) => f());
     this.offs = [];
     this.el?.empty();

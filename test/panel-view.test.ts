@@ -1,3 +1,5 @@
+// eslint-disable-next-line import/no-nodejs-modules -- computed layout test loads the shipped CSS.
+import { readFileSync } from 'node:fs';
 import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
@@ -39,6 +41,8 @@ function makeTagManager(app: App, settings: CalendarSettings = DEFAULT_SETTINGS)
 }
 
 useRealMoment();
+
+const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
 
 function panelCaptureTarget(execute: TaskCreateSession['execute']): CaptureTarget {
   return {
@@ -416,6 +420,33 @@ describe('PanelView', () => {
       activeDocument.dispatchEvent(calendarEscape);
       expect(calendarEscape.defaultPrevented).toBe(false);
       expect(right.classList.contains('is-compact-open')).toBe(false);
+    });
+
+    it('keeps the joined Task inspector presented in Projects mode with compact ownership', () => {
+      activeDocument.body.appendChild(view.containerEl);
+      const style = activeDocument.head.createEl('style');
+      style.textContent = shippedStyles;
+      const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };
+      const layout = view.contentEl.querySelector<HTMLElement>('.abyss-layout')!;
+      const right = layout.querySelector<HTMLElement>('.abyss-right')!;
+      const details = layout.querySelector<HTMLButtonElement>('.abyss-compact-pane-button--right')!;
+
+      try {
+        setGeometry(layout, rect(0, 0, 1200, 480));
+        window.dispatchEvent(new Event('resize'));
+        internals.panelNavigation.openProjects();
+        internals.state.set('taskStack', [task({ title: 'Joined Project Task' })]);
+
+        expect(getComputedStyle(right).display).not.toBe('none');
+        expect(right.textContent).toContain('Joined Project Task');
+
+        setGeometry(layout, rect(0, 0, 390, 480));
+        window.dispatchEvent(new Event('resize'));
+        expect(right.classList.contains('is-compact-open')).toBe(true);
+        expect(details.getAttribute('aria-expanded')).toBe('true');
+      } finally {
+        style.remove();
+      }
     });
 
     it.each(['resolving', 'open'] as const)(

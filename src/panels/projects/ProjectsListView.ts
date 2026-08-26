@@ -1,10 +1,33 @@
 import { Menu, setIcon } from 'obsidian';
 import { orderedGroups, type StatusGroup } from '../../projects/status';
-import type { Project } from '../../projects/types';
+import type { Project, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { BoundedWindow } from './BoundedWindow';
+import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderProgressBar } from './progressBar';
-import type { ProjectsListContext } from './viewContext';
+import { joinedNextAction, type ProjectsListContext } from './viewContext';
+
+const PORTFOLIO_ITEM_EXTENT = 52;
+const PORTFOLIO_FALLBACK_VISIBLE_ROWS = 10;
+const PORTFOLIO_OVERSCAN = 6;
+
+type PortfolioEntry =
+  | {
+      readonly type: 'group';
+      readonly key: string;
+      readonly group: StatusGroup;
+      readonly count: number;
+    }
+  | {
+      readonly type: 'project';
+      readonly key: string;
+      readonly snapshot: ProjectWorkspaceSnapshot;
+    };
+
+function isProjectWindowKey(key: string): boolean {
+  return key.startsWith('project:');
+}
 
 function projectsInGroup(group: StatusGroup, projects: Project[]): Project[] {
   if (group.statusId !== null) return projects.filter((p) => p.statusId === group.statusId);
@@ -58,17 +81,27 @@ function showNewProjectInput(scroll: HTMLElement, onCreate: (name: string) => Pr
 /** Overview: all projects grouped by status (defined order → discovered → No status). */
 export function renderProjectsList(
   container: HTMLElement,
-  projects: Project[],
+  snapshots: readonly ProjectWorkspaceSnapshot[],
   ctx: ProjectsListContext,
-): void {
+): () => void {
   container.addClass('abyss-projects-list');
-
-  const header = container.createDiv({ cls: 'abyss-projects-toolbar' });
-  header.createEl('h2', { cls: 'abyss-projects-title', text: 'Projects' });
-  const newBtn = header.createEl('button', { cls: 'abyss-projects-new', text: 'New project' });
+  const { newProjectButton } = renderProjectsToolbar(container, ctx);
 
   const statuses = ctx.settings.projects.statuses;
   const statusById = new Map(statuses.map((s) => [s.id, s]));
+  const visibleStatusIds = new Set(ctx.settings.projects.view.visibleStatusIds);
+  const visibleSnapshots = snapshots.filter(({ project }) =>
+    project.statusId === null
+      ? ctx.settings.projects.view.includeUnmapped
+      : visibleStatusIds.has(project.statusId),
+  );
+  const projects = visibleSnapshots.map(({ project, taskRollup }) => ({
+    ...project,
+    stats: taskRollup,
+  }));
+  const snapshotByPath = new Map(
+    visibleSnapshots.map((snapshot) => [snapshot.project.path, snapshot]),
+  );
 
   // Names appearing more than once → disambiguate rows with their folder.
   const nameCounts = new Map<string, number>();
@@ -78,41 +111,101 @@ export function renderProjectsList(
 
   // "New project" shows an inline input at the top of the list — the same
   // interaction as the left-panel "+", never a modal (kept consistent).
-  newBtn.addEventListener('click', () => showNewProjectInput(scroll, ctx.onCreate));
+  newProjectButton.addEventListener('click', () => showNewProjectInput(scroll, ctx.onCreate));
 
-  if (projects.length === 0) {
-    scroll.createDiv({ cls: 'abyss-projects-empty', text: 'No projects yet' });
-    return;
+  if (visibleSnapshots.length === 0) {
+    scroll.createDiv({
+      cls: 'abyss-projects-empty',
+      text: snapshots.length === 0 ? 'No projects yet' : 'No projects match the status filters',
+    });
+    return (): void => {};
   }
 
+  const entries: PortfolioEntry[] = [];
   for (const group of orderedGroups(statuses, projects)) {
     const inGroup = projectsInGroup(group, projects);
     if (inGroup.length === 0) continue;
-
-    const groupEl = scroll.createDiv({ cls: 'abyss-projects-group' });
-    const gHeader = groupEl.createDiv({ cls: 'abyss-projects-group-header' });
-    if (group.color) {
-      const dot = gHeader.createSpan({ cls: 'abyss-status-dot' });
-      dot.style.background = group.color;
-    }
-    gHeader.createSpan({ cls: 'abyss-projects-group-label', text: group.label });
-    gHeader.createSpan({ cls: 'abyss-projects-group-count', text: String(inGroup.length) });
-
+    entries.push({ type: 'group', key: `group:${group.key}`, group, count: inGroup.length });
     for (const project of inGroup) {
-      renderRow(groupEl, project, statusById, statuses, nameCounts, ctx);
+      const snapshot = snapshotByPath.get(project.path);
+      if (snapshot) {
+        entries.push({ type: 'project', key: `project:${project.path}`, snapshot });
+      }
     }
   }
+
+  const rowsHost = scroll.createDiv({ cls: 'abyss-projects-window' });
+  const bounded = new BoundedWindow(
+    entries.map(({ key }) => key),
+    PORTFOLIO_OVERSCAN,
+  );
+  const viewport = (): { first: number; visible: number } => ({
+    first: Math.floor(scroll.scrollTop / PORTFOLIO_ITEM_EXTENT),
+    visible:
+      scroll.clientHeight > 0
+        ? Math.max(1, Math.ceil(scroll.clientHeight / PORTFOLIO_ITEM_EXTENT))
+        : PORTFOLIO_FALLBACK_VISIBLE_ROWS,
+  });
+  const renderWindow = (restoreFocus = false): void => {
+    const result = bounded.render(rowsHost, {
+      ...viewport(),
+      itemExtent: PORTFOLIO_ITEM_EXTENT,
+      restoreFocus,
+      render: (host, _key, logicalIndex) => {
+        const entry = entries[logicalIndex]!;
+        if (entry.type === 'group') return renderGroupHeader(host, entry.group, entry.count);
+        return renderRow(
+          host,
+          entry.snapshot,
+          statusById,
+          statuses,
+          nameCounts,
+          ctx,
+          (path) => bounded.focus(`project:${path}`),
+          (path, delta) => {
+            bounded.focus(`project:${path}`);
+            if (bounded.move(delta, isProjectWindowKey) === null) return;
+            const nextFirst = bounded.viewportForFocus(viewport());
+            scroll.scrollTop = nextFirst * PORTFOLIO_ITEM_EXTENT;
+            renderWindow(true);
+          },
+        );
+      },
+    });
+    if (restoreFocus) scroll.scrollTop = result.first * PORTFOLIO_ITEM_EXTENT;
+  };
+  const onScroll = (): void => renderWindow(false);
+  scroll.addEventListener('scroll', onScroll);
+  renderWindow();
+  return (): void => scroll.removeEventListener('scroll', onScroll);
+}
+
+function renderGroupHeader(parent: HTMLElement, group: StatusGroup, count: number): HTMLElement {
+  const header = parent.createDiv({ cls: 'abyss-projects-group-header' });
+  if (group.color) {
+    const dot = header.createSpan({ cls: 'abyss-status-dot' });
+    dot.style.background = group.color;
+  }
+  header.createSpan({ cls: 'abyss-projects-group-label', text: group.label });
+  header.createSpan({ cls: 'abyss-projects-group-count', text: String(count) });
+  return header;
 }
 
 function renderRow(
   parent: HTMLElement,
-  project: Project,
+  snapshot: ProjectWorkspaceSnapshot,
   statusById: Map<string, ProjectStatus>,
   statuses: ProjectStatus[],
   nameCounts: Map<string, number>,
   ctx: ProjectsListContext,
-): void {
-  const row = parent.createDiv({ cls: 'abyss-project-row' });
+  onFocus: (path: string) => void,
+  onMoveFocus: (path: string, delta: number) => void,
+): HTMLElement {
+  const project = snapshot.project;
+  const row = parent.createDiv({
+    cls: 'abyss-project-row',
+    attr: { tabindex: '0' },
+  });
 
   const status = project.statusId ? statusById.get(project.statusId) : undefined;
   const dot = row.createSpan({ cls: 'abyss-status-dot' });
@@ -124,7 +217,65 @@ function renderRow(
     nameWrap.createSpan({ cls: 'abyss-project-folder', text: parentFolder(project.path) });
   }
 
-  renderProgressBar(row, project.stats.done, project.stats.total);
+  const workNoteCount =
+    snapshot.workNoteRollup.active +
+    snapshot.workNoteRollup.completed +
+    snapshot.workNoteRollup.dropped;
+  const overdueCount = snapshot.overdue.tasks + snapshot.overdue.workNotes;
+  const nextAction = joinedNextAction(snapshot.tasks);
+  const hasMetadata =
+    snapshot.taskRollup.total > 0 ||
+    workNoteCount > 0 ||
+    overdueCount > 0 ||
+    snapshot.diagnostics.length > 0 ||
+    nextAction !== undefined;
+
+  if (hasMetadata) {
+    const meta = row.createDiv({ cls: 'abyss-project-row-meta' });
+    if (snapshot.taskRollup.total > 0) {
+      const taskProgress = meta.createDiv({ cls: 'abyss-project-task-progress' });
+      taskProgress.createSpan({ cls: 'abyss-project-metric-label', text: 'Tasks' });
+      renderProgressBar(taskProgress, snapshot.taskRollup.done, snapshot.taskRollup.total);
+    }
+    if (workNoteCount > 0) {
+      meta.createSpan({ cls: 'abyss-project-work-notes', text: `Work Notes ${workNoteCount}` });
+    }
+    if (overdueCount > 0) {
+      const overdue = meta.createSpan({
+        cls: 'abyss-project-attention abyss-project-overdue',
+        attr: { title: `${String(overdueCount)} overdue` },
+      });
+      const icon = overdue.createSpan({ cls: 'abyss-project-attention-icon' });
+      setIcon(icon, 'clock-alert');
+      overdue.createSpan({ text: String(overdueCount) });
+    }
+    if (snapshot.diagnostics.length > 0) {
+      const diagnostics = meta.createSpan({
+        cls: 'abyss-project-attention abyss-project-diagnostics',
+        attr: { title: `${String(snapshot.diagnostics.length)} diagnostics` },
+      });
+      const icon = diagnostics.createSpan({ cls: 'abyss-project-attention-icon' });
+      setIcon(icon, 'triangle-alert');
+      diagnostics.createSpan({ text: String(snapshot.diagnostics.length) });
+    }
+    if (nextAction) {
+      /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
+      const next = meta.createEl('button', {
+        cls: 'abyss-project-next-action',
+        attr: {
+          type: 'button',
+          'aria-label': 'Open Next Action',
+          title: 'Open Next Action',
+        },
+      });
+      /* eslint-enable obsidianmd/ui/sentence-case */
+      setIcon(next, 'list-checks');
+      next.addEventListener('click', (event) => {
+        event.stopPropagation();
+        ctx.state.set('taskStack', [nextAction.task]);
+      });
+    }
+  }
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
 
@@ -149,7 +300,7 @@ function renderRow(
 
   const openBtn = actions.createEl('button', {
     cls: 'abyss-project-open-btn',
-    attr: { 'aria-label': 'Open note' },
+    attr: { 'aria-label': 'Open note', title: 'Open note' },
   });
   setIcon(openBtn, 'file-text');
   openBtn.addEventListener('click', (e) => {
@@ -160,4 +311,17 @@ function renderRow(
   row.addEventListener('click', () => {
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
   });
+  row.addEventListener('keydown', (event) => {
+    if (event.target === row && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+      event.preventDefault();
+      onMoveFocus(project.path, event.key === 'ArrowDown' ? 1 : -1);
+      return;
+    }
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.target !== row) return;
+    event.preventDefault();
+    ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
+  });
+  row.addEventListener('focus', () => onFocus(project.path));
+  return row;
 }

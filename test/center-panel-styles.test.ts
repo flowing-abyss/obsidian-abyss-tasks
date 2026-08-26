@@ -244,4 +244,44 @@ describe('Panel hierarchy styles', () => {
     expect(adjacentRightSections).toContain('margin-top: 8px');
     expect(adjacentRightSections).not.toContain('border');
   });
+
+  it('uses compact Project rows with a clean terminal summary and keyboard focus', () => {
+    const row = declarationsFor('.abyss-project-row');
+    const summary = declarationsFor('.abyss-project-row-meta');
+    const focus = declarationsFor('.abyss-project-row:focus-visible');
+    const nextAction = declarationsFor('.abyss-project-next-action');
+
+    expect(row).toContain('display: grid');
+    expect(row).toContain('min-width: 0');
+    expect(row).toContain('minmax(0, auto) auto');
+    expect(row).not.toContain('24px');
+    expect(summary).toContain('justify-content: flex-end');
+    expect(focus).toContain('outline:');
+    expect(nextAction).toContain('width: 24px');
+    expect(nextAction).not.toContain('margin-left');
+    expect(css).not.toContain('.abyss-next-action-slot');
+    expect(css).not.toMatch(/abyss-project-next-action::(?:before|after)/u);
+    expect(css).not.toMatch(/abyss-project-row:(?:has|not)[^{]*next-action/u);
+  });
+
+  it('does not hide the Projects inspector through a Projects-mode selector', () => {
+    expect(css).not.toMatch(/abyss-layout--projects[^}]*abyss-right[^}]*display\s*:\s*none/u);
+  });
+
+  it('gives every bounded portfolio item the same measured block extent', () => {
+    const row = declarationsFor('.abyss-project-row');
+    const group = declarationsFor('.abyss-projects-group-header');
+    const compact = atRuleBlock('@container abyss-task-list (max-width: 42rem)');
+    const compactRow = declarationsForSource(compact, '.abyss-project-row');
+    const compactMeta = declarationsForSource(compact, '.abyss-project-row-meta');
+
+    expect(row).toContain('block-size: 52px');
+    expect(row).toContain('box-sizing: border-box');
+    expect(group).toContain('block-size: 52px');
+    expect(group).toContain('box-sizing: border-box');
+    expect(group).not.toContain('margin');
+    expect(compactRow).toContain('minmax(0, auto) auto');
+    expect(compactMeta).not.toContain('grid-row');
+    expect(compactMeta).toContain('max-inline-size: 55%');
+  });
 });

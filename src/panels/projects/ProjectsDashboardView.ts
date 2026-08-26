@@ -2,7 +2,7 @@ import { Menu, setIcon } from 'obsidian';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
-import type { ProjectsDashboardContext } from './viewContext';
+import { joinedNextAction, type ProjectsDashboardContext } from './viewContext';
 
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
@@ -54,6 +54,21 @@ export function renderProjectDashboard(
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
   renderProgressBar(stats, snapshot.taskRollup.done, snapshot.taskRollup.total);
+  const nextAction = joinedNextAction(snapshot.tasks);
+  if (nextAction) {
+    /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
+    const next = stats.createEl('button', {
+      cls: 'abyss-project-next-action',
+      attr: {
+        type: 'button',
+        'aria-label': 'Open Next Action',
+        title: 'Open Next Action',
+      },
+    });
+    /* eslint-enable obsidianmd/ui/sentence-case */
+    setIcon(next, 'list-checks');
+    next.addEventListener('click', () => ctx.state.set('taskStack', [nextAction.task]));
+  }
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
@@ -62,5 +77,7 @@ export function renderProjectDashboard(
   }
 
   const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
-  ctx.renderTasks(taskHost, project.path, snapshot.tasks);
+  taskHost.createEl('h3', { cls: 'abyss-project-tasks-title', text: 'Tasks' });
+  const taskContent = taskHost.createDiv({ cls: 'abyss-project-tasks-content' });
+  ctx.renderTasks(taskContent, project.path, snapshot.tasks);
 }

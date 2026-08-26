@@ -682,6 +682,7 @@ export class CenterPanel {
           {
             renderTasks: (host, path, tasks) => this.renderProjectTasks(host, path, tasks),
             snapshots: this.projectSnapshots,
+            onSaveSettings: this.onSaveSettings,
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never

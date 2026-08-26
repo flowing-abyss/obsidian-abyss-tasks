@@ -424,10 +424,17 @@ export class PanelView extends ItemView {
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
-      if (mode !== 'tasks') {
+      if (mode !== 'tasks' && mode !== 'projects') {
         this.pendingCompactPane = undefined;
         this.closeCompactPane(false);
-      } else if (this.compactRightCollapsed && this.state.get('taskStack').length > 0) {
+      } else if (mode === 'projects' && this.compactPaneOpen === 'left') {
+        this.closeCompactPane(false);
+      }
+      if (
+        (mode === 'tasks' || mode === 'projects') &&
+        this.compactRightCollapsed &&
+        this.state.get('taskStack').length > 0
+      ) {
         this.openCompactPane('right', false);
       }
     });
@@ -440,7 +447,7 @@ export class PanelView extends ItemView {
       if (
         selectionKey &&
         selectionKey !== this.compactTaskSelectionKey &&
-        this.state.get('mode') === 'tasks' &&
+        (this.state.get('mode') === 'tasks' || this.state.get('mode') === 'projects') &&
         this.compactRightCollapsed
       ) {
         this.openCompactPane('right', false);
@@ -615,7 +622,9 @@ export class PanelView extends ItemView {
 
   private openCompactPane(pane: CompactPane, moveFocus: boolean): void {
     const elements = this.compactPaneElements;
-    if (!elements || !this.isCompactPaneCollapsed(pane) || this.state.get('mode') !== 'tasks') {
+    const mode = this.state.get('mode');
+    const modeOwnsPane = mode === 'tasks' || (mode === 'projects' && pane === 'right');
+    if (!elements || !this.isCompactPaneCollapsed(pane) || !modeOwnsPane) {
       return;
     }
     const quickCapture = this.quickCapture;
@@ -668,6 +677,10 @@ export class PanelView extends ItemView {
     const wasRightCollapsed = this.compactRightCollapsed;
     this.compactRightCollapsed = width <= COMPACT_RIGHT_MAX_REM * rem;
     this.compactLeftCollapsed = width <= COMPACT_LEFT_MAX_REM * rem;
+    this.compactPaneElements?.right.classList.toggle(
+      'is-compact-collapsed',
+      this.compactRightCollapsed,
+    );
 
     const pendingPane = this.pendingCompactPane;
     if (pendingPane && !this.isCompactPaneCollapsed(pendingPane.pane)) {
@@ -679,7 +692,7 @@ export class PanelView extends ItemView {
     if (
       !wasRightCollapsed &&
       this.compactRightCollapsed &&
-      this.state.get('mode') === 'tasks' &&
+      (this.state.get('mode') === 'tasks' || this.state.get('mode') === 'projects') &&
       this.state.get('taskStack').length > 0
     ) {
       this.openCompactPane('right', false);

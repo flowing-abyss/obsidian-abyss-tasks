@@ -1,14 +1,35 @@
+// eslint-disable-next-line import/no-nodejs-modules -- geometry contract loads the shipped CSS.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer } from './helpers';
+import { freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
+const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+
+function geometryContract(element: HTMLElement): {
+  readonly rect: DOMRect;
+  readonly display: string;
+  readonly gridTemplateColumns: string;
+  readonly gap: string;
+  readonly paddingInline: string;
+} {
+  const style = getComputedStyle(element);
+  return {
+    rect: element.getBoundingClientRect(),
+    display: style.display,
+    gridTemplateColumns: style.gridTemplateColumns,
+    gap: style.gap,
+    paddingInline: `${style.paddingInlineStart} ${style.paddingInlineEnd}`,
+  };
+}
 
 function proj(over: Partial<Project>): Project {
   return {
@@ -24,7 +45,10 @@ function proj(over: Partial<Project>): Project {
   };
 }
 
-function workspace(project = proj({})): ProjectWorkspaceSnapshot {
+function workspace(
+  project = proj({}),
+  over: Partial<ProjectWorkspaceSnapshot> = {},
+): ProjectWorkspaceSnapshot {
   return {
     project,
     tasks: [],
@@ -36,6 +60,7 @@ function workspace(project = proj({})): ProjectWorkspaceSnapshot {
     workNoteRelations: [],
     overdue: { tasks: 0, workNotes: 0 },
     diagnostics: [],
+    ...over,
   };
 }
 
@@ -58,6 +83,7 @@ describe('renderProjectsList', () => {
   const ctx = {
     state: new AppState(),
     settings: DEFAULT_SETTINGS,
+    onSaveSettings: vi.fn().mockResolvedValue(undefined),
     onCreate: vi.fn().mockResolvedValue(undefined),
     onSetStatus: vi.fn(),
     openNote: vi.fn(),
@@ -67,7 +93,10 @@ describe('renderProjectsList', () => {
     const el = freshContainer();
     renderProjectsList(
       el,
-      [proj({}), proj({ path: 'Projects/B.md', name: 'B', statusId: null, rawStatus: 'archive' })],
+      [
+        workspace(proj({})),
+        workspace(proj({ path: 'Projects/B.md', name: 'B', statusId: null, rawStatus: 'archive' })),
+      ],
       { ...ctx, state: new AppState() },
     );
     const headers = Array.from(el.querySelectorAll('.abyss-projects-group-label')).map(
@@ -81,7 +110,7 @@ describe('renderProjectsList', () => {
   it('row click switches to the dashboard view', () => {
     const state = new AppState();
     const el = freshContainer();
-    renderProjectsList(el, [proj({})], { ...ctx, state });
+    renderProjectsList(el, [workspace()], { ...ctx, state });
     (el.querySelector('.abyss-project-row') as HTMLElement).click();
     expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/A.md' });
   });
@@ -89,13 +118,259 @@ describe('renderProjectsList', () => {
   it('New project button reveals an inline input that calls onCreate (no modal)', () => {
     const onCreate = vi.fn().mockResolvedValue(undefined);
     const el = freshContainer();
-    renderProjectsList(el, [proj({})], { ...ctx, state: new AppState(), onCreate });
+    renderProjectsList(el, [workspace()], { ...ctx, state: new AppState(), onCreate });
     (el.querySelector('.abyss-projects-new') as HTMLElement).click();
     const input = el.querySelector('.abyss-projects-new-input') as HTMLInputElement;
     expect(input).toBeTruthy();
     input.value = 'Fresh Project';
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
     expect(onCreate).toHaveBeenCalledWith('Fresh Project');
+  });
+
+  it('renders one compact native header and omits an empty metadata row', () => {
+    const el = freshContainer();
+    const emptyProject = proj({
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    });
+
+    renderProjectsList(el, [workspace(emptyProject)], { ...ctx, state: new AppState() });
+
+    expect(el.querySelectorAll('.abyss-center-header')).toHaveLength(1);
+    expect(el.querySelector('.abyss-project-row-meta')).toBeNull();
+    expect(el.textContent).not.toContain('Choose Next Action');
+  });
+
+  it('persists status filters without invoking a Project note command', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.statuses = [{ ...settings.projects.statuses[0]!, id: 'wip', label: 'WIP' }];
+    settings.projects.view.visibleStatusIds = [];
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const onSetStatus = vi.fn();
+    const openNote = vi.fn();
+    const el = freshContainer();
+
+    renderProjectsList(el, [workspace(proj({ statusId: 'wip' }))], {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      onSaveSettings,
+      onSetStatus,
+      openNote,
+    });
+    el.querySelector<HTMLButtonElement>('[data-project-status-filter="wip"]')!.click();
+    await Promise.resolve();
+
+    expect(settings.projects.view.visibleStatusIds).toEqual(['wip']);
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(onSetStatus).not.toHaveBeenCalled();
+    expect(openNote).not.toHaveBeenCalled();
+  });
+
+  it('persists the Unmapped filter through the same settings-only path', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.includeUnmapped = false;
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const onSetStatus = vi.fn();
+    const el = freshContainer();
+
+    renderProjectsList(el, [workspace(proj({ statusId: null, rawStatus: 'legacy' }))], {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      onSaveSettings,
+      onSetStatus,
+    });
+    el.querySelector<HTMLButtonElement>('[data-project-unmapped-filter]')!.click();
+    await Promise.resolve();
+
+    expect(settings.projects.view.includeUnmapped).toBe(true);
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(onSetStatus).not.toHaveBeenCalled();
+  });
+
+  it('renders joined Task, Work Note, overdue, and diagnostic summary data', () => {
+    const project = proj({
+      stats: { total: 3, done: 1, cancelled: 0, inProgress: 1, open: 1, progress: 1 / 3 },
+    });
+    const el = freshContainer();
+
+    renderProjectsList(
+      el,
+      [
+        workspace(project, {
+          taskRollup: project.stats,
+          workNoteRollup: { active: 1, completed: 1, dropped: 0 },
+          overdue: { tasks: 1, workNotes: 2 },
+          diagnostics: [
+            { type: 'work-note', path: 'Notes/A.md', diagnostic: { type: 'missing-project' } },
+          ] as never,
+        }),
+      ],
+      { ...ctx, state: new AppState() },
+    );
+
+    expect(el.querySelector('.abyss-project-task-progress')?.textContent).toContain('Tasks');
+    expect(el.querySelector('.abyss-project-work-notes')?.textContent).toBe('Work Notes 2');
+    expect(el.querySelector('.abyss-project-overdue')?.textContent).toBe('3');
+    expect(el.querySelector('.abyss-project-diagnostics')?.textContent).toBe('1');
+    expect(el.textContent).not.toMatch(/\bActions?\b|Action progress/u);
+  });
+
+  it('opens the joined Next Action in the Task inspector from an icon-only control', () => {
+    const state = new AppState();
+    const next = task({ title: 'Do this', tags: ['#task/next_action'] });
+    const el = freshContainer();
+
+    renderProjectsList(
+      el,
+      [
+        workspace(proj({}), {
+          tasks: [
+            {
+              task: next,
+              projectPath: 'Projects/A.md',
+              owner: { type: 'project', path: 'Projects/A.md' },
+            },
+          ],
+        }),
+      ],
+      { ...ctx, state },
+    );
+    const control = el.querySelector<HTMLButtonElement>('[aria-label="Open Next Action"]')!;
+
+    expect(control.textContent?.trim()).toBe('');
+    expect(control.getAttribute('title')).toBeTruthy();
+    expect(el.querySelector('.abyss-next-action-slot')).toBeNull();
+    control.click();
+    expect(state.get('taskStack')).toEqual([next]);
+  });
+
+  it('reserves no Next Action geometry when no joined Task is marked', () => {
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
+    const overview = freshContainer();
+    const overviewBaseline = freshContainer();
+    const compact = freshContainer();
+    const compactBaseline = freshContainer();
+    activeDocument.body.append(overview, overviewBaseline, compact, compactBaseline);
+
+    try {
+      renderProjectsList(overview, [workspace()], { ...ctx, state: new AppState() });
+      const marked = task({ title: 'Marked', tags: ['#task/next_action'] });
+      const markedWorkspace = workspace(proj({}), {
+        tasks: [
+          {
+            task: marked,
+            projectPath: 'Projects/A.md',
+            owner: { type: 'project', path: 'Projects/A.md' },
+          },
+        ],
+      });
+      renderProjectsList(overviewBaseline, [markedWorkspace], {
+        ...ctx,
+        state: new AppState(),
+      });
+      const dashboardContext = {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(),
+      };
+      renderProjectDashboard(compact, workspace(), dashboardContext);
+      renderProjectDashboard(compactBaseline, markedWorkspace, dashboardContext);
+      overviewBaseline.querySelector('[aria-label="Open Next Action"]')?.remove();
+      compactBaseline.querySelector('[aria-label="Open Next Action"]')?.remove();
+
+      expect(overview.querySelector('[aria-label="Open Next Action"]')).toBeNull();
+      expect(compact.querySelector('[aria-label="Open Next Action"]')).toBeNull();
+      expect(overview.querySelector('.abyss-next-action-slot')).toBeNull();
+      expect(compact.querySelector('.abyss-next-action-slot')).toBeNull();
+      expect(geometryContract(overview.querySelector<HTMLElement>('.abyss-project-row')!)).toEqual(
+        geometryContract(overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!),
+      );
+      expect(
+        geometryContract(compact.querySelector<HTMLElement>('.abyss-project-dashboard-stats')!),
+      ).toEqual(
+        geometryContract(
+          compactBaseline.querySelector<HTMLElement>('.abyss-project-dashboard-stats')!,
+        ),
+      );
+    } finally {
+      style.remove();
+      overview.remove();
+      overviewBaseline.remove();
+      compact.remove();
+      compactBaseline.remove();
+    }
+  });
+
+  it('mounts only the viewport plus overscan in the production Overview', () => {
+    const el = freshContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(16);
+    scroll.scrollTop = 20 * 52;
+    scroll.dispatchEvent(new Event('scroll'));
+    const mounted = Array.from(el.querySelectorAll<HTMLElement>('[data-bounded-key]'));
+    expect(mounted).toHaveLength(22);
+    expect(mounted[0]?.dataset['boundedKey']).toBe('project:Projects/P13.md');
+    expect(mounted[mounted.length - 1]?.dataset['boundedKey']).toBe('project:Projects/P34.md');
+  });
+
+  it('allows manual scrolling away from a retained logical focus', () => {
+    const el = freshContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    el.querySelector<HTMLElement>('.abyss-project-row')!.dispatchEvent(new FocusEvent('focus'));
+
+    scroll.scrollTop = 20 * 52;
+    scroll.dispatchEvent(new Event('scroll'));
+
+    expect(scroll.scrollTop).toBe(20 * 52);
+    expect(el.querySelector<HTMLElement>('[data-bounded-key]')?.dataset['boundedKey']).toBe(
+      'project:Projects/P13.md',
+    );
+  });
+
+  it('detaches bounded-window scroll ownership when the Overview unmounts', () => {
+    const el = freshContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    const cleanup = renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+
+    cleanup();
+    scroll.scrollTop = 20 * 52;
+    scroll.dispatchEvent(new Event('scroll'));
+
+    expect(el.querySelector<HTMLElement>('.abyss-project-row')?.dataset['boundedKey']).toBe(
+      'project:Projects/P00.md',
+    );
   });
 });
 
@@ -113,6 +388,8 @@ describe('renderProjectDashboard', () => {
       renderTasks,
     });
     expect(el.querySelector('.abyss-project-dashboard-title')?.textContent).toBe('A');
+    expect(el.querySelector('.abyss-project-tasks-title')?.textContent).toBe('Tasks');
+    expect(el.textContent).not.toMatch(/\bActions?\b|Action progress/u);
     expect(renderTasks).toHaveBeenCalled();
     (el.querySelector('.abyss-project-back') as HTMLElement).click();
     expect(state.get('projectsPanel')).toEqual({ view: 'list' });
@@ -154,6 +431,136 @@ describe('renderProjectDashboard', () => {
     });
 
     expect(el.querySelector('.abyss-project-time')).toBeNull();
+  });
+
+  it('renders the compact-summary Next Action as an icon only and nothing when unset', () => {
+    const next = task({ title: 'Do this', tags: ['#task/next_action'] });
+    const action = {
+      task: next,
+      projectPath: 'Projects/A.md',
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    };
+    const ctx = {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(),
+    };
+    const set = freshContainer();
+    const unset = freshContainer();
+
+    renderProjectDashboard(set, workspace(proj({}), { tasks: [action] }), ctx);
+    renderProjectDashboard(unset, workspace(), ctx);
+    const control = set.querySelector<HTMLButtonElement>('[aria-label="Open Next Action"]')!;
+
+    expect(control.textContent?.trim()).toBe('');
+    expect(control.getAttribute('title')).toBeTruthy();
+    expect(set.querySelector('.abyss-next-action-slot')).toBeNull();
+    expect(unset.querySelector('[aria-label="Open Next Action"]')).toBeNull();
+  });
+});
+
+describe('BoundedWindow', () => {
+  it('returns exactly the viewport plus configured overscan', () => {
+    expect(computeBoundedWindow({ count: 250, first: 20, visible: 12, overscan: 6 })).toEqual({
+      start: 14,
+      end: 38,
+    });
+  });
+
+  it('clamps overscan to the collection boundaries', () => {
+    expect(computeBoundedWindow({ count: 10, first: 0, visible: 3, overscan: 6 })).toEqual({
+      start: 0,
+      end: 9,
+    });
+    expect(computeBoundedWindow({ count: 10, first: 8, visible: 3, overscan: 6 })).toEqual({
+      start: 2,
+      end: 10,
+    });
+  });
+
+  it('moves through logical keys that are not mounted and scrolls focus into view', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c', 'd', 'e'], 1);
+    bounded.focus('b');
+
+    expect(bounded.move(2)).toBe('d');
+    expect(bounded.viewportForFocus({ first: 0, visible: 2 })).toBe(2);
+    expect(bounded.bounds({ first: 2, visible: 2 })).toEqual({ start: 1, end: 5 });
+  });
+
+  it('preserves focus by stable key and restores it after the key remounts', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c'], 1);
+    bounded.focus('b');
+    bounded.setKeys(['c', 'b', 'a']);
+    const host = freshContainer();
+    const mounted = host.createEl('button', { attr: { 'data-bounded-key': 'b' } });
+    const focus = vi.spyOn(mounted, 'focus');
+    const scrollIntoView = vi.fn();
+    mounted.scrollIntoView = scrollIntoView;
+
+    expect(bounded.focusedKey()).toBe('b');
+    expect(bounded.restoreFocus(host)).toBe(true);
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('mounts only the computed slice, scrolls the logical focus, and restores DOM focus', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c', 'd', 'e'], 1);
+    const host = freshContainer();
+    const scrolled = vi.fn();
+    const focused = vi.fn();
+    bounded.focus('d');
+
+    const range = bounded.render(host, {
+      first: 0,
+      visible: 2,
+      itemExtent: 40,
+      restoreFocus: true,
+      render: (container, key) => {
+        const button = container.createEl('button');
+        if (key === 'd') {
+          button.scrollIntoView = scrolled;
+          button.focus = focused;
+        }
+        return button;
+      },
+    });
+
+    expect(range).toEqual({ start: 1, end: 5, first: 2 });
+    expect(Array.from(host.querySelectorAll('[data-bounded-key]'), (el) => el.textContent)).toEqual(
+      ['', '', '', ''],
+    );
+    expect(
+      Array.from(
+        host.querySelectorAll<HTMLElement>('[data-bounded-key]'),
+        (element) => element.dataset['boundedKey'],
+      ),
+    ).toEqual(['b', 'c', 'd', 'e']);
+    expect(scrolled).toHaveBeenCalledWith({ block: 'nearest' });
+    expect(focused).toHaveBeenCalledWith({ preventScroll: true });
+  });
+
+  it('does not re-anchor a manual viewport when focus restoration is not requested', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c', 'd', 'e'], 1);
+    const host = freshContainer();
+    const scrolled = vi.fn();
+    bounded.focus('d');
+
+    const range = bounded.render(host, {
+      first: 0,
+      visible: 2,
+      itemExtent: 40,
+      restoreFocus: false,
+      render: (container, key) => {
+        const button = container.createEl('button');
+        if (key === 'd') button.scrollIntoView = scrolled;
+        return button;
+      },
+    });
+
+    expect(range).toEqual({ start: 0, end: 3, first: 0 });
+    expect(scrolled).not.toHaveBeenCalled();
   });
 });
 
