@@ -224,7 +224,7 @@ export class LeftPanel {
         typeof sel === 'object' && sel.type === 'project' && sel.path === project.path;
       // Active (open + in-progress) derived from precomputed stats — O(1), and
       // equals what the center list shows when you open the project.
-      const openCount = project.stats.total - project.stats.done - project.stats.cancelled;
+      const openCount = project.stats.open + project.stats.inProgress;
       const row = parent.createDiv({
         cls: `abyss-left-item abyss-project-item${isActive ? ' is-active' : ''}`,
       });

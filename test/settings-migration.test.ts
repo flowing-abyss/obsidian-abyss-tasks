@@ -169,6 +169,75 @@ describe('migrateSettings', () => {
 });
 
 describe('projects migration', () => {
+  it('migrates separate persisted Task and Work Note view states without changing the fresh route', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as {
+      statuses: Array<{ id: string }>;
+      view: {
+        portfolioLayout: string;
+        visibleStatusIds: string[];
+        includeUnmapped: boolean;
+        tasks: { groupBy: string; sortBy: unknown; filters: unknown[] };
+        workNotes: { groupBy: string; sortBy: unknown; statusIds: string[] };
+      };
+    };
+    expect(projects.view.portfolioLayout).toBe('overview');
+    expect(projects.view.visibleStatusIds).toEqual(projects.statuses.map(({ id }) => id));
+    expect(projects.view.includeUnmapped).toBe(true);
+    expect(projects.view.tasks.groupBy).toBe('none');
+    expect(projects.view.workNotes.groupBy).toBe('none');
+    expect(projects.view.workNotes.statusIds).toEqual(projects.statuses.map(({ id }) => id));
+    expect(projects.view.tasks).not.toBe(projects.view.workNotes);
+  });
+
+  it('preserves independent Task and Work Note view state and migrates idempotently', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'active', label: 'Active', behavior: 'regular' }],
+        defaultStatusId: 'active',
+        view: {
+          portfolioLayout: 'board',
+          visibleStatusIds: [],
+          includeUnmapped: false,
+          tasks: {
+            groupBy: 'priority',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [{ type: 'priority', value: 'A' }],
+            statusGroups: ['todo'],
+          },
+          workNotes: {
+            groupBy: 'milestone',
+            sortBy: { field: 'updated', dir: 'asc' },
+            statusIds: [],
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['portfolioLayout']).toBe('board');
+    expect(view['visibleStatusIds']).toEqual([]);
+    expect(view['includeUnmapped']).toBe(false);
+    expect(view['tasks']).toMatchObject({
+      groupBy: 'priority',
+      sortBy: { field: 'title', dir: 'desc' },
+      statusGroups: ['todo'],
+    });
+    expect(view['workNotes']).toMatchObject({
+      groupBy: 'milestone',
+      sortBy: { field: 'updated', dir: 'asc' },
+      statusIds: [],
+    });
+  });
+
   it('adds projects + sectionCollapse when missing', () => {
     const raw: Record<string, unknown> = {};
     migrateSettings(raw);

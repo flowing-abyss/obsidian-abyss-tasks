@@ -1,6 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { computeStats, ProjectStore } from '../src/projects/ProjectStore';
+import { computeTaskRollup, ProjectStore } from '../src/projects/ProjectStore';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskIndexEvent, TaskSnapshot } from '../src/tasks';
 import { queryApiForTasks, task, taskQueryApi, type TaskFixtureInput } from './helpers';
@@ -17,20 +17,32 @@ function t(over: TaskFixtureInput): TaskSnapshot {
   return task({ ...over, source: { filePath: 'x.md', ...over.source } });
 }
 
-describe('computeStats', () => {
-  it('counts task statuses', () => {
-    const stats = computeStats([
+describe('computeTaskRollup', () => {
+  it('excludes cancelled from denominator', () => {
+    const stats = computeTaskRollup([
       t({ status: 'open' }),
       t({ status: 'done' }),
-      t({ status: 'done' }),
       t({ status: 'cancelled' }),
-      t({ status: 'in-progress' }),
     ]);
-    expect(stats).toEqual({ total: 5, done: 2, cancelled: 1, inProgress: 1 });
+    expect(stats).toEqual({
+      total: 2,
+      done: 1,
+      cancelled: 1,
+      inProgress: 0,
+      open: 1,
+      progress: 0.5,
+    });
   });
 
-  it('handles an empty list', () => {
-    expect(computeStats([])).toEqual({ total: 0, done: 0, cancelled: 0, inProgress: 0 });
+  it('uses null progress for no actionable tasks', () => {
+    expect(computeTaskRollup([t({ status: 'cancelled' })])).toEqual({
+      total: 0,
+      done: 0,
+      cancelled: 1,
+      inProgress: 0,
+      open: 0,
+      progress: null,
+    });
   });
 });
 
@@ -107,6 +119,36 @@ describe('ProjectStore enumeration', () => {
     ps.destroy();
   });
 
+  it('projects strict typed ranges while retaining invalid diagnostics', () => {
+    const { app } = makeApp([
+      {
+        path: 'Projects/A.md',
+        tags: [],
+        fm: { status: 'active', start: '2026-08-26', end: '2026-08-25' },
+      },
+      {
+        path: 'Projects/B.md',
+        tags: [],
+        fm: { status: 'active', start: '2026-08-26T14:30:00', end: '2026-09-01' },
+      },
+    ]);
+    const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+
+    ps.initialize();
+
+    expect(ps.get('Projects/A.md')?.range).toMatchObject({
+      start: { raw: '2026-08-26', precision: 'date' },
+      end: { raw: '2026-08-25', precision: 'date' },
+      issue: 'reversed',
+    });
+    expect(ps.get('Projects/B.md')?.range).toMatchObject({
+      end: { raw: '2026-09-01' },
+      issue: 'invalid-start',
+    });
+    expect(ps.get('Projects/B.md')?.frontmatter['start']).toBe('2026-08-26T14:30:00');
+    ps.destroy();
+  });
+
   it('computes stats from tasks in the note', () => {
     const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
     const tasks = [
@@ -121,6 +163,8 @@ describe('ProjectStore enumeration', () => {
       done: 1,
       cancelled: 0,
       inProgress: 0,
+      open: 1,
+      progress: 0.5,
     });
     ps.destroy();
   });
@@ -153,6 +197,8 @@ describe('ProjectStore enumeration', () => {
       done: 0,
       cancelled: 0,
       inProgress: 0,
+      open: 1,
+      progress: 0,
     });
     expect(list).toHaveBeenCalled();
     expect(forCalendarProjection).not.toHaveBeenCalled();
@@ -183,6 +229,52 @@ describe('ProjectStore enumeration', () => {
 });
 
 describe('ProjectStore incremental update', () => {
+  it('notifies only when selective typed project fields change', () => {
+    vi.useFakeTimers();
+    const mock = makeApp([
+      {
+        path: 'Projects/A.md',
+        tags: [],
+        fm: { status: 'active', start: '2026-08-26', unrelated: 'before' },
+      },
+    ]);
+    let indexListener: ((event: TaskIndexEvent) => void) | undefined;
+    const store = queryApiForTasks(
+      () => [] as TaskSnapshot[],
+      (listener) => {
+        indexListener = listener;
+        return () => {};
+      },
+    ) as never;
+    const ps = new ProjectStore(mock.app, store, { ...DEFAULT_SETTINGS });
+    ps.initialize();
+    const cb = vi.fn();
+    ps.onUpdate(cb);
+
+    mock.setCache('Projects/A.md', {
+      path: 'Projects/A.md',
+      tags: [],
+      fm: { status: 'active', start: '2026-08-26', unrelated: 'after' },
+    });
+    mock.fireChanged('Projects/A.md');
+    indexListener?.({ type: 'changed', files: ['Projects/A.md'] });
+    vi.advanceTimersByTime(150);
+    expect(cb).not.toHaveBeenCalled();
+
+    mock.setCache('Projects/A.md', {
+      path: 'Projects/A.md',
+      tags: [],
+      fm: { status: 'active', start: '2026-08-27', unrelated: 'after' },
+    });
+    mock.fireChanged('Projects/A.md');
+    indexListener?.({ type: 'changed', files: ['Projects/A.md'] });
+    vi.advanceTimersByTime(150);
+    expect(cb).toHaveBeenCalledOnce();
+
+    ps.destroy();
+    vi.useRealTimers();
+  });
+
   it('re-evaluates only the changed note on a metadata change (debounced)', () => {
     vi.useFakeTimers();
     const mock = makeApp([

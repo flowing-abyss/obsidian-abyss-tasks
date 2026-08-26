@@ -1240,7 +1240,14 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     projects?: Array<{
       path: string;
       name: string;
-      stats?: { total: number; done: number; cancelled: number; inProgress: number };
+      stats?: {
+        total: number;
+        done: number;
+        cancelled: number;
+        inProgress: number;
+        open: number;
+        progress: number | null;
+      };
     }>;
   }) {
     const state = new AppState();
@@ -1253,7 +1260,14 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       tags: [],
       statusId: null,
       rawStatus: null,
-      stats: p.stats ?? { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+      stats: p.stats ?? {
+        total: 0,
+        done: 0,
+        cancelled: 0,
+        inProgress: 0,
+        open: 0,
+        progress: null,
+      },
       ...p,
     }));
     const projectStore = {
@@ -1320,13 +1334,20 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     expect(el.querySelector('.abyss-left-showmore')).toBeTruthy();
   });
 
-  it('project badge counts active (total − done − cancelled = open + in-progress)', () => {
-    // 4 tasks: 1 open + 1 in-progress + 1 done + 1 cancelled → active = 2.
+  it('project badge uses explicit active counts without double-subtracting cancelled tasks', () => {
+    // 3 actionable tasks plus 1 cancelled: active = open + in-progress = 2.
     const projects = [
       {
         path: 'Projects/A.md',
         name: 'A',
-        stats: { total: 4, done: 1, cancelled: 1, inProgress: 1 },
+        stats: {
+          total: 3,
+          done: 1,
+          cancelled: 1,
+          inProgress: 1,
+          open: 1,
+          progress: 1 / 3,
+        },
       },
     ];
     const { el } = makeFull({ projects });

@@ -1,6 +1,10 @@
 import { inferLifecycleBehavior } from '../projects/lifecycle';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
-import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
+import {
+  buildDefaultProjectsSettings,
+  buildDefaultProjectsView,
+  buildDefaultTaskStatuses,
+} from './defaults';
 import { migrateShortcuts } from './shortcuts';
 
 const DONE_CANCELLED_STATUS_GROUPS = TYPE_ORDER.filter(
@@ -37,6 +41,7 @@ function migrateProjects(raw: Record<string, unknown>): void {
       defaultStatusId?: string;
       taskInsertionMode?: string;
       taskInsertionSection?: string;
+      view?: unknown;
     };
     const ids = (p.statuses ?? []).map((s) => s.id);
     for (const status of p.statuses ?? []) {
@@ -61,6 +66,88 @@ function migrateProjects(raw: Record<string, unknown>): void {
     }
     if (typeof p.taskInsertionSection !== 'string') {
       p.taskInsertionSection = defaults.taskInsertionSection;
+    }
+    migrateProjectsView(p);
+  }
+}
+
+const PROJECT_TASK_GROUPS = new Set(['none', 'date', 'priority', 'tag', 'status']);
+const PROJECT_TASK_SORTS = new Set(['date', 'priority', 'title', 'tag', 'status']);
+const WORK_NOTE_GROUPS = new Set(['none', 'status', 'priority', 'milestone']);
+const WORK_NOTE_SORTS = new Set(['title', 'status', 'priority', 'start', 'end', 'updated']);
+const SORT_DIRECTIONS = new Set(['asc', 'desc']);
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function validSort(
+  value: unknown,
+  fields: ReadonlySet<string>,
+): value is { field: string; dir: string } {
+  const candidate = record(value);
+  return (
+    candidate !== undefined &&
+    typeof candidate['field'] === 'string' &&
+    fields.has(candidate['field']) &&
+    typeof candidate['dir'] === 'string' &&
+    SORT_DIRECTIONS.has(candidate['dir'])
+  );
+}
+
+function stringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?: unknown }): void {
+  const ids = (projects.statuses ?? []).map(({ id }) => id);
+  const defaults = buildDefaultProjectsView(ids);
+  const view = record(projects.view);
+  if (!view) {
+    projects.view = defaults;
+    return;
+  }
+
+  if (!['overview', 'board', 'timeline'].includes(String(view['portfolioLayout']))) {
+    view['portfolioLayout'] = defaults.portfolioLayout;
+  }
+  if (!stringArray(view['visibleStatusIds'])) {
+    view['visibleStatusIds'] = [...defaults.visibleStatusIds];
+  }
+  if (typeof view['includeUnmapped'] !== 'boolean') {
+    view['includeUnmapped'] = defaults.includeUnmapped;
+  }
+
+  const tasks = record(view['tasks']);
+  if (!tasks) {
+    view['tasks'] = defaults.tasks;
+  } else {
+    if (typeof tasks['groupBy'] !== 'string' || !PROJECT_TASK_GROUPS.has(tasks['groupBy'])) {
+      tasks['groupBy'] = defaults.tasks.groupBy;
+    }
+    if (!validSort(tasks['sortBy'], PROJECT_TASK_SORTS)) {
+      tasks['sortBy'] = { ...defaults.tasks.sortBy };
+    }
+    if (!Array.isArray(tasks['filters'])) tasks['filters'] = [];
+    if ('statusGroups' in tasks && !stringArray(tasks['statusGroups'])) {
+      tasks['statusGroups'] = [...(defaults.tasks.statusGroups ?? [])];
+    }
+  }
+
+  const workNotes = record(view['workNotes']);
+  if (!workNotes) {
+    view['workNotes'] = defaults.workNotes;
+  } else {
+    if (typeof workNotes['groupBy'] !== 'string' || !WORK_NOTE_GROUPS.has(workNotes['groupBy'])) {
+      workNotes['groupBy'] = defaults.workNotes.groupBy;
+    }
+    if (!validSort(workNotes['sortBy'], WORK_NOTE_SORTS)) {
+      workNotes['sortBy'] = { ...defaults.workNotes.sortBy };
+    }
+    if (!stringArray(workNotes['statusIds'])) {
+      workNotes['statusIds'] = [...defaults.workNotes.statusIds];
     }
   }
 }

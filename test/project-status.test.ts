@@ -35,7 +35,8 @@ function proj(over: Partial<Project>): Project {
     tags: [],
     statusId: null,
     rawStatus: null,
-    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
+    range: {},
+    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
     ...over,
   };
 }

@@ -4,9 +4,29 @@ import type {
   CalendarSettings,
   ListViewState,
   ProjectsSettings,
+  ProjectsViewSettings,
   TaskStatusDef,
   ViewConfig,
 } from './types';
+
+export function buildDefaultProjectsView(statusIds: readonly string[]): ProjectsViewSettings {
+  return {
+    portfolioLayout: 'overview',
+    visibleStatusIds: [...statusIds],
+    includeUnmapped: true,
+    tasks: {
+      groupBy: 'none',
+      sortBy: { field: 'date', dir: 'asc' },
+      filters: [],
+      statusGroups: [...ACTIVE_STATUS_GROUPS],
+    },
+    workNotes: {
+      groupBy: 'none',
+      sortBy: { field: 'updated', dir: 'desc' },
+      statusIds: [...statusIds],
+    },
+  };
+}
 
 export const DEFAULT_VIEW_CONFIG: ViewConfig = {
   defaultView: 'month',
@@ -60,6 +80,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     defaultStatusId: active.id,
     taskInsertionMode: 'append',
     taskInsertionSection: '## Tasks',
+    view: buildDefaultProjectsView([active.id, planned.id, done.id]),
   };
 }
 

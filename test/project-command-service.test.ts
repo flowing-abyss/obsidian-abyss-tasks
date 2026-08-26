@@ -1,7 +1,9 @@
 import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import type { ProjectLifecycleObservation } from '../src/projects/lifecycle';
+import { ProjectCommandService } from '../src/projects/ProjectCommandService';
+import { parseProjectDate } from '../src/projects/projectDates';
+import type { ProjectDateValue } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
 import { createAppWithFiles, flushMicrotasks, useRealMoment } from './helpers';
 
@@ -72,6 +74,105 @@ async function externalSetStatus(app: App, file: TFile, tag: string): Promise<vo
 }
 
 describe('ProjectCommandService', () => {
+  it('sets one observed range field without changing the other endpoint precision', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md':
+        '---\nstart: 2026-08-20\nend: 2026-08-26T14:30:00+07:00\ntags:\n  - project/active\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const file = fileAt(app, 'Projects/A.md');
+
+    const result = await service.setRange(
+      { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26T14:30:00+07:00' },
+      { start: parseProjectDate('2026-08-21')! },
+    );
+
+    expect(result).toMatchObject({
+      type: 'ok',
+      range: {
+        start: { raw: '2026-08-21' },
+        end: { raw: '2026-08-26T14:30:00+07:00', precision: 'datetime' },
+      },
+    });
+    const content = await app.vault.read(file);
+    expect(content).toContain('start: 2026-08-21');
+    expect(content).toContain('end: 2026-08-26T14:30:00+07:00');
+  });
+
+  it('rejects invalid or reversed target ranges without opening a transaction', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstart: 2026-08-20\nend: 2026-08-26\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const processFrontMatter = vi.spyOn(app.fileManager, 'processFrontMatter');
+
+    expect(
+      await service.setRange(
+        { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26' },
+        { start: parseProjectDate('2026-08-30')! },
+      ),
+    ).toEqual({ type: 'invalid', issue: 'reversed' });
+    expect(processFrontMatter).not.toHaveBeenCalled();
+  });
+
+  it('reports the invalid patched endpoint without opening a transaction', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstart: 2026-08-20\nend: 2026-08-26\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const processFrontMatter = vi.spyOn(app.fileManager, 'processFrontMatter');
+    const invalidEnd = {
+      ...parseProjectDate('2026-08-27')!,
+      raw: 'not-a-date',
+    } as ProjectDateValue;
+
+    expect(
+      await service.setRange(
+        { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26' },
+        { end: invalidEnd },
+      ),
+    ).toEqual({ type: 'invalid', issue: 'invalid-end' });
+    expect(processFrontMatter).not.toHaveBeenCalled();
+  });
+
+  it('conflicts when an observed range endpoint changed externally', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstart: 2026-08-20\nend: 2026-08-26\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const file = fileAt(app, 'Projects/A.md');
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['end'] = '2026-08-28';
+    });
+    const vaultWrites = vi.spyOn(app.vault, 'modify');
+    vaultWrites.mockClear();
+
+    const result = await service.setRange(
+      { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26' },
+      { start: parseProjectDate('2026-08-21')! },
+    );
+
+    expect(result).toMatchObject({
+      type: 'conflict',
+      current: { start: { raw: '2026-08-20' }, end: { raw: '2026-08-28' } },
+    });
+    expect(vaultWrites).not.toHaveBeenCalled();
+  });
+
+  it('status commands never invent an end date', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstart: 2026-08-20\ntags:\n  - project/active\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const file = fileAt(app, 'Projects/A.md');
+
+    await service.setStatus(observed('Projects/A.md', 'active', ['project/active']), 'published');
+
+    const content = await app.vault.read(file);
+    expect(content).toContain('start: 2026-08-20');
+    expect(content).not.toContain('\nend:');
+  });
+
   it('changes frontmatter tags without deleting body task tags', async () => {
     const app = await createAppWithFiles({
       'Projects/A.md':

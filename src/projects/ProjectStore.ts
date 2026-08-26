@@ -2,19 +2,30 @@ import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } 
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
 import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
+import { parseProjectRange } from './projectDates';
 import { resolveStatus } from './status';
-import type { Project, ProjectStats } from './types';
+import type { Project, TaskRollup } from './types';
 
-export function computeStats(tasks: readonly TaskSnapshot[]): ProjectStats {
+export function computeTaskRollup(tasks: readonly TaskSnapshot[]): TaskRollup {
   let done = 0;
   let cancelled = 0;
   let inProgress = 0;
+  let open = 0;
   for (const t of tasks) {
     if (t.status === 'done') done++;
     else if (t.status === 'cancelled') cancelled++;
     else if (t.status === 'in-progress') inProgress++;
+    else open++;
   }
-  return { total: tasks.length, done, cancelled, inProgress };
+  const total = tasks.length - cancelled;
+  return {
+    total,
+    done,
+    cancelled,
+    inProgress,
+    open,
+    progress: total === 0 ? null : done / total,
+  };
 }
 
 function basename(path: string): string {
@@ -177,7 +188,17 @@ export class ProjectStore {
   }
 
   private cacheSignature(): string {
-    return JSON.stringify(this.cache);
+    return JSON.stringify(
+      this.cache.map((project) => ({
+        path: project.path,
+        name: project.name,
+        tags: project.tags,
+        statusId: project.statusId,
+        rawStatus: project.rawStatus,
+        range: project.range,
+        stats: project.stats,
+      })),
+    );
   }
 
   private notifyIfChanged(before: string): void {
@@ -228,7 +249,8 @@ export class ProjectStore {
       tags,
       statusId,
       rawStatus,
-      stats: computeStats(tasks),
+      range: parseProjectRange(fm['start'], fm['end']),
+      stats: computeTaskRollup(tasks),
     };
   }
 

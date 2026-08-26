@@ -18,7 +18,8 @@ function proj(over: Partial<Project>): Project {
     tags: [],
     statusId: ACTIVE_ID,
     rawStatus: null,
-    stats: { total: 4, done: 1, cancelled: 0, inProgress: 0 },
+    range: {},
+    stats: { total: 4, done: 1, cancelled: 0, inProgress: 0, open: 3, progress: 0.25 },
     ...over,
   };
 }
@@ -122,6 +123,8 @@ describe('renderProjectDashboard', () => {
         done: 1,
         cancelled: 0,
         inProgress: 0,
+        open: 3,
+        progress: 0.25,
         estimateMin: 90,
         spentMin: 30,
       } as Project['stats'] & { estimateMin: number; spentMin: number },

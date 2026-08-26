@@ -8,6 +8,8 @@ import {
   toProjectPropertyString,
   type ProjectLifecycleObservation,
 } from './lifecycle';
+import { parseProjectDate, parseProjectRange } from './projectDates';
+import type { ProjectDateValue, ProjectRange } from './types';
 
 export type ProjectPropertyCommandResult =
   | { type: 'ok'; previousStatusId: string | null; nextStatusId: string }
@@ -16,9 +18,32 @@ export type ProjectPropertyCommandResult =
   | { type: 'invalid'; field: 'status' | 'path' }
   | { type: 'io-error' };
 
+export interface ProjectRangeObservation {
+  readonly path: string;
+  readonly start: unknown;
+  readonly end: unknown;
+}
+
+export interface ProjectRangePatch {
+  readonly start?: ProjectDateValue | null;
+  readonly end?: ProjectDateValue | null;
+}
+
+export type ProjectRangeCommandResult =
+  | { type: 'ok'; range: ProjectRange }
+  | { type: 'conflict'; current: ProjectRange }
+  | { type: 'invalid'; issue: NonNullable<ProjectRange['issue']> | 'path' }
+  | { type: 'io-error' };
+
 class AbortProjectCommand extends Error {
   constructor(readonly result: ProjectPropertyCommandResult) {
     super('Project command transaction aborted');
+  }
+}
+
+class AbortProjectRangeCommand extends Error {
+  constructor(readonly result: ProjectRangeCommandResult) {
+    super('Project range command transaction aborted');
   }
 }
 
@@ -108,6 +133,65 @@ export class ProjectCommandService {
     private readonly app: App,
     private readonly statuses: () => readonly ProjectStatus[],
   ) {}
+
+  async setRange(
+    observed: ProjectRangeObservation,
+    patch: ProjectRangePatch,
+  ): Promise<ProjectRangeCommandResult> {
+    const file = this.app.vault.getAbstractFileByPath(observed.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', issue: 'path' };
+    const patchIssue = this.invalidRangePatchIssue(patch);
+    if (patchIssue) return { type: 'invalid', issue: patchIssue };
+
+    const nextStart = patch.start === undefined ? observed.start : (patch.start?.raw ?? undefined);
+    const nextEnd = patch.end === undefined ? observed.end : (patch.end?.raw ?? undefined);
+    const nextRange = parseProjectRange(nextStart, nextEnd);
+    if (nextRange.issue) return { type: 'invalid', issue: nextRange.issue };
+
+    try {
+      await this.app.fileManager.processFrontMatter(
+        file,
+        (frontmatter: Record<string, unknown>) => {
+          if (
+            !sameRawValue(frontmatter['start'], observed.start) ||
+            !sameRawValue(frontmatter['end'], observed.end)
+          ) {
+            throw new AbortProjectRangeCommand({
+              type: 'conflict',
+              current: parseProjectRange(frontmatter['start'], frontmatter['end']),
+            });
+          }
+          if (patch.start === null) delete frontmatter['start'];
+          else if (patch.start !== undefined) frontmatter['start'] = patch.start.raw;
+          if (patch.end === null) delete frontmatter['end'];
+          else if (patch.end !== undefined) frontmatter['end'] = patch.end.raw;
+        },
+      );
+      return { type: 'ok', range: nextRange };
+    } catch (error) {
+      if (error instanceof AbortProjectRangeCommand) return error.result;
+      return { type: 'io-error' };
+    }
+  }
+
+  private invalidRangePatchIssue(
+    patch: ProjectRangePatch,
+  ): 'invalid-start' | 'invalid-end' | undefined {
+    if (!this.validDatePatchValue(patch.start)) return 'invalid-start';
+    if (!this.validDatePatchValue(patch.end)) return 'invalid-end';
+    return undefined;
+  }
+
+  private validDatePatchValue(value: ProjectDateValue | null | undefined): boolean {
+    if (value === undefined || value === null) return true;
+    const parsed = parseProjectDate(value.raw);
+    return (
+      parsed !== undefined &&
+      parsed.precision === value.precision &&
+      parsed.instantMs === value.instantMs &&
+      parsed.offsetMinutes === value.offsetMinutes
+    );
+  }
 
   setStatus(
     observed: ProjectLifecycleObservation,

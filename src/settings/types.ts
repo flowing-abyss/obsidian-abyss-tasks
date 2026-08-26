@@ -59,6 +59,32 @@ export interface ProjectStatus {
   match: StatusMatch;
 }
 
+export type ProjectsPortfolioLayout = 'overview' | 'board' | 'timeline';
+
+export interface ProjectTasksViewState {
+  readonly groupBy: ListViewState['groupBy'];
+  readonly sortBy: ListViewState['sortBy'];
+  readonly filters: readonly PropertyFilter[];
+  readonly statusGroups?: readonly TaskStatusType[];
+}
+
+export interface WorkNotesViewState {
+  readonly groupBy: 'none' | 'status' | 'priority' | 'milestone';
+  readonly sortBy: {
+    field: 'title' | 'status' | 'priority' | 'start' | 'end' | 'updated';
+    dir: 'asc' | 'desc';
+  };
+  readonly statusIds: readonly string[];
+}
+
+export interface ProjectsViewSettings {
+  portfolioLayout: ProjectsPortfolioLayout;
+  visibleStatusIds: string[];
+  includeUnmapped: boolean;
+  tasks: ProjectTasksViewState;
+  workNotes: WorkNotesViewState;
+}
+
 export interface ProjectsSettings {
   membershipQuery: string;
   createFolder: string;
@@ -70,6 +96,7 @@ export interface ProjectsSettings {
   // project notes can keep tasks under a dedicated heading.
   taskInsertionMode: 'append' | 'section';
   taskInsertionSection: string;
+  view: ProjectsViewSettings;
 }
 
 export interface CalendarSettings {
