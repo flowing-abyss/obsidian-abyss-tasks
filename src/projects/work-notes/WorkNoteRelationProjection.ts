@@ -58,6 +58,7 @@ function diagnosticInvalid(
 function pathReaches(
   start: string,
   wanted: string,
+  projectPath: string,
   notes: ReadonlyMap<string, WorkNoteSnapshot>,
   seen = new Set<string>(),
 ): boolean {
@@ -65,7 +66,12 @@ function pathReaches(
   if (seen.has(start)) return false;
   seen.add(start);
   const note = notes.get(start);
-  return note?.blockedByPaths.some((path) => pathReaches(path, wanted, notes, seen)) ?? false;
+  if (!note || note.projectPath !== projectPath) return false;
+  return note.blockedByPaths.some(
+    (path) =>
+      notes.get(path)?.projectPath === projectPath &&
+      pathReaches(path, wanted, projectPath, notes, seen),
+  );
 }
 
 function projectResolvedRelation(
@@ -88,7 +94,7 @@ function projectResolvedRelation(
       : { ...base, type: 'invalid', reason: 'wrong-kind' };
   }
   if (relation === 'related') return { ...base, type: 'related' };
-  if (pathReaches(targetPath, source.path, notes)) {
+  if (pathReaches(targetPath, source.path, source.projectPath, notes)) {
     return { ...base, type: 'invalid', reason: 'cycle' };
   }
   const behavior = workNoteLifecycleBehavior(target, statuses);

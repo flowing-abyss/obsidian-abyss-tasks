@@ -98,6 +98,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.workNoteIndex = new WorkNoteIndex(
       this.app,
       () => this.settings.projects.workNoteCompatibility,
+      this.queries,
     );
     this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
     this.projectWorkspace = new ProjectWorkspaceCoordinator(
@@ -141,10 +142,10 @@ export default class TaskCalendarPlugin extends Plugin {
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
     this.app.workspace.onLayoutReady(() => {
-      void this.taskIndex.initialize();
+      this.projectWorkspace.start();
       this.workNoteIndex.initialize();
       this.projectStore.initialize();
-      this.projectWorkspace.start();
+      void this.taskIndex.initialize();
     });
 
     // Legacy Dataview shim — remove after users migrate to native `task-calendar` code blocks

@@ -3,6 +3,7 @@ import type { AppState, ListSelection } from '../app/AppState';
 import { isListViewCustomized, listSelectionToKey } from '../app/listViewState';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import type { Project, ProjectWorkspaceSnapshot } from '../projects/types';
 import { beginSettingsSave, latestSettingsSaveRevision } from '../settings/settingsSaveRevision';
 import type { CalendarSettings, TagGroup } from '../settings/types';
 import { RenameTagModal } from '../tags/RenameTagModal';
@@ -51,6 +52,7 @@ export class LeftPanel {
     private projectStore: ProjectStore | null = null,
     private projectManager: ProjectManager | null = null,
     navigation?: PanelNavigationActions,
+    private projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
   ) {
     this.navigation =
       navigation ??
@@ -80,6 +82,10 @@ export class LeftPanel {
 
   refresh(): void {
     this.render();
+  }
+
+  setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
+    this.projectSnapshots = snapshots;
   }
 
   destroy(): void {
@@ -131,7 +137,12 @@ export class LeftPanel {
     }
 
     // Projects section (collapsible) — only active (onLeftPanel) projects
-    const activeProjects = this.projectStore?.activeForLeftPanel() ?? [];
+    const onPanel = new Set(
+      this.settings.projects.statuses.filter((status) => status.onLeftPanel).map(({ id }) => id),
+    );
+    const activeProjects = this.projectSnapshots
+      .filter(({ project }) => project.statusId !== null && onPanel.has(project.statusId))
+      .map(({ project, taskRollup }) => ({ ...project, stats: taskRollup }));
     if (activeProjects.length > 0) {
       this.renderCollapsibleSection(
         'projects',
@@ -210,10 +221,7 @@ export class LeftPanel {
     }
   }
 
-  private renderProjectsList(
-    parent: HTMLElement,
-    projects: ReturnType<ProjectStore['activeForLeftPanel']>,
-  ): void {
+  private renderProjectsList(parent: HTMLElement, projects: readonly Project[]): void {
     const visible = this.showAllProjects ? projects : projects.slice(0, PROJECTS_CAP);
     const sel = this.state.get('selectedList');
     // Project colour is derived from its status colour (same source the Projects
@@ -324,10 +332,7 @@ export class LeftPanel {
     window.setTimeout(() => input.focus(), 0);
   }
 
-  private showProjectMenu(
-    e: MouseEvent,
-    project: ReturnType<ProjectStore['activeForLeftPanel']>[number],
-  ): void {
+  private showProjectMenu(e: MouseEvent, project: Project): void {
     const menu = new Menu();
     const statuses = this.settings.projects.statuses;
     if (statuses.length > 0 && this.projectManager) {

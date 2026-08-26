@@ -1,6 +1,7 @@
 import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
+import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { TagManager } from '../src/tags/TagManager';
@@ -64,6 +65,53 @@ function successfulCaptureResult(): TaskCommandResult {
   };
 }
 
+function joinedProjectSnapshot(statuses: readonly ('open' | 'done')[]): ProjectWorkspaceSnapshot {
+  const project: Project = {
+    path: 'Projects/A.md',
+    name: 'A',
+    frontmatter: {},
+    tags: [],
+    statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+    rawStatus: null,
+    range: {},
+    stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+  };
+  const actions = statuses.map((status, index) => {
+    const snapshot = task({
+      title: `Joined ${status}`,
+      status,
+      ref: { filePath: 'Work/A.md', line: index, revision: `${status}:${String(index)}` },
+      source: { filePath: 'Work/A.md', line: index },
+    });
+    return {
+      task: snapshot,
+      projectPath: project.path,
+      owner: { type: 'work-note' as const, path: 'Work/A.md' },
+    };
+  });
+  const done = statuses.filter((status) => status === 'done').length;
+  const open = statuses.length - done;
+  return {
+    project,
+    tasks: actions,
+    workNotes: [],
+    milestones: [],
+    taskRollup: {
+      total: statuses.length,
+      done,
+      cancelled: 0,
+      inProgress: 0,
+      open,
+      progress: statuses.length === 0 ? null : done / statuses.length,
+    },
+    workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+    milestoneRollups: new Map(),
+    workNoteRelations: [],
+    overdue: { tasks: 0, workNotes: 0 },
+    diagnostics: [],
+  };
+}
+
 function rect(left: number, top: number, width: number, height: number): DOMRect {
   return new DOMRect(left, top, width, height);
 }
@@ -97,6 +145,74 @@ function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
+  it('renders Project surfaces from coordinator snapshots instead of component indexes', async () => {
+    const app = await createAppWithFiles({});
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const taskApplication = configuredTaskApplication(app, settings);
+    await taskApplication.index.initialize();
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const initial = joinedProjectSnapshot(['open', 'open']);
+    const staleProject = initial.project;
+    const projectStore = {
+      list: () => [staleProject],
+      get: () => staleProject,
+      activeForLeftPanel: () => [staleProject],
+      onUpdate: () => () => {},
+      refresh: () => {},
+    } as never;
+    let workspaceListener:
+      | ((snapshots: readonly ProjectWorkspaceSnapshot[], event: unknown) => void)
+      | undefined;
+    const projectWorkspace = {
+      list: () => [initial],
+      get: () => initial,
+      onUpdate: (
+        listener: (snapshots: readonly ProjectWorkspaceSnapshot[], event: unknown) => void,
+      ) => {
+        workspaceListener = listener;
+        return () => {};
+      },
+      absorbOwnCommit: () => {},
+    } as never;
+    const view = new PanelView(
+      leaf,
+      settings,
+      makeTagManager(app, settings),
+      taskApplication.index,
+      taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      taskApplication.statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      projectStore,
+      projectWorkspace,
+    );
+    await view.onOpen();
+
+    const projectItem = Array.from(view.contentEl.querySelectorAll('.abyss-project-item')).find(
+      (element) => element.querySelector('.abyss-left-label')?.textContent === 'A',
+    );
+    expect(projectItem?.querySelector('.abyss-left-count')?.textContent).toBe('2');
+
+    const state = (view as unknown as { state: AppState }).state;
+    state.set('mode', 'projects');
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settled = joinedProjectSnapshot(['open', 'done']);
+    workspaceListener?.([settled], { snapshots: [settled], projectPaths: ['Projects/A.md'] });
+
+    expect(view.contentEl.querySelector('.abyss-progress-label')?.textContent).toBe('1/2');
+    expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).toContain(
+      'Joined open',
+    );
+    expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).toContain(
+      'Joined done',
+    );
+
+    await view.onClose();
+    taskApplication.index.destroy();
+  });
+
   describe('empty vault suite', () => {
     let app: Awaited<ReturnType<typeof createAppWithFiles>>;
     let taskApplication: TaskApplication;

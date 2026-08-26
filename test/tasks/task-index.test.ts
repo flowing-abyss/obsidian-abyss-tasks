@@ -135,6 +135,17 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('publishes an explicit initialization settlement for an empty vault', async () => {
+    const { index } = await setup({});
+    const settled: Array<Extract<TaskIndexEvent, { type: 'settled' }>> = [];
+    index.subscribeSettled((event) => settled.push(event));
+
+    await index.initialize();
+
+    expect(settled).toEqual([{ type: 'settled', reason: 'initialization', files: [] }]);
+    index.destroy();
+  });
+
   it('publishes a typed settled generation after an unchanged completed parse', async () => {
     const { app, index, fireChanged } = await setup({ 'task.md': '- [ ] alpha' });
     await index.initialize();

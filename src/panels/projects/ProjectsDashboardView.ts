@@ -1,5 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
-import type { Project } from '../../projects/types';
+import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsDashboardContext } from './viewContext';
@@ -7,7 +7,7 @@ import type { ProjectsDashboardContext } from './viewContext';
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
   container: HTMLElement,
-  project: Project | undefined,
+  snapshot: ProjectWorkspaceSnapshot | undefined,
   ctx: ProjectsDashboardContext,
 ): void {
   container.addClass('abyss-projects-dashboard');
@@ -17,10 +17,11 @@ export function renderProjectDashboard(
   back.createSpan({ text: 'Back to projects' });
   back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
 
-  if (!project) {
+  if (!snapshot) {
     container.createDiv({ cls: 'abyss-projects-empty', text: 'Project not found' });
     return;
   }
+  const project = snapshot.project;
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
@@ -52,7 +53,7 @@ export function renderProjectDashboard(
   open.addEventListener('click', () => ctx.openNote(project.path));
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
-  renderProgressBar(stats, project.stats.done, project.stats.total);
+  renderProgressBar(stats, snapshot.taskRollup.done, snapshot.taskRollup.total);
 
   const rawDesc = project.frontmatter['description'];
   const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
@@ -61,5 +62,5 @@ export function renderProjectDashboard(
   }
 
   const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
-  ctx.renderTasks(taskHost, project.path);
+  ctx.renderTasks(taskHost, project.path, snapshot.tasks);
 }

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
+import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -103,6 +104,39 @@ function queryApiForSnapshots(getTasks: () => readonly TaskSnapshot[]): TaskQuer
         : { type: 'not-found', ref };
     },
   });
+}
+
+function projectWorkspaceSnapshot(
+  project: Project,
+  tasks: readonly TaskSnapshot[],
+): ProjectWorkspaceSnapshot {
+  const done = tasks.filter(({ status }) => status === 'done').length;
+  const cancelled = tasks.filter(({ status }) => status === 'cancelled').length;
+  const inProgress = tasks.filter(({ status }) => status === 'in-progress').length;
+  const total = tasks.length - cancelled;
+  return {
+    project,
+    tasks: tasks.map((task) => ({
+      task,
+      projectPath: project.path,
+      owner: { type: 'project', path: project.path },
+    })),
+    workNotes: [],
+    milestones: [],
+    taskRollup: {
+      total,
+      done,
+      cancelled,
+      inProgress,
+      open: tasks.length - done - cancelled - inProgress,
+      progress: total === 0 ? null : done / total,
+    },
+    workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+    milestoneRollups: new Map(),
+    workNoteRelations: [],
+    overdue: { tasks: 0, workNotes: 0 },
+    diagnostics: [],
+  };
 }
 
 function makeStaticPanel(
@@ -2315,6 +2349,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       undefined,
       application,
     );
+    panel.setProjectSnapshots([
+      projectWorkspaceSnapshot(project as never, queries.list({ filePath: project.path })),
+    ]);
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);
@@ -2518,6 +2555,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       undefined,
       application,
     );
+    panel.setProjectSnapshots([
+      projectWorkspaceSnapshot(project as never, queries.list({ filePath: project.path })),
+    ]);
     const container = freshContainer();
     activeDocument.body.append(container);
     panel.mount(container);

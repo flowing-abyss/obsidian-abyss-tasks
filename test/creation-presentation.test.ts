@@ -207,14 +207,36 @@ describe('task presentation identity', () => {
     (
       panel as unknown as {
         renderTaskCard(host: HTMLElement, taskSnapshot: TaskSnapshot): void;
-        renderProjectTasks(host: HTMLElement, path: string): void;
+        renderProjectTasks(
+          host: HTMLElement,
+          path: string,
+          actions: readonly {
+            task: TaskSnapshot;
+            projectPath: string;
+            owner: { type: 'project'; path: string };
+          }[],
+        ): void;
       }
     ).renderTaskCard(listCards, snapshot);
     (
       panel as unknown as {
-        renderProjectTasks(host: HTMLElement, path: string): void;
+        renderProjectTasks(
+          host: HTMLElement,
+          path: string,
+          actions: readonly {
+            task: TaskSnapshot;
+            projectPath: string;
+            owner: { type: 'project'; path: string };
+          }[],
+        ): void;
       }
-    ).renderProjectTasks(projectHost, 'capture.md');
+    ).renderProjectTasks(projectHost, 'capture.md', [
+      {
+        task: snapshot,
+        projectPath: 'capture.md',
+        owner: { type: 'project', path: 'capture.md' },
+      },
+    ]);
 
     expect(
       listCards.querySelector<HTMLElement>('.abyss-task-card')?.dataset['abyssTaskRefKey'],

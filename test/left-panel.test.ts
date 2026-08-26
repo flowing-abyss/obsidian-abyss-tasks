@@ -1,6 +1,7 @@
 import { Menu, Notice, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { RenameTagModal } from '../src/tags/RenameTagModal';
@@ -1258,8 +1259,9 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
     const fullProjects = (opts.projects ?? []).map((p) => ({
       frontmatter: {},
       tags: [],
-      statusId: null,
+      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
       rawStatus: null,
+      range: {},
       stats: p.stats ?? {
         total: 0,
         done: 0,
@@ -1269,6 +1271,18 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
         progress: null,
       },
       ...p,
+    }));
+    const projectSnapshots: ProjectWorkspaceSnapshot[] = fullProjects.map((project) => ({
+      project,
+      tasks: [],
+      workNotes: [],
+      milestones: [],
+      taskRollup: project.stats,
+      workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+      milestoneRollups: new Map(),
+      workNoteRelations: [],
+      overdue: { tasks: 0, workNotes: 0 },
+      diagnostics: [],
     }));
     const projectStore = {
       activeForLeftPanel: () => fullProjects,
@@ -1285,6 +1299,8 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       save,
       projectStore,
       projectManager,
+      undefined,
+      projectSnapshots,
     );
     const el = freshContainer();
     panel.mount(el);

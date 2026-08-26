@@ -116,6 +116,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
+  'TaskQueryApi.isReady': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
@@ -609,6 +610,24 @@ function propertyAccesses(path: string): ReadonlySet<string> {
   return names;
 }
 
+function projectStoreReadSites(path: string): string[] {
+  const sites: string[] = [];
+  const readMethods = new Set(['activeForLeftPanel', 'get', 'list']);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      readMethods.has(node.expression.name.text) &&
+      node.expression.expression.getText().includes('projectStore')
+    ) {
+      sites.push(`${path}:${node.expression.name.text}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(syntax(path));
+  return sites;
+}
+
 describe('task architecture boundaries', () => {
   it('enforces domain, application, infrastructure, and presentation dependency direction', () => {
     expect(dependencyViolations()).toEqual([]);
@@ -828,6 +847,18 @@ describe('task architecture boundaries', () => {
       const name = member.slice(member.indexOf('.') + 1);
       expect(propertyAccesses(path).has(name)).toBe(true);
     }
+  });
+
+  it('keeps Project presentation reads on joined workspace snapshots', () => {
+    expect(
+      [
+        'src/panels/LeftPanel.ts',
+        'src/panels/CenterPanel.ts',
+        'src/panels/projects/ProjectsPanel.ts',
+      ]
+        .flatMap(projectStoreReadSites)
+        .sort(),
+    ).toEqual([]);
   });
 
   it('rejects the retired tc UI namespace', () => {

@@ -111,11 +111,13 @@ export interface WorkNoteAuditResult {
 }
 
 export interface WorkNoteIndexEvent {
+  readonly cause: 'index' | 'refresh';
   readonly changedPaths: readonly string[];
   readonly invalidatedProjectPaths: readonly string[];
+  readonly taskBarriers: readonly { readonly path: string; readonly generation: number }[];
 }
 
 export interface WorkNoteIndexSettledEvent {
-  readonly reason: 'index' | 'refresh';
+  readonly reason: 'initialization' | 'index' | 'refresh';
   readonly files: readonly { readonly path: string; readonly generation: number }[];
 }

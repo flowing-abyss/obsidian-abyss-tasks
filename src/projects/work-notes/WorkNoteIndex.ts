@@ -6,6 +6,7 @@ import {
   type CachedMetadata,
   type TAbstractFile,
 } from 'obsidian';
+import type { TaskIndexSettledEvent, TaskQueryApi } from '../../tasks';
 import { auditWorkNotes, computeWorkNotePresetFingerprint } from './compatibility';
 import type {
   WorkNoteAuditResult,
@@ -45,10 +46,15 @@ export class WorkNoteIndex {
   private indexedFingerprint = '';
   private generations = new Map<string, number>();
   private pendingSettledPaths = new Set<string>();
+  private waitingForTaskPaths = new Set<string>();
+  private taskBarriers = new Map<string, number>();
+  private taskSettlementUnsub?: () => void;
+  private ready = false;
 
   constructor(
     private readonly app: App,
     private readonly presetProvider: PresetProvider,
+    private readonly taskSettlements?: Pick<TaskQueryApi, 'subscribeSettled'>,
   ) {}
 
   private preset(): WorkNoteCompatibilityPreset {
@@ -77,6 +83,7 @@ export class WorkNoteIndex {
   }
 
   initialize(): void {
+    if (this.ready) return;
     const preset = this.preset();
     const audit = this.auditPreset(preset);
     this.replaceFromAudit(audit);
@@ -84,19 +91,22 @@ export class WorkNoteIndex {
     if (preset.enabled) {
       for (const file of this.app.vault.getMarkdownFiles()) this.generations.set(file.path, 1);
     }
+    this.taskSettlementUnsub = this.taskSettlements?.subscribeSettled?.((event) =>
+      this.onTaskSettled(event),
+    );
     const metadataRef = this.app.metadataCache.on(
       'changed',
       (file: TFile, _data: string, _cache: CachedMetadata) => {
         if (file.extension === 'md') {
           this.advanceGeneration(file.path);
-          this.queuePath(file.path);
+          this.queuePathAfterTask(file.path);
         }
       },
     );
     const createRef = this.app.vault.on('create', (file) => {
       if (isMarkdown(file)) {
         this.advanceGeneration(file.path);
-        this.queueFull();
+        this.queueFullAfterTask([file.path]);
       }
     });
     const deleteRef = this.app.vault.on('delete', (file) => {
@@ -107,7 +117,7 @@ export class WorkNoteIndex {
       if ([...this.byPath.values()].some(({ projectPath }) => projectPath === file.path)) {
         this.invalidatedProjectPaths.add(file.path);
       }
-      this.queueFull();
+      this.queueFullAfterTask([file.path]);
     });
     const renameRef = this.app.vault.on('rename', (file, oldPath) => {
       if (file instanceof TFolder) {
@@ -128,7 +138,13 @@ export class WorkNoteIndex {
             if (!isDescendant(snapshot.path, oldPath)) this.advanceGeneration(snapshot.path);
           }
         }
-        this.queueFull();
+        this.queueFullAfterTask(
+          snapshots.flatMap((snapshot) =>
+            isDescendant(snapshot.path, oldPath)
+              ? [snapshot.path, renamedDescendant(snapshot.path, oldPath, file.path)]
+              : [],
+          ),
+        );
         return;
       }
       if (!(file instanceof TFile) || (file.extension !== 'md' && !oldPath.endsWith('.md'))) return;
@@ -140,7 +156,7 @@ export class WorkNoteIndex {
         this.invalidatedProjectPaths.add(oldPath);
         this.invalidatedProjectPaths.add(file.path);
       }
-      this.queueFull();
+      this.queueFullAfterTask([oldPath, ...(file.extension === 'md' ? [file.path] : [])]);
     });
     this.unsubs.push(
       () => this.app.metadataCache.offref(metadataRef),
@@ -148,6 +164,18 @@ export class WorkNoteIndex {
       () => this.app.vault.offref(deleteRef),
       () => this.app.vault.offref(renameRef),
     );
+    this.ready = true;
+    const event: WorkNoteIndexSettledEvent = {
+      reason: 'initialization',
+      files: [...this.generations]
+        .map(([path, generation]) => ({ path, generation }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    };
+    for (const listener of this.settledListeners) listener(event);
+  }
+
+  isReady(): boolean {
+    return this.ready;
   }
 
   async audit(): Promise<WorkNoteAuditResult> {
@@ -174,6 +202,39 @@ export class WorkNoteIndex {
   private queuePath(path: string): void {
     if (!this.fullRefreshPending) this.pendingPaths.add(path);
     this.schedule();
+  }
+
+  private queuePathAfterTask(path: string): void {
+    if (!this.taskSettlements?.subscribeSettled) {
+      this.queuePath(path);
+      return;
+    }
+    this.waitingForTaskPaths.add(path);
+  }
+
+  private queueFullAfterTask(paths: readonly string[]): void {
+    this.fullRefreshPending = true;
+    this.pendingPaths.clear();
+    if (!this.taskSettlements?.subscribeSettled) {
+      this.schedule();
+      return;
+    }
+    for (const path of paths) this.waitingForTaskPaths.add(path);
+    if (this.waitingForTaskPaths.size === 0) this.schedule();
+  }
+
+  private onTaskSettled(event: TaskIndexSettledEvent): void {
+    for (const { path, generation } of event.files) {
+      if (!this.waitingForTaskPaths.delete(path)) continue;
+      this.taskBarriers.set(path, generation);
+      if (!this.fullRefreshPending) this.pendingPaths.add(path);
+    }
+    if (
+      this.waitingForTaskPaths.size === 0 &&
+      (this.fullRefreshPending || this.pendingPaths.size > 0)
+    ) {
+      this.schedule();
+    }
   }
 
   private queueFull(): void {
@@ -221,45 +282,35 @@ export class WorkNoteIndex {
           ...oldDiagnostics.keys(),
           ...this.diagnosticsByPath.keys(),
         ])
-      : this.pendingPaths;
-    const changedPaths = [...comparedPaths]
-      .filter((path) => {
-        const beforeDiagnostics = oldDiagnostics.get(path);
-        const afterDiagnostics = this.diagnosticsByPath.get(path);
-        const relevant =
-          oldSnapshots.has(path) ||
-          this.byPath.has(path) ||
-          this.isCandidateDiagnostics(beforeDiagnostics) ||
-          this.isCandidateDiagnostics(afterDiagnostics);
-        return (
-          relevant &&
-          JSON.stringify({ snapshot: oldSnapshots.get(path), diagnostics: beforeDiagnostics }) !==
-            JSON.stringify({
-              snapshot: this.byPath.get(path),
-              diagnostics: afterDiagnostics,
-            })
-        );
-      })
-      .sort((left, right) => left.localeCompare(right));
-    for (const path of changedPaths) {
-      const beforeProject = oldProjects.get(path);
-      const afterProject = this.byPath.get(path)?.projectPath;
-      if (beforeProject) this.invalidatedProjectPaths.add(beforeProject);
-      if (afterProject) this.invalidatedProjectPaths.add(afterProject);
-    }
+      : new Set(this.pendingPaths);
+    const changedPaths = this.changedPaths(comparedPaths, oldSnapshots, oldDiagnostics);
+    this.invalidateChangedProjects(changedPaths, oldProjects);
     const invalidatedProjectPaths = [...this.invalidatedProjectPaths];
     this.pendingPaths.clear();
     this.invalidatedProjectPaths.clear();
     this.fullRefreshPending = false;
     this.indexedFingerprint = audit.presetFingerprint;
+    const cause = this.explicitRefreshPending ? 'refresh' : 'index';
     if (changedPaths.length > 0 || invalidatedProjectPaths.length > 0) {
-      const event = { changedPaths, invalidatedProjectPaths };
+      const event: WorkNoteIndexEvent = {
+        cause,
+        changedPaths,
+        invalidatedProjectPaths,
+        taskBarriers:
+          cause === 'index'
+            ? [...this.taskBarriers]
+                .filter(([path]) => comparedPaths.has(path))
+                .map(([path, generation]) => ({ path, generation }))
+                .sort((left, right) => left.path.localeCompare(right.path))
+            : [],
+      };
       for (const listener of this.listeners) listener(event);
     }
     const settled = [...this.pendingSettledPaths]
       .map((path) => ({ path, generation: this.generations.get(path) ?? 1 }))
       .sort((left, right) => left.path.localeCompare(right.path));
     this.pendingSettledPaths.clear();
+    for (const { path } of settled) this.taskBarriers.delete(path);
     if (settled.length > 0) {
       const event: WorkNoteIndexSettledEvent = {
         reason: this.explicitRefreshPending ? 'refresh' : 'index',
@@ -273,6 +324,41 @@ export class WorkNoteIndex {
   private replaceFromAudit(audit: WorkNoteAuditResult): void {
     this.byPath = new Map(audit.snapshots.map((snapshot) => [snapshot.path, snapshot]));
     this.diagnosticsByPath = new Map(Object.entries(audit.diagnosticsByPath));
+  }
+
+  private changedPaths(
+    comparedPaths: ReadonlySet<string>,
+    oldSnapshots: ReadonlyMap<string, WorkNoteSnapshot>,
+    oldDiagnostics: ReadonlyMap<string, readonly WorkNoteDiagnostic[]>,
+  ): string[] {
+    return [...comparedPaths]
+      .filter((path) => {
+        const beforeDiagnostics = oldDiagnostics.get(path);
+        const afterDiagnostics = this.diagnosticsByPath.get(path);
+        const relevant =
+          oldSnapshots.has(path) ||
+          this.byPath.has(path) ||
+          this.isCandidateDiagnostics(beforeDiagnostics) ||
+          this.isCandidateDiagnostics(afterDiagnostics);
+        if (!relevant) return false;
+        return (
+          JSON.stringify({ snapshot: oldSnapshots.get(path), diagnostics: beforeDiagnostics }) !==
+          JSON.stringify({ snapshot: this.byPath.get(path), diagnostics: afterDiagnostics })
+        );
+      })
+      .sort((left, right) => left.localeCompare(right));
+  }
+
+  private invalidateChangedProjects(
+    changedPaths: readonly string[],
+    oldProjects: ReadonlyMap<string, string | undefined>,
+  ): void {
+    for (const path of changedPaths) {
+      const beforeProject = oldProjects.get(path);
+      const afterProject = this.byPath.get(path)?.projectPath;
+      if (beforeProject) this.invalidatedProjectPaths.add(beforeProject);
+      if (afterProject) this.invalidatedProjectPaths.add(afterProject);
+    }
   }
 
   private isCandidateDiagnostics(diagnostics: readonly WorkNoteDiagnostic[] | undefined): boolean {
@@ -321,11 +407,16 @@ export class WorkNoteIndex {
     this.debounce = 0;
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
+    this.taskSettlementUnsub?.();
+    this.taskSettlementUnsub = undefined;
     this.pendingPaths.clear();
     this.pendingSettledPaths.clear();
     this.invalidatedProjectPaths.clear();
+    this.waitingForTaskPaths.clear();
+    this.taskBarriers.clear();
     this.listeners.clear();
     this.settledListeners.clear();
     this.generations.clear();
+    this.ready = false;
   }
 }

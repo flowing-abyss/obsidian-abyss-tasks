@@ -2,13 +2,15 @@ import { TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
+import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { CalendarSettings } from '../../settings/types';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList } from './ProjectsListView';
 
 export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
-  renderTasks?: (host: HTMLElement, path: string) => void;
+  renderTasks?: (host: HTMLElement, path: string, tasks: ProjectWorkspaceSnapshot['tasks']) => void;
+  snapshots?: readonly ProjectWorkspaceSnapshot[];
 }
 
 /**
@@ -19,7 +21,8 @@ export interface ProjectsPanelOptions {
 export class ProjectsPanel {
   private el!: HTMLElement;
   private offs: Array<() => void> = [];
-  private readonly renderTasks: (host: HTMLElement, path: string) => void;
+  private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
+  private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
 
   constructor(
     private state: AppState,
@@ -30,6 +33,7 @@ export class ProjectsPanel {
     opts: ProjectsPanelOptions = {},
   ) {
     this.renderTasks = opts.renderTasks ?? ((): void => {});
+    this.snapshots = opts.snapshots ?? [];
   }
 
   private async createProject(name: string): Promise<void> {
@@ -67,24 +71,32 @@ export class ProjectsPanel {
 
     if (view.view === 'dashboard') {
       const container = this.el.createDiv();
-      renderProjectDashboard(container, this.projectStore.get(view.path), {
-        state: this.state,
-        settings: this.settings,
-        onSetStatus: (p, id) => this.setStatus(p, id),
-        openNote: (p) => this.openNote(p),
-        renderTasks: this.renderTasks,
-      });
+      renderProjectDashboard(
+        container,
+        this.snapshots.find(({ project }) => project.path === view.path),
+        {
+          state: this.state,
+          settings: this.settings,
+          onSetStatus: (p, id) => this.setStatus(p, id),
+          openNote: (p) => this.openNote(p),
+          renderTasks: this.renderTasks,
+        },
+      );
       return;
     }
 
     const container = this.el.createDiv();
-    renderProjectsList(container, this.projectStore.list(), {
-      state: this.state,
-      settings: this.settings,
-      onCreate: (name) => this.createProject(name),
-      onSetStatus: (p, id) => this.setStatus(p, id),
-      openNote: (p) => this.openNote(p),
-    });
+    renderProjectsList(
+      container,
+      this.snapshots.map(({ project, taskRollup }) => ({ ...project, stats: taskRollup })),
+      {
+        state: this.state,
+        settings: this.settings,
+        onCreate: (name) => this.createProject(name),
+        onSetStatus: (p, id) => this.setStatus(p, id),
+        openNote: (p) => this.openNote(p),
+      },
+    );
   }
 
   destroy(): void {

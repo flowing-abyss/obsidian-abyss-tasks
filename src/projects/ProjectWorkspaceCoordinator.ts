@@ -12,14 +12,16 @@ import type {
 type Source = 'project' | 'task' | 'work-note';
 
 interface ProjectSource {
+  isReady?(): boolean;
   list(): readonly Project[];
   onUpdate(listener: (event: ProjectStoreEvent) => void): () => void;
   onSettled?(listener: (event: ProjectStoreSettledEvent) => void): () => void;
 }
 
-type TaskSource = Pick<TaskQueryApi, 'list' | 'subscribe' | 'subscribeSettled'>;
+type TaskSource = Pick<TaskQueryApi, 'isReady' | 'list' | 'subscribe' | 'subscribeSettled'>;
 
 interface WorkNoteSource {
+  isReady?(): boolean;
   list(): readonly WorkNoteSnapshot[];
   diagnosticsFor(path: string): readonly WorkNoteSnapshot['diagnostics'][number][];
   onUpdate(listener: (event: WorkNoteIndexEvent) => void): () => void;
@@ -72,6 +74,8 @@ export class ProjectWorkspaceCoordinator {
   private publishScheduled = false;
   private started = false;
   private signature = '[]';
+  private readySources = new Set<Source>();
+  private awaitingInitialization = false;
 
   constructor(
     private readonly projects: ProjectSource,
@@ -95,9 +99,6 @@ export class ProjectWorkspaceCoordinator {
   start(): void {
     if (this.started) return;
     this.started = true;
-    const initial = this.readModel.rebuild();
-    this.signature = snapshotSignature(initial);
-    this.captureOwnership();
     this.unsubs.push(
       this.projects.onUpdate((event) => this.onProjectUpdate(event)),
       this.tasks.subscribe((event) => this.onTaskEvent(event)),
@@ -111,6 +112,19 @@ export class ProjectWorkspaceCoordinator {
     }
     if (this.workNotes.onSettled) {
       this.unsubs.push(this.workNotes.onSettled((event) => this.onWorkNoteSettled(event)));
+    }
+    for (const [source, candidate] of [
+      ['project', this.projects],
+      ['task', this.tasks],
+      ['work-note', this.workNotes],
+    ] as const) {
+      if (candidate.isReady?.() !== false) this.readySources.add(source);
+    }
+    this.awaitingInitialization = this.readySources.size < 3;
+    if (!this.awaitingInitialization) {
+      const initial = this.readModel.rebuild();
+      this.signature = snapshotSignature(initial);
+      this.captureOwnership();
     }
   }
 
@@ -182,9 +196,10 @@ export class ProjectWorkspaceCoordinator {
 
   private onWorkNoteUpdate(event: WorkNoteIndexEvent): void {
     const currentPaths = new Set(this.workNotes.list().map(({ path }) => path));
+    for (const { path, generation } of event.taskBarriers) {
+      this.requireAtLeast(path, 'task', generation);
+    }
     for (const path of event.changedPaths) {
-      const taskGeneration = this.taskInFlight.get(path);
-      if (taskGeneration !== undefined) this.requireAtLeast(path, 'task', taskGeneration);
       this.requireNext(path, 'work-note');
       if (currentPaths.has(path)) this.workNotePaths.add(path);
     }
@@ -198,22 +213,40 @@ export class ProjectWorkspaceCoordinator {
     this.scheduleIfReady();
   }
 
+  private markInitialized(source: Source): void {
+    this.readySources.add(source);
+    if (!this.awaitingInitialization || this.readySources.size < 3) return;
+    this.awaitingInitialization = false;
+    this.pending.clear();
+    this.invalidatedProjectPaths.clear();
+    const snapshots = this.readModel.rebuild();
+    this.captureOwnership();
+    this.signature = snapshotSignature(snapshots);
+    const event: ProjectWorkspacePublication = {
+      snapshots,
+      projectPaths: snapshots
+        .map(({ project }) => project.path)
+        .sort((left, right) => left.localeCompare(right)),
+    };
+    for (const listener of this.listeners) listener(snapshots, event);
+  }
+
   private onProjectSettled(event: ProjectStoreSettledEvent): void {
     for (const file of event.files) {
       this.observe('project', file.path, file.generation);
     }
+    if (event.reason === 'initialization') this.markInitialized('project');
   }
 
   private onTaskSettled(event: TaskIndexSettledEvent): void {
     for (const file of event.files) {
       this.observe('task', file.path, file.generation);
+      if (event.reason === 'initialization') continue;
       this.taskInFlight.delete(file.path);
       this.ownCommitPaths.delete(file.path);
       if (!this.pending.has(file.path)) {
         const sources = this.sourcesFor(file.path);
-        if (event.reason === 'initialization') {
-          this.requireAtLeast(file.path, 'task', file.generation);
-        } else if (sources.length > 0) {
+        if (sources.length > 0) {
           this.requireAtLeast(file.path, 'task', file.generation);
           for (const source of sources) {
             if (source !== 'task') this.requireNext(file.path, source);
@@ -221,12 +254,14 @@ export class ProjectWorkspaceCoordinator {
         }
       }
     }
+    if (event.reason === 'initialization') this.markInitialized('task');
   }
 
   private onWorkNoteSettled(event: WorkNoteIndexSettledEvent): void {
     for (const file of event.files) {
       this.observe('work-note', file.path, file.generation);
     }
+    if (event.reason === 'initialization') this.markInitialized('work-note');
   }
 
   private allPendingReady(): boolean {
@@ -240,7 +275,7 @@ export class ProjectWorkspaceCoordinator {
   }
 
   private scheduleIfReady(): void {
-    if (!this.allPendingReady() || this.publishScheduled) return;
+    if (this.awaitingInitialization || !this.allPendingReady() || this.publishScheduled) return;
     this.publishScheduled = true;
     void Promise.resolve().then(() => {
       this.publishScheduled = false;
@@ -277,6 +312,8 @@ export class ProjectWorkspaceCoordinator {
     this.ownCommitPaths.clear();
     this.taskInFlight.clear();
     this.invalidatedProjectPaths.clear();
+    this.readySources.clear();
+    this.awaitingInitialization = false;
     this.publishScheduled = false;
   }
 }

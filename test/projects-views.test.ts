@@ -4,7 +4,7 @@ import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboard
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
-import type { Project } from '../src/projects/types';
+import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { freshContainer } from './helpers';
 
@@ -21,6 +21,21 @@ function proj(over: Partial<Project>): Project {
     range: {},
     stats: { total: 4, done: 1, cancelled: 0, inProgress: 0, open: 3, progress: 0.25 },
     ...over,
+  };
+}
+
+function workspace(project = proj({})): ProjectWorkspaceSnapshot {
+  return {
+    project,
+    tasks: [],
+    workNotes: [],
+    milestones: [],
+    taskRollup: project.stats,
+    workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+    milestoneRollups: new Map(),
+    workNoteRelations: [],
+    overdue: { tasks: 0, workNotes: 0 },
+    diagnostics: [],
   };
 }
 
@@ -90,7 +105,7 @@ describe('renderProjectDashboard', () => {
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const el = freshContainer();
     const renderTasks = vi.fn();
-    renderProjectDashboard(el, proj({}), {
+    renderProjectDashboard(el, workspace(), {
       state,
       settings: DEFAULT_SETTINGS,
       onSetStatus: vi.fn(),
@@ -130,7 +145,7 @@ describe('renderProjectDashboard', () => {
       } as Project['stats'] & { estimateMin: number; spentMin: number },
     });
 
-    renderProjectDashboard(el, project, {
+    renderProjectDashboard(el, workspace(project), {
       state: new AppState(),
       settings: DEFAULT_SETTINGS,
       onSetStatus: vi.fn(),
@@ -154,7 +169,9 @@ describe('ProjectsPanel dispatch', () => {
 
   it('renders the list view by default', () => {
     const state = new AppState();
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+    });
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-list')).toBeTruthy();
@@ -163,7 +180,9 @@ describe('ProjectsPanel dispatch', () => {
   it('renders the dashboard when projectsPanel is dashboard', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+    });
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();

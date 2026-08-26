@@ -11,6 +11,7 @@ import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
+import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
 import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
@@ -266,6 +267,7 @@ export class CenterPanel {
     private readonly onRenderComplete: (root: HTMLElement) => void = () => {},
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
     navigation?: PanelNavigationActions,
+    private projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -511,6 +513,10 @@ export class CenterPanel {
     this.render();
   }
 
+  setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
+    this.projectSnapshots = snapshots;
+  }
+
   calendarView(): CalViewType {
     return this.calViewType;
   }
@@ -546,8 +552,12 @@ export class CenterPanel {
   }
 
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
-  private renderProjectTasks(host: HTMLElement, path: string): void {
-    const tasks = [...this.queries.list({ filePath: path })];
+  private renderProjectTasks(
+    host: HTMLElement,
+    path: string,
+    actions: readonly ProjectAction[],
+  ): void {
+    const tasks = actions.map(({ task }) => task);
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
     if (tasks.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
@@ -669,7 +679,10 @@ export class CenterPanel {
           this.projectManager,
           this.settings,
           this.app,
-          { renderTasks: (host, path) => this.renderProjectTasks(host, path) },
+          {
+            renderTasks: (host, path, tasks) => this.renderProjectTasks(host, path, tasks),
+            snapshots: this.projectSnapshots,
+          },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never
         // lands on the shared center element (which would leak layout into tasks mode).

@@ -2,6 +2,7 @@ import { TFile, TFolder, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
 import type { WorkNoteCompatibilityPreset } from '../src/projects/work-notes/types';
+import type { TaskIndexSettledEvent } from '../src/tasks';
 
 const fields: WorkNoteCompatibilityPreset['fields'] = {
   project: 'Project',
@@ -159,9 +160,108 @@ function harness(initial: readonly FileData[], resolutions: Record<string, strin
   };
 }
 
+function taskSettlementSource() {
+  const listeners: Array<(event: TaskIndexSettledEvent) => void> = [];
+  return {
+    source: {
+      subscribeSettled(listener: (event: TaskIndexSettledEvent) => void) {
+        listeners.push(listener);
+        return () => {};
+      },
+    },
+    settle(path: string, generation: number) {
+      for (const listener of listeners) {
+        listener({ type: 'settled', reason: 'index', files: [{ path, generation }] });
+      }
+    },
+  };
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe('WorkNoteIndex', () => {
+  it.each(['tasks-changed', 'tasks-unchanged'] as const)(
+    'publishes the exact Task barrier for a metadata edit when %s',
+    (taskResult) => {
+      vi.useFakeTimers();
+      const path = 'Tasks/A.md';
+      const h = harness(
+        [
+          {
+            path,
+            tags: ['#work-note/task'],
+            frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+          },
+        ],
+        { [`${path}\0Projects/A`]: 'Projects/A.md' },
+      );
+      const taskSource = taskSettlementSource();
+      const index = new WorkNoteIndex(h.app, preset, taskSource.source);
+      index.initialize();
+      const updates: unknown[] = [];
+      const settlements: unknown[] = [];
+      index.onUpdate((event) => updates.push(event));
+      index.onSettled((event) => settlements.push(event));
+
+      h.setFrontmatter(path, {
+        Project: '[[Projects/A]]',
+        Status: taskResult === 'tasks-changed' ? 'Done' : 'Active',
+        Priority: 'High',
+      });
+      h.metadata(path);
+      vi.runAllTimers();
+      expect(updates).toEqual([]);
+      expect(settlements).toEqual([]);
+
+      taskSource.settle(path, 7);
+      vi.runAllTimers();
+      expect(updates).toEqual([
+        {
+          cause: 'index',
+          changedPaths: [path],
+          invalidatedProjectPaths: ['Projects/A.md'],
+          taskBarriers: [{ path, generation: 7 }],
+        },
+      ]);
+      expect(settlements).toEqual([{ reason: 'index', files: [{ path, generation: 2 }] }]);
+      index.destroy();
+    },
+  );
+
+  it('marks an explicit refresh distinctly without fabricating a Task barrier', () => {
+    vi.useFakeTimers();
+    const path = 'Tasks/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    const taskSource = taskSettlementSource();
+    const index = new WorkNoteIndex(h.app, preset, taskSource.source);
+    index.initialize();
+    const updates: unknown[] = [];
+    index.onUpdate((event) => updates.push(event));
+    h.setFrontmatter(path, { Project: '[[Projects/A]]', Status: 'Done' });
+
+    index.refresh();
+    vi.runAllTimers();
+
+    expect(updates).toEqual([
+      {
+        cause: 'refresh',
+        changedPaths: [path],
+        invalidatedProjectPaths: ['Projects/A.md'],
+        taskBarriers: [],
+      },
+    ]);
+    index.destroy();
+  });
+
   it('does not scan the vault while the compatibility preset is disabled', async () => {
     const h = harness([{ path: 'Notes/A.md' }], {});
     const getMarkdownFiles = vi.spyOn(
@@ -348,8 +448,10 @@ describe('WorkNoteIndex', () => {
     vi.runAllTimers();
 
     expect(events[events.length - 1]).toEqual({
+      cause: 'index',
       changedPaths: ['Tasks/A.md'],
       invalidatedProjectPaths: ['Projects/A.md'],
+      taskBarriers: [],
     });
     expect(index.get('Tasks/A.md')).toBeUndefined();
     index.destroy();
@@ -375,7 +477,7 @@ describe('WorkNoteIndex', () => {
       invalidatedProjectPaths: readonly string[];
     }> = [];
     const settlements: Array<{
-      reason: 'index' | 'refresh';
+      reason: 'initialization' | 'index' | 'refresh';
       files: readonly { path: string; generation: number }[];
     }> = [];
     index.onUpdate((event) => events.push(event));

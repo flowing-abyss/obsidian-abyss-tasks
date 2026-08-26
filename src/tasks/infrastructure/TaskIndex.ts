@@ -523,6 +523,10 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     await this.initialization;
   }
 
+  isReady(): boolean {
+    return this.initialized;
+  }
+
   private async performInitialization(): Promise<void> {
     this.registerEvents();
     const files = [...this.app.vault.getMarkdownFiles()]
@@ -543,9 +547,13 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     if (this.destroyed) return;
     this.initialized = true;
     this.publish({ type: 'initialized' });
-    for (const [path, generation] of this.fileGenerations) {
-      this.queueSettled(path, generation, 'initialization');
-    }
+    this.publishSettled({
+      type: 'settled',
+      reason: 'initialization',
+      files: [...this.fileGenerations]
+        .map(([path, generation]) => ({ path, generation }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    });
   }
 
   list(query?: TaskQuery): readonly TaskSnapshot[] {

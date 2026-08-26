@@ -12,7 +12,7 @@ export interface ProjectStoreEvent {
 }
 
 export interface ProjectStoreSettledEvent {
-  readonly reason: 'task-barrier' | 'refresh';
+  readonly reason: 'initialization' | 'task-barrier' | 'refresh';
   readonly files: readonly { readonly path: string; readonly generation: number }[];
 }
 
@@ -78,8 +78,9 @@ export class ProjectStore {
   private readyPaths = new Set<string>();
   private readyFull = false;
   private pendingCreates = new Set<string>();
-  private readyGenerations = new Map<string, number>();
   private generations = new Map<string, number>();
+  private initializationPending = false;
+  private ready = false;
 
   constructor(
     private app: App,
@@ -88,6 +89,7 @@ export class ProjectStore {
   ) {}
 
   initialize(): void {
+    if (this.ready || this.initializationPending) return;
     this.recomputeAll();
     // A single note edit re-evaluates only that note (O(1) note + its tasks).
     // Create/delete/rename change the membership set → full rescan (rare events).
@@ -140,6 +142,14 @@ export class ProjectStore {
     this.querySettledUnsub = this.queries.subscribeSettled?.((event) =>
       this.onTaskIndexSettled(event),
     );
+    if (this.queries.isReady?.() === true) {
+      this.initializationPending = true;
+      this.releaseFull();
+    }
+  }
+
+  isReady(): boolean {
+    return this.ready;
   }
 
   private onTaskIndexEvent(event: TaskIndexEvent): void {
@@ -149,6 +159,7 @@ export class ProjectStore {
         this.releasePath(path);
       }
     } else if (event.type === 'initialized') {
+      this.initializationPending = true;
       this.releaseFull();
     } else if (event.type === 'renamed') {
       this.pendingCreates.delete(event.oldPath);
@@ -161,9 +172,7 @@ export class ProjectStore {
   }
 
   private onTaskIndexSettled(event: TaskIndexSettledEvent): void {
-    for (const { path, generation } of event.files) {
-      this.readyGenerations.set(path, generation);
-      this.generations.set(path, generation);
+    for (const { path } of event.files) {
       this.pendingCreates.delete(path);
       this.releasePath(path);
     }
@@ -220,12 +229,14 @@ export class ProjectStore {
     const settled = [...settledPaths]
       .map((path) => ({
         path,
-        generation: this.readyGenerations.get(path) ?? this.generations.get(path) ?? 1,
+        generation: this.advanceGeneration(path),
       }))
       .sort((left, right) => left.path.localeCompare(right.path));
-    this.readyGenerations.clear();
-    if (settled.length > 0) {
-      const event: ProjectStoreSettledEvent = { reason: 'task-barrier', files: settled };
+    const reason = this.initializationPending ? 'initialization' : 'task-barrier';
+    this.initializationPending = false;
+    if (reason === 'initialization') this.ready = true;
+    if (settled.length > 0 || reason === 'initialization') {
+      const event: ProjectStoreSettledEvent = { reason, files: settled };
       for (const listener of this.settledListeners) listener(event);
     }
   }
@@ -340,6 +351,12 @@ export class ProjectStore {
     return this.cache.filter((p) => p.statusId !== null && onPanel.has(p.statusId));
   }
 
+  private advanceGeneration(path: string): number {
+    const generation = (this.generations.get(path) ?? 0) + 1;
+    this.generations.set(path, generation);
+    return generation;
+  }
+
   refresh(): void {
     const invalidatedPaths = new Set([...this.byPath.keys()]);
     this.recomputeAll();
@@ -352,11 +369,7 @@ export class ProjectStore {
     };
     for (const cb of this.listeners) cb(event);
     const settled = [...invalidatedPaths]
-      .map((path) => {
-        const generation = (this.generations.get(path) ?? 0) + 1;
-        this.generations.set(path, generation);
-        return { path, generation };
-      })
+      .map((path) => ({ path, generation: this.advanceGeneration(path) }))
       .sort((left, right) => left.path.localeCompare(right.path));
     if (settled.length > 0) {
       const settledEvent: ProjectStoreSettledEvent = { reason: 'refresh', files: settled };
@@ -387,8 +400,9 @@ export class ProjectStore {
     this.waitingPaths.clear();
     this.readyPaths.clear();
     this.pendingCreates.clear();
-    this.readyGenerations.clear();
     this.generations.clear();
+    this.initializationPending = false;
+    this.ready = false;
     this.listeners = [];
     this.settledListeners.clear();
   }

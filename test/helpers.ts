@@ -7,6 +7,7 @@ import { CenterPanel } from '../src/panels/CenterPanel';
 import { LeftPanel } from '../src/panels/LeftPanel';
 import type { ProjectManager } from '../src/projects/ProjectManager';
 import type { ProjectStore } from '../src/projects/ProjectStore';
+import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { buildDefaultTaskStatuses, DEFAULT_VIEW_CONFIG } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
@@ -123,6 +124,7 @@ export function makeCenterPanelForTest(
   projectStore: ProjectStore | null = null,
   projectManager: ProjectManager | null = null,
   tasks?: TaskApplicationApi,
+  projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
 ): CenterPanel {
   const application = tasks ?? taskHarness;
   return new CenterPanel(
@@ -148,6 +150,7 @@ export function makeLeftPanelForTest(
   projectStore: ProjectStore | null = null,
   projectManager: ProjectManager | null = null,
   tasks?: TaskApplicationApi,
+  projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
 ): LeftPanel {
   const application = tasks ?? taskHarness;
   return new LeftPanel(
@@ -160,6 +163,8 @@ export function makeLeftPanelForTest(
     onSaveSettings,
     projectStore,
     projectManager,
+    undefined,
+    projectSnapshots,
   );
 }
 

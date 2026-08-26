@@ -136,6 +136,47 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('ProjectStore event convergence', () => {
+  it('settles its initialized projection only after TaskIndex initialization releases it', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    const settlements: unknown[] = [];
+    store.onSettled((event) => settlements.push(event));
+    store.initialize();
+    expect(settlements).toEqual([]);
+
+    h.index({ type: 'initialized' });
+    vi.advanceTimersByTime(150);
+
+    expect(settlements).toEqual([
+      { reason: 'initialization', files: [{ path: h.file.path, generation: 1 }] },
+    ]);
+    store.destroy();
+  });
+
+  it('keeps Project generations monotonic across Task settlement and an explicit refresh', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const generations: number[] = [];
+    store.onSettled((event) =>
+      generations.push(...event.files.map(({ generation }) => generation)),
+    );
+
+    h.settled(h.file.path, 1);
+    vi.advanceTimersByTime(150);
+    store.refresh();
+    h.setTasks([task('done')]);
+    h.index({ type: 'changed', files: [h.file.path] });
+    h.settled(h.file.path, 2);
+    vi.advanceTimersByTime(150);
+
+    expect(generations).toEqual([1, 2, 3]);
+    expect(store.get(h.file.path)?.stats.done).toBe(1);
+    store.destroy();
+  });
+
   it('publishes one typed settlement when Tasks parse unchanged', () => {
     vi.useFakeTimers();
     const h = harness();
@@ -154,7 +195,7 @@ describe('ProjectStore event convergence', () => {
     expect(settlements).toHaveBeenCalledOnce();
     expect(settlements).toHaveBeenCalledWith({
       reason: 'task-barrier',
-      files: [{ path: h.file.path, generation: 2 }],
+      files: [{ path: h.file.path, generation: 1 }],
     });
     store.destroy();
   });

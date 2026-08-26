@@ -8,6 +8,7 @@ import { ProjectCommandService } from '../projects/ProjectCommandService';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
+import type { ProjectWorkspaceSnapshot } from '../projects/types';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
@@ -295,6 +296,7 @@ export class PanelView extends ItemView {
       projectStore,
       projectManager,
       this.panelNavigation,
+      this.projectWorkspace?.list() ?? [],
     );
     this.center = new CenterPanel(
       this.state,
@@ -312,6 +314,7 @@ export class PanelView extends ItemView {
       (root) => this.creationPresentation?.afterRender(root),
       this.interactionRegistry,
       this.panelNavigation,
+      this.projectWorkspace?.list() ?? [],
     );
     this.right = new RightPanel(
       this.state,
@@ -330,13 +333,17 @@ export class PanelView extends ItemView {
     // panel's Projects section and the projects-mode center depend on this;
     // re-rendering the tasks-mode center here would double-render on every edit
     // (TaskIndex already refreshes it), so gate the center refresh to projects mode.
-    const refreshProjectSurfaces = (): void => {
+    const refreshProjectSurfaces = (snapshots?: readonly ProjectWorkspaceSnapshot[]): void => {
+      if (snapshots) {
+        this.left.setProjectSnapshots(snapshots);
+        this.center.setProjectSnapshots(snapshots);
+      }
       this.left.refresh();
       if (this.state.get('mode') === 'projects') this.center.refresh();
     };
     this.projectStoreUnsub = this.projectWorkspace
-      ? this.projectWorkspace.onUpdate(refreshProjectSurfaces)
-      : projectStore.onUpdate(refreshProjectSurfaces);
+      ? this.projectWorkspace.onUpdate((snapshots) => refreshProjectSurfaces(snapshots))
+      : projectStore.onUpdate(() => refreshProjectSurfaces());
 
     // Task 40 (Round 4): the tag-fill text-color contrast fix (tagFillContrast.ts) bakes a
     // computed `--abyss-tag-text-color` custom property into each block/item's inline style at
