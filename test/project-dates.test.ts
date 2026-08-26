@@ -19,10 +19,22 @@ describe('parseProjectDate', () => {
   });
 
   it.each([
+    ['2026-08-26T14:30:00+15:00', 900],
+    ['2026-08-26T14:30:00+23:59', 1439],
+  ] as const)(
+    'accepts RFC3339 numeric offset %s through the 23:59 boundary',
+    (raw, offsetMinutes) => {
+      expect(parseProjectDate(raw)).toMatchObject({ raw, precision: 'datetime', offsetMinutes });
+    },
+  );
+
+  it.each([
     '2026-02-30',
     '2026-08-26T14:30:00',
     '2026-08-26T25:00:00+07:00',
-    '2026-08-26T14:30:00+15:00',
+    '2026-08-26T14:30:00+24:00',
+    '2026-08-26T14:30:00+23:60',
+    '2026-08-26T14:30:00+1500',
     '2026-08-26T14:30:00-00:00',
     'August 26, 2026',
   ])('rejects invalid or imprecise value %s', (raw) => {

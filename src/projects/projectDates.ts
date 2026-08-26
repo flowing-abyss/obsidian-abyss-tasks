@@ -48,9 +48,8 @@ export function parseProjectDate(raw: unknown): ProjectDateValue | undefined {
     const offsetHour = Number(atom[9]);
     const offsetMinute = Number(atom[10]);
     if (
-      offsetHour > 14 ||
+      offsetHour > 23 ||
       offsetMinute > 59 ||
-      (offsetHour === 14 && offsetMinute !== 0) ||
       (atom[8] === '-' && offsetHour === 0 && offsetMinute === 0)
     ) {
       return undefined;
