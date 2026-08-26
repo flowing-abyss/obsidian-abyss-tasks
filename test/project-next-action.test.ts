@@ -10,6 +10,70 @@ import { localDate } from '../src/tasks/domain/validation';
 import { task, taskQueryApi } from './helpers';
 
 describe('Project Next Action', () => {
+  it('moves Next Action between two Work Notes joined to the same Project', async () => {
+    const previous = task({
+      title: 'Work Note A task',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Work A.md', line: 1 },
+    });
+    const target = task({
+      title: 'Work Note B task',
+      source: { filePath: 'Notes/Work B.md', line: 2 },
+    });
+    const applyRootTagChanges = vi.fn().mockResolvedValue({
+      type: 'ok',
+      outcome: { type: 'task', task: target },
+      changed: true,
+    });
+    const application = {
+      queries: taskQueryApi({ list: () => [previous, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const joined = [previous, target];
+    const membership = (_projectPath: string, candidate: typeof target): boolean =>
+      joined.some(
+        (action) =>
+          action.ref.filePath === candidate.ref.filePath && action.ref.line === candidate.ref.line,
+      );
+
+    await expect(
+      new NextActionService(application, membership).set('Projects/A.md', target),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(applyRootTagChanges).toHaveBeenCalledWith({
+      primary: target.ref,
+      changes: [
+        { task: target, tags: { add: ['#task/next_action'] } },
+        { task: previous, tags: { remove: ['#task/next_action'] } },
+      ],
+    });
+  });
+
+  it('keeps one genuinely external Next Action untouched with joined membership', async () => {
+    const external = task({
+      title: 'External',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Elsewhere.md', line: 1 },
+    });
+    const target = task({
+      title: 'Joined target',
+      source: { filePath: 'Notes/Work B.md', line: 2 },
+    });
+    const applyRootTagChanges = vi.fn();
+    const application = {
+      queries: taskQueryApi({ list: () => [external, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const membership = (_projectPath: string, candidate: typeof target): boolean =>
+      candidate.ref.filePath === target.ref.filePath && candidate.ref.line === target.ref.line;
+
+    await expect(
+      new NextActionService(application, membership).set('Projects/A.md', target),
+    ).resolves.toMatchObject({ type: 'integrity-conflict', tasks: [external] });
+    expect(applyRootTagChanges).not.toHaveBeenCalled();
+  });
+
   it('does not delete duplicate external next-action tags', async () => {
     const first = task({
       title: 'First external',

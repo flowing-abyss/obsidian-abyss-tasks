@@ -2377,6 +2377,73 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('opens connected inspection feedback and performs no write for an external Next Action conflict', async () => {
+    const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const target = task({
+      title: 'Project target',
+      source: { filePath: 'Projects/A.md', line: 0 },
+    });
+    const external = task({
+      title: 'External Next Action',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/External.md', line: 3 },
+    });
+    const queries = taskQueryApi({ list: () => [target, external] });
+    const applyRootTagChanges = vi.fn();
+    const application = {
+      queries,
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      rawStatus: null,
+      stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
+    };
+    const panel = new CenterPanel(
+      state,
+      app,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      {
+        list: () => [project],
+        get: () => project,
+        activeForLeftPanel: () => [project],
+        onUpdate: () => () => {},
+        refresh: () => {},
+      } as never,
+      stubProjectManager(),
+      application,
+    );
+    panel.setProjectSnapshots([projectWorkspaceSnapshot(project as never, [target])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      state.set('mode', 'projects');
+      container.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]')!.click();
+      await flushMicrotasks();
+
+      const modal = activeDocument.body.querySelector<HTMLElement>('.abyss-modal-backdrop');
+      const feedback = modal?.querySelector<HTMLElement>('.abyss-forecast-source-context');
+      expect(modal?.isConnected).toBe(true);
+      expect(feedback?.textContent).toContain('Next Action is already set');
+      expect(feedback?.textContent).toContain('nothing was changed');
+      expect(applyRootTagChanges).not.toHaveBeenCalled();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('reuses the shared capture surface and controller lifecycle in Project context', async () => {
     const { panel, container, sessionExecute } = await projectCaptureHarness();
     try {

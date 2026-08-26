@@ -116,6 +116,40 @@ describe('Project Tasks workspace', () => {
     },
   );
 
+  it.each([
+    ['with-work-notes', '[data-project-scope="work-notes"]'],
+    ['small', '[data-project-layout="board"]'],
+    ['dated', '[data-project-layout="timeline"]'],
+  ] as const)(
+    'keeps the visible %s future control disabled without leaving Tasks/List',
+    (fixture, selector) => {
+      const container = freshContainer();
+      const renderTasks = vi.fn((host: HTMLElement) => {
+        host.createDiv({ text: 'Shared task list' });
+      });
+      renderProjectDashboard(container, snapshot(fixture), {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks,
+      });
+      const workspace = container.querySelector<HTMLElement>('[data-project-workspace]')!;
+      const control = container.querySelector<HTMLButtonElement>(selector)!;
+
+      expect(control.disabled).toBe(true);
+      expect(control.getAttribute('aria-disabled')).toBe('true');
+      control.click();
+      control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+
+      expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'list' });
+      expect(container.querySelector('.abyss-project-tasks-content')?.textContent).toBe(
+        'Shared task list',
+      );
+      expect(renderTasks).toHaveBeenCalledOnce();
+    },
+  );
+
   it('preserves the user primary sort and uses ownership, created date, and file order only as equal-key tie-breakers', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.tasks = {

@@ -215,6 +215,12 @@ export class PanelView extends ItemView {
     const selectionTasks: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries: this.tasks.queries,
       planCreate: (destination) => this.tasks.planCreate(destination),
+      applyRootTagChanges: (intent) =>
+        this.tasks.applyRootTagChanges?.(intent) ??
+        Promise.resolve({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'root-tags' }],
+        }),
       execute: async (command) => {
         const initiatingRef = commandRootRef(command);
         const result = await this.tasks.execute(command);

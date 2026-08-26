@@ -9,12 +9,17 @@ export interface NextActionConflict {
   readonly tasks: readonly TaskSnapshot[];
 }
 
+export type NextActionProjectMembership = (projectPath: string, task: TaskSnapshot) => boolean;
+
 function sameTask(left: TaskSnapshot, right: TaskSnapshot): boolean {
   return left.ref.filePath === right.ref.filePath && left.ref.line === right.ref.line;
 }
 
 export class NextActionService {
-  constructor(private readonly application: TaskApplicationApi) {}
+  constructor(
+    private readonly application: TaskApplicationApi,
+    private readonly projectMembership?: NextActionProjectMembership,
+  ) {}
 
   async set(
     projectPath: string,
@@ -26,11 +31,7 @@ export class NextActionService {
     if (tagged.length > 1) {
       return { type: 'integrity-conflict', projectPath, tag: NEXT_ACTION_TAG, tasks: tagged };
     }
-    if (
-      tagged.length === 1 &&
-      tagged[0]!.source.filePath !== projectPath &&
-      tagged[0]!.source.filePath !== task.source.filePath
-    ) {
+    if (tagged.length === 1 && !this.belongsToProject(projectPath, tagged[0]!, task)) {
       return { type: 'integrity-conflict', projectPath, tag: NEXT_ACTION_TAG, tasks: tagged };
     }
     if (!this.application.applyRootTagChanges) return this.unavailable();
@@ -59,5 +60,17 @@ export class NextActionService {
       type: 'invalid',
       issues: [{ code: 'invalid-target', field: 'next-action' }],
     };
+  }
+
+  private belongsToProject(
+    projectPath: string,
+    candidate: TaskSnapshot,
+    target: TaskSnapshot,
+  ): boolean {
+    if (this.projectMembership) return this.projectMembership(projectPath, candidate);
+    return (
+      candidate.source.filePath === projectPath ||
+      candidate.source.filePath === target.source.filePath
+    );
   }
 }

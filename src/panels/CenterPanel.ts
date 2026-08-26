@@ -9,7 +9,7 @@ import {
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
-import { NextActionService } from '../projects/NextActionService';
+import { NextActionService, type NextActionConflict } from '../projects/NextActionService';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
@@ -274,7 +274,19 @@ export class CenterPanel {
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
-    this.nextActions = tasks ? new NextActionService(tasks) : null;
+    this.nextActions = tasks
+      ? new NextActionService(tasks, (projectPath, candidate) =>
+          this.projectSnapshots.some(
+            (snapshot) =>
+              snapshot.project.path === projectPath &&
+              snapshot.tasks.some(
+                ({ task }) =>
+                  task.ref.filePath === candidate.ref.filePath &&
+                  task.ref.line === candidate.ref.line,
+              ),
+          ),
+        )
+      : null;
     this.captureTargets = this.captureApplication
       ? new CaptureTargetResolver(this.captureApplication, settings)
       : null;
@@ -2246,7 +2258,22 @@ export class CenterPanel {
     const result = clear
       ? await this.nextActions.clear(task)
       : await this.nextActions.set(projectPath, task);
-    if (result.type !== 'integrity-conflict') presentTaskCommandResult(result);
+    if (result.type === 'integrity-conflict') {
+      this.presentNextActionConflict(result);
+      return;
+    }
+    presentTaskCommandResult(result);
+  }
+
+  private presentNextActionConflict(conflict: NextActionConflict): void {
+    const existing = conflict.tasks[0];
+    if (!existing) return;
+    const count = conflict.tasks.length;
+    const conflictingTasks = count === 1 ? 'another task' : `${count} other tasks`;
+    this.taskModal?.open(
+      existing,
+      `Next Action is already set on ${conflictingTasks}. Review the existing task here; nothing was changed.`,
+    );
   }
 
   private async assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void> {

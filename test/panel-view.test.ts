@@ -204,6 +204,13 @@ describe('PanelView', () => {
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const settled = joinedProjectSnapshot(['open', 'done']);
     workspaceListener?.([settled], { snapshots: [settled], projectPaths: ['Projects/A.md'] });
+    const applyRootTagChanges = vi
+      .spyOn(taskApplication.tasks, 'applyRootTagChanges')
+      .mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: settled.tasks[0]!.task },
+        changed: true,
+      });
 
     expect(view.contentEl.querySelector('.abyss-progress-label')?.textContent).toBe('1/2');
     expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).toContain(
@@ -212,6 +219,18 @@ describe('PanelView', () => {
     expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).not.toContain(
       'Joined done',
     );
+    view.contentEl.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]')!.click();
+    await flushMicrotasks();
+    expect(applyRootTagChanges).toHaveBeenCalledOnce();
+    expect(applyRootTagChanges).toHaveBeenCalledWith({
+      primary: settled.tasks[0]!.task.ref,
+      changes: [
+        {
+          task: settled.tasks[0]!.task,
+          tags: { add: ['#task/next_action'] },
+        },
+      ],
+    });
 
     await view.onClose();
     taskApplication.index.destroy();

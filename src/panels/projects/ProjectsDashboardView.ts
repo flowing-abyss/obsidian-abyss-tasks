@@ -113,41 +113,45 @@ export function renderProjectDashboard(
       button.classList.toggle('is-active', button.dataset['projectLayout'] === layout);
     }
     content.empty();
-    if (scope === 'tasks') {
-      ctx.renderTasks(content, project.path, selectedTasks);
-      return;
-    }
-    content.createDiv({ cls: 'abyss-center-empty', text: 'Work Notes' });
+    ctx.renderTasks(content, project.path, selectedTasks);
   };
 
-  const scopeButton = (value: ProjectWorkspaceScope, label: string): void => {
+  const scopeButton = (value: ProjectWorkspaceScope, label: string, selectable = true): void => {
     const button = toolbar.createEl('button', {
       text: label,
       attr: { type: 'button', 'data-project-scope': value },
     });
-    button.addEventListener('click', () => {
-      scope = value;
-      layout = 'list';
-      renderWorkspace();
-    });
+    button.disabled = !selectable;
+    button.setAttribute('aria-disabled', String(!selectable));
+    if (selectable) {
+      button.addEventListener('click', () => {
+        scope = value;
+        layout = 'list';
+        renderWorkspace();
+      });
+    }
     scopeButtons.push(button);
   };
-  const layoutButton = (value: ProjectWorkspaceLayout, label: string): void => {
+  const layoutButton = (value: ProjectWorkspaceLayout, label: string, selectable = true): void => {
     const button = toolbar.createEl('button', {
       text: label,
       attr: { type: 'button', 'data-project-layout': value },
     });
-    button.addEventListener('click', () => {
-      layout = value;
-      renderWorkspace();
-    });
+    button.disabled = !selectable;
+    button.setAttribute('aria-disabled', String(!selectable));
+    if (selectable) {
+      button.addEventListener('click', () => {
+        layout = value;
+        renderWorkspace();
+      });
+    }
     layoutButtons.push(button);
   };
 
   scopeButton('tasks', 'Tasks');
-  if (snapshot.workNotes.length > 0) scopeButton('work-notes', 'Work Notes');
+  if (snapshot.workNotes.length > 0) scopeButton('work-notes', 'Work Notes', false);
   layoutButton('list', 'List');
-  if (snapshot.tasks.length > 0) layoutButton('board', 'Board');
-  if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline');
+  if (snapshot.tasks.length > 0) layoutButton('board', 'Board', false);
+  if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline', false);
   renderWorkspace();
 }
