@@ -6048,7 +6048,12 @@ body.abyss-modal-open .popover.hover-popover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 8px 12px;
+}
+.abyss-projects-window {
+  padding-inline: 12px;
+}
+.abyss-projects-new-input-host {
+  padding-inline: 12px;
 }
 .abyss-projects-empty {
   color: var(--text-muted);
@@ -6077,7 +6082,7 @@ body.abyss-modal-open .popover.hover-popover {
   display: grid;
   box-sizing: border-box;
   block-size: 52px;
-  grid-template-columns: 8px minmax(8rem, 1fr) minmax(0, auto) auto;
+  grid-template-columns: [status] 8px [identity] minmax(8rem, 1fr) [actions] auto;
   align-items: center;
   min-width: 0;
   gap: 10px;
@@ -6085,6 +6090,14 @@ body.abyss-modal-open .popover.hover-popover {
   border-radius: 6px;
   cursor: pointer;
   overflow: hidden;
+}
+.abyss-project-row--has-meta {
+  grid-template-columns:
+    [status] 8px [identity] minmax(8rem, 1fr) [meta] minmax(0, auto)
+    [actions] auto;
+}
+.abyss-project-row > .abyss-status-dot {
+  grid-column: status;
 }
 .abyss-project-row:hover {
   background: var(--background-modifier-hover);
@@ -6094,6 +6107,7 @@ body.abyss-modal-open .popover.hover-popover {
   outline-offset: -2px;
 }
 .abyss-project-row-name {
+  grid-column: identity;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -6110,6 +6124,7 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-faint);
 }
 .abyss-project-row-meta {
+  grid-column: meta;
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -6168,6 +6183,7 @@ body.abyss-modal-open .popover.hover-popover {
   height: 14px;
 }
 .abyss-project-row-actions {
+  grid-column: actions;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -6284,7 +6300,13 @@ body.abyss-modal-open .popover.hover-popover {
   }
 
   .abyss-project-row {
-    grid-template-columns: 8px minmax(0, 1fr) minmax(0, auto) auto;
+    grid-template-columns: [status] 8px [identity] minmax(0, 1fr) [actions] auto;
+  }
+
+  .abyss-project-row--has-meta {
+    grid-template-columns:
+      [status] 8px [identity] minmax(0, 1fr) [meta] minmax(0, auto)
+      [actions] auto;
   }
 
   .abyss-project-row-meta {

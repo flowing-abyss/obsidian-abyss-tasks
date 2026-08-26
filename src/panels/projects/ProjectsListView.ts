@@ -42,17 +42,16 @@ function parentFolder(path: string): string {
   return idx === -1 ? '' : path.slice(0, idx);
 }
 
-function showNewProjectInput(scroll: HTMLElement, onCreate: (name: string) => Promise<void>): void {
-  const existing = scroll.querySelector('.abyss-projects-new-input');
+function showNewProjectInput(host: HTMLElement, onCreate: (name: string) => Promise<void>): void {
+  const existing = host.querySelector('.abyss-projects-new-input');
   if (existing) {
     (existing as HTMLInputElement).focus();
     return;
   }
-  const input = scroll.createEl('input', {
+  const input = host.createEl('input', {
     cls: 'abyss-projects-new-input',
     attr: { type: 'text', placeholder: 'Project name…' },
   });
-  scroll.insertBefore(input, scroll.firstChild);
   let committed = false;
   const commit = (): void => {
     if (committed) return;
@@ -107,11 +106,14 @@ export function renderProjectsList(
   const nameCounts = new Map<string, number>();
   for (const p of projects) nameCounts.set(p.name, (nameCounts.get(p.name) ?? 0) + 1);
 
+  const newProjectInputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
   const scroll = container.createDiv({ cls: 'abyss-projects-scroll' });
 
   // "New project" shows an inline input at the top of the list — the same
   // interaction as the left-panel "+", never a modal (kept consistent).
-  newProjectButton.addEventListener('click', () => showNewProjectInput(scroll, ctx.onCreate));
+  newProjectButton.addEventListener('click', () =>
+    showNewProjectInput(newProjectInputHost, ctx.onCreate),
+  );
 
   if (visibleSnapshots.length === 0) {
     scroll.createDiv({
@@ -134,7 +136,10 @@ export function renderProjectsList(
     }
   }
 
-  const rowsHost = scroll.createDiv({ cls: 'abyss-projects-window' });
+  const rowsHost = scroll.createDiv({
+    cls: 'abyss-projects-window',
+    attr: { tabindex: '-1', 'aria-label': 'Projects list' },
+  });
   const bounded = new BoundedWindow(
     entries.map(({ key }) => key),
     PORTFOLIO_OVERSCAN,
@@ -146,7 +151,9 @@ export function renderProjectsList(
         ? Math.max(1, Math.ceil(scroll.clientHeight / PORTFOLIO_ITEM_EXTENT))
         : PORTFOLIO_FALLBACK_VISIBLE_ROWS,
   });
+  let destroyed = false;
   const renderWindow = (restoreFocus = false): void => {
+    if (destroyed) return;
     const result = bounded.render(rowsHost, {
       ...viewport(),
       itemExtent: PORTFOLIO_ITEM_EXTENT,
@@ -164,20 +171,39 @@ export function renderProjectsList(
           (path) => bounded.focus(`project:${path}`),
           (path, delta) => {
             bounded.focus(`project:${path}`);
-            if (bounded.move(delta, isProjectWindowKey) === null) return;
-            const nextFirst = bounded.viewportForFocus(viewport());
-            scroll.scrollTop = nextFirst * PORTFOLIO_ITEM_EXTENT;
-            renderWindow(true);
+            moveLogicalFocus(delta);
           },
         );
       },
     });
     if (restoreFocus) scroll.scrollTop = result.first * PORTFOLIO_ITEM_EXTENT;
   };
+  const moveLogicalFocus = (delta: number): void => {
+    if (bounded.move(delta, isProjectWindowKey) === null) return;
+    const nextFirst = bounded.viewportForFocus(viewport());
+    scroll.scrollTop = nextFirst * PORTFOLIO_ITEM_EXTENT;
+    renderWindow(true);
+  };
   const onScroll = (): void => renderWindow(false);
+  const onWindowKeydown = (event: KeyboardEvent): void => {
+    if (event.target !== rowsHost || (event.key !== 'ArrowDown' && event.key !== 'ArrowUp')) return;
+    event.preventDefault();
+    moveLogicalFocus(event.key === 'ArrowDown' ? 1 : -1);
+  };
   scroll.addEventListener('scroll', onScroll);
+  rowsHost.addEventListener('keydown', onWindowKeydown);
   renderWindow();
-  return (): void => scroll.removeEventListener('scroll', onScroll);
+  const resizeObserver =
+    typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(() => renderWindow(false));
+  resizeObserver?.observe(scroll);
+  return (): void => {
+    destroyed = true;
+    resizeObserver?.disconnect();
+    rowsHost.removeEventListener('keydown', onWindowKeydown);
+    scroll.removeEventListener('scroll', onScroll);
+  };
 }
 
 function renderGroupHeader(parent: HTMLElement, group: StatusGroup, count: number): HTMLElement {
@@ -231,6 +257,7 @@ function renderRow(
     nextAction !== undefined;
 
   if (hasMetadata) {
+    row.addClass('abyss-project-row--has-meta');
     const meta = row.createDiv({ cls: 'abyss-project-row-meta' });
     if (snapshot.taskRollup.total > 0) {
       const taskProgress = meta.createDiv({ cls: 'abyss-project-task-progress' });

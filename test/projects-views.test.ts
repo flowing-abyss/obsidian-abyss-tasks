@@ -1,6 +1,6 @@
 // eslint-disable-next-line import/no-nodejs-modules -- geometry contract loads the shipped CSS.
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
@@ -13,6 +13,19 @@ import { freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
 const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+
+function attachedContainer(): HTMLElement {
+  const container = freshContainer();
+  container.dataset['projectsFocusTest'] = '';
+  activeDocument.body.appendChild(container);
+  return container;
+}
+
+afterEach(() => {
+  for (const container of activeDocument.body.querySelectorAll('[data-projects-focus-test]')) {
+    container.remove();
+  }
+});
 
 function geometryContract(element: HTMLElement): {
   readonly rect: DOMRect;
@@ -255,9 +268,15 @@ describe('renderProjectsList', () => {
     activeDocument.body.append(overview, overviewBaseline, compact, compactBaseline);
 
     try {
-      renderProjectsList(overview, [workspace()], { ...ctx, state: new AppState() });
+      const emptyProject = proj({
+        stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+      });
+      renderProjectsList(overview, [workspace(emptyProject)], {
+        ...ctx,
+        state: new AppState(),
+      });
       const marked = task({ title: 'Marked', tags: ['#task/next_action'] });
-      const markedWorkspace = workspace(proj({}), {
+      const markedWorkspace = workspace(emptyProject, {
         tasks: [
           {
             task: marked,
@@ -286,8 +305,21 @@ describe('renderProjectsList', () => {
       expect(compact.querySelector('[aria-label="Open Next Action"]')).toBeNull();
       expect(overview.querySelector('.abyss-next-action-slot')).toBeNull();
       expect(compact.querySelector('.abyss-next-action-slot')).toBeNull();
-      expect(geometryContract(overview.querySelector<HTMLElement>('.abyss-project-row')!)).toEqual(
-        geometryContract(overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!),
+      const unsetRow = overview.querySelector<HTMLElement>('.abyss-project-row')!;
+      const setRow = overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!;
+      const unsetActions = unsetRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
+      const setActions = setRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
+      const setMeta = setRow.querySelector<HTMLElement>('.abyss-project-row-meta')!;
+      expect(getComputedStyle(unsetRow).gridTemplateColumns).not.toContain('[meta]');
+      expect(getComputedStyle(setRow).gridTemplateColumns).toContain('[meta]');
+      expect(getComputedStyle(unsetActions).gridColumn).toBe('actions');
+      expect(getComputedStyle(setActions).gridColumn).toBe('actions');
+      expect(getComputedStyle(setMeta).gridColumn).toBe('meta');
+      expect(unsetActions.getBoundingClientRect()).toEqual(setActions.getBoundingClientRect());
+      expect(unsetRow.lastElementChild).toBe(unsetActions);
+      expect(setRow.lastElementChild).toBe(setActions);
+      expect(Array.from(setRow.children).indexOf(setMeta)).toBeLessThan(
+        Array.from(setRow.children).indexOf(setActions),
       );
       expect(
         geometryContract(compact.querySelector<HTMLElement>('.abyss-project-dashboard-stats')!),
@@ -328,6 +360,151 @@ describe('renderProjectsList', () => {
     expect(mounted[mounted.length - 1]?.dataset['boundedKey']).toBe('project:Projects/P34.md');
   });
 
+  it('uses an exact row-only viewport at padding and input boundaries', () => {
+    const el = freshContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 2 * 52 });
+
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    scroll.scrollTop = 51;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    scroll.scrollTop = 52;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+
+    const beforeInput = Array.from(
+      el.querySelectorAll<HTMLElement>('[data-bounded-key]'),
+      (node) => node.dataset['boundedKey'],
+    );
+    el.querySelector<HTMLButtonElement>('.abyss-projects-new')!.click();
+    const input = el.querySelector<HTMLElement>('.abyss-projects-new-input')!;
+    expect(scroll.contains(input)).toBe(false);
+    expect(input.parentElement?.classList.contains('abyss-projects-new-input-host')).toBe(true);
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLElement>('[data-bounded-key]'),
+        (node) => node.dataset['boundedKey'],
+      ),
+    ).toEqual(beforeInput);
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+  });
+
+  it('keeps the focused row mounted when a manual scroll stays in the same range', () => {
+    const el = attachedContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    const focused = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    focused.focus();
+
+    scroll.scrollTop = 1;
+    scroll.dispatchEvent(new Event('scroll'));
+
+    expect(el.querySelector<HTMLElement>('.abyss-project-row')).toBe(focused);
+    expect(activeDocument.activeElement).toBe(focused);
+  });
+
+  it('restores keyed DOM focus when a changed manual range retains the row', () => {
+    const el = attachedContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    const focused = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    focused.focus();
+
+    scroll.scrollTop = 52;
+    scroll.dispatchEvent(new Event('scroll'));
+
+    const remounted = el.querySelector<HTMLElement>(
+      '[data-bounded-key="project:Projects/P00.md"]',
+    )!;
+    expect(remounted).not.toBe(focused);
+    expect(activeDocument.activeElement).toBe(remounted);
+  });
+
+  it('hands focus to the stable window owner and continues logical navigation off-window', () => {
+    const el = attachedContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    const windowOwner = el.querySelector<HTMLElement>('.abyss-projects-window')!;
+    el.querySelector<HTMLElement>('.abyss-project-row')!.focus();
+
+    scroll.scrollTop = 20 * 52;
+    scroll.dispatchEvent(new Event('scroll'));
+
+    expect(activeDocument.activeElement).toBe(windowOwner);
+    expect(windowOwner.dataset['boundedFocusKey']).toBe('project:Projects/P00.md');
+    windowOwner.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(
+      el.querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]'),
+    );
+  });
+
+  it('does not remount the focused row on the native scroll after keyboard navigation', () => {
+    const el = attachedContainer();
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    const first = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    const keyboardFocused = el.querySelector<HTMLElement>(
+      '[data-bounded-key="project:Projects/P01.md"]',
+    )!;
+    expect(activeDocument.activeElement).toBe(keyboardFocused);
+
+    scroll.dispatchEvent(new Event('scroll'));
+
+    expect(el.querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]')).toBe(
+      keyboardFocused,
+    );
+    expect(activeDocument.activeElement).toBe(keyboardFocused);
+  });
+
   it('allows manual scrolling away from a retained logical focus', () => {
     const el = freshContainer();
     const snapshots = Array.from({ length: 40 }, (_, index) =>
@@ -352,6 +529,23 @@ describe('renderProjectsList', () => {
   });
 
   it('detaches bounded-window scroll ownership when the Overview unmounts', () => {
+    const disconnect = vi.fn();
+    const observe = vi.fn();
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const PreviousResizeObserver = globalThis.ResizeObserver;
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+
+      observe = observe;
+      unobserve = vi.fn();
+      disconnect = disconnect;
+    }
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: TestResizeObserver,
+    });
     const el = freshContainer();
     const snapshots = Array.from({ length: 40 }, (_, index) =>
       workspace(
@@ -361,16 +555,26 @@ describe('renderProjectsList', () => {
         }),
       ),
     );
-    const cleanup = renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
-    const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
+    try {
+      const cleanup = renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
+      const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
 
-    cleanup();
-    scroll.scrollTop = 20 * 52;
-    scroll.dispatchEvent(new Event('scroll'));
+      cleanup();
+      scroll.scrollTop = 20 * 52;
+      scroll.dispatchEvent(new Event('scroll'));
+      resizeCallback?.([], {} as ResizeObserver);
 
-    expect(el.querySelector<HTMLElement>('.abyss-project-row')?.dataset['boundedKey']).toBe(
-      'project:Projects/P00.md',
-    );
+      expect(observe).toHaveBeenCalledWith(scroll);
+      expect(disconnect).toHaveBeenCalledOnce();
+      expect(el.querySelector<HTMLElement>('.abyss-project-row')?.dataset['boundedKey']).toBe(
+        'project:Projects/P00.md',
+      );
+    } finally {
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        value: PreviousResizeObserver,
+      });
+    }
   });
 });
 
@@ -561,6 +765,45 @@ describe('BoundedWindow', () => {
 
     expect(range).toEqual({ start: 0, end: 3, first: 0 });
     expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it('restores a retained keyed row after manual replacement without scrolling it', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c', 'd'], 1);
+    const host = attachedContainer();
+    const scrolled = vi.fn();
+    const render = (container: HTMLElement, key: string): HTMLElement => {
+      const button = container.createEl('button');
+      if (key === 'b') button.scrollIntoView = scrolled;
+      return button;
+    };
+    bounded.render(host, { first: 0, visible: 2, itemExtent: 40, render });
+    bounded.focus('b');
+    host.querySelector<HTMLElement>('[data-bounded-key="b"]')!.focus();
+
+    bounded.render(host, { first: 1, visible: 2, itemExtent: 40, render });
+
+    expect(activeDocument.activeElement).toBe(
+      host.querySelector<HTMLElement>('[data-bounded-key="b"]'),
+    );
+    expect(scrolled).not.toHaveBeenCalled();
+  });
+
+  it('remounts an unchanged logical range when its spacer extent changes', () => {
+    const bounded = new BoundedWindow(['a', 'b', 'c', 'd'], 0);
+    const host = freshContainer();
+    const render = (container: HTMLElement): HTMLElement => container.createEl('button');
+    bounded.render(host, { first: 1, visible: 2, itemExtent: 40, render });
+    const firstMounted = host.querySelector('[data-bounded-key="b"]');
+    expect(
+      host.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
+    ).toBe('40px');
+
+    bounded.render(host, { first: 1, visible: 2, itemExtent: 52, render });
+
+    expect(host.querySelector('[data-bounded-key="b"]')).not.toBe(firstMounted);
+    expect(
+      host.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
+    ).toBe('52px');
   });
 });
 

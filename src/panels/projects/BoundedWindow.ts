@@ -48,6 +48,15 @@ export function computeBoundedWindow(input: BoundedWindowInput): BoundedWindowRa
 export class BoundedWindow<Key extends string> {
   private keys: readonly Key[];
   private focused: Key | null = null;
+  private mounted:
+    | {
+        readonly container: HTMLElement;
+        readonly start: number;
+        readonly end: number;
+        readonly itemExtent: number;
+        readonly keys: readonly Key[];
+      }
+    | undefined;
 
   constructor(
     keys: readonly Key[],
@@ -58,6 +67,7 @@ export class BoundedWindow<Key extends string> {
 
   setKeys(keys: readonly Key[]): void {
     this.keys = [...keys];
+    this.mounted = undefined;
     if (this.focused !== null && !this.keys.includes(this.focused)) this.focused = null;
   }
 
@@ -106,20 +116,52 @@ export class BoundedWindow<Key extends string> {
     const first =
       options.restoreFocus === true ? this.viewportForFocus(options) : natural(options.first);
     const range = this.bounds({ first, visible: options.visible });
+    const itemExtent = natural(options.itemExtent);
+    const rangeKeys = this.keys.slice(range.start, range.end);
+    const sameRange =
+      this.mounted?.container === container &&
+      this.mounted.start === range.start &&
+      this.mounted.end === range.end &&
+      this.mounted.itemExtent === itemExtent &&
+      this.mounted.keys.length === rangeKeys.length &&
+      this.mounted.keys.every((key, index) => key === rangeKeys[index]);
+    if (sameRange) {
+      if (options.restoreFocus === true) this.restoreFocus(container);
+      return { ...range, first };
+    }
+
+    const activeElement = container.ownerDocument.activeElement;
+    const activeKey =
+      activeElement instanceof HTMLElement && activeElement.parentElement === container
+        ? (activeElement.dataset['boundedKey'] as Key | undefined)
+        : undefined;
+    const replaceFocusedRow = activeKey !== undefined && activeKey === this.focused;
+    const focusedWillRemain = this.focused !== null && rangeKeys.includes(this.focused);
+    if (replaceFocusedRow && !focusedWillRemain) {
+      container.dataset['boundedFocusKey'] = String(this.focused);
+      container.focus({ preventScroll: true });
+    }
+
     container.empty();
-    this.appendSpacer(container, range.start * natural(options.itemExtent), 'start');
+    this.appendSpacer(container, range.start * itemExtent, 'start');
     for (let index = range.start; index < range.end; index += 1) {
       const key = this.keys[index];
       if (key === undefined) continue;
       const element = options.render(container, key, index);
       element.dataset['boundedKey'] = key;
     }
-    this.appendSpacer(
+    this.appendSpacer(container, (this.keys.length - range.end) * itemExtent, 'end');
+    this.mounted = {
       container,
-      (this.keys.length - range.end) * natural(options.itemExtent),
-      'end',
-    );
-    if (options.restoreFocus === true) this.restoreFocus(container);
+      ...range,
+      itemExtent,
+      keys: rangeKeys,
+    };
+    if (options.restoreFocus === true) {
+      this.restoreFocus(container);
+    } else if (replaceFocusedRow && focusedWillRemain) {
+      this.restoreFocus(container, false);
+    }
     return { ...range, first };
   }
 
@@ -137,13 +179,14 @@ export class BoundedWindow<Key extends string> {
   }
 
   /** Restores DOM focus after a virtual window remounts the retained stable key. */
-  restoreFocus(container: ParentNode): boolean {
+  restoreFocus(container: HTMLElement, scroll = true): boolean {
     if (this.focused === null) return false;
     const element = Array.from(container.querySelectorAll<HTMLElement>('[data-bounded-key]')).find(
       (candidate) => candidate.dataset['boundedKey'] === String(this.focused),
     );
     if (!element) return false;
-    element.scrollIntoView?.({ block: 'nearest' });
+    delete container.dataset['boundedFocusKey'];
+    if (scroll) element.scrollIntoView?.({ block: 'nearest' });
     element.focus({ preventScroll: true });
     return true;
   }
