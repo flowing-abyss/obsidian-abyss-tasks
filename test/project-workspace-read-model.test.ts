@@ -424,7 +424,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     coordinator.destroy();
   });
 
-  it('publishes once after a folder topology settles and still publishes a later Work Note edit', async () => {
+  it('publishes once after chained folder topologies settle and still publishes a later Work Note edit', async () => {
     const taskListeners: Array<(event: TaskIndexEvent) => void> = [];
     const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
     const workListeners: Array<(event: WorkNoteIndexEvent) => void> = [];
@@ -434,6 +434,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     let tasks: readonly TaskSnapshot[] = [action('Workspace/A.md', 1, 'open')];
     let notes: readonly WorkNoteSnapshot[] = [
       workNote('Workspace/A.md'),
+      workNote('Workspace/Empty.md'),
       workNote('Work/Other.md'),
     ];
     const coordinator = new ProjectWorkspaceCoordinator(
@@ -472,9 +473,9 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       }),
     );
 
-    tasks = [action('Archive/A.md', 1, 'open')];
+    tasks = [action('Final/A.md', 1, 'open')];
     taskListeners.forEach((listener) =>
-      listener({ type: 'changed', files: ['Archive/A.md', 'Workspace/A.md'] }),
+      listener({ type: 'changed', files: ['Final/A.md', 'Workspace/A.md'] }),
     );
     taskSettled.forEach((listener) =>
       listener({
@@ -487,17 +488,28 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
         ],
       }),
     );
+    taskSettled.forEach((listener) =>
+      listener({
+        type: 'settled',
+        reason: 'topology',
+        topology: { type: 'folder-rename', oldPath: 'Archive', newPath: 'Final' },
+        files: [
+          { path: 'Archive/A.md', generation: 2 },
+          { path: 'Final/A.md', generation: 1 },
+        ],
+      }),
+    );
     await Promise.resolve();
     expect(publications).toEqual([]);
 
-    notes = [workNote('Archive/A.md'), workNote('Work/Other.md')];
+    notes = [workNote('Final/A.md'), workNote('Final/Empty.md'), workNote('Work/Other.md')];
     workListeners.forEach((listener) =>
       listener({
         cause: 'index',
-        changedPaths: ['Archive/A.md', 'Workspace/A.md'],
+        changedPaths: ['Final/A.md', 'Final/Empty.md', 'Workspace/A.md', 'Workspace/Empty.md'],
         invalidatedProjectPaths: [projectPath],
         taskBarriers: [
-          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Final/A.md', generation: 1 },
           { path: 'Workspace/A.md', generation: 2 },
         ],
       }),
@@ -506,20 +518,22 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       listener({
         reason: 'index',
         files: [
-          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Final/A.md', generation: 1 },
+          { path: 'Final/Empty.md', generation: 1 },
           { path: 'Workspace/A.md', generation: 2 },
+          { path: 'Workspace/Empty.md', generation: 2 },
         ],
       }),
     );
     await Promise.resolve();
     expect(publications).toEqual([
       {
-        taskPaths: ['Archive/A.md'],
-        workNotePaths: ['Archive/A.md', 'Work/Other.md'],
+        taskPaths: ['Final/A.md'],
+        workNotePaths: ['Final/A.md', 'Final/Empty.md', 'Work/Other.md'],
       },
     ]);
 
-    notes = [workNote('Archive/A.md'), workNote('Work/Other.md', 'done')];
+    notes = [workNote('Final/A.md'), workNote('Final/Empty.md'), workNote('Work/Other.md', 'done')];
     workListeners.forEach((listener) =>
       listener({
         cause: 'index',

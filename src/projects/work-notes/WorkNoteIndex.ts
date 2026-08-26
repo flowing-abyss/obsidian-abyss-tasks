@@ -55,6 +55,8 @@ export class WorkNoteIndex {
   private taskBarriers = new Map<string, number>();
   private pendingTaskTopologies = new Set<string>();
   private settledTaskTopologies = new Map<string, TaskTopologySettlement>();
+  private topologyBarrierPaths = new Set<string>();
+  private topologyRefreshPending = false;
   private taskSettlementUnsub?: () => void;
   private ready = false;
 
@@ -226,6 +228,7 @@ export class WorkNoteIndex {
 
   private queueFullAfterTopology(oldPath: string, newPath: string): void {
     this.fullRefreshPending = true;
+    this.topologyRefreshPending = true;
     this.pendingPaths.clear();
     if (!this.taskSettlements?.subscribeSettled) {
       this.schedule();
@@ -262,14 +265,9 @@ export class WorkNoteIndex {
   }
 
   private acceptTaskTopology(event: TaskTopologySettlement): void {
-    const workNotePaths = new Set<string>();
-    for (const path of new Set([...this.byPath.keys(), ...this.diagnosticsByPath.keys()])) {
-      if (!isDescendant(path, event.topology.oldPath)) continue;
-      workNotePaths.add(path);
-      workNotePaths.add(renamedDescendant(path, event.topology.oldPath, event.topology.newPath));
-    }
     for (const { path, generation } of event.files) {
-      if (workNotePaths.has(path)) this.taskBarriers.set(path, generation);
+      this.taskBarriers.set(path, generation);
+      this.topologyBarrierPaths.add(path);
     }
     if (this.waitingForTaskPaths.size === 0 && this.pendingTaskTopologies.size === 0)
       this.schedule();
@@ -322,6 +320,9 @@ export class WorkNoteIndex {
         ])
       : new Set(this.pendingPaths);
     const changedPaths = this.changedPaths(comparedPaths, oldSnapshots, oldDiagnostics);
+    if (this.topologyRefreshPending) {
+      this.deriveTopologySettlements(changedPaths, comparedPaths);
+    }
     this.invalidateChangedProjects(changedPaths, oldProjects);
     const invalidatedProjectPaths = [...this.invalidatedProjectPaths];
     this.pendingPaths.clear();
@@ -356,7 +357,29 @@ export class WorkNoteIndex {
       };
       for (const listener of this.settledListeners) listener(event);
     }
+    for (const path of this.topologyBarrierPaths) this.taskBarriers.delete(path);
+    this.topologyBarrierPaths.clear();
+    this.topologyRefreshPending = false;
     this.explicitRefreshPending = false;
+  }
+
+  private deriveTopologySettlements(
+    changedPaths: readonly string[],
+    comparedPaths: ReadonlySet<string>,
+  ): void {
+    const finalPaths = new Set([
+      ...changedPaths,
+      ...[...this.pendingSettledPaths].filter((path) => comparedPaths.has(path)),
+      ...[...this.topologyBarrierPaths].filter((path) => comparedPaths.has(path)),
+    ]);
+    for (const path of [...this.pendingSettledPaths]) {
+      if (!finalPaths.has(path)) this.pendingSettledPaths.delete(path);
+    }
+    for (const path of changedPaths) {
+      if (this.pendingSettledPaths.has(path)) continue;
+      this.generations.set(path, (this.generations.get(path) ?? 0) + 1);
+      this.pendingSettledPaths.add(path);
+    }
   }
 
   private replaceFromAudit(audit: WorkNoteAuditResult): void {
@@ -454,6 +477,8 @@ export class WorkNoteIndex {
     this.taskBarriers.clear();
     this.pendingTaskTopologies.clear();
     this.settledTaskTopologies.clear();
+    this.topologyBarrierPaths.clear();
+    this.topologyRefreshPending = false;
     this.listeners.clear();
     this.settledListeners.clear();
     this.generations.clear();
