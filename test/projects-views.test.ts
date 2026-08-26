@@ -360,7 +360,7 @@ describe('renderProjectsList', () => {
     expect(mounted[mounted.length - 1]?.dataset['boundedKey']).toBe('project:Projects/P34.md');
   });
 
-  it('uses an exact row-only viewport at padding and input boundaries', () => {
+  it('uses exact top and bottom coordinates for fractional bounded viewports', () => {
     const el = freshContainer();
     const snapshots = Array.from({ length: 40 }, (_, index) =>
       workspace(
@@ -377,12 +377,38 @@ describe('renderProjectsList', () => {
     scroll.scrollTop = 0;
     scroll.dispatchEvent(new Event('scroll'));
     expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    expect(el.querySelector<HTMLElement>('[data-bounded-window-edge="end"]')?.style.blockSize).toBe(
+      '1716px',
+    );
+    scroll.scrollTop = 1;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+    expect(el.querySelector<HTMLElement>('[data-bounded-window-edge="end"]')?.style.blockSize).toBe(
+      '1664px',
+    );
     scroll.scrollTop = 51;
     scroll.dispatchEvent(new Event('scroll'));
-    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
     scroll.scrollTop = 52;
     scroll.dispatchEvent(new Event('scroll'));
     expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 103 });
+    scroll.scrollTop = 0;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 105 });
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+
+    Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 2 * 52 });
+    scroll.scrollTop = 41 * 52 - 2 * 52;
+    scroll.dispatchEvent(new Event('scroll'));
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
+    expect(
+      el.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
+    ).toBe('1716px');
+    expect(el.querySelector('[data-bounded-window-edge="end"]')).toBeNull();
 
     const beforeInput = Array.from(
       el.querySelectorAll<HTMLElement>('[data-bounded-key]'),
@@ -401,7 +427,7 @@ describe('renderProjectsList', () => {
     ).toEqual(beforeInput);
     input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     scroll.dispatchEvent(new Event('scroll'));
-    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(9);
+    expect(el.querySelectorAll('[data-bounded-key]')).toHaveLength(8);
   });
 
   it('keeps the focused row mounted when a manual scroll stays in the same range', () => {

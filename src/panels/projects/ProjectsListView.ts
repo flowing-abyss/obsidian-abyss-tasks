@@ -12,6 +12,20 @@ const PORTFOLIO_ITEM_EXTENT = 52;
 const PORTFOLIO_FALLBACK_VISIBLE_ROWS = 10;
 const PORTFOLIO_OVERSCAN = 6;
 
+function fixedItemViewport(
+  scrollTop: number,
+  viewportExtent: number,
+  itemExtent: number,
+  count: number,
+): { first: number; visible: number } {
+  const collectionExtent = count * itemExtent;
+  const top = Math.min(collectionExtent, Math.max(0, scrollTop));
+  const first = Math.floor(top / itemExtent);
+  if (viewportExtent <= 0) return { first, visible: PORTFOLIO_FALLBACK_VISIBLE_ROWS };
+  const end = Math.min(count, Math.ceil((top + viewportExtent) / itemExtent));
+  return { first, visible: Math.max(0, end - first) };
+}
+
 type PortfolioEntry =
   | {
       readonly type: 'group';
@@ -144,13 +158,8 @@ export function renderProjectsList(
     entries.map(({ key }) => key),
     PORTFOLIO_OVERSCAN,
   );
-  const viewport = (): { first: number; visible: number } => ({
-    first: Math.floor(scroll.scrollTop / PORTFOLIO_ITEM_EXTENT),
-    visible:
-      scroll.clientHeight > 0
-        ? Math.max(1, Math.ceil(scroll.clientHeight / PORTFOLIO_ITEM_EXTENT))
-        : PORTFOLIO_FALLBACK_VISIBLE_ROWS,
-  });
+  const viewport = (): { first: number; visible: number } =>
+    fixedItemViewport(scroll.scrollTop, scroll.clientHeight, PORTFOLIO_ITEM_EXTENT, entries.length);
   let destroyed = false;
   const renderWindow = (restoreFocus = false): void => {
     if (destroyed) return;
