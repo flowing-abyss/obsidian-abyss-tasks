@@ -842,6 +842,22 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     delBtns[0]!.comp.clickHandler!();
     expect(plugin.settings.projects.defaultStatusId).toBe(survivorId);
   });
+
+  it('gives a newly added project status stable regular lifecycle behavior', () => {
+    const { tab, plugin, captured } = makeTab();
+    openSection(tab, 5);
+    const addStatus = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === '+ Add status';
+    });
+
+    addStatus!.comp.clickHandler!();
+
+    expect(
+      plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]?.behavior,
+    ).toBe('regular');
+  });
 });
 
 describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => {

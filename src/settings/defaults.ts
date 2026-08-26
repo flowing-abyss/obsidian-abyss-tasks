@@ -33,6 +33,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     label: 'Active',
     color: '#4caf50',
     onLeftPanel: true,
+    behavior: 'regular',
     match: { kind: 'property', property: 'status', value: 'active' },
   };
   const planned = {
@@ -40,6 +41,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     label: 'Planned',
     color: '#2196f3',
     onLeftPanel: false,
+    behavior: 'regular' as const,
     match: { kind: 'property' as const, property: 'status', value: 'planned' },
   };
   const done = {
@@ -47,6 +49,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     label: 'Done',
     color: '#888888',
     onLeftPanel: false,
+    behavior: 'completed' as const,
     match: { kind: 'property' as const, property: 'status', value: 'done' },
   };
   return {

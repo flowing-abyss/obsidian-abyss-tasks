@@ -928,6 +928,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             label: 'New status',
             color: '#888888',
             onLeftPanel: false,
+            behavior: 'regular',
             match: { kind: 'property', property: 'status', value: '' },
           });
           this.expandedCards.add(id); // open the new card for editing

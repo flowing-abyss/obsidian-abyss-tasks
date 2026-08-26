@@ -1,4 +1,5 @@
 import type { ProjectStatus } from '../settings/types';
+import { resolveProjectLifecycle } from './lifecycle';
 import type { Project } from './types';
 
 export interface StatusGroup {
@@ -8,48 +9,13 @@ export interface StatusGroup {
   statusId: string | null; // null for discovered/none groups
 }
 
-function toPropertyString(val: unknown): string {
-  if (val == null) return '';
-  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
-    return String(val);
-  }
-  return JSON.stringify(val);
-}
-
-function matchesStatus(s: ProjectStatus, tags: string[], fm: Record<string, unknown>): boolean {
-  if (s.match.kind === 'tag') {
-    const want = s.match.tag.replace(/^#/, '').toLowerCase();
-    return tags.some((t) => {
-      const ft = t.replace(/^#/, '').toLowerCase();
-      return ft === want || ft.startsWith(want + '/');
-    });
-  }
-  const v = fm[s.match.property];
-  return toPropertyString(v) === s.match.value;
-}
-
 export function resolveStatus(
   statuses: ProjectStatus[],
   tags: string[],
   frontmatter: Record<string, unknown>,
 ): { statusId: string | null; rawStatus: string | null } {
-  for (const s of statuses) {
-    if (matchesStatus(s, tags, frontmatter)) return { statusId: s.id, rawStatus: null };
-  }
-  // discovered: property-kind only
-  const statusProps = new Set(
-    statuses
-      .filter((s) => s.match.kind === 'property')
-      .map((s) => (s.match as { property: string }).property),
-  );
-  for (const prop of statusProps) {
-    const v = frontmatter[prop];
-    const str = toPropertyString(v);
-    if (str !== '') {
-      return { statusId: null, rawStatus: str };
-    }
-  }
-  return { statusId: null, rawStatus: null };
+  const { statusId, rawStatus } = resolveProjectLifecycle(statuses, tags, frontmatter);
+  return { statusId, rawStatus };
 }
 
 export function orderedGroups(statuses: ProjectStatus[], projects: Project[]): StatusGroup[] {

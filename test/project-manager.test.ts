@@ -1,5 +1,6 @@
 import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import { ProjectManager } from '../src/projects/ProjectManager';
 import { DailyNoteResolver } from '../src/resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -47,14 +48,26 @@ describe('ProjectManager.setStatus', () => {
     expect(fm['other']).toBe('keep');
   });
 
-  it('strips an inline body status tag so status resolution does not stick', async () => {
+  it('preserves an inline body task tag while changing canonical frontmatter status', async () => {
     const app = await createAppWithFiles({
-      'P.md': '---\ntags:\n  - keepme\n---\n\nProject notes #todo here.\n',
+      'P.md': '---\ntags:\n  - todo\n  - keepme\n---\n\n- [ ] Keep #todo in task text\n',
     });
     const settings = clone();
     settings.projects.statuses = [
-      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
-      { id: 'done', label: 'Done', onLeftPanel: false, match: { kind: 'tag', tag: 'done' } },
+      {
+        id: 'todo',
+        label: 'Todo',
+        behavior: 'regular',
+        onLeftPanel: true,
+        match: { kind: 'tag', tag: 'todo' },
+      },
+      {
+        id: 'done',
+        label: 'Done',
+        behavior: 'completed',
+        onLeftPanel: false,
+        match: { kind: 'tag', tag: 'done' },
+      },
     ];
     const pm = new ProjectManager(app as never, settings, {} as never, {} as never);
     await pm.setStatus('P.md', 'done');
@@ -65,19 +78,56 @@ describe('ProjectManager.setStatus', () => {
     const content = await (
       app as never as { vault: { read(f: TFile): Promise<string> } }
     ).vault.read(file);
-    // Inline #todo removed from body; #done applied via frontmatter; unrelated tag kept.
-    expect(content).not.toMatch(/#todo\b/);
+    // Body task text is legacy read-only input; only canonical frontmatter tags are owned.
+    expect(content).toContain('- [ ] Keep #todo in task text');
     expect(content).toContain('keepme');
     expect(content).toMatch(/done/);
-    expect(content).toContain('Project notes  here.');
+  });
+
+  it('observes the owned frontmatter field and delegates status writes', async () => {
+    const app = await createAppWithFiles({ 'P.md': '---\nstatus: active\n---\n' });
+    const settings = clone();
+    const result = {
+      type: 'ok' as const,
+      previousStatusId: settings.projects.statuses[0]!.id,
+      nextStatusId: settings.projects.statuses[2]!.id,
+    };
+    const commands = {
+      setStatus: vi.fn().mockResolvedValue(result),
+      undoStatus: vi.fn(),
+    } as unknown as ProjectCommandService;
+    const pm = new ProjectManager(app as never, settings, {} as never, {} as never, commands);
+
+    expect(await pm.setStatus('P.md', settings.projects.statuses[2]!.id)).toBe(result);
+    expect(commands.setStatus).toHaveBeenCalledWith(
+      {
+        path: 'P.md',
+        statusId: settings.projects.statuses[0]!.id,
+        rawStatus: null,
+        ownedField: { kind: 'property', property: 'status', rawValue: 'active' },
+      },
+      settings.projects.statuses[2]!.id,
+    );
   });
 
   it('adds a tag marker and strips sibling tag markers for tag-kind statuses', async () => {
     const app = await createAppWithFiles({ 'P.md': '---\ntags:\n  - todo\n  - keepme\n---\n' });
     const settings = clone();
     settings.projects.statuses = [
-      { id: 'todo', label: 'Todo', onLeftPanel: true, match: { kind: 'tag', tag: 'todo' } },
-      { id: 'wip', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
+      {
+        id: 'todo',
+        label: 'Todo',
+        behavior: 'regular',
+        onLeftPanel: true,
+        match: { kind: 'tag', tag: 'todo' },
+      },
+      {
+        id: 'wip',
+        label: 'WIP',
+        behavior: 'regular',
+        onLeftPanel: true,
+        match: { kind: 'tag', tag: 'wip' },
+      },
     ];
     const pm = new ProjectManager(app as never, settings, {} as never, {} as never);
     await pm.setStatus('P.md', 'wip');

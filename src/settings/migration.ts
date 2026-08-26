@@ -1,3 +1,4 @@
+import { inferLifecycleBehavior } from '../projects/lifecycle';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import { buildDefaultProjectsSettings, buildDefaultTaskStatuses } from './defaults';
 import { migrateShortcuts } from './shortcuts';
@@ -32,12 +33,24 @@ function migrateProjects(raw: Record<string, unknown>): void {
   const projects = raw['projects'];
   if (projects && typeof projects === 'object') {
     const p = projects as {
-      statuses?: { id: string }[];
+      statuses?: Array<{ id: string; label?: unknown; behavior?: unknown }>;
       defaultStatusId?: string;
       taskInsertionMode?: string;
       taskInsertionSection?: string;
     };
     const ids = (p.statuses ?? []).map((s) => s.id);
+    for (const status of p.statuses ?? []) {
+      if (
+        status.behavior !== 'regular' &&
+        status.behavior !== 'completed' &&
+        status.behavior !== 'dropped' &&
+        status.behavior !== 'published'
+      ) {
+        status.behavior = inferLifecycleBehavior(
+          typeof status.label === 'string' ? status.label : '',
+        );
+      }
+    }
     if (!p.defaultStatusId || !ids.includes(p.defaultStatusId)) {
       p.defaultStatusId = ids[0] ?? '';
     }

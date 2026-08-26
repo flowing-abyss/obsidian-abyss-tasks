@@ -216,6 +216,32 @@ describe('projects migration', () => {
     expect(projects.taskInsertionMode).toBe('section');
     expect(projects.taskInsertionSection).toBe('## Todo');
   });
+
+  it('infers only unambiguous normalized English lifecycle labels', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [
+          { id: 'a', label: '✅ Done' },
+          { id: 'b', label: '🗑 Drop' },
+          { id: 'c', label: '🚀 Published' },
+          { id: 'd', label: 'Ready to publish' },
+          { id: 'e', label: 'Done someday', behavior: 'regular' },
+        ],
+        defaultStatusId: 'a',
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as { statuses: Array<{ behavior: string }> };
+    expect(projects.statuses.map((status) => status.behavior)).toEqual([
+      'completed',
+      'dropped',
+      'published',
+      'regular',
+      'regular',
+    ]);
+  });
 });
 
 describe('task statuses migration', () => {

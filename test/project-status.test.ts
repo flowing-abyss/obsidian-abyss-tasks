@@ -7,13 +7,21 @@ const S: ProjectStatus[] = [
   {
     id: 'a',
     label: 'Active',
+    behavior: 'regular',
     onLeftPanel: true,
     match: { kind: 'property', property: 'status', value: 'active' },
   },
-  { id: 'w', label: 'WIP', onLeftPanel: true, match: { kind: 'tag', tag: 'wip' } },
+  {
+    id: 'w',
+    label: 'WIP',
+    behavior: 'regular',
+    onLeftPanel: true,
+    match: { kind: 'tag', tag: 'wip' },
+  },
   {
     id: 'd',
     label: 'Done',
+    behavior: 'completed',
     onLeftPanel: false,
     match: { kind: 'property', property: 'status', value: 'done' },
   },

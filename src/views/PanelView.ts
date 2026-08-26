@@ -4,6 +4,7 @@ import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
 import { RightPanel } from '../panels/RightPanel';
+import { ProjectCommandService } from '../projects/ProjectCommandService';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
@@ -163,6 +164,7 @@ export class PanelView extends ItemView {
     private statusRegistry: StatusRegistry,
     private onSaveSettings: () => Promise<void> = async () => {},
     private commentTimeContext?: CommentTimeContextProvider,
+    private projectCommands?: ProjectCommandService,
   ) {
     super(leaf);
   }
@@ -260,7 +262,16 @@ export class PanelView extends ItemView {
     const projectStore = new ProjectStore(this.app, this.queries, this.settings);
     projectStore.initialize();
     this.projectStore = projectStore;
-    const projectManager = new ProjectManager(this.app, this.settings, resolver, selectionTasks);
+    const projectCommands =
+      this.projectCommands ??
+      new ProjectCommandService(this.app, () => this.settings.projects.statuses);
+    const projectManager = new ProjectManager(
+      this.app,
+      this.settings,
+      resolver,
+      selectionTasks,
+      projectCommands,
+    );
 
     this.rail = new RailPanel(this.state, this.app as never, this.panelNavigation);
     this.left = new LeftPanel(

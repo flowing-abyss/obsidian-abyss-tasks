@@ -1,5 +1,6 @@
 import { Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { ProjectCommandService } from './projects/ProjectCommandService';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import { migrateSettings } from './settings/migration';
@@ -38,6 +39,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private taskIndex!: TaskIndex;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
+  private projectCommands!: ProjectCommandService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -83,6 +85,10 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
+    this.projectCommands = new ProjectCommandService(
+      this.app,
+      () => this.settings.projects.statuses,
+    );
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 
     this.registerView(
@@ -97,6 +103,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.statusRegistry,
           () => this.saveSettings(),
           commentTimeContext,
+          this.projectCommands,
         ),
     );
 

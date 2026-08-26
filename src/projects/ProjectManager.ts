@@ -1,13 +1,9 @@
-import { normalizePath, TFile, type App } from 'obsidian';
+import { getAllTags, normalizePath, TFile, type App } from 'obsidian';
 import type { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
-import type { CalendarSettings, ProjectStatus } from '../settings/types';
+import type { CalendarSettings } from '../settings/types';
 import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
-
-function toStringArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) return raw.map((t) => String(t));
-  if (typeof raw === 'string') return [raw];
-  return [];
-}
+import { ProjectCommandService, type ProjectPropertyCommandResult } from './ProjectCommandService';
+import { resolveProjectLifecycle } from './lifecycle';
 
 /**
  * Creates project notes and writes their status markers. Status is stored
@@ -21,6 +17,10 @@ export class ProjectManager {
     private settings: CalendarSettings,
     private resolver: DailyNoteResolver,
     private tasks: TaskApplicationApi,
+    private commands: ProjectCommandService = new ProjectCommandService(
+      app,
+      () => settings.projects.statuses,
+    ),
   ) {}
 
   /**
@@ -43,78 +43,17 @@ export class ProjectManager {
     });
   }
 
-  async setStatus(path: string, statusId: string): Promise<void> {
+  async setStatus(path: string, statusId: string): Promise<ProjectPropertyCommandResult> {
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof TFile)) return;
-    const statuses = this.settings.projects.statuses;
-    const target = statuses.find((s) => s.id === statusId);
-    if (!target) return;
-
-    const propStatuses = statuses.filter((s) => s.match.kind === 'property');
-    const tagStatuses = statuses.filter((s) => s.match.kind === 'tag');
-
-    // Property markers: clear every defined property-status whose value is set,
-    // then apply the target if it is a property status. Unrelated keys untouched.
-    if (propStatuses.length > 0 || target.match.kind === 'property') {
-      await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-        for (const s of propStatuses) {
-          const m = s.match as { property: string; value: string };
-          const cur = fm[m.property];
-          // eslint-disable-next-line @typescript-eslint/no-base-to-string
-          const curStr = cur === null || cur === undefined ? '' : String(cur);
-          if (curStr === m.value) delete fm[m.property];
-        }
-        if (target.match.kind === 'property') {
-          fm[target.match.property] = target.match.value;
-        }
-      });
-    }
-
-    // Tag markers: strip sibling status tags, add the target tag if tag-kind.
-    if (tagStatuses.length > 0 || target.match.kind === 'tag') {
-      await this.applyTagMarkers(file, target, tagStatuses);
-      // Status resolution also reads INLINE body tags (getAllTags), so an inline
-      // marker would otherwise survive and keep matching the old status. Remove
-      // inline occurrences of every defined status tag (they are plugin-managed).
-      await this.stripInlineStatusTags(file, tagStatuses);
-    }
-  }
-
-  private async stripInlineStatusTags(file: TFile, tagStatuses: ProjectStatus[]): Promise<void> {
-    const tags = tagStatuses.map((s) => (s.match as { tag: string }).tag.replace(/^#/, ''));
-    if (tags.length === 0) return;
-    await this.app.vault.process(file, (content) => {
-      let out = content;
-      for (const tag of tags) {
-        const escaped = tag.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
-        // Match an inline #tag (not inside a word/path), keep any leading space.
-        const re = new RegExp(`(^|\\s)#${escaped}(?![\\w/-])`, 'gmu');
-        out = out.replace(re, '$1');
-      }
-      return out;
-    });
-  }
-
-  private async applyTagMarkers(
-    file: TFile,
-    target: ProjectStatus,
-    tagStatuses: ProjectStatus[],
-  ): Promise<void> {
-    await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
-      let tags = toStringArray(fm['tags']);
-      const strip = new Set(
-        tagStatuses.map((s) => (s.match as { tag: string }).tag.replace(/^#/, '').toLowerCase()),
-      );
-      tags = tags.filter((t) => !strip.has(t.replace(/^#/, '').toLowerCase()));
-      if (target.match.kind === 'tag') {
-        const want = target.match.tag.replace(/^#/, '');
-        if (!tags.some((t) => t.replace(/^#/, '').toLowerCase() === want.toLowerCase())) {
-          tags.push(want);
-        }
-      }
-      if (tags.length > 0) fm['tags'] = tags;
-      else delete fm['tags'];
-    });
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    const cache = this.app.metadataCache.getFileCache(file);
+    const frontmatter = (cache?.frontmatter ?? {}) as Record<string, unknown>;
+    const tags = cache ? (getAllTags(cache) ?? []) : [];
+    const observed = {
+      path,
+      ...resolveProjectLifecycle(this.settings.projects.statuses, tags, frontmatter),
+    };
+    return this.commands.setStatus(observed, statusId);
   }
 
   async create(name: string): Promise<TFile | null> {

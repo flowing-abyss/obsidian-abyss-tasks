@@ -1,3 +1,4 @@
+import type { ProjectLifecycleBehavior } from '../projects/lifecycle';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -54,6 +55,7 @@ export interface ProjectStatus {
   label: string;
   color?: string;
   onLeftPanel: boolean;
+  behavior: ProjectLifecycleBehavior;
   match: StatusMatch;
 }
 
