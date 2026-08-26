@@ -7,6 +7,7 @@ import { RightPanel } from '../panels/RightPanel';
 import { ProjectCommandService } from '../projects/ProjectCommandService';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
+import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
@@ -165,6 +166,7 @@ export class PanelView extends ItemView {
     private onSaveSettings: () => Promise<void> = async () => {},
     private commentTimeContext?: CommentTimeContextProvider,
     private projectCommands?: ProjectCommandService,
+    private readonly workNoteIndex?: WorkNoteIndex,
   ) {
     super(leaf);
   }
@@ -259,6 +261,9 @@ export class PanelView extends ItemView {
     });
 
     const resolver = new DailyNoteResolver(this.app, this.settings);
+    // The shared Work Note index is injected here for project workspace consumers.
+    // Reading the current projection has no vault side effects and does not accept an audit.
+    this.workNoteIndex?.list();
     const projectStore = new ProjectStore(this.app, this.queries, this.settings);
     projectStore.initialize();
     this.projectStore = projectStore;

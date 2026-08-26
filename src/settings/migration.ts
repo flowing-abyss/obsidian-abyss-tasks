@@ -1,4 +1,9 @@
 import { inferLifecycleBehavior } from '../projects/lifecycle';
+import {
+  buildDisabledWorkNotePreset,
+  isAuditAccepted,
+  isWorkNotePreset,
+} from '../projects/work-notes/compatibility';
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import {
   buildDefaultProjectsSettings,
@@ -41,6 +46,7 @@ function migrateProjects(raw: Record<string, unknown>): void {
       defaultStatusId?: string;
       taskInsertionMode?: string;
       taskInsertionSection?: string;
+      workNoteCompatibility?: unknown;
       view?: unknown;
     };
     const ids = (p.statuses ?? []).map((s) => s.id);
@@ -66,6 +72,14 @@ function migrateProjects(raw: Record<string, unknown>): void {
     }
     if (typeof p.taskInsertionSection !== 'string') {
       p.taskInsertionSection = defaults.taskInsertionSection;
+    }
+    if (!isWorkNotePreset(p.workNoteCompatibility)) {
+      p.workNoteCompatibility = buildDisabledWorkNotePreset();
+    } else if (
+      'acceptedAudit' in p.workNoteCompatibility &&
+      !isAuditAccepted(p.workNoteCompatibility)
+    ) {
+      delete (p.workNoteCompatibility as { acceptedAudit?: unknown }).acceptedAudit;
     }
     migrateProjectsView(p);
   }

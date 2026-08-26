@@ -1,6 +1,7 @@
 import { Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { ProjectCommandService } from './projects/ProjectCommandService';
+import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import { migrateSettings } from './settings/migration';
@@ -40,6 +41,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectCommands!: ProjectCommandService;
+  private workNoteIndex!: WorkNoteIndex;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -89,6 +91,10 @@ export default class TaskCalendarPlugin extends Plugin {
       this.app,
       () => this.settings.projects.statuses,
     );
+    this.workNoteIndex = new WorkNoteIndex(
+      this.app,
+      () => this.settings.projects.workNoteCompatibility,
+    );
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 
     this.registerView(
@@ -104,6 +110,7 @@ export default class TaskCalendarPlugin extends Plugin {
           () => this.saveSettings(),
           commentTimeContext,
           this.projectCommands,
+          this.workNoteIndex,
         ),
     );
 
@@ -121,6 +128,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
     this.app.workspace.onLayoutReady(() => {
       void this.taskIndex.initialize();
+      this.workNoteIndex.initialize();
     });
 
     // Legacy Dataview shim — remove after users migrate to native `task-calendar` code blocks
@@ -150,6 +158,7 @@ export default class TaskCalendarPlugin extends Plugin {
 
   onunload(): void {
     this.taskIndex.destroy();
+    this.workNoteIndex.destroy();
     delete (window as unknown as Record<string, unknown>).renderCalendar;
   }
 
@@ -164,6 +173,7 @@ export default class TaskCalendarPlugin extends Plugin {
   async saveSettings(): Promise<void> {
     beginSettingsSave(this.settings);
     await this.saveData(this.settings);
+    if (Object.prototype.hasOwnProperty.call(this, 'workNoteIndex')) this.workNoteIndex.refresh();
   }
 
   rebuildTaskStatusSemantics(): void {

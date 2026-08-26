@@ -1,4 +1,5 @@
 import type { ProjectLifecycleBehavior } from '../projects/lifecycle';
+import type { WorkNoteCompatibilityPreset } from '../projects/work-notes/types';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
 import type { ShortcutSettings } from './shortcuts';
 
@@ -96,6 +97,7 @@ export interface ProjectsSettings {
   // project notes can keep tasks under a dedicated heading.
   taskInsertionMode: 'append' | 'section';
   taskInsertionSection: string;
+  workNoteCompatibility: WorkNoteCompatibilityPreset;
   view: ProjectsViewSettings;
 }
 

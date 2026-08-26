@@ -169,6 +169,97 @@ describe('migrateSettings', () => {
 });
 
 describe('projects migration', () => {
+  it('adds a disabled Work Note compatibility preset without accepting an audit', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as Record<string, unknown>;
+    expect(projects['workNoteCompatibility']).toMatchObject({
+      revision: 1,
+      enabled: false,
+    });
+    expect(projects['workNoteCompatibility']).not.toHaveProperty('acceptedAudit');
+  });
+
+  it('preserves unchanged accepted Work Note settings and clears stale acceptance', () => {
+    const accepted = {
+      revision: 1,
+      enabled: true,
+      membershipQuery: '#work-note',
+      ordinaryKindQuery: '#work-note/task',
+      milestoneKindQuery: '#work-note/milestone',
+      folder: 'Tasks',
+      fields: {
+        project: 'Project',
+        status: 'Status',
+        priority: 'Priority',
+        description: 'Description',
+        start: 'Start',
+        end: 'End',
+        created: 'Created',
+        updated: 'Updated',
+        id: 'ID',
+        milestone: 'Milestone',
+        blockedBy: 'Blocked by',
+        related: 'Related',
+      },
+      rawStatusByStatusId: { active: 'Active' },
+      acceptedAudit: {
+        presetFingerprint: 'stale',
+        acceptedRevision: 1,
+        acceptedAt: '2026-08-26T00:00:00.000Z',
+        capabilities: { update: true, create: false },
+      },
+    };
+    const raw: Record<string, unknown> = {
+      projects: { statuses: [], workNoteCompatibility: accepted },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as { workNoteCompatibility: typeof accepted };
+    expect(projects.workNoteCompatibility).toBe(accepted);
+    expect(projects.workNoteCompatibility.acceptedAudit).toBeUndefined();
+  });
+
+  it('replaces a malformed persisted creation contract with a disabled preset', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [],
+        workNoteCompatibility: {
+          revision: 1,
+          enabled: true,
+          membershipQuery: '#work-note',
+          ordinaryKindQuery: '#work-note/task',
+          milestoneKindQuery: '#work-note/milestone',
+          folder: 'Tasks',
+          fields: {
+            project: 'Project',
+            status: 'Status',
+            priority: 'Priority',
+            description: 'Description',
+            start: 'Start',
+            end: 'End',
+            created: 'Created',
+            updated: 'Updated',
+            id: 'ID',
+            milestone: 'Milestone',
+            blockedBy: 'Blocked by',
+            related: 'Related',
+          },
+          rawStatusByStatusId: { active: 'Active' },
+          creation: { folder: '../outside', defaultKind: 'ordinary' },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as Record<string, Record<string, unknown>>;
+    expect(projects['workNoteCompatibility']).toMatchObject({ enabled: false, revision: 1 });
+  });
+
   it('migrates separate persisted Task and Work Note view states without changing the fresh route', () => {
     const raw: Record<string, unknown> = {};
 

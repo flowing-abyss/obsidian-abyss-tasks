@@ -1,3 +1,4 @@
+import { buildDisabledWorkNotePreset } from '../projects/work-notes/compatibility';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
 import type {
@@ -80,6 +81,7 @@ export function buildDefaultProjectsSettings(): ProjectsSettings {
     defaultStatusId: active.id,
     taskInsertionMode: 'append',
     taskInsertionSection: '## Tasks',
+    workNoteCompatibility: buildDisabledWorkNotePreset(),
     view: buildDefaultProjectsView([active.id, planned.id, done.id]),
   };
 }
