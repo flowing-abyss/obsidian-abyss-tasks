@@ -7,12 +7,21 @@ import type {
   TaskCaptureApplicationApi,
   TaskCommandResult,
   TaskCreateSession,
+  TaskPriority,
 } from '../../tasks';
 import { localDate, shiftLocalDate } from '../../tasks';
 
+export interface ProjectCaptureContext {
+  readonly type: 'project-workspace';
+  readonly projectPath: string;
+  readonly destinationPath: string;
+  readonly statusSymbol?: string;
+  readonly priority?: TaskPriority;
+}
+
 export type CaptureContext =
   | { readonly type: 'list'; readonly selection: ListSelection }
-  | { readonly type: 'project-dashboard'; readonly path: string }
+  | ProjectCaptureContext
   | { readonly type: 'default'; readonly source: 'projects' | 'calendar' | 'search' };
 
 export interface CaptureTarget {
@@ -34,12 +43,12 @@ function destinationUnavailableResult(): TaskCommandResult {
 function unavailableSession(): TaskCreateSession {
   return {
     type: 'unavailable',
-    execute: async () => destinationUnavailableResult(),
+    execute: () => Promise.resolve(destinationUnavailableResult()),
   };
 }
 
 function cloneContext(context: CaptureContext): CaptureContext {
-  if (context.type === 'project-dashboard') return { ...context };
+  if (context.type === 'project-workspace') return { ...context };
   if (context.type === 'default') return { ...context };
   return {
     type: 'list',
@@ -62,8 +71,8 @@ export class CaptureTargetResolver {
   async resolve(context: CaptureContext): Promise<CaptureTarget> {
     const frozenContext = cloneContext(context);
     const defaultPrefix = this.settings.taskPrefix.trim();
-    if (frozenContext.type === 'project-dashboard') {
-      return await this.projectTarget(frozenContext, frozenContext.path);
+    if (frozenContext.type === 'project-workspace') {
+      return await this.projectTarget(frozenContext, frozenContext.destinationPath);
     }
     if (frozenContext.type === 'default') {
       if (frozenContext.source === 'calendar') {
@@ -149,7 +158,10 @@ export class CaptureTargetResolver {
     };
   }
 
-  private async projectTarget(context: CaptureContext, path: string): Promise<CaptureTarget> {
+  private async projectTarget(
+    context: CaptureContext,
+    destinationPath: string,
+  ): Promise<CaptureTarget> {
     const insertion =
       this.settings.projects.taskInsertionMode === 'section' &&
       this.settings.projects.taskInsertionSection.trim().length > 0
@@ -159,14 +171,23 @@ export class CaptureTargetResolver {
           }
         : { type: 'append' as const };
     return {
-      label: path,
+      label: destinationPath,
       context,
       session: await this.application.planCreate({
         type: 'explicit',
-        destination: { filePath: path, insertion },
+        destination: { filePath: destinationPath, insertion },
       }),
       markdownPrefix: '',
       markdownSuffixes: [],
+      ...(context.type === 'project-workspace' &&
+        (context.statusSymbol !== undefined || context.priority !== undefined) && {
+          initial: {
+            ...(context.statusSymbol !== undefined && { statusSymbol: context.statusSymbol }),
+            ...(context.priority !== undefined && {
+              priority: { type: 'set' as const, value: context.priority },
+            }),
+          },
+        }),
     };
   }
 }

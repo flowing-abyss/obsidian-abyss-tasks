@@ -16,6 +16,7 @@ import {
   taskRefContentFingerprint,
 } from '../../src/tasks/infrastructure/TaskRefAuthority';
 import { createAppWithFiles, seedTaskCache } from '../helpers';
+import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
 
 interface Harness {
   readonly app: App;
@@ -81,6 +82,193 @@ function patch(
     },
   };
 }
+
+describe.each(['in-memory', 'obsidian'] as const)(
+  '%s coordinated root-tag repository contract',
+  (adapter) => {
+    it('revision-checks and commits same-file multi-root tag changes once', async () => {
+      const path = 'tasks.md';
+      const source = '- [ ] previous #task/next_action\n- [ ] wanted\n';
+      const h = await harness({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const authority = new TaskRefAuthority(`root-tag-${adapter}`);
+      const editor = new TaskBlockEditor();
+      const locator = new TaskLocator(authority);
+      const codec = new TaskMarkdownCodec(statusCatalog);
+      const index = new TaskIndex(h.app, {
+        statusCatalog,
+        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+        refAuthority: authority,
+      });
+      await index.initialize();
+      const roots = index.installCommittedContent(path, source);
+      const previous = roots[0]!;
+      const wanted = roots[1]!;
+      const snapshotState = {
+        currentRoot: (filePath: string, line: number, blockSource: string) =>
+          index.currentRoot(filePath, line, blockSource),
+        authoritySuccessor: (consumed: TaskRef) => index.authoritySuccessor(consumed),
+        previewContent: (filePath: string, content: string) =>
+          index.previewContent(filePath, content),
+        installCommittedContent: (filePath: string, content: string) =>
+          index.installCommittedContent(filePath, content),
+      };
+      const repository =
+        adapter === 'obsidian'
+          ? new ObsidianTaskRepository(h.app, {
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            })
+          : new InMemoryTaskRepository({
+              files: { [path]: source },
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            });
+      const process = vi.spyOn(h.app.vault, 'process');
+      const stage = vi.spyOn(authority, 'stage');
+      const commit = vi.spyOn(authority, 'commit');
+      const acknowledge = vi.spyOn(authority, 'acknowledge');
+      const request = {
+        filePath: path,
+        primary: wanted.ref,
+        changes: [
+          {
+            baseRoot: wanted,
+            baseTarget: { type: 'task' as const, ref: wanted.ref },
+            reconciliation: { observed: wanted },
+            tags: { add: ['#task/next_action'] },
+          },
+          {
+            baseRoot: previous,
+            baseTarget: { type: 'task' as const, ref: previous.ref },
+            reconciliation: { observed: previous },
+            tags: { remove: ['#task/next_action'] },
+          },
+        ],
+      };
+
+      await expect(
+        Promise.resolve().then(() =>
+          (
+            repository as unknown as {
+              editRootTags(value: typeof request): Promise<unknown>;
+            }
+          ).editRootTags(request),
+        ),
+      ).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: {
+          type: 'task',
+          task: { markdownTitle: 'wanted', tags: ['#task/next_action'] },
+        },
+      });
+      const content =
+        adapter === 'obsidian'
+          ? await read(h.app, path)
+          : (repository as InMemoryTaskRepository).content(path);
+      expect(content).toBe('- [ ] previous\n- [ ] wanted #task/next_action\n');
+      expect(stage).toHaveBeenCalledOnce();
+      expect(commit).toHaveBeenCalledOnce();
+      expect(acknowledge).toHaveBeenCalledOnce();
+      if (adapter === 'obsidian') expect(process).toHaveBeenCalledOnce();
+      else expect((repository as InMemoryTaskRepository).multiRootCommits).toHaveLength(1);
+      index.destroy();
+    });
+
+    it('rejects indexed authority divergence before a multi-root commit', async () => {
+      const path = 'tasks.md';
+      const source = '- [ ] previous #task/next_action\n- [ ] wanted\n';
+      const h = await harness({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const authority = new TaskRefAuthority(`root-tag-conflict-${adapter}`);
+      const editor = new TaskBlockEditor();
+      const locator = new TaskLocator(authority);
+      const codec = new TaskMarkdownCodec(statusCatalog);
+      const index = new TaskIndex(h.app, {
+        statusCatalog,
+        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+        refAuthority: authority,
+      });
+      await index.initialize();
+      const [previous, wanted] = index.installCommittedContent(path, source);
+      if (!previous || !wanted) throw new Error('missing roots');
+      const divergent = {
+        ...wanted.ref,
+        revision: authority.mintRevision(wanted.source.originalBlock),
+      };
+      const snapshotState = {
+        currentRoot: (filePath: string, line: number, blockSource: string) =>
+          line === wanted.ref.line ? divergent : index.currentRoot(filePath, line, blockSource),
+        authoritySuccessor: () => undefined,
+        previewContent: (filePath: string, content: string) =>
+          index.previewContent(filePath, content),
+        installCommittedContent: (filePath: string, content: string) =>
+          index.installCommittedContent(filePath, content),
+      };
+      const repository =
+        adapter === 'obsidian'
+          ? new ObsidianTaskRepository(h.app, {
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            })
+          : new InMemoryTaskRepository({
+              files: { [path]: source },
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            });
+      const stage = vi.spyOn(authority, 'stage');
+
+      await expect(
+        repository.editRootTags?.({
+          filePath: path,
+          primary: wanted.ref,
+          changes: [
+            {
+              baseRoot: wanted,
+              baseTarget: { type: 'task', ref: wanted.ref },
+              reconciliation: { observed: wanted },
+              tags: { add: ['#task/next_action'] },
+            },
+            {
+              baseRoot: previous,
+              baseTarget: { type: 'task', ref: previous.ref },
+              reconciliation: { observed: previous },
+              tags: { remove: ['#task/next_action'] },
+            },
+          ],
+        }),
+      ).resolves.toMatchObject({ type: 'conflict' });
+      expect(stage).not.toHaveBeenCalled();
+      const content =
+        adapter === 'obsidian'
+          ? await read(h.app, path)
+          : (repository as InMemoryTaskRepository).content(path);
+      expect(content).toBe(source);
+      index.destroy();
+    });
+  },
+);
 
 describe('ObsidianTaskRepository planning contract', () => {
   it('returns repository-authoritative same-line authority-transition evidence', async () => {

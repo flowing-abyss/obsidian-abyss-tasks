@@ -37,7 +37,10 @@ export interface TaskPatch {
 
 export type SubtaskPatch = Omit<TaskPatch, 'duration'>;
 
-type TaskInitialFields = Omit<TaskPatch, 'markdownTitle'>;
+/** Create-only fields. Checkbox status is intentionally not part of TaskPatch. */
+export interface TaskCreationInitial extends Omit<TaskPatch, 'markdownTitle'> {
+  readonly statusSymbol?: string;
+}
 
 type TaskCreationDestination =
   | { readonly type: 'configured-default' }
@@ -58,7 +61,7 @@ export type TaskCommand =
       readonly type: 'create';
       readonly markdownBody: string;
       readonly destination: TaskCreationDestination;
-      readonly initial?: TaskInitialFields;
+      readonly initial?: TaskCreationInitial;
     }
   | {
       readonly type: 'patch';
@@ -149,6 +152,13 @@ export interface MoveRecovery {
   readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'io-error';
 }
 
+export interface RootTagRecovery {
+  readonly state: 'new-tags-committed-old-tags-remain';
+  readonly appliedTask: TaskSnapshot;
+  readonly remainingTasks: readonly TaskSnapshot[];
+  readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'invalid' | 'io-error';
+}
+
 export type TaskCommandResult =
   | { readonly type: 'ok'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
@@ -156,6 +166,11 @@ export type TaskCommandResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] }
   | { readonly type: 'invalid'; readonly issues: readonly TaskIssue[] }
   | { readonly type: 'partial'; readonly operation: 'move'; readonly recovery: MoveRecovery }
+  | {
+      readonly type: 'partial';
+      readonly operation: 'root-tags';
+      readonly recovery: RootTagRecovery;
+    }
   | {
       readonly type: 'io-error';
       readonly cause: string;

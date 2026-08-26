@@ -110,6 +110,67 @@ function rootRef(harness: Harness, content: string, line = 0): TaskRef {
 for (const adapter of ['in-memory', 'obsidian'] as const) {
   describe(`${adapter} root task lifecycle contract`, () => {
     it.each([
+      ['todo', ' ', '- [ ] initial status'],
+      ['in-progress', '/', '- [/] initial status'],
+      ['done', 'x', '- [x] initial status ✅ 2026-08-01'],
+      ['cancelled', '-', '- [-] initial status ❌ 2026-08-01'],
+    ] as const)(
+      'applies an initial %s checkbox status in the create write',
+      async (_name, symbol, expected) => {
+        const harness = await makeHarness(adapter, '');
+        const catalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+        const application = new TaskApplicationService(
+          taskQueryApi(),
+          harness.repository,
+          catalog,
+          { today: () => localDate('2026-08-01') },
+          undefined,
+          () => ({
+            taskLifecycle: { addCreatedDate: false, addCompletionDate: true },
+            recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
+          }),
+        );
+
+        await expect(
+          application.execute({
+            type: 'create',
+            destination: { type: 'explicit', destination: appendDestination },
+            markdownBody: 'initial status',
+            initial: { statusSymbol: symbol },
+          }),
+        ).resolves.toMatchObject({
+          type: 'ok',
+          outcome: { type: 'task', task: { statusSymbol: symbol } },
+        });
+        expect(await harness.read()).toBe(expected);
+      },
+    );
+
+    it('rejects an unknown initial checkbox status without writing', async () => {
+      const source = '# Tasks\n';
+      const harness = await makeHarness(adapter, source);
+      const application = new TaskApplicationService(
+        taskQueryApi(),
+        harness.repository,
+        new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+        { today: () => localDate('2026-08-01') },
+      );
+
+      await expect(
+        application.execute({
+          type: 'create',
+          destination: { type: 'explicit', destination: appendDestination },
+          markdownBody: 'invalid status',
+          initial: { statusSymbol: '?' },
+        }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-status', field: 'status' }],
+      });
+      expect(await harness.read()).toBe(source);
+    });
+
+    it.each([
       {
         name: 'an empty destination',
         source: '',

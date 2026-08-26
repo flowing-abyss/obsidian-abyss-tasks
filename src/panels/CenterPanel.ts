@@ -9,6 +9,7 @@ import {
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
+import { NextActionService } from '../projects/NextActionService';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
@@ -114,6 +115,7 @@ import {
 } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
+import { renderNextActionControl } from './projects/NextActionControl';
 import { ProjectsPanel } from './projects/ProjectsPanel';
 import { visibleCalendarDates } from './visibleCalendarDates';
 
@@ -238,6 +240,7 @@ export class CenterPanel {
   private searchResultsFrame: number | null = null;
 
   private projectsPanel: ProjectsPanel | null = null;
+  private readonly nextActions: NextActionService | null;
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
   private captureRequestId = 0;
@@ -271,6 +274,7 @@ export class CenterPanel {
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
+    this.nextActions = tasks ? new NextActionService(tasks) : null;
     this.captureTargets = this.captureApplication
       ? new CaptureTargetResolver(this.captureApplication, settings)
       : null;
@@ -562,12 +566,51 @@ export class CenterPanel {
     if (tasks.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      for (const task of tasks) this.renderTaskCard(scroll, task);
+      this.renderProjectTaskCollection(scroll, path, tasks);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
     this.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender();
+  }
+
+  private renderProjectTaskCollection(
+    container: HTMLElement,
+    projectPath: string,
+    tasks: readonly TaskSnapshot[],
+  ): void {
+    const groupBy = this.settings.projects.view.tasks.groupBy;
+    if (groupBy === 'none') {
+      for (const task of tasks) this.renderTaskCard(container, task, { projectPath });
+      return;
+    }
+    const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+    let groups;
+    switch (groupBy) {
+      case 'date':
+        groups = groupTasksByDate([...tasks], today, tomorrow);
+        break;
+      case 'priority':
+        groups = groupTasksByPriority([...tasks]);
+        break;
+      case 'status':
+        groups = groupTasksByStatus([...tasks], this.statusRegistry);
+        break;
+      case 'tag':
+        groups = groupTasksByTag([...tasks]);
+        break;
+    }
+    let first = true;
+    for (const group of groups) {
+      if (group.tasks.length === 0) continue;
+      container.createDiv({
+        cls: first ? 'abyss-group-header abyss-group-header--first' : 'abyss-group-header',
+        text: `${group.label}  ${group.tasks.length}`,
+      });
+      first = false;
+      for (const task of group.tasks) this.renderTaskCard(container, task, { projectPath });
+    }
   }
 
   private destroyCalendarView(): void {
@@ -1667,7 +1710,11 @@ export class CenterPanel {
     for (const task of tasks) this.renderTaskCard(container, task);
   }
 
-  private renderTaskCard(container: HTMLElement, task: TaskSnapshot): void {
+  private renderTaskCard(
+    container: HTMLElement,
+    task: TaskSnapshot,
+    context: { readonly projectPath?: string } = {},
+  ): void {
     const stack = this.state.get('taskStack');
     const root = stack[0];
     const current = stack[stack.length - 1];
@@ -1883,6 +1930,14 @@ export class CenterPanel {
       this.state.set('taskStack', [task]);
     });
 
+    if (context.projectPath !== undefined && this.nextActions) {
+      renderNextActionControl(mainRow, {
+        task,
+        onSet: () => void this.updateProjectNextAction(context.projectPath!, task, false),
+        onClear: () => void this.updateProjectNextAction(context.projectPath!, task, true),
+      });
+    }
+
     // Delete button (visible on hover)
     const deleteBtn = mainRow.createEl('button', {
       cls: 'abyss-task-delete-btn',
@@ -2006,6 +2061,17 @@ export class CenterPanel {
               ),
           );
         }
+      }
+
+      if (context.projectPath !== undefined && this.nextActions) {
+        const active = task.tags.includes('#task/next_action');
+        menu.addItem((item) =>
+          item
+            .setTitle(active ? 'Clear Next Action' : 'Set as Next Action')
+            .setIcon(active ? 'list-x' : 'list-checks')
+            .setSection('actions')
+            .onClick(() => void this.updateProjectNextAction(context.projectPath!, task, active)),
+        );
       }
 
       // ── Priority (submenu) ────────────────────────────────
@@ -2169,6 +2235,18 @@ export class CenterPanel {
         patch: { tags: { add, remove } },
       }),
     );
+  }
+
+  private async updateProjectNextAction(
+    projectPath: string,
+    task: TaskSnapshot,
+    clear: boolean,
+  ): Promise<void> {
+    if (!this.nextActions) return;
+    const result = clear
+      ? await this.nextActions.clear(task)
+      : await this.nextActions.set(projectPath, task);
+    if (result.type !== 'integrity-conflict') presentTaskCommandResult(result);
   }
 
   private async assignTagFromInbox(task: TaskSnapshot, tag: string): Promise<void> {
@@ -2747,7 +2825,11 @@ export class CenterPanel {
     trigger.addEventListener('click', () => {
       const context: CaptureContext =
         placement.type === 'project'
-          ? { type: 'project-dashboard', path: placement.path }
+          ? {
+              type: 'project-workspace',
+              projectPath: placement.path,
+              destinationPath: placement.path,
+            }
           : { type: 'list', selection: this.state.get('selectedList') };
       this.openCapture(placement, context, trigger);
     });

@@ -114,6 +114,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 };
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
+  'TaskApplicationApi.applyRootTagChanges': 'src/projects/NextActionService.ts',
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskQueryApi.isReady': 'src/projects/ProjectStore.ts',

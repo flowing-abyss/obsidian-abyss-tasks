@@ -1,8 +1,18 @@
 import { Menu, setIcon } from 'obsidian';
+import { selectProjectTasks } from '../../projects/selectProjectTasks';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import { joinedNextAction, type ProjectsDashboardContext } from './viewContext';
+
+export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
+export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
+
+function hasDatedTask(snapshot: ProjectWorkspaceSnapshot): boolean {
+  return snapshot.tasks.some(({ task }) =>
+    Boolean(task.planning.start ?? task.planning.scheduled ?? task.planning.due),
+  );
+}
 
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
@@ -22,6 +32,11 @@ export function renderProjectDashboard(
     return;
   }
   const project = snapshot.project;
+  const selectedTasks = selectProjectTasks({
+    actions: snapshot.tasks,
+    viewState: ctx.settings.projects.view.tasks,
+    settings: ctx.settings,
+  });
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
@@ -76,8 +91,63 @@ export function renderProjectDashboard(
     container.createDiv({ cls: 'abyss-project-description', text: desc });
   }
 
-  const taskHost = container.createDiv({ cls: 'abyss-project-tasks' });
-  taskHost.createEl('h3', { cls: 'abyss-project-tasks-title', text: 'Tasks' });
-  const taskContent = taskHost.createDiv({ cls: 'abyss-project-tasks-content' });
-  ctx.renderTasks(taskContent, project.path, snapshot.tasks);
+  let scope: ProjectWorkspaceScope = 'tasks';
+  let layout: ProjectWorkspaceLayout = 'list';
+  const workspace = container.createDiv({
+    cls: 'abyss-project-tasks',
+    attr: { 'data-project-workspace': '' },
+  });
+  workspace.createEl('h3', { cls: 'abyss-project-tasks-title', text: 'Tasks' });
+  const toolbar = workspace.createDiv({ cls: 'abyss-project-workspace-toolbar' });
+  const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
+  const scopeButtons: HTMLButtonElement[] = [];
+  const layoutButtons: HTMLButtonElement[] = [];
+
+  const renderWorkspace = (): void => {
+    workspace.dataset['scope'] = scope;
+    workspace.dataset['layout'] = layout;
+    for (const button of scopeButtons) {
+      button.classList.toggle('is-active', button.dataset['projectScope'] === scope);
+    }
+    for (const button of layoutButtons) {
+      button.classList.toggle('is-active', button.dataset['projectLayout'] === layout);
+    }
+    content.empty();
+    if (scope === 'tasks') {
+      ctx.renderTasks(content, project.path, selectedTasks);
+      return;
+    }
+    content.createDiv({ cls: 'abyss-center-empty', text: 'Work Notes' });
+  };
+
+  const scopeButton = (value: ProjectWorkspaceScope, label: string): void => {
+    const button = toolbar.createEl('button', {
+      text: label,
+      attr: { type: 'button', 'data-project-scope': value },
+    });
+    button.addEventListener('click', () => {
+      scope = value;
+      layout = 'list';
+      renderWorkspace();
+    });
+    scopeButtons.push(button);
+  };
+  const layoutButton = (value: ProjectWorkspaceLayout, label: string): void => {
+    const button = toolbar.createEl('button', {
+      text: label,
+      attr: { type: 'button', 'data-project-layout': value },
+    });
+    button.addEventListener('click', () => {
+      layout = value;
+      renderWorkspace();
+    });
+    layoutButtons.push(button);
+  };
+
+  scopeButton('tasks', 'Tasks');
+  if (snapshot.workNotes.length > 0) scopeButton('work-notes', 'Work Notes');
+  layoutButton('list', 'List');
+  if (snapshot.tasks.length > 0) layoutButton('board', 'Board');
+  if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline');
+  renderWorkspace();
 }

@@ -136,7 +136,11 @@ const scenarios: readonly Scenario[] = [
   },
   {
     name: 'project-dashboard',
-    context: { type: 'project-dashboard', path: 'Projects/Beta.md' },
+    context: {
+      type: 'project-workspace',
+      projectPath: 'Projects/Beta.md',
+      destinationPath: 'Projects/Beta.md',
+    },
     label: 'Projects/Beta.md',
     destination: {
       filePath: 'Projects/Beta.md',
@@ -218,8 +222,9 @@ describe('CaptureTargetResolver', () => {
 
     const target = await resolver.resolve(context);
     const project = await resolver.resolve({
-      type: 'project-dashboard',
-      path: 'Projects/Frozen.md',
+      type: 'project-workspace',
+      projectPath: 'Projects/Frozen.md',
+      destinationPath: 'Projects/Frozen.md',
     });
     const upcoming = await resolver.resolve({ type: 'list', selection: 'upcoming' });
     selection.tag = '#changed';
@@ -244,5 +249,32 @@ describe('CaptureTargetResolver', () => {
     expect(upcoming.initial).toEqual({
       due: { type: 'set', value: localDate('2026-08-23') },
     });
+  });
+
+  it('uses Project destination, status, and priority without inventing a date', async () => {
+    const captureApplication = application();
+    const resolver = new CaptureTargetResolver(captureApplication, settings());
+    const context = {
+      type: 'project-workspace',
+      projectPath: 'Projects/Focused.md',
+      destinationPath: 'Projects/Focused.md',
+      statusSymbol: '/',
+      priority: 'B',
+    } satisfies CaptureContext;
+
+    const target = await resolver.resolve(context);
+
+    expect(target.session).toMatchObject({
+      type: 'ready',
+      destination: {
+        filePath: 'Projects/Focused.md',
+        insertion: { type: 'section', heading: '## Project tasks' },
+      },
+    });
+    expect(target.initial).toMatchObject({
+      statusSymbol: '/',
+      priority: { type: 'set', value: 'B' },
+    });
+    expect(target.initial).not.toHaveProperty('due');
   });
 });

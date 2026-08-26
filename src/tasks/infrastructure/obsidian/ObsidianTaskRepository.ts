@@ -4,12 +4,14 @@ import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,
   RevisionPrecondition,
+  RootTagRevisionChange,
   TaskDraft,
   TaskEditCommand,
   TaskEditRequest,
   TaskMoveRequest,
   TaskRepository,
   TaskRepositoryResult,
+  TaskRootTagEditRequest,
 } from '../../application/TaskRepository';
 import type {
   MoveRecovery,
@@ -54,6 +56,18 @@ import {
 } from '../TaskRefAuthority';
 
 type LocateResult = ReturnType<TaskLocator['locate']>;
+
+function primaryRootTagChange(request: TaskRootTagEditRequest): RootTagRevisionChange | undefined {
+  if (request.changes.some(({ baseRoot }) => baseRoot.ref.filePath !== request.filePath)) {
+    return undefined;
+  }
+  return request.changes.find(
+    ({ baseRoot }) =>
+      baseRoot.ref.filePath === request.primary.filePath &&
+      baseRoot.ref.line === request.primary.line &&
+      baseRoot.ref.revision === request.primary.revision,
+  );
+}
 
 function preparedRevisionResult(
   prepared: RevisionPrecondition | undefined,
@@ -1064,6 +1078,213 @@ export class ObsidianTaskRepository implements TaskRepository {
         type: 'io-error',
         cause: 'process-error',
         path: rootRef.filePath,
+        contentState: 'unknown',
+      }
+    );
+  }
+
+  private snapshotsForCandidate(filePath: string, content: string): readonly TaskSnapshot[] {
+    return (
+      this.options.snapshotState?.previewContent(filePath, content) ??
+      this.options.snapshotsFromContent(filePath, content)
+    );
+  }
+
+  private rootTagAuthorityConflict(
+    filePath: string,
+    candidate: string,
+    change: RootTagRevisionChange,
+    located: LocateResult,
+  ): TaskRepositoryResult | undefined {
+    const evidence = this.options.refAuthority?.evidence(change.baseRoot.ref.revision);
+    const indexedRef =
+      evidence &&
+      this.options.snapshotState?.currentRoot(filePath, change.baseRoot.ref.line, evidence.source);
+    if (
+      !this.options.refAuthority ||
+      !this.options.snapshotState ||
+      indexedRef?.revision === change.baseRoot.ref.revision
+    ) {
+      return undefined;
+    }
+    if (located.type !== 'exact') {
+      return this.resolutionResultForRef(located, change.baseRoot.ref, candidate);
+    }
+    const current = this.snapshotFor(filePath, candidate, located.block);
+    return current
+      ? { type: 'conflict', current }
+      : { type: 'not-found', target: { type: 'task', ref: change.baseRoot.ref } };
+  }
+
+  async editRootTags(request: TaskRootTagEditRequest): Promise<TaskRepositoryResult> {
+    const file = this.app.vault.getAbstractFileByPath(request.filePath);
+    if (!(file instanceof TFile)) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'root-tags' }] };
+    }
+    const primaryChange = primaryRootTagChange(request);
+    if (!primaryChange) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'root-tags' }] };
+    }
+
+    let result: TaskRepositoryResult | undefined;
+    let transitionToken: object | undefined;
+    let committedContent: string | undefined;
+    try {
+      await this.processFile(file, (content) => {
+        let candidate = content;
+        let changed = false;
+        for (const change of request.changes) {
+          const blocks = this.options.editor.rootBlocks(candidate);
+          const located = this.options.locator.locate(blocks, change.baseRoot.ref);
+          const revisionResult = preparedRevisionResult(
+            change,
+            located,
+            this.options.snapshotState?.authoritySuccessor?.(change.baseRoot.ref),
+            (currentRef) => this.options.locator.locate(blocks, currentRef),
+            (block) => this.snapshotFor(request.filePath, candidate, block),
+          );
+          if (revisionResult) {
+            result = revisionResult;
+            return content;
+          }
+          const authorityConflict = this.rootTagAuthorityConflict(
+            request.filePath,
+            candidate,
+            change,
+            located,
+          );
+          if (authorityConflict) {
+            result = authorityConflict;
+            return content;
+          }
+          if (located.type !== 'exact') {
+            result = this.resolutionResultForRef(located, change.baseRoot.ref, candidate);
+            return content;
+          }
+          const sourceLine = candidate.split(/\r?\n/u)[located.block.line];
+          if (sourceLine === undefined) {
+            result = { type: 'not-found', target: { type: 'task', ref: change.baseRoot.ref } };
+            return content;
+          }
+          const edited = applyTaskCommand(this.options.codec, sourceLine, {
+            type: 'patch',
+            target: { type: 'task', ref: change.baseRoot.ref },
+            patch: { tags: change.tags },
+          });
+          if (edited.type === 'invalid') {
+            result = edited;
+            return content;
+          }
+          if (edited.type === 'unchanged') continue;
+          candidate = this.options.editor.replaceLine(
+            candidate,
+            located.block,
+            0,
+            edited.content,
+          ).content;
+          changed = true;
+        }
+
+        const candidateTasks = this.snapshotsForCandidate(request.filePath, candidate);
+        const primary = candidateTasks.find((task) => task.source.line === request.primary.line);
+        if (!primary) {
+          result = { type: 'not-found', target: { type: 'task', ref: request.primary } };
+          return content;
+        }
+        const roots = request.changes.flatMap((change) => {
+          const root = candidateTasks.find(
+            (task) => task.source.line === change.baseRoot.source.line,
+          );
+          return root ? [root] : [];
+        });
+        result = { type: 'committed', outcome: { type: 'task', task: primary }, roots, changed };
+        if (!changed) return content;
+
+        if (this.options.refAuthority && this.options.snapshotState) {
+          const finalBlocks = new Map(
+            this.options.editor.rootBlocks(candidate).map((block) => [block.line, block] as const),
+          );
+          const roots: RootRevisionOverride[] = [];
+          for (const change of request.changes) {
+            const block = finalBlocks.get(change.baseRoot.source.line);
+            const revision =
+              block &&
+              this.options.refAuthority.successor(change.baseRoot.ref.revision, block.source);
+            if (!block || !revision) {
+              result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+              return content;
+            }
+            roots.push({ line: block.line, source: block.source, revision });
+          }
+          const primaryEvidence = this.options.refAuthority.evidence(
+            primaryChange.baseRoot.ref.revision,
+          );
+          const indexedPrimary =
+            primaryEvidence &&
+            this.options.snapshotState.currentRoot(
+              request.filePath,
+              primaryChange.baseRoot.ref.line,
+              primaryEvidence.source,
+            );
+          const staged = this.options.refAuthority.stage(
+            {
+              filePath: request.filePath,
+              candidateFingerprint: taskRefContentFingerprint(candidate),
+              candidateLength: candidate.length,
+              expectedRevision: primaryChange.baseRoot.ref.revision,
+              roots,
+            },
+            indexedPrimary?.revision ?? '',
+          );
+          if (staged.type === 'conflict') {
+            result = { type: 'conflict', current: primaryChange.baseRoot };
+            return content;
+          }
+          transitionToken = staged.token;
+        }
+        committedContent = candidate;
+        return candidate;
+      });
+    } catch {
+      if (transitionToken) {
+        await this.abortAndReconcileTransition(
+          file,
+          request.filePath,
+          transitionToken,
+          request.primary,
+        );
+      } else if (committedContent !== undefined) {
+        await this.reconcileAfterRejection(file, request.filePath);
+      }
+      return {
+        type: 'io-error',
+        cause: 'process-error',
+        path: request.filePath,
+        contentState: 'unknown',
+      };
+    }
+    if (result?.type === 'committed' && result.changed && committedContent !== undefined) {
+      if (transitionToken) this.options.refAuthority?.commit(transitionToken);
+      const installed = this.options.snapshotState?.installCommittedContent(
+        request.filePath,
+        committedContent,
+      );
+      if (transitionToken)
+        this.options.refAuthority?.acknowledge(request.filePath, committedContent);
+      if (result.outcome.type === 'task' && installed) {
+        const primary = installed.find((task) => task.source.line === request.primary.line);
+        const roots = request.changes.flatMap((change) => {
+          const root = installed.find((task) => task.source.line === change.baseRoot.source.line);
+          return root ? [root] : [];
+        });
+        if (primary) result = { ...result, outcome: { type: 'task', task: primary }, roots };
+      }
+    }
+    return (
+      result ?? {
+        type: 'io-error',
+        cause: 'process-error',
+        path: request.filePath,
         contentState: 'unknown',
       }
     );

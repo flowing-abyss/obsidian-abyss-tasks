@@ -209,7 +209,7 @@ describe('PanelView', () => {
     expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).toContain(
       'Joined open',
     );
-    expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).toContain(
+    expect(view.contentEl.querySelector('.abyss-project-tasks')?.textContent).not.toContain(
       'Joined done',
     );
 

@@ -11,6 +11,19 @@ export interface TaskListSelectionInput {
   readonly textQuery?: string;
 }
 
+export interface TaskCollectionSelectionInput {
+  readonly tasks: readonly TaskSnapshot[];
+  readonly viewState: {
+    readonly groupBy: ListViewState['groupBy'];
+    readonly sortBy: ListViewState['sortBy'];
+    readonly filters: readonly PropertyFilter[];
+    readonly statusGroups?: readonly TaskStatusType[];
+  };
+  readonly settings: CalendarSettings;
+  readonly textQuery?: string;
+  readonly tieBreak?: (left: TaskSnapshot, right: TaskSnapshot) => number;
+}
+
 function dateOf(task: TaskSnapshot): string | undefined {
   return task.planning.due ?? task.planning.scheduled ?? task.planning.start;
 }
@@ -88,7 +101,11 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
   return a.localeCompare(b);
 }
 
-function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelectionInput): number {
+function compare(
+  left: TaskSnapshot,
+  right: TaskSnapshot,
+  input: Pick<TaskCollectionSelectionInput, 'viewState' | 'settings'>,
+): number {
   const field = input.viewState.sortBy.field;
   if (field === 'date') {
     return (
@@ -108,10 +125,21 @@ function compare(left: TaskSnapshot, right: TaskSnapshot, input: TaskListSelecti
 }
 
 export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnapshot[] {
+  return selectTaskCollection({
+    tasks: input.tasks.filter((task) =>
+      selected(task, input.selection, input.settings, input.today),
+    ),
+    viewState: input.viewState,
+    settings: input.settings,
+    ...(input.textQuery !== undefined && { textQuery: input.textQuery }),
+  });
+}
+
+/** Applies the shared user-controlled filter and primary-sort contract to any task collection. */
+export function selectTaskCollection(input: TaskCollectionSelectionInput): readonly TaskSnapshot[] {
   const allowed = input.viewState.statusGroups;
   const query = input.textQuery?.toLowerCase();
   return input.tasks
-    .filter((task) => selected(task, input.selection, input.settings, input.today))
     .filter(
       (task) =>
         !allowed ||
@@ -130,7 +158,7 @@ export function selectTaskList(input: TaskListSelectionInput): readonly TaskSnap
     .sort((left, right) => {
       const explicit = compare(left, right, input);
       if (explicit !== 0) return input.viewState.sortBy.dir === 'asc' ? explicit : -explicit;
-      return compareCreated(left, right);
+      return input.tieBreak?.(left, right) ?? compareCreated(left, right);
     });
 }
 

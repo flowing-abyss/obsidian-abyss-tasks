@@ -711,7 +711,11 @@ export class PanelView extends ItemView {
     if (mode === 'projects') {
       const projectsPanel = this.state.get('projectsPanel');
       if (projectsPanel.view === 'dashboard') {
-        return { type: 'project-dashboard', path: projectsPanel.path };
+        return {
+          type: 'project-workspace',
+          projectPath: projectsPanel.path,
+          destinationPath: projectsPanel.path,
+        };
       }
     }
     return { type: 'default', source: mode };

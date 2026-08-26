@@ -109,6 +109,21 @@ export function createTaskBlock(
     content = sourceLines.join('\n');
   }
 
+  if (draft.initialStatus !== undefined) {
+    const status = applyTaskCommand(codec, sourceLines[0]!, {
+      type: 'set-status',
+      target: { type: 'task', ref: DRAFT_REF },
+      symbol: draft.initialStatus.symbol,
+      ...(draft.initialStatus.stamp !== undefined && { stamp: draft.initialStatus.stamp }),
+      ...(draft.initialStatus.addCompletionDate !== undefined && {
+        addCompletionDate: draft.initialStatus.addCompletionDate,
+      }),
+    });
+    if (status.type === 'invalid') return status;
+    sourceLines[0] = status.content;
+    content = sourceLines.join('\n');
+  }
+
   if (!draft.addCreatedDate) return { type: 'created', content };
   const stamped = content.split('\n').map((sourceLine) => {
     const parsed = codec.parseLine(sourceLine, { filePath: '', line: 0 });

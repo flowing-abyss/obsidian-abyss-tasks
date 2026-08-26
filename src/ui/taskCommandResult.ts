@@ -167,7 +167,10 @@ function describeCommandError(
       return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
     case 'partial':
       return {
-        message: 'The task was copied, but the original could not be removed.',
+        message:
+          result.operation === 'move'
+            ? 'The task was copied, but the original could not be removed.'
+            : 'The new task tags were saved, but older tags could not be removed.',
         requiresRecovery: true,
       };
   }
@@ -178,7 +181,7 @@ export function presentTaskMoveResult(
   tasks: TaskApplicationApi,
   result: TaskCommandResult,
 ): void {
-  if (result.type === 'partial') {
+  if (result.type === 'partial' && result.operation === 'move') {
     new TaskMoveRecoveryModal(app, tasks, result.recovery).open();
     return;
   }

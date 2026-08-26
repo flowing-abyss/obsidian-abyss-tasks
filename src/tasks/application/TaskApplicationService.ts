@@ -27,6 +27,7 @@ import type {
   TaskCaptureApplicationApi,
   TaskCreateSession,
   TaskQueryApi,
+  TaskRootTagChangesIntent,
 } from './TaskApplicationApi';
 import type { TaskBehaviorSettings, TaskBehaviorSettingsProvider } from './TaskBehaviorSettings';
 import type {
@@ -42,6 +43,7 @@ import type {
   TaskMoveRequest,
   TaskRepository,
   TaskRepositoryResult,
+  TaskRootTagEditRequest,
 } from './TaskRepository';
 import {
   prepareRetry,
@@ -69,6 +71,14 @@ function normalizeTagChange(tags: NonNullable<import('../domain/commands').TaskP
     ...(tags.add !== undefined && { add: add.filter((tag) => !removed.has(tag)) }),
     ...(tags.remove !== undefined && { remove }),
   };
+}
+
+function withoutInitialStatus(
+  initial: CreateTaskCommandInitial,
+): Omit<CreateTaskCommandInitial, 'statusSymbol'> {
+  const fields = { ...initial };
+  delete fields.statusSymbol;
+  return fields;
 }
 
 function rootRefOf(target: TaskStatusTarget): TaskRef {
@@ -430,6 +440,76 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     }
   }
 
+  async applyRootTagChanges(intent: TaskRootTagChangesIntent): Promise<TaskCommandResult> {
+    try {
+      if (intent.changes.length === 0) {
+        return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'root-tags' }] };
+      }
+      const prepared: TaskRootTagEditRequest['changes'][number][] = [];
+      for (const change of intent.changes) {
+        const tags = normalizeTagChange(change.tags);
+        if (tags === undefined) {
+          return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] };
+        }
+        const target = { type: 'task' as const, ref: change.task.ref };
+        const recent = this.recentFor(target);
+        const resolution: TaskResolution = recent
+          ? { type: 'exact', task: recent, basis: { observed: recent } }
+          : this.queries.resolve(change.task.ref);
+        if (resolution.type === 'ambiguous') {
+          return {
+            type: 'ambiguous',
+            candidates: resolution.candidates.map((candidate) => ({
+              root: candidate.root,
+              target: { type: 'task', ref: candidate.root.ref },
+            })),
+          };
+        }
+        if (resolution.type !== 'exact' && resolution.type !== 'rebased') {
+          return { type: 'not-found', target };
+        }
+        const current = resolution.type === 'exact' ? resolution.task : resolution.current;
+        prepared.push({
+          baseRoot: current,
+          baseTarget: { type: 'task', ref: current.ref },
+          reconciliation: resolution.basis,
+          tags,
+        });
+      }
+
+      const primaryIndex = prepared.findIndex(
+        ({ baseRoot }) =>
+          baseRoot.ref.filePath === intent.primary.filePath &&
+          baseRoot.ref.line === intent.primary.line,
+      );
+      if (primaryIndex < 0) {
+        return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'root-tags' }] };
+      }
+      const primary = prepared[primaryIndex]!;
+      const ordered = [primary, ...prepared.filter((_, index) => index !== primaryIndex)];
+      const files = new Set(ordered.map(({ baseRoot }) => baseRoot.ref.filePath));
+      if (files.size === 1) {
+        if (!this.repository.editRootTags) {
+          return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+        }
+        const result = await this.repository.editRootTags({
+          filePath: primary.baseRoot.ref.filePath,
+          primary: primary.baseRoot.ref,
+          changes: ordered,
+        });
+        if (result.type === 'committed') {
+          for (const root of result.roots ?? []) this.remember(root);
+          if (result.outcome.type === 'task') this.remember(result.outcome.task);
+        }
+        return this.terminalRepositoryResult(result);
+      }
+
+      return await this.applyCrossFileRootTags(intent, ordered);
+    } catch {
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+    }
+  }
+
   async execute(command: TaskCommand): Promise<TaskCommandResult> {
     try {
       const inputIssue = multilineInputIssue(command);
@@ -519,6 +599,62 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return await this.finishPrepared(prepared, await this.dispatch(request));
   }
 
+  private async applyCrossFileRootTags(
+    intent: TaskRootTagChangesIntent,
+    prepared: readonly TaskRootTagEditRequest['changes'][number][],
+  ): Promise<TaskCommandResult> {
+    let appliedPrimary: TaskSnapshot | undefined;
+    let changed = false;
+    for (let index = 0; index < prepared.length; index++) {
+      const change = prepared[index]!;
+      const command: TaskEditCommand = {
+        type: 'patch',
+        target: { type: 'task', ref: change.baseRoot.ref },
+        patch: { tags: change.tags },
+      };
+      const request: TaskEditRequest = { command, ...change };
+      const result = await this.repository.edit(
+        this.repository.supportsRevisionPreconditions === true ? request : command,
+      );
+      if (result.type !== 'committed') {
+        const terminal = this.terminalRepositoryResult(result);
+        if (!appliedPrimary) return terminal;
+        const cause =
+          terminal.type === 'conflict' ||
+          terminal.type === 'not-found' ||
+          terminal.type === 'ambiguous' ||
+          terminal.type === 'invalid' ||
+          terminal.type === 'io-error'
+            ? terminal.type
+            : 'io-error';
+        return {
+          type: 'partial',
+          operation: 'root-tags',
+          recovery: {
+            state: 'new-tags-committed-old-tags-remain',
+            appliedTask: appliedPrimary,
+            remainingTasks: prepared.slice(index).map(({ baseRoot }) => baseRoot),
+            cause,
+          },
+        };
+      }
+      changed ||= result.changed;
+      if (result.outcome.type !== 'task') {
+        return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+      }
+      this.remember(result.outcome.task);
+      if (
+        change.baseRoot.ref.filePath === intent.primary.filePath &&
+        change.baseRoot.ref.line === intent.primary.line
+      ) {
+        appliedPrimary = result.outcome.task;
+      }
+    }
+    return appliedPrimary
+      ? { type: 'ok', outcome: { type: 'task', task: appliedPrimary }, changed }
+      : { type: 'invalid', issues: [{ code: 'invalid-target', field: 'root-tags' }] };
+  }
+
   private async create(
     command: CreateTaskCommand,
     settings: TaskBehaviorSettings,
@@ -558,17 +694,36 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     if (resolution === undefined || resolution.type === 'unavailable') {
       return destinationUnavailableResult();
     }
+    const statusRule =
+      request.initial?.statusSymbol === undefined
+        ? undefined
+        : this.statusCatalog.ruleForSymbol(request.initial.statusSymbol);
+    if (request.initial?.statusSymbol !== undefined && statusRule === undefined) {
+      return { type: 'invalid', issues: [{ code: 'invalid-status', field: 'status' }] };
+    }
     const tags = request.initial?.tags && normalizeTagChange(request.initial.tags);
     if (request.initial?.tags !== undefined && tags === undefined) {
       return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] };
     }
-    const initial =
-      request.initial === undefined
-        ? undefined
-        : { ...request.initial, ...(tags !== undefined && { tags }) };
+    const initial = (() => {
+      if (request.initial === undefined) return undefined;
+      const fields = withoutInitialStatus(request.initial);
+      return { ...fields, ...(tags !== undefined && { tags }) };
+    })();
     const result = await this.repository.create(resolution.destination, {
       markdownBody: request.markdownBody,
       ...(initial !== undefined && { initial }),
+      ...(statusRule !== undefined && {
+        initialStatus: {
+          symbol: statusRule.symbol,
+          ...((statusRule.type === 'done' || statusRule.type === 'cancelled') && {
+            stamp: reading.localDate,
+          }),
+          ...(statusRule.type === 'done' && {
+            addCompletionDate: settings.taskLifecycle.addCompletionDate,
+          }),
+        },
+      }),
       today: reading.localDate,
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
@@ -592,7 +747,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     };
     return {
       destination: planned,
-      prepare: async () => ({ type: 'resolved', destination: planned }),
+      prepare: () => Promise.resolve({ type: 'resolved', destination: planned }),
     };
   }
 
@@ -630,7 +785,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   private unavailableCreateSession(): TaskCreateSession {
     return {
       type: 'unavailable',
-      execute: async () => destinationUnavailableResult(),
+      execute: () => Promise.resolve(destinationUnavailableResult()),
     };
   }
 

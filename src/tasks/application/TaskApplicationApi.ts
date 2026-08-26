@@ -72,6 +72,21 @@ export interface TaskQueryApi {
 export interface TaskApplicationApi {
   readonly queries: TaskQueryApi;
   execute(command: TaskCommand): Promise<TaskCommandResult>;
+  applyRootTagChanges?(intent: TaskRootTagChangesIntent): Promise<TaskCommandResult>;
+}
+
+export interface TaskRootTagChange {
+  readonly task: TaskSnapshot;
+  readonly tags: {
+    readonly add?: readonly string[];
+    readonly remove?: readonly string[];
+  };
+}
+
+/** Neutral ordered root-tag intent used by any feature that coordinates canonical task roots. */
+export interface TaskRootTagChangesIntent {
+  readonly primary: TaskRef;
+  readonly changes: readonly TaskRootTagChange[];
 }
 
 export type CreateTaskCommand = Extract<TaskCommand, { readonly type: 'create' }>;

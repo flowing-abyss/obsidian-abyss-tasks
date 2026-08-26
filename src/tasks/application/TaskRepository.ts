@@ -51,7 +51,15 @@ export type TaskEditCommand =
 
 export interface TaskDraft {
   readonly markdownBody: string;
-  readonly initial?: NonNullable<Extract<TaskCommand, { readonly type: 'create' }>['initial']>;
+  readonly initial?: Omit<
+    NonNullable<Extract<TaskCommand, { readonly type: 'create' }>['initial']>,
+    'statusSymbol'
+  >;
+  readonly initialStatus?: {
+    readonly symbol: string;
+    readonly stamp?: LocalDate;
+    readonly addCompletionDate?: boolean;
+  };
   readonly today?: LocalDate;
   readonly addCreatedDate?: boolean;
 }
@@ -81,6 +89,16 @@ export interface TaskMoveRequest extends RevisionPrecondition {
   readonly destination: TaskDestination;
 }
 
+export interface RootTagRevisionChange extends RevisionPrecondition {
+  readonly tags: NonNullable<import('../domain/commands').TaskPatch['tags']>;
+}
+
+export interface TaskRootTagEditRequest {
+  readonly filePath: string;
+  readonly primary: TaskRef;
+  readonly changes: readonly RootTagRevisionChange[];
+}
+
 export interface RecurrenceCompletionRevisionRequest extends RevisionPrecondition {
   readonly command: RecurrenceCompletionRequest;
   readonly baseOwnedDescendants: string;
@@ -97,7 +115,12 @@ export type RepositoryRevisionResult =
   | { readonly type: 'ambiguous'; readonly candidates: readonly TaskResolutionCandidate[] };
 
 export type TaskRepositoryResult =
-  | { readonly type: 'committed'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
+  | {
+      readonly type: 'committed';
+      readonly outcome: TaskCommandOutcome;
+      readonly changed: boolean;
+      readonly roots?: readonly TaskSnapshot[];
+    }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
   | RepositoryRevisionResult
   | { readonly type: 'not-found'; readonly target: TaskMutationTarget }
@@ -123,4 +146,5 @@ export interface TaskRepository {
     request: TaskMoveRequest | TaskRef,
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult>;
+  editRootTags?(request: TaskRootTagEditRequest): Promise<TaskRepositoryResult>;
 }

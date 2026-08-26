@@ -2293,6 +2293,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
 
   async function projectCaptureHarness(
     implementation: TaskCreateSession['execute'] = async () => projectCaptureSuccess(),
+    settings: CalendarSettings = DEFAULT_SETTINGS,
   ): Promise<{
     panel: CenterPanel;
     state: AppState;
@@ -2325,7 +2326,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       name: 'A',
       frontmatter: {},
       tags: [],
-      statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
+      statusId: settings.projects.statuses[0]!.id,
       rawStatus: null,
       stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
     };
@@ -2339,9 +2340,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     const panel = new CenterPanel(
       state,
       app,
-      DEFAULT_SETTINGS,
+      settings,
       queries,
-      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      new StatusRegistry(settings.taskStatuses),
       undefined,
       projectStore,
       stubProjectManager(),
@@ -2358,6 +2359,68 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     state.set('mode', 'projects');
     return { panel, state, container, sessionExecute };
   }
+
+  it('renders Next Action as an icon-only Project task-card control', async () => {
+    const { panel, container } = await projectCaptureHarness();
+    try {
+      const card = container.querySelector<HTMLElement>('.abyss-task-card')!;
+      const control = card.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]');
+
+      expect(control).not.toBeNull();
+      expect(control?.textContent?.trim()).toBe('');
+      expect(control?.getAttribute('title')).toBeTruthy();
+      expect(card.querySelector('.abyss-next-action-slot')).toBeNull();
+      expect(card.textContent).not.toMatch(/Choose Next Action|Next Action/u);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('reuses the shared capture surface and controller lifecycle in Project context', async () => {
+    const { panel, container, sessionExecute } = await projectCaptureHarness();
+    try {
+      const trigger = container.querySelector<HTMLButtonElement>('.abyss-add-task-trigger')!;
+      const input = await openListCapture(container);
+      const surface = input.closest<HTMLElement>('.abyss-capture-surface');
+
+      expect(input.classList).toContain('abyss-capture-input');
+      expect(surface?.classList).toContain('abyss-capture-surface--inline');
+      expect(surface?.querySelector('.abyss-capture-destination')).not.toBeNull();
+      expect(container.querySelector('.abyss-project-capture-input')).toBeNull();
+
+      setCaptureDraft(input, 'first shared capture');
+      input.focus();
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledOnce();
+      expect(input.value).toBe('');
+      expect(activeDocument.activeElement).toBe(input);
+      expect(trigger.hidden).toBe(true);
+
+      pressCaptureKey(input, 'Escape');
+      expect(container.querySelector('.abyss-capture-surface')).toBeNull();
+      expect(trigger.hidden).toBe(false);
+      expect(activeDocument.activeElement).toBe(trigger);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('renders Project task cards with the user Project grouping setting', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.tasks = { ...settings.projects.view.tasks, groupBy: 'priority' };
+    const { panel, container } = await projectCaptureHarness(undefined, settings);
+    try {
+      expect(container.querySelector('.abyss-group-header')).not.toBeNull();
+      expect(container.querySelectorAll('.abyss-task-card')).toHaveLength(1);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
 
   it('mounts the projects panel on a child host, not the shared center element', async () => {
     const { state, el } = await makeProjectsPanel();
