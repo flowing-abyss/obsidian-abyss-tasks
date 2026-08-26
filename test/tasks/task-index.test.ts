@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
+import { TFile, TFolder, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskIndexEvent } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
@@ -131,6 +131,24 @@ function captureCreateCallback(
   return (file: TAbstractFile): void => {
     if (!captured) throw new Error('captureCreateCallback: no create handler registered');
     captured(file);
+  };
+}
+
+function captureRenameCallback(
+  app: Awaited<ReturnType<typeof createAppWithFiles>>,
+): (file: TAbstractFile, oldPath: string) => void {
+  let captured: ((file: TAbstractFile, oldPath: string) => void) | undefined;
+  const originalOn = app.vault.on.bind(app.vault) as (
+    name: string,
+    callback: (...args: unknown[]) => void,
+  ) => unknown;
+  app.vault.on = ((name: string, callback: (...args: unknown[]) => void) => {
+    if (name === 'rename') captured = callback as (file: TAbstractFile, oldPath: string) => void;
+    return originalOn(name, callback);
+  }) as typeof app.vault.on;
+  return (file: TAbstractFile, oldPath: string): void => {
+    if (!captured) throw new Error('captureRenameCallback: no rename handler registered');
+    captured(file, oldPath);
   };
 }
 
@@ -795,6 +813,64 @@ describe('TaskIndex lifecycle and events', () => {
     expect(index.list({ filePath: 'created.md' })).toEqual([]);
     expect(events).toContainEqual({ type: 'renamed', oldPath: 'old.md', newPath: 'new.md' });
     expect(events).toContainEqual({ type: 'deleted', path: 'created.md' });
+    index.destroy();
+  });
+
+  it('reindexes a renamed folder and emits one typed topology settlement for every descendant', async () => {
+    const { app, index } = await setup({
+      'Workspace/A.md': '- [ ] alpha',
+      'Workspace/Empty.md': 'no tasks',
+    });
+    const fireRename = captureRenameCallback(app);
+    await index.initialize();
+    const changed: TaskIndexEvent[] = [];
+    const settled: unknown[] = [];
+    index.subscribe((event) => changed.push(event));
+    index.subscribeSettled((event) => settled.push(event));
+    const files = app.vault.getMarkdownFiles();
+    const contents = new Map(
+      await Promise.all(
+        files.map(async (file) => [file, await app.vault.cachedRead(file)] as const),
+      ),
+    );
+    for (const file of files)
+      Object.assign(file, { path: file.path.replace('Workspace/', 'Archive/') });
+    app.vault.getMarkdownFiles = () => files;
+    app.vault.getAbstractFileByPath = (path) => files.find((file) => file.path === path) ?? null;
+    app.vault.cachedRead = async (file) => contents.get(file) ?? '';
+    const folder = Object.assign(Object.create(TFolder.prototype) as object, {
+      path: 'Archive',
+      name: 'Archive',
+      children: files,
+    }) as unknown as TFolder;
+
+    fireRename(folder, 'Workspace');
+    await flushMicrotasks();
+
+    expect(app.vault.getMarkdownFiles().map(({ path }) => path)).toEqual([
+      'Archive/A.md',
+      'Archive/Empty.md',
+    ]);
+    expect(index.list({ filePath: 'Workspace/A.md' })).toEqual([]);
+    expect(index.list({ filePath: 'Archive/A.md' }).map(({ title }) => title)).toEqual(['alpha']);
+    expect(changed).toEqual([{ type: 'changed', files: ['Archive/A.md', 'Workspace/A.md'] }]);
+    expect(settled).toEqual([
+      {
+        type: 'settled',
+        reason: 'topology',
+        topology: {
+          type: 'folder-rename',
+          oldPath: 'Workspace',
+          newPath: 'Archive',
+        },
+        files: [
+          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Archive/Empty.md', generation: 1 },
+          { path: 'Workspace/A.md', generation: 2 },
+          { path: 'Workspace/Empty.md', generation: 2 },
+        ],
+      },
+    ]);
     index.destroy();
   });
 

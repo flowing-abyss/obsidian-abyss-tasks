@@ -1,6 +1,7 @@
 import {
   parseYaml,
   TFile,
+  TFolder,
   type App,
   type CachedMetadata,
   type EventRef,
@@ -220,10 +221,19 @@ function immutableEvent(event: TaskIndexEvent): TaskIndexEvent {
     return Object.freeze({ type: 'changed', files: Object.freeze([...event.files]) });
   }
   if (event.type === 'settled') {
+    const files = Object.freeze(event.files.map((file) => Object.freeze({ ...file })));
+    if (event.reason === 'topology') {
+      return Object.freeze({
+        type: 'settled',
+        reason: 'topology',
+        topology: Object.freeze({ ...event.topology }),
+        files,
+      });
+    }
     return Object.freeze({
       type: 'settled',
       reason: event.reason,
-      files: Object.freeze(event.files.map((file) => Object.freeze({ ...file }))),
+      files,
     });
   }
   return Object.freeze({ ...event });
@@ -429,6 +439,10 @@ function extensionOf(path: string): string {
   return dot >= 0 ? name.slice(dot + 1) : '';
 }
 
+function isDescendant(path: string, folder: string): boolean {
+  return path.startsWith(`${folder}/`);
+}
+
 function dailyNoteDateForPath(filePath: string, format: string): LocalDate | undefined {
   const filename = filePath.replace(/^.*\//u, '').replace(/\.[^.]*$/u, '');
   return momentToRegex(format).test(filename)
@@ -491,7 +505,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private readonly pendingFiles = new Set<string>();
   private readonly pendingSettledFiles = new Map<
     string,
-    { readonly generation: number; readonly reason: TaskIndexSettledEvent['reason'] }
+    { readonly generation: number; readonly reason: 'index' | 'initialization' }
   >();
   private fileLifecycles = new WeakMap<TFile, FileLifecycle>();
   private readonly pendingReads = new Set<Promise<void>>();
@@ -1056,6 +1070,10 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         this.trackRead(read);
       }),
       this.app.vault.on('rename', (file: TAbstractFile, oldPath: string) => {
+        if (file instanceof TFolder && !this.destroyed) {
+          this.handleFolderRename(file, oldPath);
+          return;
+        }
         if (!(file instanceof TFile) || this.destroyed) return;
         const newPath = file.path;
         const wasMarkdown = extensionOf(oldPath) === 'md';
@@ -1144,6 +1162,50 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.options.refAuthority?.discard(filePath);
   }
 
+  private handleFolderRename(folder: TFolder, oldPath: string): void {
+    const newPath = folder.path;
+    const oldFiles = [...this.fileGenerations]
+      .filter(([path]) => isDescendant(path, oldPath))
+      .map(([path, generation]) => ({ path, generation: generation + 1 }));
+    const oldTaskPaths = [...this.taskMap.keys()].filter((path) => isDescendant(path, oldPath));
+    const newFiles = this.app.vault
+      .getMarkdownFiles()
+      .filter((file) => isDescendant(file.path, newPath))
+      .sort((left, right) => left.path.localeCompare(right.path));
+
+    for (const { path } of oldFiles) this.removeFile(path);
+    const read = Promise.all(
+      newFiles.map(async (file) => {
+        const path = file.path;
+        this.advance(file, path);
+        const committed = await this.loadFile(file, path, true, true);
+        return { path, committed };
+      }),
+    ).then((results) => {
+      if (this.destroyed) return;
+      const newTaskPaths = results
+        .filter(({ path, committed }) => committed && this.taskMap.has(path))
+        .map(({ path }) => path);
+      const changedPaths = [...new Set([...oldTaskPaths, ...newTaskPaths])].sort((left, right) =>
+        left.localeCompare(right),
+      );
+      if (changedPaths.length > 0) this.publish({ type: 'changed', files: changedPaths });
+      const files = [
+        ...oldFiles,
+        ...results
+          .filter(({ committed }) => committed)
+          .map(({ path }) => ({ path, generation: this.fileGenerations.get(path) ?? 1 })),
+      ].sort((left, right) => left.path.localeCompare(right.path));
+      this.publishSettled({
+        type: 'settled',
+        reason: 'topology',
+        topology: { type: 'folder-rename', oldPath, newPath },
+        files,
+      });
+    });
+    this.trackRead(read);
+  }
+
   private observe(file: TFile, path: string): FileObservation | undefined {
     if (this.destroyed || this.app.vault.getAbstractFileByPath(path) !== file) return undefined;
     const existing = this.fileLifecycles.get(file);
@@ -1202,7 +1264,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private queueSettled(
     filePath: string,
     generation?: number,
-    reason: TaskIndexSettledEvent['reason'] = 'index',
+    reason: 'index' | 'initialization' = 'index',
   ): void {
     if (this.destroyed || !this.initialized) return;
     this.pendingSettledFiles.set(filePath, {

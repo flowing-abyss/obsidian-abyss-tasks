@@ -424,6 +424,125 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     coordinator.destroy();
   });
 
+  it('publishes once after a folder topology settles and still publishes a later Work Note edit', async () => {
+    const taskListeners: Array<(event: TaskIndexEvent) => void> = [];
+    const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
+    const workListeners: Array<(event: WorkNoteIndexEvent) => void> = [];
+    const workSettled: Array<
+      (event: { reason: 'index'; files: readonly { path: string; generation: number }[] }) => void
+    > = [];
+    let tasks: readonly TaskSnapshot[] = [action('Workspace/A.md', 1, 'open')];
+    let notes: readonly WorkNoteSnapshot[] = [
+      workNote('Workspace/A.md'),
+      workNote('Work/Other.md'),
+    ];
+    const coordinator = new ProjectWorkspaceCoordinator(
+      { list: () => [project()], onUpdate: () => () => {} },
+      {
+        list: () => tasks,
+        subscribe: (listener) => {
+          taskListeners.push(listener);
+          return () => {};
+        },
+        subscribeSettled: (listener) => {
+          taskSettled.push(listener);
+          return () => {};
+        },
+      },
+      {
+        list: () => notes,
+        diagnosticsFor: () => [],
+        onUpdate: (listener) => {
+          workListeners.push(listener);
+          return () => {};
+        },
+        onSettled: (listener) => {
+          workSettled.push(listener as never);
+          return () => {};
+        },
+      },
+      () => statuses,
+    );
+    coordinator.start();
+    const publications: Array<{ taskPaths: string[]; workNotePaths: string[] }> = [];
+    coordinator.onUpdate((snapshots) =>
+      publications.push({
+        taskPaths: snapshots[0]!.tasks.map(({ task: snapshot }) => snapshot.source.filePath),
+        workNotePaths: snapshots[0]!.workNotes.map(({ path }) => path),
+      }),
+    );
+
+    tasks = [action('Archive/A.md', 1, 'open')];
+    taskListeners.forEach((listener) =>
+      listener({ type: 'changed', files: ['Archive/A.md', 'Workspace/A.md'] }),
+    );
+    taskSettled.forEach((listener) =>
+      listener({
+        type: 'settled',
+        reason: 'topology',
+        topology: { type: 'folder-rename', oldPath: 'Workspace', newPath: 'Archive' },
+        files: [
+          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Workspace/A.md', generation: 2 },
+        ],
+      }),
+    );
+    await Promise.resolve();
+    expect(publications).toEqual([]);
+
+    notes = [workNote('Archive/A.md'), workNote('Work/Other.md')];
+    workListeners.forEach((listener) =>
+      listener({
+        cause: 'index',
+        changedPaths: ['Archive/A.md', 'Workspace/A.md'],
+        invalidatedProjectPaths: [projectPath],
+        taskBarriers: [
+          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Workspace/A.md', generation: 2 },
+        ],
+      }),
+    );
+    workSettled.forEach((listener) =>
+      listener({
+        reason: 'index',
+        files: [
+          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Workspace/A.md', generation: 2 },
+        ],
+      }),
+    );
+    await Promise.resolve();
+    expect(publications).toEqual([
+      {
+        taskPaths: ['Archive/A.md'],
+        workNotePaths: ['Archive/A.md', 'Work/Other.md'],
+      },
+    ]);
+
+    notes = [workNote('Archive/A.md'), workNote('Work/Other.md', 'done')];
+    workListeners.forEach((listener) =>
+      listener({
+        cause: 'index',
+        changedPaths: ['Work/Other.md'],
+        invalidatedProjectPaths: [projectPath],
+        taskBarriers: [{ path: 'Work/Other.md', generation: 2 }],
+      }),
+    );
+    workSettled.forEach((listener) =>
+      listener({ reason: 'index', files: [{ path: 'Work/Other.md', generation: 2 }] }),
+    );
+    taskSettled.forEach((listener) =>
+      listener({
+        type: 'settled',
+        reason: 'index',
+        files: [{ path: 'Work/Other.md', generation: 2 }],
+      }),
+    );
+    await Promise.resolve();
+    expect(publications).toHaveLength(2);
+    coordinator.destroy();
+  });
+
   it('publishes one stable initial snapshot only after all sources initialize', async () => {
     const projectSettled: Array<(event: never) => void> = [];
     const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];

@@ -19,6 +19,7 @@ import type {
 } from './types';
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
+type TaskTopologySettlement = Extract<TaskIndexSettledEvent, { readonly reason: 'topology' }>;
 
 function isMarkdown(file: TAbstractFile): file is TFile {
   return file instanceof TFile && file.extension === 'md';
@@ -30,6 +31,10 @@ function isDescendant(path: string, folder: string): boolean {
 
 function renamedDescendant(path: string, oldFolder: string, newFolder: string): string {
   return `${newFolder}${path.slice(oldFolder.length)}`;
+}
+
+function topologyKey(oldPath: string, newPath: string): string {
+  return `${oldPath}\0${newPath}`;
 }
 
 export class WorkNoteIndex {
@@ -48,6 +53,8 @@ export class WorkNoteIndex {
   private pendingSettledPaths = new Set<string>();
   private waitingForTaskPaths = new Set<string>();
   private taskBarriers = new Map<string, number>();
+  private pendingTaskTopologies = new Set<string>();
+  private settledTaskTopologies = new Map<string, TaskTopologySettlement>();
   private taskSettlementUnsub?: () => void;
   private ready = false;
 
@@ -138,13 +145,7 @@ export class WorkNoteIndex {
             if (!isDescendant(snapshot.path, oldPath)) this.advanceGeneration(snapshot.path);
           }
         }
-        this.queueFullAfterTask(
-          snapshots.flatMap((snapshot) =>
-            isDescendant(snapshot.path, oldPath)
-              ? [snapshot.path, renamedDescendant(snapshot.path, oldPath, file.path)]
-              : [],
-          ),
-        );
+        this.queueFullAfterTopology(oldPath, file.path);
         return;
       }
       if (!(file instanceof TFile) || (file.extension !== 'md' && !oldPath.endsWith('.md'))) return;
@@ -223,18 +224,55 @@ export class WorkNoteIndex {
     if (this.waitingForTaskPaths.size === 0) this.schedule();
   }
 
+  private queueFullAfterTopology(oldPath: string, newPath: string): void {
+    this.fullRefreshPending = true;
+    this.pendingPaths.clear();
+    if (!this.taskSettlements?.subscribeSettled) {
+      this.schedule();
+      return;
+    }
+    const key = topologyKey(oldPath, newPath);
+    const settled = this.settledTaskTopologies.get(key);
+    if (settled) {
+      this.settledTaskTopologies.delete(key);
+      this.acceptTaskTopology(settled);
+      return;
+    }
+    this.pendingTaskTopologies.add(key);
+  }
+
   private onTaskSettled(event: TaskIndexSettledEvent): void {
     for (const { path, generation } of event.files) {
       if (!this.waitingForTaskPaths.delete(path)) continue;
       this.taskBarriers.set(path, generation);
       if (!this.fullRefreshPending) this.pendingPaths.add(path);
     }
+    if (event.reason === 'topology') {
+      const key = topologyKey(event.topology.oldPath, event.topology.newPath);
+      if (this.pendingTaskTopologies.delete(key)) this.acceptTaskTopology(event);
+      else this.settledTaskTopologies.set(key, event);
+    }
     if (
       this.waitingForTaskPaths.size === 0 &&
+      this.pendingTaskTopologies.size === 0 &&
       (this.fullRefreshPending || this.pendingPaths.size > 0)
     ) {
       this.schedule();
     }
+  }
+
+  private acceptTaskTopology(event: TaskTopologySettlement): void {
+    const workNotePaths = new Set<string>();
+    for (const path of new Set([...this.byPath.keys(), ...this.diagnosticsByPath.keys()])) {
+      if (!isDescendant(path, event.topology.oldPath)) continue;
+      workNotePaths.add(path);
+      workNotePaths.add(renamedDescendant(path, event.topology.oldPath, event.topology.newPath));
+    }
+    for (const { path, generation } of event.files) {
+      if (workNotePaths.has(path)) this.taskBarriers.set(path, generation);
+    }
+    if (this.waitingForTaskPaths.size === 0 && this.pendingTaskTopologies.size === 0)
+      this.schedule();
   }
 
   private queueFull(): void {
@@ -414,6 +452,8 @@ export class WorkNoteIndex {
     this.invalidatedProjectPaths.clear();
     this.waitingForTaskPaths.clear();
     this.taskBarriers.clear();
+    this.pendingTaskTopologies.clear();
+    this.settledTaskTopologies.clear();
     this.listeners.clear();
     this.settledListeners.clear();
     this.generations.clear();

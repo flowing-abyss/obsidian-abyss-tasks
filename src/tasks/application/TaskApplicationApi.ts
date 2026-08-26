@@ -19,18 +19,34 @@ export interface TaskQuery {
   readonly dateRange?: DateRange;
 }
 
+export interface TaskIndexFileSettlement {
+  readonly path: string;
+  readonly generation: number;
+}
+
+export type TaskIndexSettledEvent =
+  | {
+      readonly type: 'settled';
+      readonly reason: 'index' | 'initialization';
+      readonly files: readonly TaskIndexFileSettlement[];
+    }
+  | {
+      readonly type: 'settled';
+      readonly reason: 'topology';
+      readonly topology: {
+        readonly type: 'folder-rename';
+        readonly oldPath: string;
+        readonly newPath: string;
+      };
+      readonly files: readonly TaskIndexFileSettlement[];
+    };
+
 export type TaskIndexEvent =
   | { readonly type: 'initialized' }
   | { readonly type: 'changed'; readonly files: readonly string[] }
   | { readonly type: 'renamed'; readonly oldPath: string; readonly newPath: string }
   | { readonly type: 'deleted'; readonly path: string }
-  | {
-      readonly type: 'settled';
-      readonly reason: 'index' | 'initialization';
-      readonly files: readonly { readonly path: string; readonly generation: number }[];
-    };
-
-export type TaskIndexSettledEvent = Extract<TaskIndexEvent, { readonly type: 'settled' }>;
+  | TaskIndexSettledEvent;
 
 export interface CalendarTaskSource {
   readonly root: TaskSnapshot;

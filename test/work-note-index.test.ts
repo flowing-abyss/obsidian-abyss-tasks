@@ -174,6 +174,20 @@ function taskSettlementSource() {
         listener({ type: 'settled', reason: 'index', files: [{ path, generation }] });
       }
     },
+    settleFolderRename(
+      oldPath: string,
+      newPath: string,
+      files: readonly { path: string; generation: number }[],
+    ) {
+      for (const listener of listeners) {
+        listener({
+          type: 'settled',
+          reason: 'topology',
+          topology: { type: 'folder-rename', oldPath, newPath },
+          files,
+        });
+      }
+    },
   };
 }
 
@@ -504,6 +518,72 @@ describe('WorkNoteIndex', () => {
       },
     ]);
     expect(index.get('Archive/Tasks/A.md')?.projectPath).toBe('Archive/Projects/A.md');
+    index.destroy();
+  });
+
+  it('waits for one folder-topology settlement, including empty descendants, and then keeps indexing', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Workspace/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        {
+          path: 'Workspace/Empty.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        { path: 'Projects/A.md' },
+      ],
+      {
+        'Workspace/A.md\0Projects/A': 'Projects/A.md',
+        'Workspace/Empty.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+    const taskSource = taskSettlementSource();
+    const index = new WorkNoteIndex(h.app, { ...preset, folder: '' }, taskSource.source);
+    index.initialize();
+    const updates: unknown[] = [];
+    const settlements: unknown[] = [];
+    index.onUpdate((event) => updates.push(event));
+    index.onSettled((event) => settlements.push(event));
+
+    h.renameFolder('Workspace', 'Archive');
+    vi.runAllTimers();
+    expect(updates).toEqual([]);
+    expect(settlements).toEqual([]);
+
+    taskSource.settleFolderRename('Workspace', 'Archive', [
+      { path: 'Archive/A.md', generation: 1 },
+      { path: 'Workspace/A.md', generation: 2 },
+    ]);
+    vi.runAllTimers();
+
+    expect(index.list().map(({ path }) => path)).toEqual(['Archive/A.md', 'Archive/Empty.md']);
+    expect(updates).toEqual([
+      {
+        cause: 'index',
+        changedPaths: ['Archive/A.md', 'Archive/Empty.md', 'Workspace/A.md', 'Workspace/Empty.md'],
+        invalidatedProjectPaths: ['Projects/A.md'],
+        taskBarriers: [
+          { path: 'Archive/A.md', generation: 1 },
+          { path: 'Workspace/A.md', generation: 2 },
+        ],
+      },
+    ]);
+
+    h.setFrontmatter('Archive/Empty.md', {
+      Project: '[[Projects/A]]',
+      Status: 'Active',
+      Priority: 'High',
+    });
+    h.metadata('Archive/Empty.md');
+    taskSource.settle('Archive/Empty.md', 2);
+    vi.runAllTimers();
+    expect(updates).toHaveLength(2);
+    expect(settlements).toHaveLength(2);
     index.destroy();
   });
 
