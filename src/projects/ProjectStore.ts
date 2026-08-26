@@ -1,10 +1,20 @@
 import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { evaluateQuery } from '../query/evaluateQuery';
 import type { CalendarSettings } from '../settings/types';
-import type { TaskIndexEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
+import type { TaskIndexEvent, TaskIndexSettledEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
 import { parseProjectRange } from './projectDates';
 import { resolveStatus } from './status';
 import type { Project, TaskRollup } from './types';
+
+export interface ProjectStoreEvent {
+  readonly changedPaths: readonly string[];
+  readonly invalidatedProjectPaths: readonly string[];
+}
+
+export interface ProjectStoreSettledEvent {
+  readonly reason: 'task-barrier' | 'refresh';
+  readonly files: readonly { readonly path: string; readonly generation: number }[];
+}
 
 export function computeTaskRollup(tasks: readonly TaskSnapshot[]): TaskRollup {
   let done = 0;
@@ -58,14 +68,18 @@ function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
 export class ProjectStore {
   private cache: Project[] = [];
   private byPath = new Map<string, Project>();
-  private listeners: Array<() => void> = [];
+  private listeners: Array<(event: ProjectStoreEvent) => void> = [];
+  private settledListeners = new Set<(event: ProjectStoreSettledEvent) => void>();
   private eventUnsubs: Array<() => void> = [];
   private queryUnsub?: () => void;
+  private querySettledUnsub?: () => void;
   private debounce = 0;
   private waitingPaths = new Set<string>();
   private readyPaths = new Set<string>();
   private readyFull = false;
   private pendingCreates = new Set<string>();
+  private readyGenerations = new Map<string, number>();
+  private generations = new Map<string, number>();
 
   constructor(
     private app: App,
@@ -123,6 +137,9 @@ export class ProjectStore {
       () => this.app.vault.offref(renameRef),
     );
     this.queryUnsub = this.queries.subscribe((event) => this.onTaskIndexEvent(event));
+    this.querySettledUnsub = this.queries.subscribeSettled?.((event) =>
+      this.onTaskIndexSettled(event),
+    );
   }
 
   private onTaskIndexEvent(event: TaskIndexEvent): void {
@@ -137,9 +154,18 @@ export class ProjectStore {
       this.pendingCreates.delete(event.oldPath);
       this.pendingCreates.delete(event.newPath);
       this.releasePath(event.oldPath, event.newPath);
-    } else {
+    } else if (event.type === 'deleted') {
       this.pendingCreates.delete(event.path);
       this.releasePath(event.path);
+    }
+  }
+
+  private onTaskIndexSettled(event: TaskIndexSettledEvent): void {
+    for (const { path, generation } of event.files) {
+      this.readyGenerations.set(path, generation);
+      this.generations.set(path, generation);
+      this.pendingCreates.delete(path);
+      this.releasePath(path);
     }
   }
 
@@ -171,6 +197,13 @@ export class ProjectStore {
 
   private flush(): void {
     const before = this.cacheSignature();
+    const previousProjectPaths = new Set(this.byPath.keys());
+    const candidates = this.readyFull
+      ? new Set([
+          ...previousProjectPaths,
+          ...this.app.vault.getMarkdownFiles().map(({ path }) => path),
+        ])
+      : new Set(this.readyPaths);
     if (this.readyFull) {
       this.recomputeAll();
       this.readyPaths.clear();
@@ -178,9 +211,23 @@ export class ProjectStore {
       for (const path of this.readyPaths) this.updateOne(path);
       this.rebuildCache();
     }
+    const settledPaths = new Set(
+      [...candidates].filter((path) => previousProjectPaths.has(path) || this.byPath.has(path)),
+    );
     this.readyFull = false;
     this.readyPaths.clear();
-    this.notifyIfChanged(before);
+    this.notifyIfChanged(before, settledPaths);
+    const settled = [...settledPaths]
+      .map((path) => ({
+        path,
+        generation: this.readyGenerations.get(path) ?? this.generations.get(path) ?? 1,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    this.readyGenerations.clear();
+    if (settled.length > 0) {
+      const event: ProjectStoreSettledEvent = { reason: 'task-barrier', files: settled };
+      for (const listener of this.settledListeners) listener(event);
+    }
   }
 
   private hasIndexedTasks(...paths: string[]): boolean {
@@ -201,9 +248,17 @@ export class ProjectStore {
     );
   }
 
-  private notifyIfChanged(before: string): void {
+  private notifyIfChanged(before: string, invalidatedPaths: ReadonlySet<string>): void {
     if (this.cacheSignature() === before) return;
-    for (const cb of this.listeners) cb();
+    const event: ProjectStoreEvent = {
+      changedPaths: [...invalidatedPaths]
+        .filter((path) => this.byPath.has(path))
+        .sort((left, right) => left.localeCompare(right)),
+      invalidatedProjectPaths: [...invalidatedPaths].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    };
+    for (const cb of this.listeners) cb(event);
   }
 
   /** Full O(N + T) rescan of every markdown file. Used on init, create/delete/rename, refresh(). */
@@ -286,26 +341,55 @@ export class ProjectStore {
   }
 
   refresh(): void {
+    const invalidatedPaths = new Set([...this.byPath.keys()]);
     this.recomputeAll();
-    for (const cb of this.listeners) cb();
+    for (const path of this.byPath.keys()) invalidatedPaths.add(path);
+    const event: ProjectStoreEvent = {
+      changedPaths: [...this.byPath.keys()].sort((left, right) => left.localeCompare(right)),
+      invalidatedProjectPaths: [...invalidatedPaths].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+    };
+    for (const cb of this.listeners) cb(event);
+    const settled = [...invalidatedPaths]
+      .map((path) => {
+        const generation = (this.generations.get(path) ?? 0) + 1;
+        this.generations.set(path, generation);
+        return { path, generation };
+      })
+      .sort((left, right) => left.path.localeCompare(right.path));
+    if (settled.length > 0) {
+      const settledEvent: ProjectStoreSettledEvent = { reason: 'refresh', files: settled };
+      for (const listener of this.settledListeners) listener(settledEvent);
+    }
   }
 
-  onUpdate(cb: () => void): () => void {
+  onUpdate(cb: (event: ProjectStoreEvent) => void): () => void {
     this.listeners.push(cb);
     return () => {
       this.listeners = this.listeners.filter((l) => l !== cb);
     };
   }
 
+  onSettled(listener: (event: ProjectStoreSettledEvent) => void): () => void {
+    this.settledListeners.add(listener);
+    return () => this.settledListeners.delete(listener);
+  }
+
   destroy(): void {
     if (this.debounce) window.clearTimeout(this.debounce);
     this.queryUnsub?.();
     this.queryUnsub = undefined;
+    this.querySettledUnsub?.();
+    this.querySettledUnsub = undefined;
     for (const unsubscribe of this.eventUnsubs) unsubscribe();
     this.eventUnsubs = [];
     this.waitingPaths.clear();
     this.readyPaths.clear();
     this.pendingCreates.clear();
+    this.readyGenerations.clear();
+    this.generations.clear();
     this.listeners = [];
+    this.settledListeners.clear();
   }
 }

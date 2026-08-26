@@ -89,6 +89,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   TaskCommentSnapshot: ['src/panels/RightPanel.ts'],
   TaskCreateSession: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   TaskIndexEvent: ['src/projects/ProjectStore.ts'],
+  TaskIndexSettledEvent: ['src/projects/ProjectStore.ts'],
   TaskNodeRef: ['src/panels/RightPanel.ts'],
   TaskPlanning: ['src/views/calendarOccurrences.ts'],
   TaskOccurrenceResult: ['src/ui/recurrence/RecurrenceEditor.ts'],
@@ -119,6 +120,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
+  'TaskQueryApi.subscribeSettled': 'src/projects/ProjectStore.ts',
 };
 
 function source(path: string): string {

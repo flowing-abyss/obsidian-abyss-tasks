@@ -32,3 +32,40 @@ export interface Project {
   range: ProjectRange;
   stats: ProjectStats;
 }
+
+export interface ProjectAction {
+  readonly task: TaskSnapshot;
+  readonly projectPath: string;
+  readonly owner:
+    | { readonly type: 'project'; readonly path: string }
+    | { readonly type: 'work-note'; readonly path: string };
+}
+
+export type ProjectWorkspaceDiagnostic =
+  | {
+      readonly type: 'work-note';
+      readonly path: string;
+      readonly diagnostic: WorkNoteDiagnostic;
+    }
+  | {
+      readonly type: 'relation';
+      readonly path: string;
+      readonly relation: Extract<WorkNoteRelationProjection, { readonly type: 'invalid' }>;
+    };
+
+export interface ProjectWorkspaceSnapshot {
+  readonly project: Project;
+  readonly tasks: readonly ProjectAction[];
+  readonly workNotes: readonly WorkNoteSnapshot[];
+  readonly milestones: readonly WorkNoteSnapshot[];
+  readonly taskRollup: TaskRollup;
+  readonly workNoteRollup: WorkNoteRollup;
+  readonly milestoneRollups: ReadonlyMap<string, MilestoneRollup>;
+  readonly workNoteRelations: readonly WorkNoteRelationProjection[];
+  readonly overdue: { readonly tasks: number; readonly workNotes: number };
+  readonly diagnostics: readonly ProjectWorkspaceDiagnostic[];
+}
+import type { TaskSnapshot } from '../tasks';
+import type { WorkNoteRelationProjection } from './work-notes/WorkNoteRelationProjection';
+import type { MilestoneRollup, WorkNoteRollup } from './work-notes/rollups';
+import type { WorkNoteDiagnostic, WorkNoteSnapshot } from './work-notes/types';

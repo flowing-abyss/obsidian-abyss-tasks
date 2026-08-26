@@ -114,3 +114,8 @@ export interface WorkNoteIndexEvent {
   readonly changedPaths: readonly string[];
   readonly invalidatedProjectPaths: readonly string[];
 }
+
+export interface WorkNoteIndexSettledEvent {
+  readonly reason: 'index' | 'refresh';
+  readonly files: readonly { readonly path: string; readonly generation: number }[];
+}

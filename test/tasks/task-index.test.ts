@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { TFile, type CachedMetadata, type TAbstractFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type { TaskIndexEvent } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import * as taskTypes from '../../src/tasks/domain/types';
 import { localDate } from '../../src/tasks/domain/validation';
@@ -134,6 +135,28 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('publishes a typed settled generation after an unchanged completed parse', async () => {
+    const { app, index, fireChanged } = await setup({ 'task.md': '- [ ] alpha' });
+    await index.initialize();
+    const changed: TaskIndexEvent[] = [];
+    const settled: Array<Extract<TaskIndexEvent, { type: 'settled' }>> = [];
+    index.subscribe((event) => changed.push(event));
+    index.subscribeSettled((event) => settled.push(event));
+
+    fireChanged(mdFile(app, 'task.md'), '- [ ] alpha', taskCache());
+    await flushMicrotasks();
+
+    expect(changed).toEqual([]);
+    expect(settled).toEqual([
+      {
+        type: 'settled',
+        reason: 'index',
+        files: [{ path: 'task.md', generation: 2 }],
+      },
+    ]);
+    index.destroy();
+  });
+
   it('distinguishes a plugin-owned authority successor and safely applies the intent', async () => {
     const source = '- [ ] alpha\n';
     const candidate = '- [ ] beta\n';
@@ -717,12 +740,12 @@ describe('TaskIndex lifecycle and events', () => {
   it('atomically replaces modified files, observes metadata-only changes, and batches refresh events', async () => {
     const { app, index, fireChanged } = await setup({ 'a.md': '- [ ] a', 'b.md': '- [ ] b' });
     await index.initialize();
-    const events: Array<{ type: string; files?: readonly string[] }> = [];
+    const events: Array<Extract<TaskIndexEvent, { type: 'changed' }>> = [];
     index.subscribe((event) => {
       if (event.type === 'changed') {
         expect(index.list({ filePath: event.files[0] })).toHaveLength(1);
+        events.push(event);
       }
-      events.push(event);
     });
     fireChanged(mdFile(app, 'b.md'), '- [ ] b2', taskCache(0, { color: '#bbb' }));
     fireChanged(mdFile(app, 'a.md'), '- [ ] a2', taskCache(0, { color: '#aaa' }));
@@ -1114,10 +1137,23 @@ describe('TaskIndex lifecycle and events', () => {
   it('recomputes the daily-note date after a markdown rename', async () => {
     const { app, index } = await setup({ '2026-07-01.md': '- [ ] daily task' });
     await index.initialize();
+    const settlements: Array<Extract<TaskIndexEvent, { type: 'settled' }>> = [];
+    index.subscribeSettled((event) => settlements.push(event));
 
     await app.vault.rename(mdFile(app, '2026-07-01.md'), '2026-07-02.md');
+    await flushMicrotasks();
 
     expect(index.list()[0]?.presentation.dailyNoteDate).toBe('2026-07-02');
+    expect(settlements).toEqual([
+      {
+        type: 'settled',
+        reason: 'index',
+        files: [
+          { path: '2026-07-01.md', generation: 2 },
+          { path: '2026-07-02.md', generation: 1 },
+        ],
+      },
+    ]);
     index.destroy();
   });
 

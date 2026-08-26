@@ -7,6 +7,7 @@ import { RightPanel } from '../panels/RightPanel';
 import { ProjectCommandService } from '../projects/ProjectCommandService';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
+import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
@@ -142,6 +143,7 @@ export class PanelView extends ItemView {
   private selectedListRenameUnsub?: () => void;
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
+  private ownsProjectStore = false;
   private creationPresentation?: CreationPresentationController;
   private ownedWriteRef: TaskRef | undefined = undefined;
   private interactionRegistry?: InteractionRegistry<ShortcutActionId>;
@@ -167,6 +169,8 @@ export class PanelView extends ItemView {
     private commentTimeContext?: CommentTimeContextProvider,
     private projectCommands?: ProjectCommandService,
     private readonly workNoteIndex?: WorkNoteIndex,
+    private readonly injectedProjectStore?: ProjectStore,
+    private readonly projectWorkspace?: ProjectWorkspaceCoordinator,
   ) {
     super(leaf);
   }
@@ -261,11 +265,12 @@ export class PanelView extends ItemView {
     });
 
     const resolver = new DailyNoteResolver(this.app, this.settings);
-    // The shared Work Note index is injected here for project workspace consumers.
-    // Reading the current projection has no vault side effects and does not accept an audit.
-    this.workNoteIndex?.list();
-    const projectStore = new ProjectStore(this.app, this.queries, this.settings);
-    projectStore.initialize();
+    const projectStore =
+      this.injectedProjectStore ?? new ProjectStore(this.app, this.queries, this.settings);
+    if (!this.injectedProjectStore) {
+      projectStore.initialize();
+      this.ownsProjectStore = true;
+    }
     this.projectStore = projectStore;
     const projectCommands =
       this.projectCommands ??
@@ -325,10 +330,13 @@ export class PanelView extends ItemView {
     // panel's Projects section and the projects-mode center depend on this;
     // re-rendering the tasks-mode center here would double-render on every edit
     // (TaskIndex already refreshes it), so gate the center refresh to projects mode.
-    this.projectStoreUnsub = projectStore.onUpdate(() => {
+    const refreshProjectSurfaces = (): void => {
       this.left.refresh();
       if (this.state.get('mode') === 'projects') this.center.refresh();
-    });
+    };
+    this.projectStoreUnsub = this.projectWorkspace
+      ? this.projectWorkspace.onUpdate(refreshProjectSurfaces)
+      : projectStore.onUpdate(refreshProjectSurfaces);
 
     // Task 40 (Round 4): the tag-fill text-color contrast fix (tagFillContrast.ts) bakes a
     // computed `--abyss-tag-text-color` custom property into each block/item's inline style at
@@ -482,7 +490,8 @@ export class PanelView extends ItemView {
     this.projectStoreUnsub?.();
     this.creationPresentation?.destroy();
     this.creationPresentation = undefined;
-    this.projectStore?.destroy();
+    if (this.ownsProjectStore) this.projectStore?.destroy();
+    this.ownsProjectStore = false;
     this.rail?.destroy();
     this.left?.destroy();
     this.center?.destroy();
@@ -709,6 +718,7 @@ export class PanelView extends ItemView {
   private affects(event: TaskIndexEvent, path: string): boolean {
     if (event.type === 'initialized') return true;
     if (event.type === 'changed') return event.files.includes(path);
+    if (event.type === 'settled') return event.files.some((file) => file.path === path);
     if (event.type === 'renamed') return event.oldPath === path || event.newPath === path;
     return event.path === path;
   }
@@ -775,6 +785,12 @@ export class PanelView extends ItemView {
 
   private convergeOwnCommand(initiatingRef: TaskRef, result: TaskCommandResult): void {
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
+    if (result.changed) {
+      this.projectWorkspace?.absorbOwnCommit([
+        initiatingRef.filePath,
+        result.outcome.task.source.filePath,
+      ]);
+    }
     const stack = this.state.get('taskStack');
     const selectedRef = stack[0] ? rootTaskRef(stack[0]) : undefined;
     if (!selectedRef || !this.sameRef(selectedRef, initiatingRef)) return;

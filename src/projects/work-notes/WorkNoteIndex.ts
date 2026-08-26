@@ -13,6 +13,7 @@ import type {
   WorkNoteCompatibilityPreset,
   WorkNoteDiagnostic,
   WorkNoteIndexEvent,
+  WorkNoteIndexSettledEvent,
   WorkNoteSnapshot,
 } from './types';
 
@@ -34,12 +35,16 @@ export class WorkNoteIndex {
   private byPath = new Map<string, WorkNoteSnapshot>();
   private diagnosticsByPath = new Map<string, readonly WorkNoteDiagnostic[]>();
   private listeners = new Set<(event: WorkNoteIndexEvent) => void>();
+  private settledListeners = new Set<(event: WorkNoteIndexSettledEvent) => void>();
   private unsubs: Array<() => void> = [];
   private pendingPaths = new Set<string>();
   private invalidatedProjectPaths = new Set<string>();
   private fullRefreshPending = false;
+  private explicitRefreshPending = false;
   private debounce = 0;
   private indexedFingerprint = '';
+  private generations = new Map<string, number>();
+  private pendingSettledPaths = new Set<string>();
 
   constructor(
     private readonly app: App,
@@ -72,20 +77,31 @@ export class WorkNoteIndex {
   }
 
   initialize(): void {
-    const audit = auditWorkNotes(this.source(), this.preset());
+    const preset = this.preset();
+    const audit = this.auditPreset(preset);
     this.replaceFromAudit(audit);
     this.indexedFingerprint = audit.presetFingerprint;
+    if (preset.enabled) {
+      for (const file of this.app.vault.getMarkdownFiles()) this.generations.set(file.path, 1);
+    }
     const metadataRef = this.app.metadataCache.on(
       'changed',
       (file: TFile, _data: string, _cache: CachedMetadata) => {
-        if (file.extension === 'md') this.queuePath(file.path);
+        if (file.extension === 'md') {
+          this.advanceGeneration(file.path);
+          this.queuePath(file.path);
+        }
       },
     );
     const createRef = this.app.vault.on('create', (file) => {
-      if (isMarkdown(file)) this.queueFull();
+      if (isMarkdown(file)) {
+        this.advanceGeneration(file.path);
+        this.queueFull();
+      }
     });
     const deleteRef = this.app.vault.on('delete', (file) => {
       if (!isMarkdown(file)) return;
+      this.advanceGeneration(file.path);
       const snapshot = this.byPath.get(file.path);
       if (snapshot) this.invalidatedProjectPaths.add(snapshot.projectPath);
       if ([...this.byPath.values()].some(({ projectPath }) => projectPath === file.path)) {
@@ -101,18 +117,23 @@ export class WorkNoteIndex {
         for (const snapshot of snapshots) {
           if (isDescendant(snapshot.path, oldPath)) {
             this.invalidatedProjectPaths.add(snapshot.projectPath);
+            this.advanceGeneration(snapshot.path);
+            this.advanceGeneration(renamedDescendant(snapshot.path, oldPath, file.path), true);
           }
           if (isDescendant(snapshot.projectPath, oldPath)) {
             this.invalidatedProjectPaths.add(snapshot.projectPath);
             this.invalidatedProjectPaths.add(
               renamedDescendant(snapshot.projectPath, oldPath, file.path),
             );
+            if (!isDescendant(snapshot.path, oldPath)) this.advanceGeneration(snapshot.path);
           }
         }
         this.queueFull();
         return;
       }
       if (!(file instanceof TFile) || (file.extension !== 'md' && !oldPath.endsWith('.md'))) return;
+      this.advanceGeneration(oldPath);
+      if (file.extension === 'md') this.advanceGeneration(file.path, true);
       const snapshot = this.byPath.get(oldPath);
       if (snapshot) this.invalidatedProjectPaths.add(snapshot.projectPath);
       if ([...this.byPath.values()].some(({ projectPath }) => projectPath === oldPath)) {
@@ -130,7 +151,24 @@ export class WorkNoteIndex {
   }
 
   async audit(): Promise<WorkNoteAuditResult> {
-    return Promise.resolve(auditWorkNotes(this.source(), this.preset()));
+    return Promise.resolve(this.auditPreset(this.preset()));
+  }
+
+  private auditPreset(preset: WorkNoteCompatibilityPreset): WorkNoteAuditResult {
+    if (preset.enabled) return auditWorkNotes(this.source(), preset);
+    return {
+      presetFingerprint: computeWorkNotePresetFingerprint(preset),
+      eligiblePaths: [],
+      snapshots: [],
+      diagnosticsByPath: {},
+      issues: [],
+      capabilities: { update: false, create: false },
+    };
+  }
+
+  private advanceGeneration(path: string, reset = false): void {
+    this.generations.set(path, reset ? 1 : (this.generations.get(path) ?? 0) + 1);
+    this.pendingSettledPaths.add(path);
   }
 
   private queuePath(path: string): void {
@@ -159,7 +197,10 @@ export class WorkNoteIndex {
     const preset = this.preset();
     const presetChanged = computeWorkNotePresetFingerprint(preset) !== this.indexedFingerprint;
     const fullRefresh = this.fullRefreshPending || presetChanged;
-    const audit = auditWorkNotes(this.source(fullRefresh ? undefined : this.pendingPaths), preset);
+    const auditPaths = fullRefresh ? undefined : this.pendingPaths;
+    const audit = preset.enabled
+      ? auditWorkNotes(this.source(auditPaths), preset)
+      : this.auditPreset(preset);
     const auditByPath = new Map(audit.snapshots.map((snapshot) => [snapshot.path, snapshot]));
     if (fullRefresh) {
       this.replaceFromAudit(audit);
@@ -211,9 +252,22 @@ export class WorkNoteIndex {
     this.invalidatedProjectPaths.clear();
     this.fullRefreshPending = false;
     this.indexedFingerprint = audit.presetFingerprint;
-    if (changedPaths.length === 0 && invalidatedProjectPaths.length === 0) return;
-    const event = { changedPaths, invalidatedProjectPaths };
-    for (const listener of this.listeners) listener(event);
+    if (changedPaths.length > 0 || invalidatedProjectPaths.length > 0) {
+      const event = { changedPaths, invalidatedProjectPaths };
+      for (const listener of this.listeners) listener(event);
+    }
+    const settled = [...this.pendingSettledPaths]
+      .map((path) => ({ path, generation: this.generations.get(path) ?? 1 }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    this.pendingSettledPaths.clear();
+    if (settled.length > 0) {
+      const event: WorkNoteIndexSettledEvent = {
+        reason: this.explicitRefreshPending ? 'refresh' : 'index',
+        files: settled,
+      };
+      for (const listener of this.settledListeners) listener(event);
+    }
+    this.explicitRefreshPending = false;
   }
 
   private replaceFromAudit(audit: WorkNoteAuditResult): void {
@@ -229,6 +283,14 @@ export class WorkNoteIndex {
   }
 
   refresh(): void {
+    this.explicitRefreshPending = true;
+    if (this.preset().enabled) {
+      for (const file of this.app.vault.getMarkdownFiles()) this.advanceGeneration(file.path);
+    } else {
+      for (const path of new Set([...this.byPath.keys(), ...this.diagnosticsByPath.keys()])) {
+        this.advanceGeneration(path);
+      }
+    }
     this.queueFull();
   }
 
@@ -249,13 +311,21 @@ export class WorkNoteIndex {
     return () => this.listeners.delete(listener);
   }
 
+  onSettled(listener: (event: WorkNoteIndexSettledEvent) => void): () => void {
+    this.settledListeners.add(listener);
+    return () => this.settledListeners.delete(listener);
+  }
+
   destroy(): void {
     if (this.debounce) window.clearTimeout(this.debounce);
     this.debounce = 0;
     for (const unsub of this.unsubs) unsub();
     this.unsubs = [];
     this.pendingPaths.clear();
+    this.pendingSettledPaths.clear();
     this.invalidatedProjectPaths.clear();
     this.listeners.clear();
+    this.settledListeners.clear();
+    this.generations.clear();
   }
 }

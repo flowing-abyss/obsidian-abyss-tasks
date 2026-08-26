@@ -10,6 +10,7 @@ import type {
   CalendarProjectionSources,
   CalendarTaskSource,
   TaskIndexEvent,
+  TaskIndexSettledEvent,
   TaskQuery,
   TaskQueryApi,
 } from '../application/TaskApplicationApi';
@@ -217,6 +218,13 @@ function cloneCalendarTaskSource(
 function immutableEvent(event: TaskIndexEvent): TaskIndexEvent {
   if (event.type === 'changed') {
     return Object.freeze({ type: 'changed', files: Object.freeze([...event.files]) });
+  }
+  if (event.type === 'settled') {
+    return Object.freeze({
+      type: 'settled',
+      reason: event.reason,
+      files: Object.freeze(event.files.map((file) => Object.freeze({ ...file }))),
+    });
   }
   return Object.freeze({ ...event });
 }
@@ -479,7 +487,12 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private readonly fileGenerations = new Map<string, number>();
   private readonly reconciliationTransitions = new Map<string, FileReconciliationTransition>();
   private listeners: Listener[] = [];
+  private settledListeners: Array<(event: TaskIndexSettledEvent) => void> = [];
   private readonly pendingFiles = new Set<string>();
+  private readonly pendingSettledFiles = new Map<
+    string,
+    { readonly generation: number; readonly reason: TaskIndexSettledEvent['reason'] }
+  >();
   private fileLifecycles = new WeakMap<TFile, FileLifecycle>();
   private readonly pendingReads = new Set<Promise<void>>();
   private flushScheduled = false;
@@ -530,6 +543,9 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     if (this.destroyed) return;
     this.initialized = true;
     this.publish({ type: 'initialized' });
+    for (const [path, generation] of this.fileGenerations) {
+      this.queueSettled(path, generation, 'initialization');
+    }
   }
 
   list(query?: TaskQuery): readonly TaskSnapshot[] {
@@ -671,6 +687,13 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     };
   }
 
+  subscribeSettled(listener: (event: TaskIndexSettledEvent) => void): () => void {
+    this.settledListeners.push(listener);
+    return () => {
+      this.settledListeners = this.settledListeners.filter((candidate) => candidate !== listener);
+    };
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -679,7 +702,9 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.metadataCacheRefs = [];
     this.vaultRefs = [];
     this.listeners = [];
+    this.settledListeners = [];
     this.pendingFiles.clear();
+    this.pendingSettledFiles.clear();
     this.fileLifecycles = new WeakMap();
     this.pendingReads.clear();
     this.taskMap.clear();
@@ -892,6 +917,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
       this.fileGenerations.has(filePath),
     );
     if (this.replaceFile(filePath, tasks, authorityTransitions)) this.queueChanged(filePath);
+    this.queueSettled(filePath);
     return tasks.map(cloneTaskSnapshot);
   }
 
@@ -1004,6 +1030,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         );
         const changed = this.replaceFile(path, tasks, authorityTransitions, true);
         if (changed) this.queueChanged(path);
+        this.queueSettled(path);
       }),
     );
     this.vaultRefs.push(
@@ -1013,7 +1040,10 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         if (this.app.vault.getAbstractFileByPath(path) !== file) return;
         this.advance(file, path);
         const read = this.loadFile(file, path, true, true).then((committed) => {
-          if (committed) this.queueChanged(path);
+          if (committed) {
+            this.queueChanged(path);
+            this.queueSettled(path);
+          }
         });
         this.trackRead(read);
       }),
@@ -1029,6 +1059,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
           return;
         }
         const tasks = this.taskMap.get(oldPath) ?? [];
+        const oldGeneration = (this.fileGenerations.get(oldPath) ?? 0) + 1;
         this.advance(file, isMarkdown ? newPath : undefined);
         this.removeFile(oldPath);
         if (newPath !== oldPath) this.removeFile(newPath);
@@ -1053,10 +1084,14 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
               }),
             );
             this.publish({ type: 'renamed', oldPath, newPath });
+            this.queueSettled(oldPath, oldGeneration);
+            this.queueSettled(newPath);
           } else {
             const read = this.loadFile(file, newPath, true).then((committed) => {
               if (committed || this.isFileAt(file, newPath)) {
                 this.publish({ type: 'renamed', oldPath, newPath });
+                this.queueSettled(oldPath, oldGeneration);
+                this.queueSettled(newPath);
               }
             });
             this.trackRead(read);
@@ -1066,12 +1101,14 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
 
         if (wasMarkdown) {
           this.publish({ type: 'renamed', oldPath, newPath });
+          this.queueSettled(oldPath, oldGeneration);
           return;
         }
 
         const read = this.loadFile(file, newPath, true).then((committed) => {
           if (committed || this.isFileAt(file, newPath)) {
             this.publish({ type: 'renamed', oldPath, newPath });
+            this.queueSettled(newPath);
           }
         });
         this.trackRead(read);
@@ -1080,9 +1117,11 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
         if (!(file instanceof TFile) || file.extension !== 'md' || this.destroyed) return;
         const path = file.path;
         const existed = this.taskMap.has(path);
+        const generation = (this.fileGenerations.get(path) ?? 0) + 1;
         this.advance(file, undefined);
         this.removeFile(path);
         if (existed) this.publish({ type: 'deleted', path });
+        this.queueSettled(path, generation);
       }),
     );
   }
@@ -1149,15 +1188,51 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private queueChanged(filePath: string): void {
     if (this.destroyed || !this.initialized) return;
     this.pendingFiles.add(filePath);
+    this.schedulePublishedBatch();
+  }
+
+  private queueSettled(
+    filePath: string,
+    generation?: number,
+    reason: TaskIndexSettledEvent['reason'] = 'index',
+  ): void {
+    if (this.destroyed || !this.initialized) return;
+    this.pendingSettledFiles.set(filePath, {
+      generation: generation ?? this.fileGenerations.get(filePath) ?? 1,
+      reason,
+    });
+    this.schedulePublishedBatch();
+  }
+
+  private schedulePublishedBatch(): void {
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     void Promise.resolve().then(() => {
       this.flushScheduled = false;
-      if (this.destroyed || this.pendingFiles.size === 0) return;
-      const files = [...this.pendingFiles].sort((left, right) => left.localeCompare(right));
-      this.pendingFiles.clear();
-      this.publish({ type: 'changed', files });
+      if (this.destroyed) return;
+      if (this.pendingFiles.size > 0) {
+        const files = [...this.pendingFiles].sort((left, right) => left.localeCompare(right));
+        this.pendingFiles.clear();
+        this.publish({ type: 'changed', files });
+      }
+      if (this.pendingSettledFiles.size > 0) {
+        const pending = [...this.pendingSettledFiles];
+        this.pendingSettledFiles.clear();
+        for (const reason of ['initialization', 'index'] as const) {
+          const files = pending
+            .filter(([, value]) => value.reason === reason)
+            .map(([path, value]) => ({ path, generation: value.generation }))
+            .sort((left, right) => left.path.localeCompare(right.path));
+          if (files.length > 0) this.publishSettled({ type: 'settled', reason, files });
+        }
+      }
     });
+  }
+
+  private publishSettled(event: TaskIndexSettledEvent): void {
+    if (this.destroyed || !this.initialized) return;
+    const detached = immutableEvent(event) as TaskIndexSettledEvent;
+    for (const listener of [...this.settledListeners]) listener(detached);
   }
 
   private publish(event: TaskIndexEvent): void {

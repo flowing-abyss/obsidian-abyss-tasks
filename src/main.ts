@@ -1,6 +1,8 @@
 import { Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { ProjectCommandService } from './projects/ProjectCommandService';
+import { ProjectStore } from './projects/ProjectStore';
+import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
@@ -41,6 +43,8 @@ export default class TaskCalendarPlugin extends Plugin {
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectCommands!: ProjectCommandService;
+  private projectStore!: ProjectStore;
+  private projectWorkspace!: ProjectWorkspaceCoordinator;
   private workNoteIndex!: WorkNoteIndex;
 
   async onload(): Promise<void> {
@@ -95,6 +99,14 @@ export default class TaskCalendarPlugin extends Plugin {
       this.app,
       () => this.settings.projects.workNoteCompatibility,
     );
+    this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
+    this.projectWorkspace = new ProjectWorkspaceCoordinator(
+      this.projectStore,
+      this.queries,
+      this.workNoteIndex,
+      () => this.settings.projects.statuses,
+      { today: () => window.moment().format('YYYY-MM-DD') },
+    );
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 
     this.registerView(
@@ -111,6 +123,8 @@ export default class TaskCalendarPlugin extends Plugin {
           commentTimeContext,
           this.projectCommands,
           this.workNoteIndex,
+          this.projectStore,
+          this.projectWorkspace,
         ),
     );
 
@@ -129,6 +143,8 @@ export default class TaskCalendarPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       void this.taskIndex.initialize();
       this.workNoteIndex.initialize();
+      this.projectStore.initialize();
+      this.projectWorkspace.start();
     });
 
     // Legacy Dataview shim — remove after users migrate to native `task-calendar` code blocks
@@ -157,6 +173,8 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.projectWorkspace.destroy();
+    this.projectStore.destroy();
     this.taskIndex.destroy();
     this.workNoteIndex.destroy();
     delete (window as unknown as Record<string, unknown>).renderCalendar;

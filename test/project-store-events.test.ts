@@ -82,6 +82,7 @@ function harness() {
   };
   let snapshots: readonly TaskSnapshot[] = [task('open')];
   let indexListener: ((event: TaskIndexEvent) => void) | undefined;
+  let settledListener: ((event: Extract<TaskIndexEvent, { type: 'settled' }>) => void) | undefined;
   const indexUnsub = vi.fn();
   const queries: TaskQueryApi = taskQueryApi({
     list: (query) =>
@@ -92,6 +93,10 @@ function harness() {
     subscribe: (listener) => {
       indexListener = listener;
       return indexUnsub;
+    },
+    subscribeSettled: (listener) => {
+      settledListener = listener;
+      return () => {};
     },
   });
   return {
@@ -109,6 +114,12 @@ function harness() {
       }
     },
     index: (event: TaskIndexEvent) => indexListener?.(event),
+    settled: (path: string, generation = 2) =>
+      settledListener?.({
+        type: 'settled',
+        reason: 'index',
+        files: [{ path, generation }],
+      }),
     setTasks: (next: readonly TaskSnapshot[]) => {
       snapshots = next;
     },
@@ -125,6 +136,29 @@ function harness() {
 afterEach(() => vi.useRealTimers());
 
 describe('ProjectStore event convergence', () => {
+  it('publishes one typed settlement when Tasks parse unchanged', () => {
+    vi.useFakeTimers();
+    const h = harness();
+    const store = new ProjectStore(h.app, h.queries, DEFAULT_SETTINGS);
+    store.initialize();
+    const updates = vi.fn();
+    const settlements = vi.fn();
+    store.onUpdate(updates);
+    store.onSettled(settlements);
+
+    h.metadata();
+    h.settled(h.file.path);
+    vi.advanceTimersByTime(150);
+
+    expect(updates).not.toHaveBeenCalled();
+    expect(settlements).toHaveBeenCalledOnce();
+    expect(settlements).toHaveBeenCalledWith({
+      reason: 'task-barrier',
+      files: [{ path: h.file.path, generation: 2 }],
+    });
+    store.destroy();
+  });
+
   it.each(['changed', 'renamed'] as const)(
     'does not let a late equivalent empty-project %s event release unrelated task metadata',
     (lateEvent) => {

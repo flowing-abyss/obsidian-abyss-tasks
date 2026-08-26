@@ -162,6 +162,22 @@ function harness(initial: readonly FileData[], resolutions: Record<string, strin
 afterEach(() => vi.useRealTimers());
 
 describe('WorkNoteIndex', () => {
+  it('does not scan the vault while the compatibility preset is disabled', async () => {
+    const h = harness([{ path: 'Notes/A.md' }], {});
+    const getMarkdownFiles = vi.spyOn(
+      (h.app as never as { vault: { getMarkdownFiles(): TFile[] } }).vault,
+      'getMarkdownFiles',
+    );
+    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
+
+    index.initialize();
+    await index.audit();
+
+    expect(getMarkdownFiles).not.toHaveBeenCalled();
+    expect(index.list()).toEqual([]);
+    index.destroy();
+  });
+
   it('keeps an eligible unknown status visible and diagnoses non-string dates', () => {
     const h = harness(
       [
@@ -358,7 +374,12 @@ describe('WorkNoteIndex', () => {
       changedPaths: readonly string[];
       invalidatedProjectPaths: readonly string[];
     }> = [];
+    const settlements: Array<{
+      reason: 'index' | 'refresh';
+      files: readonly { path: string; generation: number }[];
+    }> = [];
     index.onUpdate((event) => events.push(event));
+    index.onSettled((event) => settlements.push(event));
 
     h.renameFolder('Workspace', 'Archive');
     vi.runAllTimers();
@@ -370,6 +391,15 @@ describe('WorkNoteIndex', () => {
     expect(events[events.length - 1]?.changedPaths).toEqual([
       'Archive/Tasks/A.md',
       'Workspace/Tasks/A.md',
+    ]);
+    expect(settlements).toEqual([
+      {
+        reason: 'index',
+        files: [
+          { path: 'Archive/Tasks/A.md', generation: 1 },
+          { path: 'Workspace/Tasks/A.md', generation: 2 },
+        ],
+      },
     ]);
     expect(index.get('Archive/Tasks/A.md')?.projectPath).toBe('Archive/Projects/A.md');
     index.destroy();

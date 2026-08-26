@@ -23,7 +23,14 @@ export type TaskIndexEvent =
   | { readonly type: 'initialized' }
   | { readonly type: 'changed'; readonly files: readonly string[] }
   | { readonly type: 'renamed'; readonly oldPath: string; readonly newPath: string }
-  | { readonly type: 'deleted'; readonly path: string };
+  | { readonly type: 'deleted'; readonly path: string }
+  | {
+      readonly type: 'settled';
+      readonly reason: 'index' | 'initialization';
+      readonly files: readonly { readonly path: string; readonly generation: number }[];
+    };
+
+export type TaskIndexSettledEvent = Extract<TaskIndexEvent, { readonly type: 'settled' }>;
 
 export interface CalendarTaskSource {
   readonly root: TaskSnapshot;
@@ -41,6 +48,8 @@ export interface TaskQueryApi {
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources;
   resolve(ref: TaskRef): TaskResolution;
   subscribe(listener: (event: TaskIndexEvent) => void): () => void;
+  /** Optional compatibility port for consumers that coordinate completed per-file parses. */
+  subscribeSettled?(listener: (event: TaskIndexSettledEvent) => void): () => void;
 }
 
 export interface TaskApplicationApi {

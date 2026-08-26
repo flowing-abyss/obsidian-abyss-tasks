@@ -166,6 +166,7 @@ export class TaskModal {
   private affects(event: TaskIndexEvent, path: string): boolean {
     if (event.type === 'initialized') return true;
     if (event.type === 'changed') return event.files.includes(path);
+    if (event.type === 'settled') return event.files.some((file) => file.path === path);
     if (event.type === 'renamed') return event.oldPath === path || event.newPath === path;
     return event.path === path;
   }
