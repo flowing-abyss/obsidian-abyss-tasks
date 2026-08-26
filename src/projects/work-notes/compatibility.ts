@@ -61,18 +61,15 @@ function stableObject(value: unknown): unknown {
   if (value === null || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
+      .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([key, entry]) => [key, stableObject(entry)]),
   );
 }
 
-function fnv1a(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `wn-${(hash >>> 0).toString(16).padStart(8, '0')}`;
+function compareCodeUnits(left: string, right: string): number {
+  if (left < right) return -1;
+  if (left > right) return 1;
+  return 0;
 }
 
 export function computeWorkNotePresetFingerprint(preset: WorkNoteCompatibilityPreset): string {
@@ -87,7 +84,7 @@ export function computeWorkNotePresetFingerprint(preset: WorkNoteCompatibilityPr
     rawStatusByStatusId: preset.rawStatusByStatusId,
     creation: preset.creation ?? null,
   };
-  return fnv1a(JSON.stringify(stableObject(audited)));
+  return `work-note-preset:v2:${JSON.stringify(stableObject(audited))}`;
 }
 
 export function isAuditAccepted(preset: WorkNoteCompatibilityPreset): boolean {
@@ -142,7 +139,7 @@ function inFolder(path: string, folder: string): boolean {
   if (!folder) return true;
   let normalized = folder;
   while (normalized.endsWith('/')) normalized = normalized.slice(0, -1);
-  return path === `${normalized}.md` || path.startsWith(`${normalized}/`);
+  return path.startsWith(`${normalized}/`);
 }
 
 function wikilinkPath(raw: string): string | null {
@@ -326,6 +323,13 @@ function projectSnapshot(
     true,
   );
   diagnostics.push(...blockedBy.diagnostics, ...related.diagnostics, ...milestoneLink.diagnostics);
+  if (milestoneLink.linkCount > 1 || milestoneLink.paths.length > 1) {
+    diagnostics.push({
+      type: 'multiple-milestones',
+      field: 'milestone',
+      rawValue: frontmatter[preset.fields.milestone],
+    });
+  }
 
   const statusRawValue = frontmatter[preset.fields.status];
   const rawStatus = scalarString(statusRawValue, 'status', 'non-scalar-status', diagnostics);

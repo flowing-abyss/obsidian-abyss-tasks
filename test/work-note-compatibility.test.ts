@@ -250,6 +250,95 @@ describe('Work Note compatibility audit', () => {
     );
   });
 
+  it('does not accept a distinct preset that collides under the legacy 32-bit fingerprint', () => {
+    const legacyCollisionShape: Partial<WorkNoteCompatibilityPreset> = {
+      ordinaryKindQuery: '#ordinary',
+      milestoneKindQuery: '#milestone',
+      folder: 'Work Notes',
+      rawStatusByStatusId: { active: 'Active' },
+      creation: undefined,
+    };
+    const first = preset({ ...legacyCollisionShape, membershipQuery: '#17opwv0kycq4r' });
+    const second = preset({ ...legacyCollisionShape, membershipQuery: '#jux0fg1j3i3tn' });
+    const accepted = acceptWorkNoteAudit(
+      first,
+      { update: true, create: true },
+      '2026-08-26T00:00:00.000Z',
+    );
+
+    expect(computeWorkNotePresetFingerprint(first)).not.toBe(
+      computeWorkNotePresetFingerprint(second),
+    );
+    expect(computeWorkNotePresetFingerprint(first)).toMatch(/^work-note-preset:v2:/u);
+    expect(isAuditAccepted({ ...second, acceptedAudit: accepted.acceptedAudit })).toBe(false);
+  });
+
+  it('scopes a named folder to descendants without admitting its sibling note', () => {
+    const fixture = source(
+      [
+        {
+          path: 'Work Notes.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[P]]', Status: 'Active' },
+        },
+        {
+          path: 'Work Notes/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[P]]', Status: 'Active' },
+        },
+        {
+          path: 'Root.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[P]]', Status: 'Active' },
+        },
+      ],
+      {
+        'Work Notes.md\0P': 'Projects/P.md',
+        'Work Notes/A.md\0P': 'Projects/P.md',
+        'Root.md\0P': 'Projects/P.md',
+      },
+    );
+
+    expect(
+      auditWorkNotes(fixture, preset({ folder: 'Work Notes', creation: undefined })).eligiblePaths,
+    ).toEqual(['Work Notes/A.md']);
+    expect(
+      auditWorkNotes(fixture, preset({ folder: '', creation: undefined })).eligiblePaths,
+    ).toEqual(['Root.md', 'Work Notes.md', 'Work Notes/A.md']);
+  });
+
+  it('diagnoses multiple Milestone candidates while preserving the raw singular field', () => {
+    const rawMilestones = ['[[Milestones/M1]]', '[[Milestones/M2]]'];
+    const fixture = source(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: {
+            Project: '[[P]]',
+            Status: 'Active',
+            Milestone: rawMilestones,
+          },
+        },
+      ],
+      {
+        'Tasks/A.md\0P': 'Projects/P.md',
+        'Tasks/A.md\0Milestones/M1': 'Milestones/M1.md',
+        'Tasks/A.md\0Milestones/M2': 'Milestones/M2.md',
+      },
+    );
+
+    const snapshot = auditWorkNotes(fixture, preset()).snapshots[0];
+    expect(snapshot?.milestonePath).toBeUndefined();
+    expect(snapshot?.diagnostics).toContainEqual(
+      expect.objectContaining({
+        type: 'multiple-milestones',
+        field: 'milestone',
+        rawValue: rawMilestones,
+      }),
+    );
+  });
+
   it('rejects a structurally malformed persisted acceptance record', () => {
     const malformed = {
       ...preset(),

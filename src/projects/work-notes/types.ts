@@ -54,6 +54,7 @@ export interface WorkNoteDiagnostic {
     | 'missing-kind'
     | 'missing-project'
     | 'multiple-projects'
+    | 'multiple-milestones'
     | 'ambiguous-project'
     | 'broken-project'
     | 'invalid-project-entry'

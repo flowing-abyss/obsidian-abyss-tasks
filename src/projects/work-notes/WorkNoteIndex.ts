@@ -1,4 +1,11 @@
-import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } from 'obsidian';
+import {
+  getAllTags,
+  TFile,
+  TFolder,
+  type App,
+  type CachedMetadata,
+  type TAbstractFile,
+} from 'obsidian';
 import { auditWorkNotes, computeWorkNotePresetFingerprint } from './compatibility';
 import type {
   WorkNoteAuditResult,
@@ -13,6 +20,14 @@ type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibility
 
 function isMarkdown(file: TAbstractFile): file is TFile {
   return file instanceof TFile && file.extension === 'md';
+}
+
+function isDescendant(path: string, folder: string): boolean {
+  return path.startsWith(`${folder}/`);
+}
+
+function renamedDescendant(path: string, oldFolder: string, newFolder: string): string {
+  return `${newFolder}${path.slice(oldFolder.length)}`;
 }
 
 export class WorkNoteIndex {
@@ -72,15 +87,35 @@ export class WorkNoteIndex {
     const deleteRef = this.app.vault.on('delete', (file) => {
       if (!isMarkdown(file)) return;
       const snapshot = this.byPath.get(file.path);
-      this.invalidatedProjectPaths.add(snapshot?.projectPath ?? file.path);
+      if (snapshot) this.invalidatedProjectPaths.add(snapshot.projectPath);
+      if ([...this.byPath.values()].some(({ projectPath }) => projectPath === file.path)) {
+        this.invalidatedProjectPaths.add(file.path);
+      }
       this.queueFull();
     });
     const renameRef = this.app.vault.on('rename', (file, oldPath) => {
-      if (!(file instanceof TFile) && !oldPath.endsWith('.md')) return;
+      if (file instanceof TFolder) {
+        const snapshots = [...this.byPath.values()].sort((left, right) =>
+          left.path.localeCompare(right.path),
+        );
+        for (const snapshot of snapshots) {
+          if (isDescendant(snapshot.path, oldPath)) {
+            this.invalidatedProjectPaths.add(snapshot.projectPath);
+          }
+          if (isDescendant(snapshot.projectPath, oldPath)) {
+            this.invalidatedProjectPaths.add(snapshot.projectPath);
+            this.invalidatedProjectPaths.add(
+              renamedDescendant(snapshot.projectPath, oldPath, file.path),
+            );
+          }
+        }
+        this.queueFull();
+        return;
+      }
+      if (!(file instanceof TFile) || (file.extension !== 'md' && !oldPath.endsWith('.md'))) return;
       const snapshot = this.byPath.get(oldPath);
-      if (snapshot) {
-        this.invalidatedProjectPaths.add(snapshot.projectPath);
-      } else {
+      if (snapshot) this.invalidatedProjectPaths.add(snapshot.projectPath);
+      if ([...this.byPath.values()].some(({ projectPath }) => projectPath === oldPath)) {
         this.invalidatedProjectPaths.add(oldPath);
         this.invalidatedProjectPaths.add(file.path);
       }

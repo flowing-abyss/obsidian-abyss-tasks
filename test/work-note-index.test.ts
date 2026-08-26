@@ -1,4 +1,4 @@
-import { TFile, type CachedMetadata } from 'obsidian';
+import { TFile, TFolder, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
 import type { WorkNoteCompatibilityPreset } from '../src/projects/work-notes/types';
@@ -36,6 +36,14 @@ function tfile(path: string): TFile {
   }) as TFile;
 }
 
+function tfolder(path: string): TFolder {
+  return Object.assign(Object.create(TFolder.prototype) as object, {
+    path,
+    name: path.slice(path.lastIndexOf('/') + 1),
+    children: [],
+  }) as unknown as TFolder;
+}
+
 interface FileData {
   readonly path: string;
   readonly tags?: readonly string[];
@@ -44,6 +52,7 @@ interface FileData {
 
 function harness(initial: readonly FileData[], resolutions: Record<string, string | null>) {
   let files = initial.map(({ path }) => tfile(path));
+  const linkResolutions = { ...resolutions };
   const data = new Map(initial.map((entry) => [entry.path, entry]));
   const metadataHandlers: Array<(file: TFile, text: string, cache: CachedMetadata) => void> = [];
   const vaultHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -78,7 +87,7 @@ function harness(initial: readonly FileData[], resolutions: Record<string, strin
         return cacheFor(file.path);
       },
       getFirstLinkpathDest: (linkpath: string, sourcePath: string) => {
-        const path = resolutions[`${sourcePath}\0${linkpath}`];
+        const path = linkResolutions[`${sourcePath}\0${linkpath}`];
         return path ? tfile(path) : null;
       },
       on,
@@ -103,12 +112,44 @@ function harness(initial: readonly FileData[], resolutions: Record<string, strin
         data.delete(oldPath);
         data.set(newPath, { ...entry, path: newPath });
       }
+      for (const [key, target] of Object.entries(linkResolutions)) {
+        const separator = key.indexOf('\0');
+        const sourcePath = key.slice(0, separator);
+        const linkpath = key.slice(separator + 1);
+        const rewrittenSource = sourcePath === oldPath ? newPath : sourcePath;
+        const rewrittenTarget = target === oldPath ? newPath : target;
+        if (rewrittenSource !== sourcePath) delete linkResolutions[key];
+        linkResolutions[`${rewrittenSource}\0${linkpath}`] = rewrittenTarget;
+      }
       for (const handler of vaultHandlers.get('rename') ?? []) handler(file, oldPath);
+    },
+    renameFolder(oldPath: string, newPath: string) {
+      const rewrite = (path: string): string =>
+        path.startsWith(`${oldPath}/`) ? `${newPath}${path.slice(oldPath.length)}` : path;
+      files = files.map((file) => tfile(rewrite(file.path)));
+      for (const [path, entry] of [...data]) {
+        const rewritten = rewrite(path);
+        if (rewritten === path) continue;
+        data.delete(path);
+        data.set(rewritten, { ...entry, path: rewritten });
+      }
+      for (const [key, target] of Object.entries(linkResolutions)) {
+        const separator = key.indexOf('\0');
+        const sourcePath = key.slice(0, separator);
+        const linkpath = key.slice(separator + 1);
+        delete linkResolutions[key];
+        linkResolutions[`${rewrite(sourcePath)}\0${linkpath}`] = target ? rewrite(target) : null;
+      }
+      const folder = tfolder(newPath);
+      for (const handler of vaultHandlers.get('rename') ?? []) handler(folder, oldPath);
     },
     delete(path: string) {
       const file = files.find((candidate) => candidate.path === path)!;
       files = files.filter((candidate) => candidate !== file);
       data.delete(path);
+      for (const [key, target] of Object.entries(linkResolutions)) {
+        if (target === path) linkResolutions[key] = null;
+      }
       for (const handler of vaultHandlers.get('delete') ?? []) handler(file);
     },
     setFrontmatter(path: string, frontmatter: Record<string, unknown>) {
@@ -216,8 +257,7 @@ describe('WorkNoteIndex', () => {
     index.destroy();
   });
 
-  it('never guesses a duplicate basename and invalidates both buckets on rename', () => {
-    vi.useFakeTimers();
+  it('never guesses a duplicate basename', () => {
     const h = harness(
       [
         {
@@ -232,11 +272,29 @@ describe('WorkNoteIndex', () => {
     );
     const index = new WorkNoteIndex(h.app, preset);
     index.initialize();
-    const events: Array<{ invalidatedProjectPaths: readonly string[] }> = [];
-    index.onUpdate((event) => events.push(event));
     expect(index.diagnosticsFor('Tasks/A.md')).toContainEqual(
       expect.objectContaining({ type: 'ambiguous-project' }),
     );
+    index.destroy();
+  });
+
+  it('invalidates old and new buckets when a resolved Project dependency is renamed', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        { path: 'Projects/A.md' },
+      ],
+      { 'Tasks/A.md\0Projects/A': 'Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, preset);
+    index.initialize();
+    const events: Array<{ invalidatedProjectPaths: readonly string[] }> = [];
+    index.onUpdate((event) => events.push(event));
 
     h.rename('Projects/A.md', 'Elsewhere/A.md');
     vi.runAllTimers();
@@ -245,6 +303,103 @@ describe('WorkNoteIndex', () => {
       'Projects/A.md',
       'Elsewhere/A.md',
     ]);
+    expect(index.get('Tasks/A.md')?.projectPath).toBe('Elsewhere/A.md');
+    index.destroy();
+  });
+
+  it('invalidates the old bucket when a resolved Project dependency is deleted', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        { path: 'Projects/A.md' },
+      ],
+      { 'Tasks/A.md\0Projects/A': 'Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, preset);
+    index.initialize();
+    const events: Array<{
+      changedPaths: readonly string[];
+      invalidatedProjectPaths: readonly string[];
+    }> = [];
+    index.onUpdate((event) => events.push(event));
+
+    h.delete('Projects/A.md');
+    vi.runAllTimers();
+
+    expect(events[events.length - 1]).toEqual({
+      changedPaths: ['Tasks/A.md'],
+      invalidatedProjectPaths: ['Projects/A.md'],
+    });
+    expect(index.get('Tasks/A.md')).toBeUndefined();
+    index.destroy();
+  });
+
+  it('reindexes affected Work Notes and invalidates old and new buckets on folder rename', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Workspace/Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Workspace/Projects/A]]', Status: 'Active' },
+        },
+        { path: 'Workspace/Projects/A.md' },
+      ],
+      { 'Workspace/Tasks/A.md\0Workspace/Projects/A': 'Workspace/Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, { ...preset, folder: '' });
+    index.initialize();
+    const events: Array<{
+      changedPaths: readonly string[];
+      invalidatedProjectPaths: readonly string[];
+    }> = [];
+    index.onUpdate((event) => events.push(event));
+
+    h.renameFolder('Workspace', 'Archive');
+    vi.runAllTimers();
+
+    expect(events[events.length - 1]?.invalidatedProjectPaths).toEqual([
+      'Workspace/Projects/A.md',
+      'Archive/Projects/A.md',
+    ]);
+    expect(events[events.length - 1]?.changedPaths).toEqual([
+      'Archive/Tasks/A.md',
+      'Workspace/Tasks/A.md',
+    ]);
+    expect(index.get('Archive/Tasks/A.md')?.projectPath).toBe('Archive/Projects/A.md');
+    index.destroy();
+  });
+
+  it('does not publish unrelated Markdown rename or delete paths as Project buckets', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        { path: 'Projects/A.md' },
+        { path: 'Notes/Unrelated.md' },
+      ],
+      { 'Tasks/A.md\0Projects/A': 'Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, preset);
+    index.initialize();
+    const listener = vi.fn();
+    index.onUpdate(listener);
+
+    h.rename('Notes/Unrelated.md', 'Archive/Unrelated.md');
+    vi.runAllTimers();
+    h.delete('Archive/Unrelated.md');
+    vi.runAllTimers();
+
+    expect(listener).not.toHaveBeenCalled();
     index.destroy();
   });
 
