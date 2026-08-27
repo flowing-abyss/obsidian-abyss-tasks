@@ -1,7 +1,7 @@
 import type { TaskIndexEvent, TaskQueryApi } from '../../tasks/application/TaskApplicationApi';
 import type { TaskRef, TaskSnapshot } from '../../tasks/domain/types';
 
-export type DependencyDiagnostic =
+type DependencyDiagnostic =
   | { readonly type: 'missing-prerequisite'; readonly id: string }
   | { readonly type: 'duplicate-id'; readonly id: string; readonly candidates: readonly TaskRef[] }
   | { readonly type: 'self-edge'; readonly id: string }
