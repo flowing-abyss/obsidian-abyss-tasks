@@ -545,36 +545,78 @@ function sharedTagPrefix(tags: readonly string[]): string {
   return shared.length > 0 ? `#${shared.join('/')}` : '';
 }
 
+const FIELD_ALIASES: Readonly<
+  Record<keyof WorkNoteCompatibilityPreset['fields'], readonly string[]>
+> = {
+  project: ['project', 'up'],
+  status: ['status', 'state'],
+  priority: ['priority'],
+  description: ['description'],
+  start: ['start'],
+  end: ['end'],
+  created: ['created'],
+  updated: ['updated'],
+  id: ['id'],
+  milestone: ['milestone'],
+  blockedBy: ['blockedby'],
+  related: ['related'],
+};
+
+function normalizedFieldName(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/gu, '');
+}
+
+function structuralFieldPair(
+  files: readonly WorkNoteSourceFile[],
+  propertyCounts: Readonly<Record<string, number>>,
+): { readonly project: string; readonly status: string } | undefined {
+  const candidates = (field: 'project' | 'status'): string[] =>
+    Object.keys(propertyCounts).filter((property) =>
+      FIELD_ALIASES[field].includes(normalizedFieldName(property)),
+    );
+  const pairs = candidates('project').flatMap((project) =>
+    candidates('status').map((status) => ({
+      project,
+      status,
+      cooccurrence: files.filter(
+        (file) => file.frontmatter[project] !== undefined && file.frontmatter[status] !== undefined,
+      ).length,
+    })),
+  );
+  pairs.sort(
+    (left, right) =>
+      right.cooccurrence - left.cooccurrence ||
+      compareCodeUnits(left.project, right.project) ||
+      compareCodeUnits(left.status, right.status),
+  );
+  const best = pairs[0];
+  return best && best.cooccurrence > 0 ? { project: best.project, status: best.status } : undefined;
+}
+
 function deriveFields(
   propertyCounts: Readonly<Record<string, number>>,
+  structuralPair?: { readonly project: string; readonly status: string },
 ): WorkNoteCompatibilityPreset['fields'] {
-  const aliases: Readonly<Record<keyof WorkNoteCompatibilityPreset['fields'], readonly string[]>> =
-    {
-      project: ['project', 'up'],
-      status: ['status', 'state'],
-      priority: ['priority'],
-      description: ['description'],
-      start: ['start'],
-      end: ['end'],
-      created: ['created'],
-      updated: ['updated'],
-      id: ['id'],
-      milestone: ['milestone'],
-      blockedBy: ['blockedby'],
-      related: ['related'],
-    };
   const observed = Object.keys(propertyCounts).sort(
     (left, right) =>
-      (propertyCounts[right] ?? 0) - (propertyCounts[left] ?? 0) || left.localeCompare(right),
+      (propertyCounts[right] ?? 0) - (propertyCounts[left] ?? 0) || compareCodeUnits(left, right),
   );
   return Object.fromEntries(
     FIELD_KEYS.map((field) => {
+      if (field === 'project' && structuralPair) return [field, structuralPair.project];
+      if (field === 'status' && structuralPair) return [field, structuralPair.status];
       const match = observed.find((property) =>
-        aliases[field].includes(property.toLowerCase().replace(/[^a-z0-9]/gu, '')),
+        FIELD_ALIASES[field].includes(normalizedFieldName(property)),
       );
       return [field, match ?? DEFAULT_FIELDS[field]];
     }),
   ) as unknown as WorkNoteCompatibilityPreset['fields'];
+}
+
+function rankedCountKeys(counts: Readonly<Record<string, number>>): string[] {
+  return Object.keys(counts).sort(
+    (left, right) => (counts[right] ?? 0) - (counts[left] ?? 0) || compareCodeUnits(left, right),
+  );
 }
 
 export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePresetSuggestion {
@@ -586,7 +628,19 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
   for (const file of files) {
     for (const key of Object.keys(file.frontmatter)) increment(propertyCounts, key);
   }
-  const fields = deriveFields(propertyCounts);
+  const pair = structuralFieldPair(files, propertyCounts);
+  const pairSeeds = pair
+    ? files.filter(
+        (file) =>
+          file.frontmatter[pair.project] !== undefined &&
+          file.frontmatter[pair.status] !== undefined,
+      )
+    : [];
+  const clusterPropertyCounts: Record<string, number> = {};
+  for (const file of pairSeeds) {
+    for (const key of Object.keys(file.frontmatter)) increment(clusterPropertyCounts, key);
+  }
+  const fields = deriveFields(pairSeeds.length > 0 ? clusterPropertyCounts : propertyCounts, pair);
   const structuralSeeds = files.filter(
     (file) =>
       file.frontmatter[fields.project] !== undefined &&
@@ -599,10 +653,9 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
     const status = file.frontmatter[fields.status];
     if (typeof status === 'string') increment(statusValueCounts, status);
   }
-  const milestoneTag =
-    Object.keys(tagCounts).find((tag) => tag.toLowerCase().includes('milestone')) ?? '';
-  const ordinaryTag =
-    Object.keys(tagCounts).find((tag) => tag !== milestoneTag) ?? mostCommon(tagCounts);
+  const rankedTags = rankedCountKeys(tagCounts);
+  const milestoneTag = rankedTags.find((tag) => tag.includes('milestone')) ?? '';
+  const ordinaryTag = rankedTags.find((tag) => tag !== milestoneTag) ?? '';
   const commonTag = milestoneTag
     ? sharedTagPrefix([ordinaryTag, milestoneTag]) || mostCommon(tagCounts)
     : ordinaryTag;

@@ -453,6 +453,58 @@ describe('Work Note compatibility audit', () => {
     });
     expect(suggestion.preset.acceptedAudit).toBeUndefined();
   });
+
+  it('ranks structural field pairs before vault-wide aliases and ranks candidate tags deterministically', () => {
+    const suggestion = suggestWorkNotePreset(
+      source(
+        [
+          {
+            path: 'Reference/One.md',
+            tags: ['#reference'],
+            frontmatter: { Project: '[[Reference/Root]]' },
+          },
+          {
+            path: 'Reference/Two.md',
+            tags: ['#reference'],
+            frontmatter: { Project: '[[Reference/Root]]' },
+          },
+          {
+            path: 'Reference/Three.md',
+            tags: ['#reference'],
+            frontmatter: { Project: '[[Reference/Root]]', State: 'Filed' },
+          },
+          {
+            path: 'Work/First.md',
+            tags: ['#context/first', '#mark/scene'],
+            frontmatter: { Up: ['[[Projects/A]]'], Status: 'Idea' },
+          },
+          {
+            path: 'Work/Second.md',
+            tags: ['#mark/scene', '#context/second'],
+            frontmatter: { Up: ['[[Projects/A]]'], Status: 'Review' },
+          },
+        ],
+        {
+          'Work/First.md\0Projects/A': 'Projects/A.md',
+          'Work/Second.md\0Projects/A': 'Projects/A.md',
+        },
+      ),
+    );
+
+    expect(suggestion.preset).toMatchObject({
+      folder: 'Work',
+      membershipQuery: '#mark/scene',
+      ordinaryKindQuery: '#mark/scene',
+      milestoneKindQuery: '',
+      fields: { project: 'Up', status: 'Status' },
+    });
+    expect(suggestion.observations.tagCounts).toEqual({
+      '#context/first': 1,
+      '#mark/scene': 2,
+      '#context/second': 1,
+    });
+    expect(suggestion.preview).toMatchObject({ eligibleCount: 2, rejectedCandidateCount: 0 });
+  });
 });
 
 describe('frozen projects scale fixture', () => {

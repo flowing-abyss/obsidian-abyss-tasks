@@ -1,4 +1,5 @@
 import esbuild from 'esbuild';
+import { execFileSync } from 'node:child_process';
 import { builtinModules } from 'node:module';
 import process from 'process';
 
@@ -9,6 +10,18 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = process.argv[2] === 'production';
+
+function resolveBuildCommit() {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    }).trim();
+  } catch (error) {
+    if (prod) throw error;
+    return 'development';
+  }
+}
 
 const context = await esbuild.context({
   banner: {
@@ -37,6 +50,9 @@ const context = await esbuild.context({
   logLevel: 'info',
   sourcemap: prod ? false : 'inline',
   treeShaking: true,
+  define: {
+    __TASK_CALENDAR_BUILD_COMMIT__: JSON.stringify(resolveBuildCommit()),
+  },
   outfile: 'main.js',
   minify: prod,
 });

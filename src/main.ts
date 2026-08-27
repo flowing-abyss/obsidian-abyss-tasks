@@ -1,8 +1,10 @@
 import { Notice, Plugin } from 'obsidian';
+import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
+import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
 import type { WorkNoteCompatibilityPreview } from './projects/work-notes/types';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
@@ -215,6 +217,16 @@ export default class TaskCalendarPlugin extends Plugin {
 
   async previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
     return this.workNoteIndex.previewCompatibility();
+  }
+
+  readOnlyCompatibilityDiagnostic(): {
+    readonly buildCommit: string;
+    readonly prohibitedWorkNoteMutationCommandIds: readonly string[];
+  } {
+    return {
+      buildCommit: buildCommitIdentity(),
+      prohibitedWorkNoteMutationCommandIds: PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS,
+    };
   }
 
   rebuildTaskStatusSemantics(): void {

@@ -43,6 +43,10 @@ interface PluginLike {
   saveSettings: () => Promise<void>;
   openPanel: () => Promise<void>;
   previewWorkNoteCompatibility: () => Promise<unknown>;
+  readOnlyCompatibilityDiagnostic: () => {
+    readonly buildCommit: string;
+    readonly prohibitedWorkNoteMutationCommandIds: readonly string[];
+  };
 }
 
 function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
@@ -178,6 +182,29 @@ describe('TaskCalendarPlugin onload', () => {
     expect(command?.name).toBe('Preview work note compatibility');
     await (command as unknown as { callback: () => Promise<void> }).callback();
     expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('publishes build provenance and the canonical prohibited Work Note mutation routes', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+
+    const diagnostic = plugin.readOnlyCompatibilityDiagnostic();
+
+    expect(diagnostic).toEqual({
+      buildCommit: 'development',
+      prohibitedWorkNoteMutationCommandIds: [
+        'task-calendar:create-work-note',
+        'task-calendar:set-work-note-status',
+        'task-calendar:set-work-note-date',
+        'task-calendar:set-work-note-relation',
+        'task-calendar:update-work-note',
+        'task-calendar:accept-work-note-audit',
+        'task-calendar:enable-work-note-compatibility',
+      ],
+    });
+    for (const id of diagnostic.prohibitedWorkNoteMutationCommandIds) {
+      expect(plugin.commands.has(id.replace(/^task-calendar:/u, ''))).toBe(false);
+    }
   });
 
   it('settles the read-only preview command when metadata inspection fails', async () => {
