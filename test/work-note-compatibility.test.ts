@@ -406,6 +406,53 @@ describe('Work Note compatibility audit', () => {
       blockedBy: 'blocked_by',
     });
   });
+
+  it('infers a single-kind work-note cluster from structural fields instead of vault-wide noise', () => {
+    const suggestion = suggestWorkNotePreset(
+      source(
+        [
+          {
+            path: 'Journal/Day 1.md',
+            tags: ['#note/basic'],
+            frontmatter: { Up: '[[Journal/Month]]' },
+          },
+          {
+            path: 'Journal/Day 2.md',
+            tags: ['#note/basic'],
+            frontmatter: { Up: '[[Journal/Month]]' },
+          },
+          {
+            path: 'Work/Action.md',
+            tags: ['#mark/scene'],
+            frontmatter: { Up: ['[[Projects/A]]'], Status: 'Idea' },
+          },
+          {
+            path: 'Work/Review.md',
+            tags: ['#mark/scene'],
+            frontmatter: { Up: ['[[Projects/A]]'], Status: 'Review' },
+          },
+        ],
+        {
+          'Work/Action.md\0Projects/A': 'Projects/A.md',
+          'Work/Review.md\0Projects/A': 'Projects/A.md',
+        },
+      ),
+    );
+
+    expect(suggestion.preset).toMatchObject({
+      enabled: false,
+      folder: 'Work',
+      membershipQuery: '#mark/scene',
+      ordinaryKindQuery: '#mark/scene',
+      milestoneKindQuery: '',
+      fields: { project: 'Up', status: 'Status' },
+    });
+    expect(suggestion.preview).toMatchObject({
+      eligibleCount: 2,
+      rejectedCandidateCount: 0,
+    });
+    expect(suggestion.preset.acceptedAudit).toBeUndefined();
+  });
 });
 
 describe('frozen projects scale fixture', () => {

@@ -550,7 +550,7 @@ function deriveFields(
 ): WorkNoteCompatibilityPreset['fields'] {
   const aliases: Readonly<Record<keyof WorkNoteCompatibilityPreset['fields'], readonly string[]>> =
     {
-      project: ['project'],
+      project: ['project', 'up'],
       status: ['status', 'state'],
       priority: ['priority'],
       description: ['description'],
@@ -584,20 +584,28 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
   const statusValueCounts: Record<string, number> = {};
   const files = source.files();
   for (const file of files) {
-    increment(folderCounts, file.path.includes('/') ? file.path.split('/')[0]! : '');
     for (const key of Object.keys(file.frontmatter)) increment(propertyCounts, key);
-    for (const tag of file.tags) increment(tagCounts, normalizeTag(tag));
   }
   const fields = deriveFields(propertyCounts);
-  for (const file of files) {
+  const structuralSeeds = files.filter(
+    (file) =>
+      file.frontmatter[fields.project] !== undefined &&
+      file.frontmatter[fields.status] !== undefined,
+  );
+  const observedFiles = structuralSeeds.length > 0 ? structuralSeeds : files;
+  for (const file of observedFiles) {
+    increment(folderCounts, file.path.includes('/') ? file.path.split('/')[0]! : '');
+    for (const tag of file.tags) increment(tagCounts, normalizeTag(tag));
     const status = file.frontmatter[fields.status];
     if (typeof status === 'string') increment(statusValueCounts, status);
   }
   const milestoneTag =
-    Object.keys(tagCounts).find((tag) => tag.toLowerCase().includes('milestone')) ??
-    mostCommon(tagCounts);
-  const ordinaryTag = Object.keys(tagCounts).find((tag) => tag !== milestoneTag) ?? milestoneTag;
-  const commonTag = sharedTagPrefix([ordinaryTag, milestoneTag]) || mostCommon(tagCounts);
+    Object.keys(tagCounts).find((tag) => tag.toLowerCase().includes('milestone')) ?? '';
+  const ordinaryTag =
+    Object.keys(tagCounts).find((tag) => tag !== milestoneTag) ?? mostCommon(tagCounts);
+  const commonTag = milestoneTag
+    ? sharedTagPrefix([ordinaryTag, milestoneTag]) || mostCommon(tagCounts)
+    : ordinaryTag;
   const rawStatusByStatusId: Record<string, string> = {};
   for (const rawStatus of Object.keys(statusValueCounts).sort((left, right) =>
     left.localeCompare(right),
