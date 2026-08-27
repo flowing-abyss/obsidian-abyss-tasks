@@ -121,6 +121,39 @@ describe('single-task dependency carrier commands', () => {
   });
 
   it.each([
+    [
+      'variation-selector task ID',
+      '- [ ] Ship 🆔️ same ^ship\r\n',
+      { type: 'set-task-id' as const, ref, id: 'same' },
+    ],
+    [
+      'variation-selector dependency list with accepted spacing',
+      '- [ ] Ship ⛔️ one_1, two-2 ^ship\r\n',
+      {
+        type: 'set-task-dependency' as const,
+        ref,
+        dependencyId: 'one_1',
+        enabled: true,
+      },
+    ],
+    [
+      'variation-selector dependency carrier when removing an absent edge',
+      '- [ ] Ship ⛔️ keep ^ship\r\n',
+      {
+        type: 'set-task-dependency' as const,
+        ref,
+        dependencyId: 'absent',
+        enabled: false,
+      },
+    ],
+  ])('preserves exact bytes for a sole valid %s no-op', (_name, source, command) => {
+    expect(applyTaskCommand(codec, source, command)).toEqual({
+      type: 'unchanged',
+      content: source,
+    });
+  });
+
+  it.each([
     ['task ID', { type: 'set-task-id', ref, id: 'bad.id' }, 'task-id'],
     [
       'dependency ID',
@@ -198,6 +231,52 @@ describe('single-task dependency carrier commands', () => {
         '>   - 2026-08-27T08:30:00+07:00: Comment keeps spacing\r\n' +
         '>   - [ ] Child 🆔 child-id ⛔ child-prep\r\n',
     );
+    stack.index.destroy();
+  });
+
+  it.each([
+    {
+      name: 'variation-selector task ID',
+      source: '- [ ] ID 🆔️ same ^id\r\n',
+      command: (taskRef: TaskRef): DependencyTaskCommand => ({
+        type: 'set-task-id',
+        ref: taskRef,
+        id: 'same',
+      }),
+    },
+    {
+      name: 'variation-selector existing dependency',
+      source: '- [ ] Existing edge ⛔️ one_1, two-2 ^existing\r\n',
+      command: (taskRef: TaskRef): DependencyTaskCommand => ({
+        type: 'set-task-dependency',
+        ref: taskRef,
+        dependencyId: 'one_1',
+        enabled: true,
+      }),
+    },
+    {
+      name: 'variation-selector carrier with an absent dependency',
+      source: '- [ ] Absent edge ⛔️ keep ^absent\r\n',
+      command: (taskRef: TaskRef): DependencyTaskCommand => ({
+        type: 'set-task-dependency',
+        ref: taskRef,
+        dependencyId: 'absent',
+        enabled: false,
+      }),
+    },
+  ])('preserves $name bytes for an application/repository no-op', async ({ source, command }) => {
+    const app = await createAppWithFiles({ 'Tasks.md': source });
+    seedTaskCache(app, 'Tasks.md', [{ task: ' ', parent: -1, line: 0 }]);
+    const stack = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    await stack.index.initialize();
+    const task = stack.tasks.queries.list()[0]!;
+
+    await expect(stack.tasks.execute(command(task.ref))).resolves.toMatchObject({
+      type: 'ok',
+      changed: false,
+    });
+
+    expect(await app.vault.cachedRead(app.vault.getMarkdownFiles()[0]!)).toBe(source);
     stack.index.destroy();
   });
 });

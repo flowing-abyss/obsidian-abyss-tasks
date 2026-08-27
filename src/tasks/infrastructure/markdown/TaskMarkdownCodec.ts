@@ -481,6 +481,13 @@ export class TaskMarkdownCodec {
         return invalid('invalid-target', 'task-id');
       }
     }
+    const occurrences = parsed.occurrences.get('task-id') ?? [];
+    if (
+      (edit.id === null && occurrences.length === 0) ||
+      (edit.id !== null && occurrences.length === 1 && parsed.dependency.id === edit.id)
+    ) {
+      return { type: 'unchanged', content: parsed.original };
+    }
     const token = edit.id === null ? null : `🆔 ${edit.id}`;
     const content = this.replaceAllKnownCarriers(parsed, 'task-id', token);
     return content === parsed.original
@@ -500,6 +507,14 @@ export class TaskMarkdownCodec {
     if (typeof edit.enabled !== 'boolean') return invalid('invalid-target', 'dependency');
 
     const existing = [...new Set(parsed.dependency.dependsOn)];
+    const occurrences = parsed.occurrences.get('depends-on') ?? [];
+    const hasDuplicateListEntry = existing.length !== parsed.dependency.dependsOn.length;
+    const desiredStateAlreadyHolds = edit.enabled
+      ? existing.includes(edit.dependencyId)
+      : !existing.includes(edit.dependencyId);
+    if (desiredStateAlreadyHolds && occurrences.length <= 1 && !hasDuplicateListEntry) {
+      return { type: 'unchanged', content: parsed.original };
+    }
     let dependencies: readonly string[];
     if (edit.enabled) {
       dependencies = existing.includes(edit.dependencyId)
