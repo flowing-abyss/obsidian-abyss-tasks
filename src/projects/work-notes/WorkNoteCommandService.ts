@@ -1,4 +1,5 @@
 import { normalizePath, parseYaml, stringifyYaml, TFile, type App } from 'obsidian';
+import { markdownSemanticLiteralRanges } from '../../tags/markdownTagRename';
 import { auditWorkNotes, computeWorkNotePresetFingerprint, isAuditAccepted } from './compatibility';
 import type {
   WorkNoteAuditSource,
@@ -71,91 +72,16 @@ function frontmatterFromMarkdown(markdown: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
-function withoutFencedAndIndentedCode(markdown: string): string {
-  const output: string[] = [];
-  let fence: { readonly marker: '`' | '~'; readonly length: number } | null = null;
-  for (const line of markdown.split(/\r?\n/u)) {
-    const run = fenceRun(line);
-    if (fence) {
-      if (
-        run?.marker === fence.marker &&
-        run.length >= fence.length &&
-        run.remainder.trim().length === 0
-      ) {
-        fence = null;
-      }
-      output.push('');
-      continue;
-    }
-    if (run && run.length >= 3) {
-      if (run.marker === '~' || !run.remainder.includes('`')) {
-        fence = { marker: run.marker, length: run.length };
-        output.push('');
-        continue;
-      }
-    }
-    output.push(/^(?: {4}|\t)/u.test(line) ? '' : line);
-  }
-  return output.join('\n');
-}
-
-function fenceRun(
-  line: string,
-): { readonly marker: '`' | '~'; readonly length: number; readonly remainder: string } | undefined {
-  let start = 0;
-  while (start < 3 && line[start] === ' ') start += 1;
-  const marker = line[start];
-  if (marker !== '`' && marker !== '~') return undefined;
-  let end = start;
-  while (line[end] === marker) end += 1;
-  return { marker, length: end - start, remainder: line.slice(end) };
-}
-
-function backtickRunLength(markdown: string, start: number): number {
-  let end = start;
-  while (markdown[end] === '`') end += 1;
-  return end - start;
-}
-
-function closingBacktickRun(markdown: string, start: number, length: number): number {
-  for (let index = start; index < markdown.length; index += 1) {
-    if (markdown[index] !== '`') continue;
-    const run = backtickRunLength(markdown, index);
-    if (run === length) return index;
-    index += run - 1;
-  }
-  return -1;
-}
-
-function withoutInlineCode(markdown: string): string {
-  let output = '';
-  let index = 0;
-  while (index < markdown.length) {
-    if (markdown[index] !== '`') {
-      output += markdown[index];
-      index += 1;
-      continue;
-    }
-    const length = backtickRunLength(markdown, index);
-    const closing = closingBacktickRun(markdown, index + length, length);
-    if (closing < 0) {
-      output += markdown.slice(index, index + length);
-      index += length;
-      continue;
-    }
-    output += ' '.repeat(closing + length - index);
-    index = closing + length;
-  }
-  return output;
-}
-
 function inlineMarkdownTags(markdown: string): string[] {
   const body = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u, '');
-  const prose = withoutInlineCode(withoutFencedAndIndentedCode(body))
-    .replace(/<!--[\s\S]*?-->/gu, '')
-    .replace(/<(code|pre)\b[^>]*>[\s\S]*?<\/\1>/giu, '');
+  const excluded = markdownSemanticLiteralRanges(body);
   const tags = new Set<string>();
-  for (const match of prose.matchAll(/(^|[\s([{>"'])#([\p{L}\p{N}_/-]+)/gu)) {
+  let rangeIndex = 0;
+  for (const match of body.matchAll(/(^|[\s([{>"'])#([\p{L}\p{N}_/-]+)/gu)) {
+    const tagFrom = (match.index ?? 0) + (match[1]?.length ?? 0);
+    while (excluded[rangeIndex] && excluded[rangeIndex]!.to <= tagFrom) rangeIndex += 1;
+    const range = excluded[rangeIndex];
+    if (range && range.from <= tagFrom && tagFrom < range.to) continue;
     if (match[2]) tags.add(`#${match[2]}`);
   }
   return [...tags];

@@ -946,7 +946,7 @@ function wikiScanAt(source: string, cursor: number, state: WikiScanState): WikiS
  * The rename pass consumes this one ordered range set, so destinations, raw markup, comments,
  * code, and math all share the same lossless boundary contract.
  */
-function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
+export function markdownSemanticLiteralRanges(source: string): readonly SourceRange[] {
   const codeRanges = excludedCodeRanges(source);
   const ranges: SourceRange[] = [...codeRanges];
   const opaqueRanges: SourceRange[] = [...codeRanges];
