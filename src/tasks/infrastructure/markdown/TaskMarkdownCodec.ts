@@ -7,12 +7,19 @@ import {
   type RecurrenceTaskLineEditResult,
 } from '../../domain/recurrenceIteration';
 import { parseTaskLineSourceModel } from '../../domain/taskLineSourceModel';
-import type { OnCompletion, TaskPriority, TaskStatus } from '../../domain/types';
+import type {
+  OnCompletion,
+  TaskDependencyCarriers,
+  TaskPriority,
+  TaskStatus,
+} from '../../domain/types';
 import {
   formatDurationMinutes,
   isSingleLineText,
   localDate,
   localTime,
+  taskDependencyId,
+  taskDependencyIds,
   type TaskIssue,
   type TaskValidationField,
   type TaskValidationState,
@@ -114,6 +121,7 @@ export interface ParsedTaskLine {
   readonly recurrence?: string;
   readonly onCompletion: OnCompletion;
   readonly onCompletionExplicit: boolean;
+  readonly dependency: TaskDependencyCarriers;
   readonly source: {
     readonly filePath: string;
     readonly line: number;
@@ -876,6 +884,10 @@ export class TaskMarkdownCodec {
   parseLine(original: string, source: ParseSource): ParsedTaskLine | null {
     const model = parseTaskLineSourceModel(original);
     if (!model) return null;
+    const taskId = model.carriers.find((carrier) => carrier.kind === 'task-id')?.value;
+    const dependencyLists = model.carriers
+      .filter((carrier) => carrier.kind === 'depends-on' && typeof carrier.value === 'string')
+      .flatMap((carrier) => (carrier.value as string).split(',').map((id) => id.trim()));
     return {
       original: model.original,
       lineEnding: model.lineEnding,
@@ -890,6 +902,10 @@ export class TaskMarkdownCodec {
       recurrence: model.recurrence,
       onCompletion: model.onCompletion,
       onCompletionExplicit: model.onCompletionExplicit,
+      dependency: {
+        ...(typeof taskId === 'string' && { id: taskDependencyId(taskId) }),
+        dependsOn: taskDependencyIds(dependencyLists),
+      },
       source: { ...source, originalMarkdown: original },
     };
   }

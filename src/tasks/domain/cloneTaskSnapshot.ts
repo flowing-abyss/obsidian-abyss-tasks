@@ -5,6 +5,7 @@ import type {
   TaskRef,
   TaskSnapshot,
 } from './types';
+import { taskDependencyId, taskDependencyIds } from './validation';
 
 function cloneTaskRef(ref: TaskRef): TaskRef {
   return { ...ref };
@@ -47,6 +48,12 @@ export function cloneTaskSnapshot(task: TaskSnapshot): TaskSnapshot {
     tags: [...task.tags],
     subtasks: task.subtasks.map(cloneSubtask),
     comments: task.comments.map(cloneComment),
+    ...(task.dependency !== undefined && {
+      dependency: {
+        ...(task.dependency.id !== undefined && { id: taskDependencyId(task.dependency.id) }),
+        dependsOn: taskDependencyIds(task.dependency.dependsOn),
+      },
+    }),
     source: { ...task.source },
     presentation: { ...task.presentation },
   };

@@ -83,6 +83,20 @@ export function durationMinutes(value: number): DurationMinutes {
   return value as DurationMinutes;
 }
 
+/** Accept only the IDs already supported by the source-line parser. */
+export function taskDependencyId(value: string): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+    throw new Error('invalid-task-dependency-id');
+  }
+  return value;
+}
+
+/** Defensively validates arrays before they cross into immutable task snapshots. */
+export function taskDependencyIds(values: readonly string[]): readonly string[] {
+  if (!Array.isArray(values)) throw new Error('invalid-task-dependency-ids');
+  return values.map(taskDependencyId);
+}
+
 export function formatDurationMinutes(value: DurationMinutes): string {
   const hours = Math.floor(value / 60);
   const minutes = value % 60;

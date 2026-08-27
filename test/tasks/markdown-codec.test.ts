@@ -59,6 +59,7 @@ describe('TaskMarkdownCodec', () => {
       recurrence: parsed?.recurrence,
       onCompletion: parsed?.onCompletion,
       onCompletionExplicit: parsed?.onCompletionExplicit,
+      dependency: parsed?.dependency,
     }).toEqual({
       statusSymbol: model?.statusSymbol,
       markdownTitle: model?.markdownTitle,
@@ -70,7 +71,18 @@ describe('TaskMarkdownCodec', () => {
       recurrence: model?.recurrence,
       onCompletion: model?.onCompletion,
       onCompletionExplicit: model?.onCompletionExplicit,
+      dependency: { dependsOn: [] },
     });
+  });
+
+  it('projects parsed Tasks ID and dependency carriers without changing source bytes', () => {
+    const source = '- [ ] Ship 🆔️ ship-1 ⛔ prep-1, prep_2 #unchanged';
+    const parsed = parse(source);
+
+    expect(parsed.dependency).toEqual({ id: 'ship-1', dependsOn: ['prep-1', 'prep_2'] });
+    expect(parsed.source.originalMarkdown).toBe(source);
+    expect(parsed.original).toBe(source);
+    expectLosslessPartition(parsed);
   });
 
   describe('atomic schedule commands', () => {

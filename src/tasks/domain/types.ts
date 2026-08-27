@@ -11,6 +11,11 @@ declare const durationBrand: unique symbol;
 export type LocalDate = string & { readonly [localDateBrand]: true };
 export type LocalTime = string & { readonly [localTimeBrand]: true };
 export type DurationMinutes = number & { readonly [durationBrand]: true };
+/** Read-only carriers parsed from the source line; they are never normalized or rewritten here. */
+export interface TaskDependencyCarriers {
+  readonly id?: string;
+  readonly dependsOn: readonly string[];
+}
 
 export interface TaskStatusRule {
   readonly id: string;
@@ -158,6 +163,7 @@ export interface TaskSnapshot {
   readonly subtasks: readonly SubtaskSnapshot[];
   readonly comments: readonly TaskCommentSnapshot[];
   readonly description?: string;
+  readonly dependency?: TaskDependencyCarriers;
   readonly source: TaskSource;
   readonly presentation: TaskPresentationMetadata;
 }

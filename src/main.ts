@@ -1,6 +1,7 @@
 import { Notice, Plugin } from 'obsidian';
 import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { DependencyIndex } from './projects/dependencies/DependencyIndex';
 import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
@@ -47,6 +48,7 @@ export default class TaskCalendarPlugin extends Plugin {
   queries!: TaskQueryApi;
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
+  private dependencyIndex!: DependencyIndex;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectCommands!: ProjectCommandService;
@@ -68,6 +70,7 @@ export default class TaskCalendarPlugin extends Plugin {
       }),
       refAuthority,
     });
+    this.dependencyIndex = new DependencyIndex(this.taskIndex);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
@@ -208,6 +211,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.projectWorkspace.destroy();
     this.projectStore.destroy();
     this.taskIndex.destroy();
+    this.dependencyIndex.destroy();
     this.workNoteIndex.destroy();
     delete (window as unknown as Record<string, unknown>).renderCalendar;
   }

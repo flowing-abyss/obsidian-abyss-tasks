@@ -321,6 +321,10 @@ export function projectTaskSnapshot(projection: TaskSnapshotProjection): TaskSna
     ...(parsed.recurrence !== undefined && { recurrence: parsed.recurrence }),
     onCompletion: parsed.onCompletion,
     onCompletionExplicit: parsed.onCompletionExplicit,
+    dependency: {
+      ...(parsed.dependency.id !== undefined && { id: parsed.dependency.id }),
+      dependsOn: [...parsed.dependency.dependsOn],
+    },
     subtasks: children.subtasks,
     comments: children.comments,
     ...(children.description !== undefined && { description: children.description }),

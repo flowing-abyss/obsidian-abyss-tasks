@@ -342,6 +342,12 @@ export function taskSnapshotForCalendarOccurrence(occurrence: CalendarOccurrence
     subtasks: [...node.subtasks],
     comments: [...node.comments],
     ...(node.description !== undefined && { description: node.description }),
+    ...(root.dependency !== undefined && {
+      dependency: {
+        ...(root.dependency.id !== undefined && { id: root.dependency.id }),
+        dependsOn: [...root.dependency.dependsOn],
+      },
+    }),
     source: { ...root.source },
     presentation: { ...root.presentation },
   };
