@@ -394,7 +394,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => this.completionDecisionFor(task),
         });
       } else if (this.activeViewType === 'week') {
         this.activeView = new WeekView({
@@ -411,7 +411,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => this.completionDecisionFor(task),
         });
       } else {
         this.activeView = new ListView({
@@ -421,7 +421,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => this.completionDecisionFor(task),
         });
       }
     }
@@ -429,6 +429,12 @@ export class CalendarRenderer {
     this.activeView.render(this.viewContainer, tasks, config);
     this.projectionDiagnosticOwner.update(this.viewContainer, this.projectionIssues);
     this.updateToolbar();
+  }
+
+  private completionDecisionFor(task: TaskSnapshot) {
+    const target = calendarMutationTarget(task);
+    if (target?.type !== 'task') return undefined;
+    return this.dependencyProjection?.evaluateCompletion(task);
   }
 
   private isSameViewType(): boolean {

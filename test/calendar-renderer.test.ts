@@ -565,6 +565,99 @@ describe('CalendarRenderer', () => {
       },
     );
 
+    it.each([
+      { activation: 'click' as const, label: 'click' },
+      { activation: 'Enter' as const, label: 'Enter' },
+      { activation: ' ' as const, label: 'Space' },
+    ])(
+      'keeps a calendar subtask occurrence completion available on $label when its root is blocked',
+      async ({ activation }) => {
+        const path = 'Tasks.md';
+        const source = [
+          '- [ ] Prepare 🆔 prep',
+          '- [ ] Blocked root ⛔ prep',
+          '  - [ ] Planned subtask 🔁 every day 📅 2026-08-28',
+        ].join('\n');
+        const app = await createAppWithFiles({ [path]: source });
+        const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+        const authority = new TaskRefAuthority(`calendar-subtask-${activation}`);
+        const index = new TaskIndex(app, {
+          statusCatalog,
+          dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+          refAuthority: authority,
+        });
+        await index.initialize();
+        index.installCommittedContent(path, source);
+        const graph = new DependencyIndex(index);
+        const policy = new DependencyPolicy(graph);
+        const repository = new InMemoryTaskRepository({
+          files: { [path]: source },
+          codec: new TaskMarkdownCodec(statusCatalog),
+          snapshotsFromContent: (filePath, content) => index.previewContent(filePath, content),
+          locator: new TaskLocator(authority),
+          refAuthority: authority,
+          snapshotState: index,
+        });
+        const application = new TaskApplicationService(
+          index,
+          repository,
+          statusCatalog,
+          { today: () => localDate('2026-08-28') },
+          undefined,
+          undefined,
+          graph,
+          policy,
+        );
+        const execute = vi.spyOn(application, 'execute');
+        const root = freshContainer();
+        const renderer = new CalendarRenderer(
+          root,
+          resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+          app,
+          index,
+          application,
+          new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+          '',
+          { removeScheduledDate: false },
+          undefined,
+          noInteractionOwnership,
+          policy,
+        );
+        renderer.mount();
+
+        const card = Array.from(root.querySelectorAll<HTMLElement>('.task')).find((candidate) =>
+          candidate.textContent?.includes('Planned subtask'),
+        );
+        expect(card).toBeDefined();
+        const marker = card!.querySelector<HTMLElement>('.abyss-status-marker')!;
+        expect(marker.hasAttribute('aria-disabled')).toBe(false);
+        marker.dispatchEvent(
+          activation === 'click'
+            ? new MouseEvent('click', { bubbles: true, cancelable: true })
+            : new KeyboardEvent('keydown', {
+                key: activation,
+                bubbles: true,
+                cancelable: true,
+              }),
+        );
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledWith({
+          type: 'toggle-completion',
+          target: expect.objectContaining({ type: 'subtask' }),
+        });
+        await expect(execute.mock.results[0]?.value).resolves.toMatchObject({ type: 'ok' });
+        expect(repository.content(path)).toContain(
+          '  - [x] Planned subtask 🔁 every day 📅 2026-08-28',
+        );
+        expect(repository.content(path)).toContain('- [ ] Blocked root ⛔ prep');
+        renderer.destroy();
+        graph.destroy();
+        index.destroy();
+      },
+    );
+
     it('renders forecast badges without counting or mutating projected occurrences', () => {
       const store = new StubStore();
       const root = freshContainer();
