@@ -74,6 +74,26 @@ async function externalSetStatus(app: App, file: TFile, tag: string): Promise<vo
 }
 
 describe('ProjectCommandService', () => {
+  it('observes the exact raw Project endpoints used by a timeline command', async () => {
+    const app = await createAppWithFiles({ 'Projects/A.md': '# A\n' });
+    const service = new ProjectCommandService(app, () => statuses);
+
+    expect(
+      service.observeRange({
+        path: 'Projects/A.md',
+        frontmatter: {
+          start: '2026-08-20',
+          end: '2026-08-26T14:30:00+07:00',
+          unrelated: 'keep',
+        },
+      }),
+    ).toEqual({
+      path: 'Projects/A.md',
+      start: '2026-08-20',
+      end: '2026-08-26T14:30:00+07:00',
+    });
+  });
+
   it('sets one observed range field without changing the other endpoint precision', async () => {
     const app = await createAppWithFiles({
       'Projects/A.md':

@@ -324,6 +324,7 @@ export class PanelView extends ItemView {
       this.panelNavigation,
       this.projectWorkspace?.list() ?? [],
       this.workNoteCommands,
+      projectCommands,
     );
     this.right = new RightPanel(
       this.state,

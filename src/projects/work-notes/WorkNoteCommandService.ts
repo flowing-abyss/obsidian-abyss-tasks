@@ -1,5 +1,7 @@
 import { normalizePath, parseYaml, stringifyYaml, TFile, type App } from 'obsidian';
 import { markdownSemanticLiteralRanges } from '../../tags/markdownTagRename';
+import type { ProjectRangePatch } from '../ProjectCommandService';
+import { parseProjectDate, parseProjectRange } from '../projectDates';
 import { auditWorkNotes, computeWorkNotePresetFingerprint, isAuditAccepted } from './compatibility';
 import type {
   WorkNoteAuditSource,
@@ -174,7 +176,12 @@ export class WorkNoteCommandService {
       string,
       unknown
     >;
-    const properties = new Set<string>([preset.fields.project, preset.fields.status]);
+    const properties = new Set<string>([
+      preset.fields.project,
+      preset.fields.status,
+      preset.fields.start,
+      preset.fields.end,
+    ]);
     const marker = preset.creation?.kindMarkers[snapshot.kind];
     if (marker?.kind === 'property') properties.add(marker.property);
     const fields = Object.fromEntries(
@@ -345,6 +352,108 @@ export class WorkNoteCommandService {
       if (error instanceof AbortWorkNoteCommand) return error.result;
       return { type: 'io-error' };
     }
+  }
+
+  async setRange(
+    observed: WorkNoteObservedFields,
+    patch: ProjectRangePatch,
+  ): Promise<WorkNoteCommandResult> {
+    const expectation = {
+      presetRevision: observed.presetRevision,
+      presetFingerprint: observed.presetFingerprint,
+    };
+    const blocked = this.compatibility('update', expectation);
+    if (blocked) return blocked;
+    const invalidPatch = this.invalidRangePatchField(patch);
+    if (invalidPatch) return { type: 'invalid', field: invalidPatch };
+    const preset = this.preset();
+    const observedStart = observedRaw(observed, preset, 'start');
+    const observedEnd = observedRaw(observed, preset, 'end');
+    const nextStart = patch.start === undefined ? observedStart : (patch.start?.raw ?? undefined);
+    const nextEnd = patch.end === undefined ? observedEnd : (patch.end?.raw ?? undefined);
+    const nextRange = parseProjectRange(nextStart, nextEnd);
+    if (nextRange.issue) return { type: 'invalid', field: nextRange.issue };
+    const file = this.app.vault.getAbstractFileByPath(observed.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+
+    const audit = await this.index.audit();
+    const latest = await this.latestSnapshotFromFile(file, observed, preset);
+    if (!audit.capabilities.update || !latest) {
+      return { type: 'compatibility-conflict', reason: 'latest-audit-rejected' };
+    }
+    if (latest.kind !== observed.kind || latest.projectPath !== observed.projectPath) {
+      return { type: 'compatibility-conflict', reason: 'eligibility-changed' };
+    }
+
+    try {
+      await this.app.vault.process(file, (markdown) => {
+        const transactionBlocked = this.compatibility('update', expectation);
+        if (transactionBlocked) throw new AbortWorkNoteCommand(transactionBlocked);
+        const transactionPreset = this.preset();
+        const frontmatter = frontmatterFromMarkdown(markdown);
+        const shapeConflict = this.observedShapeChanged(observed, transactionPreset, frontmatter);
+        if (shapeConflict) {
+          throw new AbortWorkNoteCommand({ type: 'conflict', field: shapeConflict });
+        }
+        for (const semantic of ['start', 'end'] as const) {
+          if (
+            !sameRawValue(
+              frontmatter[transactionPreset.fields[semantic]],
+              observedRaw(observed, transactionPreset, semantic),
+            )
+          ) {
+            throw new AbortWorkNoteCommand({ type: 'conflict', field: semantic });
+          }
+        }
+        const snapshot = this.latestSnapshot(
+          observed,
+          transactionPreset,
+          frontmatter,
+          inlineMarkdownTags(markdown),
+        );
+        if (
+          !snapshot ||
+          snapshot.kind !== observed.kind ||
+          snapshot.projectPath !== observed.projectPath
+        ) {
+          throw new AbortWorkNoteCommand({
+            type: 'compatibility-conflict',
+            reason: 'eligibility-changed',
+          });
+        }
+        if (patch.start === null) delete frontmatter[transactionPreset.fields.start];
+        else if (patch.start !== undefined) {
+          frontmatter[transactionPreset.fields.start] = patch.start.raw;
+        }
+        if (patch.end === null) delete frontmatter[transactionPreset.fields.end];
+        else if (patch.end !== undefined) {
+          frontmatter[transactionPreset.fields.end] = patch.end.raw;
+        }
+        return replaceFrontmatter(markdown, frontmatter);
+      });
+      this.index.refresh();
+      return { type: 'ok', path: observed.path };
+    } catch (error) {
+      if (error instanceof AbortWorkNoteCommand) return error.result;
+      return { type: 'io-error' };
+    }
+  }
+
+  private invalidRangePatchField(patch: ProjectRangePatch): string | undefined {
+    for (const semantic of ['start', 'end'] as const) {
+      const value = patch[semantic];
+      if (value === undefined || value === null) continue;
+      const parsed = parseProjectDate(value.raw);
+      if (
+        !parsed ||
+        parsed.precision !== value.precision ||
+        parsed.instantMs !== value.instantMs ||
+        parsed.offsetMinutes !== value.offsetMinutes
+      ) {
+        return semantic;
+      }
+    }
+    return undefined;
   }
 
   async create(request: WorkNoteCreateRequest): Promise<WorkNoteCommandResult> {

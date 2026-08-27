@@ -58,6 +58,10 @@ export class ProjectWorkspaceSession {
       columns: {},
     } satisfies WorkNoteBoardSession,
   };
+  readonly timelines = {
+    tasks: viewport(),
+    workNotes: viewport(),
+  };
 
   openProject(path: string): void {
     if (this.projectPath === path) return;
@@ -77,6 +81,8 @@ export class ProjectWorkspaceSession {
     this.workNotes.board.selectedColumnKey = null;
     this.workNotes.board.focusedKey = null;
     this.workNotes.board.restoreFocus = false;
+    Object.assign(this.timelines.tasks, viewport());
+    Object.assign(this.timelines.workNotes, viewport());
     for (const key of Object.keys(this.workNotes.board.columns)) {
       delete this.workNotes.board.columns[key];
     }

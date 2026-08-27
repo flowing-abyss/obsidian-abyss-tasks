@@ -39,6 +39,11 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.setRange#process#1': {
+    mutation: 'work-note metadata',
+    reason:
+      'Atomically revalidates current Markdown eligibility and exact observed endpoints before updating one accepted Work Note range.',
+  },
   'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.setStatus#process#1': {
     mutation: 'work-note metadata',
     reason:

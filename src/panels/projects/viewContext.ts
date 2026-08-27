@@ -14,6 +14,7 @@ export interface ProjectsListContext {
   onSaveSettings: () => Promise<void>;
   onFiltersChanged?: () => void;
   onPortfolioLayoutChanged?: () => void;
+  timelineAvailable?: boolean;
   onCreate: (name: string) => Promise<void>;
   onSetStatus: (path: string, statusId: string) => void;
   openNote: (path: string) => void;
@@ -29,10 +30,18 @@ export interface ProjectsDashboardContext {
   renderTasks: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
   /** Renders the same task cards through the shared status-board shell. */
   renderTaskBoard?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  /** Renders dated Project Tasks through the shared Timeline shell. */
+  renderTaskTimeline?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
   /** Renders rich supporting notes without projecting them into checkbox Tasks. */
   renderWorkNotes?: (host: HTMLElement, path: string, notes: readonly WorkNoteSnapshot[]) => void;
   /** Renders the same Work Notes through the shared guarded board shell. */
   renderWorkNoteBoard?: (
+    host: HTMLElement,
+    path: string,
+    notes: readonly WorkNoteSnapshot[],
+  ) => void;
+  /** Renders dated Work Notes through the shared Timeline shell. */
+  renderWorkNoteTimeline?: (
     host: HTMLElement,
     path: string,
     notes: readonly WorkNoteSnapshot[],

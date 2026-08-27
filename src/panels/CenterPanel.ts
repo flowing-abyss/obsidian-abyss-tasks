@@ -10,6 +10,7 @@ import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
 import { NextActionService, type NextActionConflict } from '../projects/NextActionService';
+import type { ProjectCommandService } from '../projects/ProjectCommandService';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
@@ -120,12 +121,14 @@ import { renderNextActionControl } from './projects/NextActionControl';
 import { ProjectWorkspaceSession } from './projects/ProjectWorkspaceSession';
 import { renderBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
+import { renderTasksTimeline } from './projects/ProjectsTimelineView';
 import {
   createTaskBoardMutation,
   projectBoardTasks,
   taskBoardColumns,
   type BoardMutation,
 } from './projects/boardProjection';
+import type { TimelinePointRole } from './projects/timelineProjection';
 import { visibleCalendarDates } from './visibleCalendarDates';
 
 interface TimedBlockFocusLocator {
@@ -285,6 +288,7 @@ export class CenterPanel {
     navigation?: PanelNavigationActions,
     private projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
     private readonly workNoteCommands?: WorkNoteCommandService,
+    private readonly projectCommands?: ProjectCommandService,
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -636,6 +640,50 @@ export class CenterPanel {
     this.completeTaskCardRender();
   }
 
+  private async setProjectTimelineTaskDate(
+    task: TaskSnapshot,
+    role: TimelinePointRole,
+    date: string,
+  ): Promise<TaskCommandResult> {
+    if (!this.tasks || role === 'milestone') throw new Error('Task Timeline mutation unavailable');
+    const value = localDate(date);
+    let command;
+    if (role === 'start' || role === 'end') {
+      const ref = calendarRootTaskRef(task);
+      if (!ref) throw new Error('Task Timeline target unavailable');
+      command = {
+        type: 'set-span-boundary' as const,
+        ref,
+        boundary: role === 'start' ? ('start' as const) : ('due' as const),
+        date: value,
+      };
+    } else {
+      command = calendarPatchCommand(task, {
+        [role]: { type: 'set' as const, value },
+      });
+      if (!command) throw new Error('Task Timeline target unavailable');
+    }
+    const result = await this.tasks.execute(command);
+    presentTaskCommandResult(result);
+    return result;
+  }
+
+  private renderProjectTaskTimeline(
+    host: HTMLElement,
+    path: string,
+    actions: readonly ProjectAction[],
+  ): void {
+    renderTasksTimeline(host, {
+      actions,
+      session: this.projectWorkspaceSession.timelines.tasks,
+      renderTask: (identity, task) => {
+        this.renderTaskCard(identity, task, { projectPath: path });
+      },
+      onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
+    });
+    this.completeTaskCardRender();
+  }
+
   private taskBoardMutation(): BoardMutation<TaskSnapshot> {
     return createTaskBoardMutation(this.statusRegistry.all(), (task, symbol) =>
       this.setTaskStatus(task, symbol),
@@ -797,6 +845,8 @@ export class CenterPanel {
           {
             renderTasks: (host, path, tasks) => this.renderProjectTasks(host, path, tasks),
             renderTaskBoard: (host, path, tasks) => this.renderProjectTaskBoard(host, path, tasks),
+            renderTaskTimeline: (host, path, tasks) =>
+              this.renderProjectTaskTimeline(host, path, tasks),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,
             pendingBoardUndo: this.pendingProjectBoardUndo,
@@ -809,6 +859,7 @@ export class CenterPanel {
               this.projectStore?.refresh();
             },
             workNoteCommands: this.workNoteCommands,
+            projectCommands: this.projectCommands,
             workspaceSession: this.projectWorkspaceSession,
           },
         );

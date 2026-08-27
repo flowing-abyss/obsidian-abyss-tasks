@@ -330,6 +330,67 @@ describe('CenterPanel planning API delegation', () => {
     expect(execute).toHaveBeenCalledTimes(7);
     expect(process).not.toHaveBeenCalled();
   });
+
+  it('routes every Task Timeline role through the existing application command path', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] task 📅 2026-07-20\n' });
+    const state = new AppState();
+    const ref: TaskRef = { filePath: 'f.md', line: 0, revision: 'r' };
+    const current = Object.assign(
+      task({
+        planning: { due: '2026-07-20' },
+        source: { filePath: 'f.md', line: 0, originalMarkdown: '- [ ] task 📅 2026-07-20' },
+      }),
+      { ref },
+    );
+    const store = makeStubStore([current], app);
+    const queries = (store as unknown as { taskQueries: TaskApplicationApi['queries'] })
+      .taskQueries;
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'not-found',
+      target: { type: 'task', ref },
+    });
+    const panel = new CenterPanel(
+      state,
+      app,
+      DEFAULT_SETTINGS,
+      queries,
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      null,
+      null,
+      { queries, execute },
+    );
+    const process = vi.spyOn(app.vault, 'process');
+
+    await callPrivate(panel, 'setProjectTimelineTaskDate', current, 'start', '2026-07-18');
+    await callPrivate(panel, 'setProjectTimelineTaskDate', current, 'end', '2026-07-22');
+    await callPrivate(panel, 'setProjectTimelineTaskDate', current, 'scheduled', '2026-07-19');
+    await callPrivate(panel, 'setProjectTimelineTaskDate', current, 'due', '2026-07-23');
+
+    expect(execute).toHaveBeenNthCalledWith(1, {
+      type: 'set-span-boundary',
+      ref,
+      boundary: 'start',
+      date: '2026-07-18',
+    });
+    expect(execute).toHaveBeenNthCalledWith(2, {
+      type: 'set-span-boundary',
+      ref,
+      boundary: 'due',
+      date: '2026-07-22',
+    });
+    expect(execute).toHaveBeenNthCalledWith(3, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { scheduled: { type: 'set', value: '2026-07-19' } },
+    });
+    expect(execute).toHaveBeenNthCalledWith(4, {
+      type: 'patch',
+      target: { type: 'task', ref },
+      patch: { due: { type: 'set', value: '2026-07-23' } },
+    });
+    expect(process).not.toHaveBeenCalled();
+  });
 });
 
 describe('CenterPanel root lifecycle API delegation', () => {

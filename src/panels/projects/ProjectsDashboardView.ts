@@ -4,16 +4,11 @@ import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
+import { taskTimelineItem, workNoteTimelineItem } from './timelineProjection';
 import { joinedNextAction, type ProjectsDashboardContext } from './viewContext';
 
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
 export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
-
-function hasDatedTask(snapshot: ProjectWorkspaceSnapshot): boolean {
-  return snapshot.tasks.some(({ task }) =>
-    Boolean(task.planning.start ?? task.planning.scheduled ?? task.planning.due),
-  );
-}
 
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
@@ -107,6 +102,12 @@ export function renderProjectDashboard(
   const layoutButtons: HTMLButtonElement[] = [];
   const boardAvailable = (): boolean =>
     scope === 'tasks' ? ctx.renderTaskBoard !== undefined : ctx.renderWorkNoteBoard !== undefined;
+  const timelineAvailable = (): boolean =>
+    scope === 'tasks'
+      ? ctx.renderTaskTimeline !== undefined &&
+        selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
+      : ctx.renderWorkNoteTimeline !== undefined &&
+        snapshot.workNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
 
   const renderWorkspace = (): void => {
     workspace.dataset['scope'] = scope;
@@ -119,15 +120,22 @@ export function renderProjectDashboard(
       if (button.dataset['projectLayout'] === 'board') {
         button.disabled = !boardAvailable();
         button.setAttribute('aria-disabled', String(button.disabled));
+      } else if (button.dataset['projectLayout'] === 'timeline') {
+        button.disabled = !timelineAvailable();
+        button.setAttribute('aria-disabled', String(button.disabled));
       }
     }
     content.empty();
     if (scope === 'work-notes') {
-      if (layout === 'board' && ctx.renderWorkNoteBoard) {
+      if (layout === 'timeline' && ctx.renderWorkNoteTimeline) {
+        ctx.renderWorkNoteTimeline(content, project.path, snapshot.workNotes);
+      } else if (layout === 'board' && ctx.renderWorkNoteBoard) {
         ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
       } else {
         ctx.renderWorkNotes?.(content, project.path, snapshot.workNotes);
       }
+    } else if (layout === 'timeline' && ctx.renderTaskTimeline) {
+      ctx.renderTaskTimeline(content, project.path, selectedTasks);
     } else if (layout === 'board' && ctx.renderTaskBoard) {
       ctx.renderTaskBoard(content, project.path, selectedTasks);
     } else {
@@ -193,6 +201,21 @@ export function renderProjectDashboard(
     });
     layoutButtons.push(button);
   }
-  if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline', false);
+  const hasTimelineContent =
+    selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated') ||
+    snapshot.workNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
+  if (hasTimelineContent) {
+    const button = toolbar.createEl('button', {
+      text: 'Timeline',
+      attr: { type: 'button', 'data-project-layout': 'timeline' },
+    });
+    button.addEventListener('click', () => {
+      if (!timelineAvailable()) return;
+      layout = 'timeline';
+      session.layout = layout;
+      renderWorkspace();
+    });
+    layoutButtons.push(button);
+  }
   renderWorkspace();
 }

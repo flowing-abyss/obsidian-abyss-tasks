@@ -6486,6 +6486,225 @@ body.abyss-modal-open .popover.hover-popover {
   font-size: var(--font-ui-smaller);
 }
 
+/* Shared Timeline: one quiet date spine; Project, Work Note, and Task adapters keep their own rows. */
+.abyss-projects-timeline-host,
+.abyss-timeline-host,
+.abyss-timeline,
+.abyss-timeline-dated {
+  min-width: 0;
+  min-height: 0;
+}
+.abyss-projects-timeline-host,
+.abyss-timeline-host,
+.abyss-timeline,
+.abyss-timeline-dated {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+}
+.abyss-timeline {
+  overflow: hidden;
+}
+.abyss-timeline-feedback {
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-feedback:empty {
+  display: none;
+}
+.abyss-timeline-axis,
+.abyss-timeline-row {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.42fr) minmax(14rem, 1fr) auto;
+  min-width: 0;
+}
+.abyss-timeline-axis {
+  flex: 0 0 auto;
+  align-items: end;
+  padding-inline: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-faint);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-axis-dates,
+.abyss-timeline-plot {
+  display: grid;
+  grid-template-columns: repeat(var(--abyss-timeline-days), minmax(0, 1fr));
+}
+.abyss-timeline-axis-dates > span {
+  min-width: 0;
+  padding: 5px 2px;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: clip;
+  white-space: nowrap;
+}
+.abyss-timeline-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.abyss-timeline-rows {
+  min-height: 100%;
+}
+.abyss-timeline-row {
+  box-sizing: border-box;
+  block-size: 56px;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.abyss-timeline-row:hover,
+.abyss-timeline-row:focus-within {
+  background: var(--background-modifier-hover);
+}
+.abyss-timeline-row:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+.abyss-timeline-identity {
+  min-width: 0;
+  overflow: hidden;
+}
+.abyss-timeline-title,
+.abyss-timeline-detail,
+.abyss-timeline-agenda-date {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-timeline-title {
+  color: var(--text-normal);
+}
+.abyss-timeline-detail,
+.abyss-timeline-agenda-date {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-identity > .abyss-task-card {
+  block-size: 46px;
+  padding-inline: 0;
+  border: 0;
+  background: transparent;
+}
+.abyss-timeline-plot {
+  position: relative;
+  height: 30px;
+  align-items: center;
+  isolation: isolate;
+}
+.abyss-timeline-drop-cell {
+  z-index: 0;
+  grid-row: 1;
+  align-self: stretch;
+  border-inline-start: 1px solid var(--background-modifier-border);
+}
+.abyss-timeline-range,
+.abyss-timeline-point {
+  position: absolute;
+  z-index: 1;
+  pointer-events: none;
+}
+.abyss-timeline-range {
+  height: 8px;
+  margin-inline: 3px;
+  border-radius: var(--radius-s);
+  background: var(--interactive-accent);
+}
+.abyss-timeline-point {
+  width: 10px;
+  height: 10px;
+  justify-self: center;
+  border: 2px solid var(--background-primary);
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  transform: translateX(-50%);
+}
+.abyss-timeline-date-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.abyss-timeline-date-handle,
+.abyss-timeline-date-picker {
+  min-height: 26px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-date-handle {
+  padding: 2px 6px;
+  cursor: grab;
+}
+.abyss-timeline-date-picker {
+  width: 8.5rem;
+  padding: 2px 4px;
+  font-family: var(--font-monospace);
+}
+.abyss-timeline-date-handle:not(:disabled):hover,
+.abyss-timeline-date-picker:not(:disabled):hover {
+  border-color: var(--interactive-accent);
+  color: var(--text-normal);
+}
+.abyss-timeline-date-handle:focus-visible,
+.abyss-timeline-date-picker:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+.abyss-timeline-undated,
+.abyss-timeline-invalid {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.abyss-timeline-undated h4,
+.abyss-timeline-invalid h4 {
+  margin: 0 0 4px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-diagnostic-row {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-diagnostic-row > :first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-timeline-diagnostic-reason {
+  margin-inline-start: auto;
+  color: var(--text-error);
+}
+.abyss-timeline.is-agenda .abyss-timeline-axis,
+.abyss-timeline.is-agenda .abyss-timeline-plot {
+  display: none;
+}
+.abyss-timeline.is-agenda .abyss-timeline-row {
+  block-size: auto;
+  min-block-size: 56px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 6px;
+}
+
 /* Shared lifecycle/status board: quiet shell, existing cards carry the detail. */
 .abyss-board {
   display: flex;
@@ -6588,6 +6807,23 @@ body.abyss-modal-open .popover.hover-popover {
   }
   .abyss-work-note-inspector-host:empty {
     display: none;
+  }
+
+  .abyss-timeline-axis,
+  .abyss-timeline-plot {
+    display: none;
+  }
+  .abyss-timeline-row {
+    block-size: auto;
+    min-block-size: 56px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    padding-block: 6px;
+  }
+  .abyss-timeline-date-controls {
+    flex-wrap: wrap;
+  }
+  .abyss-timeline-date-picker {
+    max-width: 8rem;
   }
 
   .abyss-board-column-tabs {

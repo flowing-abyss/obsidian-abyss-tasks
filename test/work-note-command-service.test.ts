@@ -1,5 +1,6 @@
 import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { parseProjectDate } from '../src/projects/projectDates';
 import {
   acceptWorkNoteAudit,
   computeWorkNotePresetFingerprint,
@@ -291,6 +292,56 @@ describe('WorkNoteCommandService', () => {
     expect(content).toContain('Status: Finished raw');
     expect(content).not.toContain('Status: done');
     expect(content).toContain('Unknown: keep');
+  });
+
+  it('guards configured date fields and preserves the exact untouched datetime endpoint', async () => {
+    const candidate = enabledPreset();
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\nStart: 2026-08-26T14:30:00+07:00\nEnd: 2026-08-30\ntags: [work-note/task]\n---\n',
+    });
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index);
+    const snapshot = (await index.audit()).snapshots[0]!;
+    const latestObserved = service.observe(snapshot)!;
+
+    expect(latestObserved.fields).toMatchObject({
+      Start: '2026-08-26T14:30:00+07:00',
+      End: '2026-08-30',
+    });
+    expect(
+      await service.setRange(latestObserved, { end: parseProjectDate('2026-09-01')! }),
+    ).toEqual({ type: 'ok', path: 'Work Notes/A.md' });
+
+    const content = await app.vault.read(await fileAt(app, 'Work Notes/A.md'));
+    expect(content).toContain('Start: 2026-08-26T14:30:00+07:00');
+    expect(content).toContain('End: 2026-09-01');
+  });
+
+  it('writes nothing when an observed Work Note range endpoint changed externally', async () => {
+    const candidate = enabledPreset();
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\nStart: 2026-08-26\nEnd: 2026-08-30\ntags: [work-note/task]\n---\n',
+    });
+    const file = await fileAt(app, 'Work Notes/A.md');
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index);
+    const snapshot = (await index.audit()).snapshots[0]!;
+    const latestObserved = service.observe(snapshot)!;
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['Start'] = '2026-08-27';
+    });
+    await flushMicrotasks();
+    const writes = vi.spyOn(app.vault, 'modify');
+    writes.mockClear();
+
+    expect(
+      await service.setRange(latestObserved, { end: parseProjectDate('2026-09-01')! }),
+    ).toEqual({ type: 'conflict', field: 'start' });
+    expect(writes).not.toHaveBeenCalled();
   });
 
   it('repairs an unknown scalar status but conflicts on the latest non-scalar shape', async () => {

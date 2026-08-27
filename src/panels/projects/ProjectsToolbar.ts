@@ -11,10 +11,12 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
     cls: 'abyss-cal-view-switcher abyss-projects-view-switcher',
     attr: { 'aria-label': 'Project view' },
   });
-  for (const [layout, label] of [
+  const layouts: Array<readonly ['overview' | 'board' | 'timeline', string]> = [
     ['overview', 'Overview'],
     ['board', 'Board'],
-  ] as const) {
+  ];
+  if (ctx.timelineAvailable === true) layouts.push(['timeline', 'Timeline']);
+  for (const [layout, label] of layouts) {
     const selected = ctx.settings.projects.view.portfolioLayout === layout;
     const button = switcher.createEl('button', {
       cls: `abyss-cal-view-btn${selected ? ' is-active' : ''}`,

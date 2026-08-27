@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseProjectDate, parseProjectRange } from '../src/projects/projectDates';
+import {
+  parseProjectDate,
+  parseProjectRange,
+  projectDateOnLocalDate,
+} from '../src/projects/projectDates';
 
 describe('parseProjectDate', () => {
   it.each([
@@ -66,5 +70,28 @@ describe('parseProjectRange', () => {
       end: { raw: '2026-08-20' },
       issue: 'reversed',
     });
+  });
+});
+
+describe('projectDateOnLocalDate', () => {
+  it('moves a datetime endpoint to another civil date without changing its time or offset text', () => {
+    const observed = parseProjectDate('2026-08-26T14:30:00.125+07:00')!;
+
+    expect(projectDateOnLocalDate(observed, '2026-09-01')).toEqual({
+      raw: '2026-09-01T14:30:00.125+07:00',
+      precision: 'datetime',
+      instantMs: Date.parse('2026-09-01T07:30:00.125Z'),
+      offsetMinutes: 420,
+    });
+  });
+
+  it('keeps a date endpoint at date precision and rejects an invalid destination', () => {
+    const observed = parseProjectDate('2026-08-26')!;
+
+    expect(projectDateOnLocalDate(observed, '2026-09-01')).toMatchObject({
+      raw: '2026-09-01',
+      precision: 'date',
+    });
+    expect(projectDateOnLocalDate(observed, '2026-09-31')).toBeUndefined();
   });
 });

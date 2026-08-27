@@ -9,7 +9,7 @@ import {
   type ProjectLifecycleObservation,
 } from './lifecycle';
 import { parseProjectDate, parseProjectRange } from './projectDates';
-import type { ProjectDateValue, ProjectRange } from './types';
+import type { Project, ProjectDateValue, ProjectRange } from './types';
 
 export type ProjectPropertyCommandResult =
   | { type: 'ok'; previousStatusId: string | null; nextStatusId: string }
@@ -133,6 +133,14 @@ export class ProjectCommandService {
     private readonly app: App,
     private readonly statuses: () => readonly ProjectStatus[],
   ) {}
+
+  observeRange(project: Pick<Project, 'path' | 'frontmatter'>): ProjectRangeObservation {
+    return {
+      path: project.path,
+      start: project.frontmatter['start'],
+      end: project.frontmatter['end'],
+    };
+  }
 
   async setRange(
     observed: ProjectRangeObservation,

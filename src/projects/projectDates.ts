@@ -78,3 +78,14 @@ export function parseProjectRange(startRaw: unknown, endRaw: unknown): ProjectRa
   }
   return { ...(start && { start }), ...(end && { end }) };
 }
+
+/** Moves one typed endpoint to a civil date while retaining its existing precision and offset. */
+export function projectDateOnLocalDate(
+  observed: ProjectDateValue,
+  date: string,
+): ProjectDateValue | undefined {
+  const parsedDate = parseProjectDate(date);
+  if (!parsedDate || parsedDate.precision !== 'date') return undefined;
+  if (observed.precision === 'date') return parsedDate;
+  return parseProjectDate(`${date}${observed.raw.slice(10)}`);
+}

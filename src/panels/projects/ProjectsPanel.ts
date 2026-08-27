@@ -1,6 +1,9 @@
 import { TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
-import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
+import type {
+  ProjectCommandService,
+  ProjectPropertyCommandResult,
+} from '../../projects/ProjectCommandService';
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
@@ -10,13 +13,21 @@ import type { CalendarSettings } from '../../settings/types';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
-import { renderProjectsList } from './ProjectsListView';
+import { renderProjectsList, showNewProjectInput } from './ProjectsListView';
+import { renderProjectsTimeline, renderWorkNotesTimeline } from './ProjectsTimelineView';
+import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderWorkNotesView } from './WorkNotesView';
+import { projectTimelineItem } from './timelineProjection';
 
 export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
   renderTasks?: (host: HTMLElement, path: string, tasks: ProjectWorkspaceSnapshot['tasks']) => void;
   renderTaskBoard?: (
+    host: HTMLElement,
+    path: string,
+    tasks: ProjectWorkspaceSnapshot['tasks'],
+  ) => void;
+  renderTaskTimeline?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
@@ -27,6 +38,7 @@ export interface ProjectsPanelOptions {
   onBoardUndoPending?: (pending: PendingProjectBoardUndo) => void;
   onBoardUndoResolved?: () => void;
   workNoteCommands?: WorkNoteCommandService;
+  projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
 }
 
@@ -46,12 +58,14 @@ export class ProjectsPanel {
   private offs: Array<() => void> = [];
   private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
   private readonly renderTaskBoard: ProjectsPanelOptions['renderTaskBoard'];
+  private readonly renderTaskTimeline: ProjectsPanelOptions['renderTaskTimeline'];
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
   private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
   private readonly onBoardUndoPending: ((pending: PendingProjectBoardUndo) => void) | undefined;
   private readonly onBoardUndoResolved: (() => void) | undefined;
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
+  private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
   private viewCleanup: (() => void) | null = null;
 
@@ -65,12 +79,14 @@ export class ProjectsPanel {
   ) {
     this.renderTasks = opts.renderTasks ?? ((): void => {});
     this.renderTaskBoard = opts.renderTaskBoard;
+    this.renderTaskTimeline = opts.renderTaskTimeline;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
     this.pendingBoardUndo = opts.pendingBoardUndo;
     this.onBoardUndoPending = opts.onBoardUndoPending;
     this.onBoardUndoResolved = opts.onBoardUndoResolved;
     this.workNoteCommands = opts.workNoteCommands;
+    this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
   }
 
@@ -147,6 +163,19 @@ export class ProjectsPanel {
     });
   }
 
+  private renderWorkNoteTimeline(
+    host: HTMLElement,
+    notes: ProjectWorkspaceSnapshot['workNotes'],
+  ): void {
+    if (!this.workNoteCommands) return;
+    renderWorkNotesTimeline(host, {
+      notes,
+      commands: this.workNoteCommands,
+      commandsEnabled: this.workNoteCommands.capabilities().update,
+      session: this.workspaceSession.timelines.workNotes,
+    });
+  }
+
   private render(): void {
     this.viewCleanup?.();
     this.viewCleanup = null;
@@ -167,12 +196,15 @@ export class ProjectsPanel {
           workspaceSession: this.workspaceSession,
           renderTasks: this.renderTasks,
           ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
+          ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
           ...(this.workNoteCommands
             ? {
                 renderWorkNotes: (host, path, notes) =>
                   this.renderWorkNotes(host, path, notes, 'list'),
                 renderWorkNoteBoard: (host, path, notes) =>
                   this.renderWorkNotes(host, path, notes, 'board'),
+                renderWorkNoteTimeline: (host, _path, notes) =>
+                  this.renderWorkNoteTimeline(host, notes),
               }
             : {}),
         },
@@ -192,9 +224,40 @@ export class ProjectsPanel {
       onSetStatus: (p: string, id: string) => void this.setStatus(p, id),
       openNote: (p: string) => this.openNote(p),
     };
+    const visibleStatusIds = new Set(this.settings.projects.view.visibleStatusIds);
+    const timelineSnapshots = this.snapshots.filter(({ project }) =>
+      project.statusId === null
+        ? this.settings.projects.view.includeUnmapped
+        : visibleStatusIds.has(project.statusId),
+    );
+    const timelineAvailable =
+      this.projectCommands !== undefined &&
+      timelineSnapshots.some(({ project }) => projectTimelineItem(project).kind !== 'undated');
+    const portfolioContext = { ...listContext, timelineAvailable };
+    if (this.settings.projects.view.portfolioLayout === 'timeline' && timelineAvailable) {
+      const { newProjectButton } = renderProjectsToolbar(container, portfolioContext);
+      const inputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
+      newProjectButton.addEventListener('click', () =>
+        showNewProjectInput(inputHost, listContext.onCreate),
+      );
+      const timelineHost = container.createDiv({ cls: 'abyss-projects-timeline-host' });
+      const handle = renderProjectsTimeline(timelineHost, {
+        projects: timelineSnapshots.map(({ project }) => project),
+        commands: this.projectCommands,
+        onMutation: (_project, result) => {
+          if (result.type === 'ok') this.projectStore.refresh();
+        },
+      });
+      this.viewCleanup = () => handle.destroy();
+      return;
+    }
+    if (this.settings.projects.view.portfolioLayout === 'timeline') {
+      this.settings.projects.view.portfolioLayout = 'overview';
+      void this.onSaveSettings();
+    }
     if (this.settings.projects.view.portfolioLayout === 'board') {
       const board = renderProjectsBoard(container, {
-        ...listContext,
+        ...portfolioContext,
         snapshots: this.snapshots,
         onMoveStatus: (path, statusId) => this.setStatus(path, statusId, false),
         onUndoStatus: (path, expectedStatusId, previousStatusId) =>
@@ -209,7 +272,7 @@ export class ProjectsPanel {
       });
       this.viewCleanup = () => board.destroy();
     } else {
-      this.viewCleanup = renderProjectsList(container, this.snapshots, listContext);
+      this.viewCleanup = renderProjectsList(container, this.snapshots, portfolioContext);
     }
   }
 

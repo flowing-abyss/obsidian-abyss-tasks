@@ -8,6 +8,7 @@ import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboard
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
+import { parseProjectRange } from '../src/projects/projectDates';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { freshContainer, task } from './helpers';
@@ -143,6 +144,32 @@ describe('renderProjectsList', () => {
     expect(settings.projects.view.visibleStatusIds).toEqual([ACTIVE_ID]);
     expect(onSaveSettings).toHaveBeenCalledOnce();
     expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+  });
+
+  it('shows the portfolio Timeline route only when a real dated renderer is available', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const onPortfolioLayoutChanged = vi.fn();
+    const available = freshContainer();
+    renderProjectsList(available, [workspace()], {
+      ...ctx,
+      settings,
+      timelineAvailable: true,
+      onPortfolioLayoutChanged,
+    });
+
+    available
+      .querySelector<HTMLButtonElement>('[data-project-portfolio-layout="timeline"]')!
+      .click();
+    await Promise.resolve();
+    expect(settings.projects.view.portfolioLayout).toBe('timeline');
+    expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+
+    const unavailable = freshContainer();
+    renderProjectsList(unavailable, [workspace()], {
+      ...ctx,
+      settings: structuredClone(DEFAULT_SETTINGS),
+    });
+    expect(unavailable.querySelector('[data-project-portfolio-layout="timeline"]')).toBeNull();
   });
 
   it('keeps the shared toolbar available while the lifecycle Board is active', () => {
@@ -963,6 +990,51 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
+  });
+
+  it('renders the dated portfolio Timeline and delegates endpoint changes to ProjectCommandService', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const datedProject = proj({
+      frontmatter: {
+        start: '2026-08-26T14:30:00+07:00',
+        end: '2026-08-30',
+      },
+      range: parseProjectRange('2026-08-26T14:30:00+07:00', '2026-08-30'),
+    });
+    const setRange = vi.fn().mockResolvedValue({
+      type: 'ok',
+      range: parseProjectRange('2026-08-26T14:30:00+07:00', '2026-09-01'),
+    });
+    const projectCommands = {
+      observeRange: vi.fn().mockReturnValue({
+        path: datedProject.path,
+        start: datedProject.frontmatter['start'],
+        end: datedProject.frontmatter['end'],
+      }),
+      setRange,
+    } as never;
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(datedProject)],
+      projectCommands,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    const end = el.querySelector<HTMLInputElement>('[data-timeline-date-picker="end"]')!;
+
+    expect(el.querySelector('.abyss-timeline')).not.toBeNull();
+    end.value = '2026-09-01';
+    end.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+
+    expect(setRange).toHaveBeenCalledWith(
+      {
+        path: 'Projects/A.md',
+        start: '2026-08-26T14:30:00+07:00',
+        end: '2026-08-30',
+      },
+      { end: expect.objectContaining({ raw: '2026-09-01', precision: 'date' }) },
+    );
   });
 
   it('retains pending Undo through a synchronous Project store refresh', async () => {
