@@ -11,6 +11,7 @@ export interface ProjectsListContext {
   settings: CalendarSettings;
   onSaveSettings: () => Promise<void>;
   onFiltersChanged?: () => void;
+  onPortfolioLayoutChanged?: () => void;
   onCreate: (name: string) => Promise<void>;
   onSetStatus: (path: string, statusId: string) => void;
   openNote: (path: string) => void;
@@ -23,4 +24,6 @@ export interface ProjectsDashboardContext {
   openNote: (path: string) => void;
   /** Renders the project's tasks into `host` (wired by PanelView to reuse task rendering). */
   renderTasks: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  /** Renders the same task cards through the shared status-board shell. */
+  renderTaskBoard?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
 }

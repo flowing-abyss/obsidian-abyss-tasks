@@ -4,12 +4,18 @@ import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { CalendarSettings } from '../../settings/types';
+import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList } from './ProjectsListView';
 
 export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
   renderTasks?: (host: HTMLElement, path: string, tasks: ProjectWorkspaceSnapshot['tasks']) => void;
+  renderTaskBoard?: (
+    host: HTMLElement,
+    path: string,
+    tasks: ProjectWorkspaceSnapshot['tasks'],
+  ) => void;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
 }
@@ -23,6 +29,7 @@ export class ProjectsPanel {
   private el!: HTMLElement;
   private offs: Array<() => void> = [];
   private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
+  private readonly renderTaskBoard: ProjectsPanelOptions['renderTaskBoard'];
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
   private viewCleanup: (() => void) | null = null;
@@ -36,6 +43,7 @@ export class ProjectsPanel {
     opts: ProjectsPanelOptions = {},
   ) {
     this.renderTasks = opts.renderTasks ?? ((): void => {});
+    this.renderTaskBoard = opts.renderTaskBoard;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
   }
@@ -59,8 +67,20 @@ export class ProjectsPanel {
     if (this.el) this.render();
   }
 
-  private setStatus(path: string, statusId: string): void {
-    void this.projectManager.setStatus(path, statusId).then(() => this.projectStore.refresh());
+  private async setStatus(path: string, statusId: string) {
+    const result = await this.projectManager.setStatus(path, statusId);
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
+  }
+
+  private async undoStatus(
+    path: string,
+    expectedStatusId: string,
+    previousStatusId: string | null,
+  ) {
+    const result = await this.projectManager.undoStatus(path, expectedStatusId, previousStatusId);
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
   }
 
   private openNote(path: string): void {
@@ -83,24 +103,38 @@ export class ProjectsPanel {
         {
           state: this.state,
           settings: this.settings,
-          onSetStatus: (p, id) => this.setStatus(p, id),
+          onSetStatus: (p, id) => void this.setStatus(p, id),
           openNote: (p) => this.openNote(p),
           renderTasks: this.renderTasks,
+          ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
         },
       );
       return;
     }
 
     const container = this.el.createDiv();
-    this.viewCleanup = renderProjectsList(container, this.snapshots, {
+    const listContext = {
       state: this.state,
       settings: this.settings,
       onSaveSettings: this.onSaveSettings,
       onFiltersChanged: () => this.render(),
-      onCreate: (name) => this.createProject(name),
-      onSetStatus: (p, id) => this.setStatus(p, id),
-      openNote: (p) => this.openNote(p),
-    });
+      onPortfolioLayoutChanged: () => this.render(),
+      onCreate: (name: string) => this.createProject(name),
+      onSetStatus: (p: string, id: string) => void this.setStatus(p, id),
+      openNote: (p: string) => this.openNote(p),
+    };
+    if (this.settings.projects.view.portfolioLayout === 'board') {
+      const board = renderProjectsBoard(container, {
+        ...listContext,
+        snapshots: this.snapshots,
+        onMoveStatus: (path, statusId) => this.setStatus(path, statusId),
+        onUndoStatus: (path, expectedStatusId, previousStatusId) =>
+          this.undoStatus(path, expectedStatusId, previousStatusId),
+      });
+      this.viewCleanup = () => board.destroy();
+    } else {
+      this.viewCleanup = renderProjectsList(container, this.snapshots, listContext);
+    }
   }
 
   destroy(): void {

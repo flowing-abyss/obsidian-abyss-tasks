@@ -113,7 +113,11 @@ export function renderProjectDashboard(
       button.classList.toggle('is-active', button.dataset['projectLayout'] === layout);
     }
     content.empty();
-    ctx.renderTasks(content, project.path, selectedTasks);
+    if (layout === 'board' && ctx.renderTaskBoard) {
+      ctx.renderTaskBoard(content, project.path, selectedTasks);
+    } else {
+      ctx.renderTasks(content, project.path, selectedTasks);
+    }
   };
 
   const scopeButton = (value: ProjectWorkspaceScope, label: string, selectable = true): void => {
@@ -151,7 +155,7 @@ export function renderProjectDashboard(
   scopeButton('tasks', 'Tasks');
   if (snapshot.workNotes.length > 0) scopeButton('work-notes', 'Work Notes', false);
   layoutButton('list', 'List');
-  if (snapshot.tasks.length > 0) layoutButton('board', 'Board', false);
+  if (snapshot.tasks.length > 0) layoutButton('board', 'Board', ctx.renderTaskBoard !== undefined);
   if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline', false);
   renderWorkspace();
 }

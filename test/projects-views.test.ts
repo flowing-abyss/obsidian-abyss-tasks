@@ -120,6 +120,30 @@ describe('renderProjectsList', () => {
     expect(headers.indexOf('archive')).toBeGreaterThan(headers.indexOf('Active'));
   });
 
+  it('switches the portfolio to its lifecycle Board without changing the configured filters', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'overview';
+    settings.projects.view.visibleStatusIds = [ACTIVE_ID];
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const onPortfolioLayoutChanged = vi.fn();
+    const el = freshContainer();
+
+    renderProjectsList(el, [workspace()], {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      onSaveSettings,
+      onPortfolioLayoutChanged,
+    });
+    el.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="board"]')!.click();
+    await Promise.resolve();
+
+    expect(settings.projects.view.portfolioLayout).toBe('board');
+    expect(settings.projects.view.visibleStatusIds).toEqual([ACTIVE_ID]);
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+  });
+
   it('row click switches to the dashboard view', () => {
     const state = new AppState();
     const el = freshContainer();

@@ -118,7 +118,6 @@ describe('Project Tasks workspace', () => {
 
   it.each([
     ['with-work-notes', '[data-project-scope="work-notes"]'],
-    ['small', '[data-project-layout="board"]'],
     ['dated', '[data-project-layout="timeline"]'],
   ] as const)(
     'keeps the visible %s future control disabled without leaving Tasks/List',
@@ -149,6 +148,35 @@ describe('Project Tasks workspace', () => {
       expect(renderTasks).toHaveBeenCalledOnce();
     },
   );
+
+  it('activates the Board route and preserves Tasks/List as the default', () => {
+    const container = freshContainer();
+    const renderTasks = vi.fn((host: HTMLElement) => host.createDiv({ text: 'Shared task list' }));
+    const renderTaskBoard = vi.fn((host: HTMLElement) =>
+      host.createDiv({ text: 'Shared task board' }),
+    );
+    renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks,
+      renderTaskBoard,
+    });
+
+    const workspace = container.querySelector<HTMLElement>('[data-project-workspace]')!;
+    const board = container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!;
+    expect(board.disabled).toBe(false);
+    expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'list' });
+
+    board.click();
+
+    expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'board' });
+    expect(container.querySelector('.abyss-project-tasks-content')?.textContent).toBe(
+      'Shared task board',
+    );
+    expect(renderTaskBoard).toHaveBeenCalledOnce();
+  });
 
   it('preserves the user primary sort and uses ownership, created date, and file order only as equal-key tie-breakers', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);

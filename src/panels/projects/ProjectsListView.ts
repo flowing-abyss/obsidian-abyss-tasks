@@ -170,7 +170,7 @@ export function renderProjectsList(
       render: (host, _key, logicalIndex) => {
         const entry = entries[logicalIndex]!;
         if (entry.type === 'group') return renderGroupHeader(host, entry.group, entry.count);
-        return renderRow(
+        return renderProjectRow(
           host,
           entry.snapshot,
           statusById,
@@ -226,7 +226,7 @@ function renderGroupHeader(parent: HTMLElement, group: StatusGroup, count: numbe
   return header;
 }
 
-function renderRow(
+export function renderProjectRow(
   parent: HTMLElement,
   snapshot: ProjectWorkspaceSnapshot,
   statusById: Map<string, ProjectStatus>,
@@ -235,6 +235,7 @@ function renderRow(
   ctx: ProjectsListContext,
   onFocus: (path: string) => void,
   onMoveFocus: (path: string, delta: number) => void,
+  ownsArrowNavigation = true,
 ): HTMLElement {
   const project = snapshot.project;
   const row = parent.createDiv({
@@ -348,7 +349,11 @@ function renderRow(
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
   });
   row.addEventListener('keydown', (event) => {
-    if (event.target === row && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+    if (
+      ownsArrowNavigation &&
+      event.target === row &&
+      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
+    ) {
       event.preventDefault();
       onMoveFocus(project.path, event.key === 'ArrowDown' ? 1 : -1);
       return;

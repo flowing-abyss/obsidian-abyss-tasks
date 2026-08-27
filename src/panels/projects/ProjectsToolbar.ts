@@ -6,6 +6,34 @@ export interface ProjectsToolbarResult {
   readonly newProjectButton: HTMLButtonElement;
 }
 
+function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext): void {
+  const switcher = controls.createDiv({
+    cls: 'abyss-cal-view-switcher abyss-projects-view-switcher',
+    attr: { 'aria-label': 'Project view' },
+  });
+  for (const [layout, label] of [
+    ['overview', 'Overview'],
+    ['board', 'Board'],
+  ] as const) {
+    const selected = ctx.settings.projects.view.portfolioLayout === layout;
+    const button = switcher.createEl('button', {
+      cls: `abyss-cal-view-btn${selected ? ' is-active' : ''}`,
+      text: label,
+      attr: {
+        type: 'button',
+        'data-project-portfolio-layout': layout,
+        'aria-current': selected ? 'page' : 'false',
+      },
+    });
+    button.addEventListener('click', () => {
+      if (ctx.settings.projects.view.portfolioLayout === layout) return;
+      ctx.settings.projects.view.portfolioLayout = layout;
+      void ctx.onSaveSettings();
+      ctx.onPortfolioLayoutChanged?.();
+    });
+  }
+}
+
 function renderStatusFilter(
   controls: HTMLElement,
   status: ProjectStatus,
@@ -62,15 +90,7 @@ export function renderProjectsToolbar(
   header.createEl('h2', { cls: 'abyss-center-title abyss-projects-title', text: 'Projects' });
   const controls = header.createDiv({ cls: 'abyss-center-controls' });
 
-  const viewSwitcher = controls.createDiv({
-    cls: 'abyss-cal-view-switcher abyss-projects-view-switcher',
-    attr: { 'aria-label': 'Project view' },
-  });
-  viewSwitcher.createEl('button', {
-    cls: 'abyss-cal-view-btn is-active',
-    text: 'Overview',
-    attr: { type: 'button', 'aria-current': 'page' },
-  });
+  renderPortfolioLayout(controls, ctx);
 
   const filters = controls.createDiv({
     cls: 'abyss-project-status-filters',

@@ -6288,6 +6288,63 @@ body.abyss-modal-open .popover.hover-popover {
   font-size: var(--font-ui-small);
 }
 
+/* Shared lifecycle/status board: quiet shell, existing cards carry the detail. */
+.abyss-board {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+.abyss-board-column-tabs {
+  display: none;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.abyss-board-columns {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px;
+  overflow: hidden;
+}
+.abyss-board-column {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+.abyss-board-column.is-collapsed {
+  display: none;
+}
+.abyss-board-column-header {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-board-column-count {
+  margin-left: auto;
+}
+.abyss-board-column-scroll {
+  min-height: 0;
+  overflow-y: auto;
+}
+.abyss-board-items {
+  min-height: 100%;
+}
+.abyss-board-items > .abyss-project-row {
+  margin: 4px;
+}
+
 @container abyss-task-list (max-width: 42rem) {
   .abyss-projects-toolbar {
     align-items: flex-start;
@@ -6312,6 +6369,29 @@ body.abyss-modal-open .popover.hover-popover {
   .abyss-project-row-meta {
     max-inline-size: 55%;
     overflow-x: auto;
+  }
+
+  .abyss-board-column-tabs {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .abyss-board-columns {
+    display: block;
+    overflow: hidden;
+  }
+  .abyss-board-column {
+    display: none;
+    height: 100%;
+  }
+  .abyss-board-column.is-active {
+    display: flex;
+  }
+  .abyss-board-column.is-collapsed {
+    display: none;
+  }
+  .abyss-board-column-tab.is-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
   }
 }
 

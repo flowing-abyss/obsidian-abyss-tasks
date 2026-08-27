@@ -748,3 +748,63 @@ describe('CenterPanel timed vertical resize', () => {
     );
   });
 });
+
+describe('CenterPanel task board mutation', () => {
+  it('writes the exact configured checkbox symbol instead of collapsing same-type statuses', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Ready\n' });
+    const statuses = [
+      {
+        id: 'todo-a',
+        symbol: ' ',
+        name: 'Ready',
+        type: 'todo' as const,
+        icon: 'circle',
+        core: false,
+      },
+      {
+        id: 'todo-b',
+        symbol: '?',
+        name: 'Needs input',
+        type: 'todo' as const,
+        icon: 'help-circle',
+        core: false,
+      },
+    ];
+    const current = task({
+      title: 'Ready',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Ready',
+        originalBlock: '- [ ] Ready',
+      },
+    });
+    const queries = taskQueryApi({ list: () => [current] });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'invalid',
+      issues: [{ code: 'invalid-status', field: 'status' }],
+    });
+    const panel = new CenterPanel(
+      new AppState(),
+      app,
+      { ...DEFAULT_SETTINGS, taskStatuses: statuses },
+      queries,
+      new StatusRegistry(statuses),
+      undefined,
+      null,
+      null,
+      { queries, execute },
+    );
+
+    const mutation = callPrivate<{
+      move(item: TaskSnapshot, columnKey: string): Promise<unknown>;
+    }>(panel, 'taskBoardMutation');
+    await mutation.move(current, 'todo-b');
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'set-status',
+      target: { type: 'task', ref: current.ref },
+      symbol: '?',
+    });
+  });
+});

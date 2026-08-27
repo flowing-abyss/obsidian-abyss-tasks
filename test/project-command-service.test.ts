@@ -209,6 +209,32 @@ describe('ProjectCommandService', () => {
     ).toEqual({ type: 'conflict', currentStatusId: 'hold' });
   });
 
+  it('conditional undo restores the exact observed previous lifecycle status', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\ntags:\n  - project/active\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const file = fileAt(app, 'Projects/A.md');
+
+    const moved = await service.setStatus(
+      observed('Projects/A.md', 'active', ['project/active']),
+      'published',
+    );
+    expect(moved).toEqual({
+      type: 'ok',
+      previousStatusId: 'active',
+      nextStatusId: 'published',
+    });
+    const undone = await service.undoStatus(
+      observed('Projects/A.md', 'published', ['project/published']),
+      'active',
+    );
+
+    expect(undone.type).toBe('ok');
+    expect(await app.vault.read(file)).toContain('project/active');
+    expect(await app.vault.read(file)).not.toContain('project/published');
+  });
+
   it('writes nothing when the latest owned frontmatter shape became ambiguous', async () => {
     const app = await createAppWithFiles({
       'Projects/A.md': '---\ntags:\n  - project/active\n---\n',

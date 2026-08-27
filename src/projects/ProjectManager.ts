@@ -56,6 +56,26 @@ export class ProjectManager {
     return this.commands.setStatus(observed, statusId);
   }
 
+  async undoStatus(
+    path: string,
+    expectedStatusId: string,
+    previousStatusId: string | null,
+  ): Promise<ProjectPropertyCommandResult> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    const cache = this.app.metadataCache.getFileCache(file);
+    const frontmatter = (cache?.frontmatter ?? {}) as Record<string, unknown>;
+    const tags = cache ? (getAllTags(cache) ?? []) : [];
+    const observed = {
+      path,
+      ...resolveProjectLifecycle(this.settings.projects.statuses, tags, frontmatter),
+    };
+    if (observed.statusId !== expectedStatusId) {
+      return { type: 'conflict', currentStatusId: observed.statusId };
+    }
+    return this.commands.undoStatus(observed, previousStatusId);
+  }
+
   async create(name: string): Promise<TFile | null> {
     const folder = this.settings.projects.createFolder.trim();
     const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-');
