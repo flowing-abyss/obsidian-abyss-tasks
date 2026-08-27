@@ -6341,9 +6341,6 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-board-items {
   min-height: 100%;
 }
-.abyss-board-items > .abyss-project-row {
-  margin: 4px;
-}
 .abyss-board-items > .abyss-project-row,
 .abyss-board-items > .abyss-task-card {
   box-sizing: border-box;
@@ -6399,8 +6396,22 @@ body.abyss-modal-open .popover.hover-popover {
   .abyss-board-column.is-collapsed {
     display: none;
   }
-  .abyss-board-columns.is-drag-active .abyss-board-column[data-terminal-filtered='true'] {
+  .abyss-board-columns.is-drag-active {
+    position: relative;
+  }
+  .abyss-board-columns.is-drag-active .abyss-board-column[data-board-terminal-drag-zone] {
     display: flex;
+    position: absolute;
+    inset-block: 8px;
+    z-index: 1;
+    inline-size: min(36%, 11rem);
+    max-inline-size: calc(50% - 12px);
+  }
+  .abyss-board-column[data-board-terminal-drag-zone='left'] {
+    inset-inline-start: 8px;
+  }
+  .abyss-board-column[data-board-terminal-drag-zone='right'] {
+    inset-inline-end: 8px;
   }
   .abyss-board-column-tab.is-active {
     background: var(--interactive-accent);

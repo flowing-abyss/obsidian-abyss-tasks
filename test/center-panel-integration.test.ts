@@ -2339,6 +2339,117 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('renders a Board task status marker inert so its context menu reaches the canonical card path', () => {
+    const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
+    const state = new AppState();
+    const panel = makeStaticPanel(state, [current]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [
+        {
+          task: current,
+          projectPath: 'Projects/A.md',
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ]);
+      const marker = host.querySelector<HTMLElement>('.abyss-status-marker')!;
+      const card = marker.closest<HTMLElement>('[data-board-item]')!;
+      const cardContextMenu = vi.fn();
+      card.addEventListener('contextmenu', cardContextMenu);
+
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+      expect(marker.getAttribute('tabindex')).toBeNull();
+      expect(marker.getAttribute('role')).toBeNull();
+      expect(cardContextMenu).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('retains Board Undo across the production Project-store refresh subscriber replacing ProjectsPanel', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const activeStatusId = settings.projects.statuses[0]!.id;
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: activeStatusId,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const setStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: activeStatusId,
+      nextStatusId: 'published',
+    });
+    const undoStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: activeStatusId,
+      nextStatusId: 'published',
+    });
+    let onProjectStoreUpdate = (): void => {};
+    const subscribeToProjectStore = (listener: () => void): (() => void) => {
+      onProjectStoreUpdate = listener;
+      return () => {};
+    };
+    const projectStore = {
+      list: () => [project],
+      get: () => project,
+      activeForLeftPanel: () => [project],
+      onUpdate: subscribeToProjectStore,
+      refresh: () => onProjectStoreUpdate(),
+    } as never;
+    const state = new AppState();
+    state.set('mode', 'projects');
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      settings,
+      taskQueryApi(),
+      new StatusRegistry(settings.taskStatuses),
+      undefined,
+      projectStore,
+      { setStatus, undoStatus, create: vi.fn() } as never,
+    );
+    // This is the same production subscription that PanelView installs: a store event full-renders
+    // CenterPanel, which disposes and recreates its ProjectsPanel instance.
+    subscribeToProjectStore(() => panel.refresh());
+    panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      const card = container.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+      const target = container.querySelector<HTMLElement>('[data-board-column="published"]')!;
+      card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+      await flushMicrotasks();
+      expect(undoStatus).toHaveBeenCalledWith('Projects/A.md', 'published', activeStatusId);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   function projectCaptureSuccess(): TaskCommandResult {
     return {
       type: 'ok',

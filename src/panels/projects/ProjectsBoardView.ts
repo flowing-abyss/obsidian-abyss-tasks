@@ -125,7 +125,15 @@ export function renderBoard<T>(
       board.classList.toggle('is-drag-active', active);
       board
         .querySelectorAll<HTMLElement>('.abyss-board-column[data-terminal-filtered="true"]')
-        .forEach((column) => column.classList.toggle('is-collapsed', !active));
+        .forEach((column) => {
+          column.classList.toggle('is-collapsed', !active);
+          if (!active) {
+            delete column.dataset['boardTerminalDragZone'];
+            return;
+          }
+          column.dataset['boardTerminalDragZone'] =
+            column.dataset['boardColumnRole'] === 'terminal-left' ? 'left' : 'right';
+        });
     };
 
     for (const column of options.columns) {

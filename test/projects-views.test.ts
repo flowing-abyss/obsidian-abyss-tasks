@@ -198,6 +198,11 @@ describe('renderProjectsList', () => {
       const deepRow = el.querySelector<HTMLElement>('[data-board-item="Projects/22.md"]')!;
       expect(getComputedStyle(deepRow).blockSize).toBe('88px');
       expect(getComputedStyle(deepRow).overflow).toBe('hidden');
+      expect(Number.parseFloat(getComputedStyle(deepRow).marginTop)).toBe(0);
+      expect(Number.parseFloat(getComputedStyle(deepRow).marginBottom)).toBe(0);
+      expect(
+        el.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
+      ).toBe('1584px');
       deepRow.focus();
       for (let index = 0; index < 5; index += 1) {
         activeDocument.activeElement?.dispatchEvent(

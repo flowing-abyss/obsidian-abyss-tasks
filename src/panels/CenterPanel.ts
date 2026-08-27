@@ -117,7 +117,7 @@ import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBloc
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { renderNextActionControl } from './projects/NextActionControl';
 import { renderBoard } from './projects/ProjectsBoardView';
-import { ProjectsPanel } from './projects/ProjectsPanel';
+import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
 import {
   createTaskBoardMutation,
   projectBoardTasks,
@@ -247,6 +247,9 @@ export class CenterPanel {
   private searchResultsFrame: number | null = null;
 
   private projectsPanel: ProjectsPanel | null = null;
+  // CenterPanel survives the ProjectStore subscriber's full projects-mode redraw; the inner
+  // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
+  private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
   private readonly nextActions: NextActionService | null;
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
@@ -748,7 +751,10 @@ export class CenterPanel {
       this.md.load();
     }
 
-    if (mode !== 'projects') this.destroyProjectsPanel();
+    if (mode !== 'projects') {
+      this.destroyProjectsPanel();
+      this.pendingProjectBoardUndo = undefined;
+    }
 
     if (mode === 'calendar') {
       // Explicit refreshes (configuration/theme/view changes) remain full renders.
@@ -788,6 +794,15 @@ export class CenterPanel {
             renderTaskBoard: (host, path, tasks) => this.renderProjectTaskBoard(host, path, tasks),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,
+            pendingBoardUndo: this.pendingProjectBoardUndo,
+            onBoardUndoPending: (pending) => {
+              this.pendingProjectBoardUndo = pending;
+              this.projectStore?.refresh();
+            },
+            onBoardUndoResolved: () => {
+              this.pendingProjectBoardUndo = undefined;
+              this.projectStore?.refresh();
+            },
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never
@@ -1804,12 +1819,11 @@ export class CenterPanel {
     renderStatusMarker(mainRow, {
       task,
       registry: this.statusRegistry,
-      onLeftClick: () => {
-        if (context.manageStatusMarker !== false) void this.toggleTask(task);
-      },
+      interactive: context.manageStatusMarker !== false,
+      onLeftClick: () => void this.toggleTask(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        if (context.manageStatusMarker !== false) this.openStatusMenu(ev, task);
+        this.openStatusMenu(ev, task);
       },
     });
 

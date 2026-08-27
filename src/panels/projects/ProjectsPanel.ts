@@ -19,6 +19,15 @@ export interface ProjectsPanelOptions {
   ) => void;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
+  pendingBoardUndo?: PendingProjectBoardUndo;
+  onBoardUndoPending?: (pending: PendingProjectBoardUndo) => void;
+  onBoardUndoResolved?: () => void;
+}
+
+export interface PendingProjectBoardUndo {
+  readonly path: string;
+  readonly columnKey: string;
+  readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
 }
 
 /**
@@ -33,14 +42,10 @@ export class ProjectsPanel {
   private readonly renderTaskBoard: ProjectsPanelOptions['renderTaskBoard'];
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
+  private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
+  private readonly onBoardUndoPending: ((pending: PendingProjectBoardUndo) => void) | undefined;
+  private readonly onBoardUndoResolved: (() => void) | undefined;
   private viewCleanup: (() => void) | null = null;
-  private pendingBoardUndo:
-    | {
-        readonly path: string;
-        readonly columnKey: string;
-        readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
-      }
-    | undefined;
 
   constructor(
     private state: AppState,
@@ -54,6 +59,9 @@ export class ProjectsPanel {
     this.renderTaskBoard = opts.renderTaskBoard;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
+    this.pendingBoardUndo = opts.pendingBoardUndo;
+    this.onBoardUndoPending = opts.onBoardUndoPending;
+    this.onBoardUndoResolved = opts.onBoardUndoResolved;
   }
 
   private async createProject(name: string): Promise<void> {
@@ -141,12 +149,10 @@ export class ProjectsPanel {
           this.undoStatus(path, expectedStatusId, previousStatusId, false),
         pendingUndo: this.pendingBoardUndo,
         onUndoPending: (pending) => {
-          this.pendingBoardUndo = pending;
-          this.projectStore.refresh();
+          this.onBoardUndoPending?.(pending);
         },
         onUndoResolved: () => {
-          this.pendingBoardUndo = undefined;
-          this.projectStore.refresh();
+          this.onBoardUndoResolved?.();
         },
       });
       this.viewCleanup = () => board.destroy();

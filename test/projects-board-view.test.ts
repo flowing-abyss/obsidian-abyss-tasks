@@ -41,6 +41,39 @@ describe('shared board view', () => {
     expect(published.classList.contains('is-collapsed')).toBe(true);
   });
 
+  it('makes both filtered terminal bookends simultaneous narrow drag zones without displacing active content', () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [
+        column('dropped', 'terminal-left'),
+        column('active', 'regular', [item]),
+        column('published', 'terminal-right'),
+      ],
+      visibleColumnKeys: new Set(['active']),
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const dropped = el.querySelector<HTMLElement>('[data-board-column="dropped"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const published = el.querySelector<HTMLElement>('[data-board-column="published"]')!;
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+
+    card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+
+    expect(dropped.dataset['boardTerminalDragZone']).toBe('left');
+    expect(published.dataset['boardTerminalDragZone']).toBe('right');
+    expect(active.classList.contains('is-active')).toBe(true);
+    expect(
+      el.querySelectorAll('[data-board-column-tab="dropped"], [data-board-column-tab="published"]'),
+    ).toHaveLength(0);
+
+    card.dispatchEvent(new Event('dragend', { bubbles: true }));
+    expect(dropped.dataset['boardTerminalDragZone']).toBeUndefined();
+    expect(published.dataset['boardTerminalDragZone']).toBeUndefined();
+  });
+
   it('keeps a terminal item visible when its filter is enabled and removes it only after a successful filtered write', async () => {
     const item = { id: 'a', name: 'A' };
     const move = vi.fn().mockResolvedValue({ type: 'ok' });
