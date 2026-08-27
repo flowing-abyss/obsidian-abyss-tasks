@@ -6344,6 +6344,16 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-board-items > .abyss-project-row {
   margin: 4px;
 }
+.abyss-board-items > .abyss-project-row,
+.abyss-board-items > .abyss-task-card {
+  box-sizing: border-box;
+  block-size: 88px;
+  overflow: hidden;
+}
+.abyss-project-status-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
 
 @container abyss-task-list (max-width: 42rem) {
   .abyss-projects-toolbar {
@@ -6388,6 +6398,9 @@ body.abyss-modal-open .popover.hover-popover {
   }
   .abyss-board-column.is-collapsed {
     display: none;
+  }
+  .abyss-board-columns.is-drag-active .abyss-board-column[data-terminal-filtered='true'] {
+    display: flex;
   }
   .abyss-board-column-tab.is-active {
     background: var(--interactive-accent);

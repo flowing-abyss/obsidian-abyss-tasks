@@ -5,7 +5,8 @@ import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { BoardColumn, BoardMutation, BoardMutationResult } from './boardProjection';
 import { createProjectBoardMutation, projectBoardColumns } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
-import { renderProjectRow } from './ProjectsListView';
+import { renderProjectRow, showNewProjectInput } from './ProjectsListView';
+import { renderProjectsToolbar } from './ProjectsToolbar';
 import type { ProjectsListContext } from './viewContext';
 
 const BOARD_ITEM_EXTENT = 88;
@@ -20,6 +21,11 @@ export interface BoardViewOptions<T> {
   readonly visibleColumnKeys?: ReadonlySet<string>;
   readonly manageStatusMenu?: boolean;
   readonly onMutation?: (item: T, columnKey: string, result: BoardMutationResult) => void;
+  readonly initialUndo?: {
+    readonly item: T;
+    readonly columnKey: string;
+    readonly result: BoardMutationResult;
+  };
   readonly undo?: (
     item: T,
     columnKey: string,
@@ -32,7 +38,7 @@ export interface BoardViewHandle {
 }
 
 function successful(result: BoardMutationResult): boolean {
-  return result === undefined || result.type === 'ok';
+  return result !== undefined && result.type === 'ok' && (!('changed' in result) || result.changed);
 }
 
 function isProjectStatusMove(
@@ -59,7 +65,7 @@ export function renderBoard<T>(
     readonly item: T;
     readonly columnKey: string;
     readonly result: BoardMutationResult;
-  } | null = null;
+  } | null = options.initialUndo ?? null;
   const cleanups: Array<() => void> = [];
 
   const projectedItems = (column: BoardColumn<T>): readonly T[] => {
@@ -126,20 +132,22 @@ export function renderBoard<T>(
       const visible = options.visibleColumnKeys?.has(column.key) !== false;
       const terminal = column.role === 'terminal-left' || column.role === 'terminal-right';
       if (!visible && !terminal) continue;
-      const tab = tabs.createEl('button', {
-        cls: `abyss-board-column-tab${selectedColumnKey === column.key ? ' is-active' : ''}`,
-        text: column.label,
-        attr: {
-          type: 'button',
-          role: 'tab',
-          'aria-selected': String(selectedColumnKey === column.key),
-          'data-board-column-tab': column.key,
-        },
-      });
-      tab.addEventListener('click', () => {
-        selectedColumnKey = column.key;
-        render();
-      });
+      if (visible || !terminal) {
+        const tab = tabs.createEl('button', {
+          cls: `abyss-board-column-tab${selectedColumnKey === column.key ? ' is-active' : ''}`,
+          text: column.label,
+          attr: {
+            type: 'button',
+            role: 'tab',
+            'aria-selected': String(selectedColumnKey === column.key),
+            'data-board-column-tab': column.key,
+          },
+        });
+        tab.addEventListener('click', () => {
+          selectedColumnKey = column.key;
+          render();
+        });
+      }
 
       const columnEl = board.createDiv({
         cls: `abyss-board-column${selectedColumnKey === column.key ? ' is-active' : ''}${
@@ -264,6 +272,13 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
     expectedStatusId: string,
     previousStatusId: string | null,
   ) => Promise<ProjectPropertyCommandResult>;
+  readonly pendingUndo?: {
+    readonly path: string;
+    readonly columnKey: string;
+    readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
+  };
+  readonly onUndoPending?: (pending: NonNullable<ProjectsBoardOptions['pendingUndo']>) => void;
+  readonly onUndoResolved?: () => void;
 }
 
 /** Adapts Project lifecycle records to the shared board shell. */
@@ -271,6 +286,12 @@ export function renderProjectsBoard(
   container: HTMLElement,
   options: ProjectsBoardOptions,
 ): BoardViewHandle {
+  const { newProjectButton } = renderProjectsToolbar(container, options);
+  const newProjectInputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
+  const boardHost = container.createDiv();
+  newProjectButton.addEventListener('click', () =>
+    showNewProjectInput(newProjectInputHost, options.onCreate),
+  );
   const statuses = options.settings.projects.statuses;
   const snapshots = options.snapshots.map((snapshot) => ({
     ...snapshot,
@@ -288,13 +309,31 @@ export function renderProjectsBoard(
   const mutation = createProjectBoardMutation(statuses, (project, statusId) =>
     options.onMoveStatus(project.path, statusId),
   );
-  return renderBoard(container, {
+  const pendingUndo = options.pendingUndo;
+  const initialUndo =
+    pendingUndo === undefined
+      ? undefined
+      : (() => {
+          const item = projects.find((project) => project.path === pendingUndo.path);
+          return item === undefined ? undefined : { ...pendingUndo, item };
+        })();
+  return renderBoard(boardHost, {
     columns: projectBoardColumns(statuses, projects),
     visibleColumnKeys,
     mutation,
     undo: (project, _columnKey, result) => {
       if (!isProjectStatusMove(result)) return Promise.resolve(result);
-      return options.onUndoStatus(project.path, result.nextStatusId, result.previousStatusId);
+      return options
+        .onUndoStatus(project.path, result.nextStatusId, result.previousStatusId)
+        .then((undoResult) => {
+          if (successful(undoResult)) options.onUndoResolved?.();
+          return undoResult;
+        });
+    },
+    initialUndo,
+    onMutation: (project, columnKey, result) => {
+      if (!isProjectStatusMove(result)) return;
+      options.onUndoPending?.({ path: project.path, columnKey, result });
     },
     itemKey: (project) => project.path,
     renderItem: (host, project) => {
@@ -309,6 +348,7 @@ export function renderProjectsBoard(
         options,
         () => undefined,
         () => undefined,
+        false,
         false,
       );
     },

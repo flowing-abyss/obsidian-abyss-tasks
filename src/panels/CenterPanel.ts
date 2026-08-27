@@ -617,7 +617,11 @@ export class CenterPanel {
         mutation: this.taskBoardMutation(),
         itemKey: (task) => this.taskKey(task),
         renderItem: (container, task) =>
-          this.renderTaskCard(container, task, { projectPath: path, manageStatusMenu: false }),
+          this.renderTaskCard(container, task, {
+            projectPath: path,
+            manageStatusMenu: false,
+            manageStatusMarker: false,
+          }),
       });
     }
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -1771,7 +1775,11 @@ export class CenterPanel {
   private renderTaskCard(
     container: HTMLElement,
     task: TaskSnapshot,
-    context: { readonly projectPath?: string; readonly manageStatusMenu?: boolean } = {},
+    context: {
+      readonly projectPath?: string;
+      readonly manageStatusMenu?: boolean;
+      readonly manageStatusMarker?: boolean;
+    } = {},
   ): HTMLElement {
     const stack = this.state.get('taskStack');
     const root = stack[0];
@@ -1796,10 +1804,12 @@ export class CenterPanel {
     renderStatusMarker(mainRow, {
       task,
       registry: this.statusRegistry,
-      onLeftClick: () => void this.toggleTask(task),
+      onLeftClick: () => {
+        if (context.manageStatusMarker !== false) void this.toggleTask(task);
+      },
       onContextMenu: (ev) => {
         ev.stopPropagation();
-        this.openStatusMenu(ev, task);
+        if (context.manageStatusMarker !== false) this.openStatusMenu(ev, task);
       },
     });
 
@@ -3819,7 +3829,7 @@ export class CenterPanel {
   }
 
   private toggleTask(task: TaskSnapshot): Promise<void> {
-    if (isForecastCalendarTask(task)) return Promise.resolve();
+    if (isForecastCalendarTask(task)) return Promise.resolve(undefined);
     return requestTaskCompletion(
       task,
       () => this.commitTaskToggle(task),
@@ -3839,29 +3849,34 @@ export class CenterPanel {
     );
   }
 
-  private setTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
-    if (isForecastCalendarTask(task)) return Promise.resolve();
+  private setTaskStatus(
+    task: TaskSnapshot,
+    symbol: string,
+  ): Promise<TaskCommandResult | undefined> {
+    if (isForecastCalendarTask(task)) return Promise.resolve(undefined);
     if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
+      let result: TaskCommandResult | undefined;
       return requestTaskCompletion(
         task,
-        () => this.commitTaskStatus(task, symbol),
+        async () => {
+          result = await this.commitTaskStatus(task, symbol);
+        },
         this.interactionOwnership,
         this.completionConfirmationAbortController.signal,
-      );
+      ).then(() => result);
     }
     return this.commitTaskStatus(task, symbol);
   }
 
-  private async commitTaskStatus(task: TaskSnapshot, symbol: string): Promise<void> {
+  private async commitTaskStatus(
+    task: TaskSnapshot,
+    symbol: string,
+  ): Promise<TaskCommandResult | undefined> {
     const target = calendarMutationTarget(task);
     if (!target || !this.tasks) return;
-    presentTaskCommandResult(
-      await this.tasks.execute({
-        type: 'set-status',
-        target,
-        symbol,
-      }),
-    );
+    const result = await this.tasks.execute({ type: 'set-status', target, symbol });
+    presentTaskCommandResult(result);
+    return result;
   }
 
   private openRecurrenceEditor(anchor: HTMLElement, task: TaskSnapshot): void {

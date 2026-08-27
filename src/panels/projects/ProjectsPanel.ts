@@ -1,5 +1,6 @@
 import { TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
+import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
@@ -33,6 +34,13 @@ export class ProjectsPanel {
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
   private viewCleanup: (() => void) | null = null;
+  private pendingBoardUndo:
+    | {
+        readonly path: string;
+        readonly columnKey: string;
+        readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
+      }
+    | undefined;
 
   constructor(
     private state: AppState,
@@ -67,9 +75,9 @@ export class ProjectsPanel {
     if (this.el) this.render();
   }
 
-  private async setStatus(path: string, statusId: string) {
+  private async setStatus(path: string, statusId: string, refresh = true) {
     const result = await this.projectManager.setStatus(path, statusId);
-    if (result.type === 'ok') this.projectStore.refresh();
+    if (refresh && result.type === 'ok') this.projectStore.refresh();
     return result;
   }
 
@@ -77,9 +85,10 @@ export class ProjectsPanel {
     path: string,
     expectedStatusId: string,
     previousStatusId: string | null,
+    refresh = true,
   ) {
     const result = await this.projectManager.undoStatus(path, expectedStatusId, previousStatusId);
-    if (result.type === 'ok') this.projectStore.refresh();
+    if (refresh && result.type === 'ok') this.projectStore.refresh();
     return result;
   }
 
@@ -127,9 +136,18 @@ export class ProjectsPanel {
       const board = renderProjectsBoard(container, {
         ...listContext,
         snapshots: this.snapshots,
-        onMoveStatus: (path, statusId) => this.setStatus(path, statusId),
+        onMoveStatus: (path, statusId) => this.setStatus(path, statusId, false),
         onUndoStatus: (path, expectedStatusId, previousStatusId) =>
-          this.undoStatus(path, expectedStatusId, previousStatusId),
+          this.undoStatus(path, expectedStatusId, previousStatusId, false),
+        pendingUndo: this.pendingBoardUndo,
+        onUndoPending: (pending) => {
+          this.pendingBoardUndo = pending;
+          this.projectStore.refresh();
+        },
+        onUndoResolved: () => {
+          this.pendingBoardUndo = undefined;
+          this.projectStore.refresh();
+        },
       });
       this.viewCleanup = () => board.destroy();
     } else {

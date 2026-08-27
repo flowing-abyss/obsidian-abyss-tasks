@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
+import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
@@ -142,6 +143,26 @@ describe('renderProjectsList', () => {
     expect(settings.projects.view.visibleStatusIds).toEqual([ACTIVE_ID]);
     expect(onSaveSettings).toHaveBeenCalledOnce();
     expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the shared toolbar available while the lifecycle Board is active', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    const onPortfolioLayoutChanged = vi.fn();
+    const el = freshContainer();
+
+    renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace()],
+      onPortfolioLayoutChanged,
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+    });
+
+    expect(el.querySelector('[data-project-portfolio-layout="overview"]')).not.toBeNull();
+    expect(el.querySelector('[data-project-status-filter]')).not.toBeNull();
+    expect(el.querySelector('[aria-label="New project"]')).not.toBeNull();
   });
 
   it('row click switches to the dashboard view', () => {

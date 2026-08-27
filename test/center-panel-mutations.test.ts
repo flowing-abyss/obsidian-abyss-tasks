@@ -799,12 +799,16 @@ describe('CenterPanel task board mutation', () => {
     const mutation = callPrivate<{
       move(item: TaskSnapshot, columnKey: string): Promise<unknown>;
     }>(panel, 'taskBoardMutation');
-    await mutation.move(current, 'todo-b');
+    const result = await mutation.move(current, 'todo-b');
 
     expect(execute).toHaveBeenCalledWith({
       type: 'set-status',
       target: { type: 'task', ref: current.ref },
       symbol: '?',
+    });
+    expect(result).toEqual({
+      type: 'invalid',
+      issues: [{ code: 'invalid-status', field: 'status' }],
     });
   });
 });

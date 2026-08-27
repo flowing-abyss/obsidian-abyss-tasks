@@ -56,7 +56,10 @@ function parentFolder(path: string): string {
   return idx === -1 ? '' : path.slice(0, idx);
 }
 
-function showNewProjectInput(host: HTMLElement, onCreate: (name: string) => Promise<void>): void {
+export function showNewProjectInput(
+  host: HTMLElement,
+  onCreate: (name: string) => Promise<void>,
+): void {
   const existing = host.querySelector('.abyss-projects-new-input');
   if (existing) {
     (existing as HTMLInputElement).focus();
@@ -236,6 +239,7 @@ export function renderProjectRow(
   onFocus: (path: string) => void,
   onMoveFocus: (path: string, delta: number) => void,
   ownsArrowNavigation = true,
+  showStatusControl = true,
 ): HTMLElement {
   const project = snapshot.project;
   const row = parent.createDiv({
@@ -318,8 +322,9 @@ export function renderProjectRow(
 
   const statusBtn = actions.createEl('button', {
     cls: 'abyss-project-status-btn',
-    attr: { 'aria-label': 'Change status' },
+    attr: { 'aria-label': 'Change status', title: 'Change status' },
   });
+  statusBtn.toggle(showStatusControl);
   setIcon(statusBtn, 'circle-dot');
   statusBtn.addEventListener('click', (e) => {
     e.stopPropagation();
