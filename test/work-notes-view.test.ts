@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { Menu, type MenuItem } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import {
   createWorkNoteBoardMutation,
   workNoteBoardColumns,
 } from '../src/panels/projects/boardProjection';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
+import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import {
   WORK_NOTE_FALLBACK_VISIBLE_ROWS,
   WORK_NOTE_OVERSCAN,
@@ -14,7 +16,50 @@ import {
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer } from './helpers';
+import { flushMicrotasks, freshContainer } from './helpers';
+
+interface CapturedMenuItem {
+  title: string;
+  click: () => unknown;
+}
+
+function captureMenuItems(): CapturedMenuItem[] {
+  const captured: CapturedMenuItem[] = [];
+  vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+    let title = '';
+    let click = (): unknown => undefined;
+    const item = {
+      setTitle(value: string) {
+        title = value;
+        return this;
+      },
+      setIcon() {
+        return this;
+      },
+      setChecked() {
+        return this;
+      },
+      setDisabled() {
+        return this;
+      },
+      onClick(callback: () => unknown) {
+        click = callback;
+        captured.push({
+          get title() {
+            return title;
+          },
+          click: () => click(),
+        });
+        return this;
+      },
+    } as unknown as MenuItem;
+    build(item);
+    return this;
+  });
+  return captured;
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 function note(index: number, over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnapshot {
   const ordinal = String(index).padStart(3, '0');
@@ -92,6 +137,47 @@ describe('renderWorkNotesView', () => {
       expect(
         root.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
       ).toBe(`${String((103 - WORK_NOTE_OVERSCAN) * WORK_NOTE_ROW_EXTENT)}px`);
+    } finally {
+      root.remove();
+    }
+  });
+
+  it('restores a deep logical list viewport and focus after the renderer is replaced', () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const notes = Array.from({ length: 150 }, (_, index) => note(index));
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/P.md');
+    const options = {
+      notes,
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list' as const,
+      session: session.workNotes,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    };
+    try {
+      let handle = renderWorkNotesView(root, options);
+      let scroll = root.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
+      Object.defineProperty(scroll, 'clientHeight', {
+        configurable: true,
+        value: WORK_NOTE_ROW_EXTENT * 5,
+      });
+      scroll.scrollTop = WORK_NOTE_ROW_EXTENT * 100;
+      scroll.dispatchEvent(new Event('scroll'));
+      root
+        .querySelector<HTMLElement>('[data-work-note-path="Work Notes/Work note 103.md"]')!
+        .focus();
+
+      handle.destroy();
+      handle = renderWorkNotesView(root, options);
+      scroll = root.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
+
+      expect(scroll.scrollTop).toBe(WORK_NOTE_ROW_EXTENT * 100);
+      expect((activeDocument.activeElement as HTMLElement).dataset['workNotePath']).toBe(
+        'Work Notes/Work note 103.md',
+      );
+      handle.destroy();
     } finally {
       root.remove();
     }
@@ -201,6 +287,43 @@ describe('renderWorkNotesView', () => {
     ).toEqual(['Work note 002', 'Work note 001']);
   });
 
+  it.each([
+    ['compatibility-conflict', { type: 'compatibility-conflict', reason: 'latest-audit-rejected' }],
+    ['conflict', { type: 'conflict', field: 'status' }],
+    ['invalid', { type: 'invalid', field: 'status' }],
+    ['partial', { type: 'partial', path: 'Work Notes/Partial.md', reason: 'shape-changed' }],
+    ['io-error', { type: 'io-error' }],
+  ] as const)(
+    'presents a connected %s failure from the list and restores the initiating status button',
+    async (resultType, result) => {
+      const root = freshContainer();
+      activeDocument.body.appendChild(root);
+      const items = captureMenuItems();
+      try {
+        renderWorkNotesView(root, {
+          notes: [note(1)],
+          statuses: DEFAULT_SETTINGS.projects.statuses,
+          layout: 'list',
+          onSetStatus: vi.fn().mockResolvedValue(result),
+          openNote: vi.fn(),
+        });
+        const trigger = root.querySelector<HTMLButtonElement>('.abyss-work-note-status')!;
+        trigger.click();
+        await items.find(({ title }) => title === 'Done')!.click();
+
+        await vi.waitFor(() => {
+          const feedback = root.querySelector<HTMLElement>('[data-work-note-feedback]');
+          expect(feedback?.dataset['resultType']).toBe(resultType);
+          expect(feedback?.getAttribute('role')).toBe('status');
+          expect(feedback?.textContent).not.toBe('');
+          expect(activeDocument.activeElement).toBe(trigger);
+        });
+      } finally {
+        root.remove();
+      }
+    },
+  );
+
   it('makes Work Notes selectable while every dashboard still opens in Tasks/List', () => {
     const root = freshContainer();
     const renderTasks = vi.fn((host: HTMLElement) => host.createDiv({ text: 'Tasks list' }));
@@ -247,6 +370,66 @@ describe('renderWorkNotesView', () => {
     expect(renderWorkNotes).toHaveBeenCalledOnce();
     root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
     expect(workspace.dataset).toMatchObject({ scope: 'work-notes', layout: 'board' });
+  });
+
+  it('retains the same open Project workspace but resets a newly opened or different Project', () => {
+    const root = freshContainer();
+    const session = new ProjectWorkspaceSession();
+    const context = {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      workspaceSession: session,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(),
+      renderWorkNotes: vi.fn(),
+      renderWorkNoteBoard: vi.fn(),
+    };
+    const snapshot = (path: string): ProjectWorkspaceSnapshot => ({
+      project: {
+        path,
+        name: path,
+        frontmatter: {},
+        tags: [],
+        statusId: null,
+        rawStatus: null,
+        range: {},
+        stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+      },
+      tasks: [],
+      workNotes: [note(1, { projectPath: path })],
+      milestones: [],
+      taskRollup: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+      workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+      milestoneRollups: new Map(),
+      workNoteRelations: [],
+      overdue: { tasks: 0, workNotes: 0 },
+      diagnostics: [],
+    });
+
+    renderProjectDashboard(root, snapshot('Projects/P.md'), context);
+    root.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    root.empty();
+    renderProjectDashboard(root, snapshot('Projects/P.md'), context);
+    expect(root.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject({
+      scope: 'work-notes',
+      layout: 'board',
+    });
+
+    root.empty();
+    renderProjectDashboard(root, snapshot('Projects/Q.md'), context);
+    expect(root.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject({
+      scope: 'tasks',
+      layout: 'list',
+    });
+    session.closeProject();
+    root.empty();
+    renderProjectDashboard(root, snapshot('Projects/Q.md'), context);
+    expect(root.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject({
+      scope: 'tasks',
+      layout: 'list',
+    });
   });
 
   it('keeps the real Work Notes scope available for creating a project first note', () => {
@@ -323,5 +506,135 @@ describe('Work Note board adapter', () => {
 
     expect(columns.map(({ key }) => key)).toEqual([...statuses.map(({ id }) => id), 'unmapped']);
     expect(columns[columns.length - 1]?.items).toHaveLength(1);
+  });
+
+  it('keeps a failed board menu move visibly in place and restores the card focus', async () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const items = captureMenuItems();
+    try {
+      renderWorkNotesView(root, {
+        notes: [note(1)],
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        layout: 'board',
+        onSetStatus: vi.fn().mockResolvedValue({ type: 'conflict', field: 'status' }),
+        openNote: vi.fn(),
+      });
+      const card = root.querySelector<HTMLElement>('[data-board-item]')!;
+      const source = card.closest<HTMLElement>('[data-board-column]')!;
+      card.focus();
+      card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await items.find(({ title }) => title === 'Done')!.click();
+
+      await vi.waitFor(() => {
+        expect(card.closest('[data-board-column]')).toBe(source);
+        expect(root.querySelector<HTMLElement>('[data-work-note-feedback]')?.dataset).toMatchObject(
+          {
+            resultType: 'conflict',
+          },
+        );
+        expect(activeDocument.activeElement).toBe(card);
+      });
+    } finally {
+      root.remove();
+    }
+  });
+
+  it('keeps a failed board drag visibly in place with accessible feedback and card focus', async () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    try {
+      renderWorkNotesView(root, {
+        notes: [note(1)],
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        layout: 'board',
+        onSetStatus: vi
+          .fn()
+          .mockResolvedValue({ type: 'compatibility-conflict', reason: 'latest-audit-rejected' }),
+        openNote: vi.fn(),
+      });
+      const card = root.querySelector<HTMLElement>('[data-board-item]')!;
+      const source = card.closest<HTMLElement>('[data-board-column]')!;
+      const target = root.querySelector<HTMLElement>(
+        `[data-board-column="${DEFAULT_SETTINGS.projects.statuses[2]!.id}"]`,
+      )!;
+      card.focus();
+      card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+
+      await vi.waitFor(() => {
+        expect(card.closest('[data-board-column]')).toBe(source);
+        expect(root.querySelector<HTMLElement>('[data-work-note-feedback]')?.dataset).toMatchObject(
+          {
+            resultType: 'compatibility-conflict',
+          },
+        );
+        expect(activeDocument.activeElement).toBe(card);
+      });
+    } finally {
+      root.remove();
+    }
+  });
+
+  it('retains deep board scroll and logical card focus through a successful local move and outer replacement', async () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const statuses = DEFAULT_SETTINGS.projects.statuses;
+    const notes = Array.from({ length: 140 }, (_, index) => note(index));
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/P.md');
+    const command = vi.fn().mockResolvedValue({ type: 'ok', path: notes[103]!.path });
+    const render = (current: readonly WorkNoteSnapshot[]) =>
+      renderWorkNotesView(root, {
+        notes: current,
+        statuses,
+        layout: 'board',
+        session: session.workNotes,
+        onSetStatus: command,
+        openNote: vi.fn(),
+      });
+    try {
+      let handle = render(notes);
+      let sourceScroll = root.querySelector<HTMLElement>(
+        `[data-board-column="${statuses[0]!.id}"] .abyss-board-column-scroll`,
+      )!;
+      Object.defineProperty(sourceScroll, 'clientHeight', { configurable: true, value: 5 * 88 });
+      sourceScroll.scrollTop = 100 * 88;
+      sourceScroll.dispatchEvent(new Event('scroll'));
+      const card = root.querySelector<HTMLElement>(
+        '[data-board-item="Work Notes/Work note 103.md"]',
+      )!;
+      card.focus();
+      card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      root
+        .querySelector<HTMLElement>(`[data-board-column="${statuses[2]!.id}"]`)!
+        .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(
+        'Work Notes/Work note 103.md',
+      );
+      sourceScroll = root.querySelector<HTMLElement>(
+        `[data-board-column="${statuses[0]!.id}"] .abyss-board-column-scroll`,
+      )!;
+      expect(sourceScroll.scrollTop).toBe(100 * 88);
+
+      handle.destroy();
+      const updated = notes.map((current) =>
+        current.path === notes[103]!.path ? { ...current, statusId: statuses[2]!.id } : current,
+      );
+      handle = render(updated);
+      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(
+        'Work Notes/Work note 103.md',
+      );
+      expect(
+        root.querySelector<HTMLElement>(
+          `[data-board-column="${statuses[0]!.id}"] .abyss-board-column-scroll`,
+        )?.scrollTop,
+      ).toBe(100 * 88);
+      handle.destroy();
+    } finally {
+      root.remove();
+    }
   });
 });

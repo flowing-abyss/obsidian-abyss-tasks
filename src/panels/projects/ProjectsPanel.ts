@@ -7,6 +7,7 @@ import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
+import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList } from './ProjectsListView';
@@ -26,6 +27,7 @@ export interface ProjectsPanelOptions {
   onBoardUndoPending?: (pending: PendingProjectBoardUndo) => void;
   onBoardUndoResolved?: () => void;
   workNoteCommands?: WorkNoteCommandService;
+  workspaceSession?: ProjectWorkspaceSession;
 }
 
 export interface PendingProjectBoardUndo {
@@ -50,6 +52,7 @@ export class ProjectsPanel {
   private readonly onBoardUndoPending: ((pending: PendingProjectBoardUndo) => void) | undefined;
   private readonly onBoardUndoResolved: (() => void) | undefined;
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
+  private readonly workspaceSession: ProjectWorkspaceSession;
   private viewCleanup: (() => void) | null = null;
 
   constructor(
@@ -68,6 +71,7 @@ export class ProjectsPanel {
     this.onBoardUndoPending = opts.onBoardUndoPending;
     this.onBoardUndoResolved = opts.onBoardUndoResolved;
     this.workNoteCommands = opts.workNoteCommands;
+    this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
   }
 
   private async createProject(name: string): Promise<void> {
@@ -139,6 +143,7 @@ export class ProjectsPanel {
       onCreate: (request) => this.workNoteCommands!.create(request),
       onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
       openNote: (path) => this.openNote(path),
+      session: this.workspaceSession.workNotes,
     });
   }
 
@@ -159,6 +164,7 @@ export class ProjectsPanel {
           settings: this.settings,
           onSetStatus: (p, id) => void this.setStatus(p, id),
           openNote: (p) => this.openNote(p),
+          workspaceSession: this.workspaceSession,
           renderTasks: this.renderTasks,
           ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
           ...(this.workNoteCommands
@@ -174,6 +180,7 @@ export class ProjectsPanel {
       return;
     }
 
+    this.workspaceSession.closeProject();
     const container = this.el.createDiv();
     const listContext = {
       state: this.state,

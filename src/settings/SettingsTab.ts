@@ -8,7 +8,10 @@ import {
   setIcon,
   Setting,
 } from 'obsidian';
-import type { WorkNoteCompatibilityPreview } from '../projects/work-notes/types';
+import type {
+  WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityPreview,
+} from '../projects/work-notes/types';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
@@ -32,7 +35,7 @@ interface TaskCalendarPlugin extends Plugin {
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
   previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
-  acceptWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
+  acceptWorkNoteCompatibility(token: string): Promise<WorkNoteCompatibilityAcceptanceResult>;
   disableWorkNoteCompatibility(): Promise<void>;
 }
 
@@ -1069,15 +1072,28 @@ export class CalendarSettingsTab extends PluginSettingTab {
       cls: 'abyss-work-note-preview-guard',
       text: 'Read-only preview. Commands remain unavailable until this exact audit is accepted.',
     });
-    if (preview.notes.eligible === 0) return;
+    if (preview.notes.eligible === 0 || !preview.acceptanceToken) return;
+    const acceptanceToken = preview.acceptanceToken;
     const accept = containerEl.createEl('button', {
       text: 'Enable audited work notes',
       attr: { type: 'button', 'data-work-note-accept': '' },
     });
     accept.addEventListener('click', () => {
       accept.disabled = true;
-      void this.plugin.acceptWorkNoteCompatibility().then(
-        (accepted) => this.renderWorkNotePreview(containerEl, accepted),
+      void this.plugin.acceptWorkNoteCompatibility(acceptanceToken).then(
+        (accepted) => {
+          if (accepted.type === 'ok') {
+            this.renderWorkNotePreview(containerEl, accepted.preview);
+            return;
+          }
+          containerEl.replaceChildren();
+          containerEl.createDiv({
+            text:
+              accepted.type === 'stale-preview'
+                ? 'Work note audit changed. Preview again before enabling.'
+                : 'Audit acceptance unavailable.',
+          });
+        },
         () => {
           accept.disabled = false;
           containerEl.createDiv({ text: 'Audit acceptance unavailable.' });

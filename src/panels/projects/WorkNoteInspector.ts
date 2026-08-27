@@ -1,12 +1,24 @@
 import { Menu, setIcon } from 'obsidian';
-import type { WorkNoteSnapshot, WorkNoteStatusDefinition } from '../../projects/work-notes/types';
+import type {
+  WorkNoteCommandResult,
+  WorkNoteSnapshot,
+  WorkNoteStatusDefinition,
+} from '../../projects/work-notes/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { workNoteStatusMenuModel } from './boardProjection';
+import {
+  createWorkNoteResultPresenter,
+  type WorkNoteResultPresenter,
+} from './WorkNoteResultPresenter';
 
 export interface WorkNoteInspectorOptions {
   readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly commandsEnabled?: boolean;
-  readonly onSetStatus: (note: WorkNoteSnapshot, statusId: string) => void;
+  readonly resultPresenter?: WorkNoteResultPresenter;
+  readonly onSetStatus: (
+    note: WorkNoteSnapshot,
+    statusId: string,
+  ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
 }
 
@@ -29,6 +41,27 @@ function metadataRow(host: HTMLElement, label: string, value: string): void {
   row.createSpan({ cls: 'abyss-work-note-inspector-value', text: value });
 }
 
+function renderStatusMenu(
+  event: MouseEvent,
+  note: WorkNoteSnapshot,
+  status: HTMLElement,
+  options: WorkNoteInspectorOptions,
+  presenter: WorkNoteResultPresenter,
+): void {
+  const menu = new Menu();
+  for (const action of workNoteStatusMenuModel(options.statuses, note)) {
+    menu.addItem((item) =>
+      item
+        .setTitle(action.label)
+        .setIcon(action.icon)
+        .setChecked(action.checked)
+        .setDisabled(action.disabled)
+        .onClick(() => presenter.run(() => options.onSetStatus(note, action.columnKey), status)),
+    );
+  }
+  showMenuAtMouseEventWithFocus(menu, event);
+}
+
 export function renderWorkNoteInspector(
   container: HTMLElement,
   note: WorkNoteSnapshot,
@@ -36,6 +69,7 @@ export function renderWorkNoteInspector(
 ): void {
   container.empty();
   container.addClass('abyss-work-note-inspector');
+  const presenter = options.resultPresenter ?? createWorkNoteResultPresenter(container);
   const header = container.createDiv({ cls: 'abyss-work-note-inspector-header' });
   header.createEl('h3', { text: basename(note.path) });
   const open = header.createEl('button', {
@@ -67,18 +101,7 @@ export function renderWorkNoteInspector(
   status.disabled = options.commandsEnabled === false;
   status.addEventListener('click', (event) => {
     if (status.disabled) return;
-    const menu = new Menu();
-    for (const action of workNoteStatusMenuModel(options.statuses, note)) {
-      menu.addItem((item) =>
-        item
-          .setTitle(action.label)
-          .setIcon(action.icon)
-          .setChecked(action.checked)
-          .setDisabled(action.disabled)
-          .onClick(() => options.onSetStatus(note, action.columnKey)),
-      );
-    }
-    showMenuAtMouseEventWithFocus(menu, event);
+    renderStatusMenu(event, note, status, options, presenter);
   });
 
   const metadata = container.createDiv({ cls: 'abyss-work-note-inspector-metadata' });

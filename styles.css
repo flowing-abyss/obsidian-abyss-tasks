@@ -6346,6 +6346,20 @@ body.abyss-modal-open .popover.hover-popover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.abyss-work-note-feedback {
+  overflow: hidden;
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-error);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-work-note-feedback:empty {
+  display: none;
+}
 .abyss-work-notes-content {
   display: flex;
   flex: 1;

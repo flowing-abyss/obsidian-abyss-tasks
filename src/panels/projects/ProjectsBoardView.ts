@@ -17,6 +17,8 @@ import {
 import { BoundedWindow } from './BoundedWindow';
 import { renderProjectRow, showNewProjectInput } from './ProjectsListView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
+import type { LogicalViewportSession, WorkNoteBoardSession } from './ProjectWorkspaceSession';
+import { boardColumnViewport, logicalViewportFirst } from './ProjectWorkspaceSession';
 import type { ProjectsListContext } from './viewContext';
 
 const BOARD_ITEM_EXTENT = 88;
@@ -31,6 +33,11 @@ export interface BoardViewOptions<T> {
   readonly visibleColumnKeys?: ReadonlySet<string>;
   readonly manageStatusMenu?: boolean;
   readonly onMutation?: (item: T, columnKey: string, result: BoardMutationResult) => void;
+  readonly executeMutation?: (
+    command: () => Promise<BoardMutationResult>,
+    initiator: HTMLElement,
+  ) => Promise<BoardMutationResult>;
+  readonly session?: WorkNoteBoardSession;
   readonly initialUndo?: {
     readonly item: T;
     readonly columnKey: string;
@@ -55,6 +62,11 @@ export interface WorkNotesBoardOptions {
     statusId: string,
   ) => Promise<WorkNoteCommandResult>;
   readonly renderItem: (host: HTMLElement, note: WorkNoteSnapshot) => HTMLElement;
+  readonly executeMutation?: (
+    command: () => Promise<WorkNoteCommandResult>,
+    initiator: HTMLElement,
+  ) => Promise<WorkNoteCommandResult>;
+  readonly session?: WorkNoteBoardSession;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -75,11 +87,17 @@ export function renderBoard<T>(
 ): BoardViewHandle {
   container.addClass('abyss-board');
   const overrides = new Map<string, string>();
-  let dragging: T | null = null;
+  let dragging: { readonly item: T; readonly initiator: HTMLElement } | null = null;
+  const selectedFromSession = options.session?.selectedColumnKey;
   let selectedColumnKey =
+    options.columns.find(
+      (column) =>
+        column.key === selectedFromSession && options.visibleColumnKeys?.has(column.key) !== false,
+    )?.key ??
     options.columns.find((column) => options.visibleColumnKeys?.has(column.key) !== false)?.key ??
     options.columns[0]?.key ??
     '';
+  if (options.session) options.session.selectedColumnKey = selectedColumnKey;
   let destroyed = false;
   let undoPending: {
     readonly item: T;
@@ -105,15 +123,23 @@ export function renderBoard<T>(
     });
   };
 
-  const commitMove = (item: T, columnKey: string): void => {
-    void options.mutation.move(item, columnKey).then((result) => {
-      if (!successful(result)) return;
-      overrides.set(options.itemKey(item), columnKey);
-      dragging = null;
-      if (options.undo) undoPending = { item, columnKey, result };
-      options.onMutation?.(item, columnKey, result);
-      render();
-    });
+  const commitMove = (item: T, columnKey: string, initiator: HTMLElement): void => {
+    if (options.session) {
+      options.session.focusedKey = options.itemKey(item);
+      options.session.restoreFocus = true;
+    }
+    const command = (): Promise<BoardMutationResult> => options.mutation.move(item, columnKey);
+    const pending = options.executeMutation?.(command, initiator) ?? command();
+    void pending
+      .then((result) => {
+        if (!successful(result)) return;
+        overrides.set(options.itemKey(item), columnKey);
+        dragging = null;
+        if (options.undo) undoPending = { item, columnKey, result };
+        options.onMutation?.(item, columnKey, result);
+        render();
+      })
+      .catch(() => undefined);
   };
 
   const render = (): void => {
@@ -173,6 +199,7 @@ export function renderBoard<T>(
         });
         tab.addEventListener('click', () => {
           selectedColumnKey = column.key;
+          if (options.session) options.session.selectedColumnKey = column.key;
           render();
         });
       }
@@ -198,6 +225,14 @@ export function renderBoard<T>(
       });
       const keys = items.map(options.itemKey);
       const bounded = new BoundedWindow(keys, BOARD_OVERSCAN);
+      const sessionColumn: LogicalViewportSession | undefined = boardColumnViewport(
+        options.session,
+        column.key,
+      );
+      const focusedKey = options.session?.focusedKey;
+      if (focusedKey) bounded.focus(focusedKey);
+      const initialFirst = logicalViewportFirst(sessionColumn, keys);
+      scroll.scrollTop = initialFirst * BOARD_ITEM_EXTENT;
       const viewport = (): { first: number; visible: number } => {
         const first = Math.floor(Math.max(0, scroll.scrollTop) / BOARD_ITEM_EXTENT);
         const visibleItems =
@@ -218,7 +253,13 @@ export function renderBoard<T>(
             itemEl.dataset['boardItem'] = key;
             if (itemEl.tabIndex < 0) itemEl.tabIndex = 0;
             itemEl.setAttribute('draggable', 'true');
-            itemEl.addEventListener('focus', () => bounded.focus(key));
+            itemEl.addEventListener('focus', () => {
+              bounded.focus(key);
+              if (options.session) {
+                options.session.focusedKey = key;
+                options.session.restoreFocus = true;
+              }
+            });
             itemEl.addEventListener('keydown', (event) => {
               if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
               event.preventDefault();
@@ -229,7 +270,7 @@ export function renderBoard<T>(
               renderWindow(true);
             });
             itemEl.addEventListener('dragstart', () => {
-              dragging = item;
+              dragging = { item, initiator: itemEl };
               setDraggingState(true);
             });
             itemEl.addEventListener('dragend', () => {
@@ -249,7 +290,7 @@ export function renderBoard<T>(
                       .setIcon(action.icon)
                       .setChecked(action.checked)
                       .setDisabled(action.disabled)
-                      .onClick(() => commitMove(item, action.columnKey)),
+                      .onClick(() => commitMove(item, action.columnKey, itemEl)),
                   );
                 }
                 showMenuAtMouseEventWithFocus(menu, event);
@@ -260,10 +301,24 @@ export function renderBoard<T>(
         });
         if (restoreFocus) scroll.scrollTop = result.first * BOARD_ITEM_EXTENT;
       };
-      const onScroll = (): void => renderWindow(false);
+      const rememberViewport = (): void => {
+        if (!sessionColumn) return;
+        sessionColumn.firstIndex = viewport().first;
+        sessionColumn.firstKey = keys[sessionColumn.firstIndex] ?? null;
+      };
+      const onScroll = (): void => {
+        rememberViewport();
+        renderWindow(false);
+      };
       scroll.addEventListener('scroll', onScroll);
       cleanups.push(() => scroll.removeEventListener('scroll', onScroll));
-      renderWindow();
+      renderWindow(
+        options.session?.restoreFocus === true &&
+          focusedKey !== undefined &&
+          focusedKey !== null &&
+          keys.includes(focusedKey),
+      );
+      rememberViewport();
 
       columnEl.addEventListener('dragover', (event) => {
         if (dragging === null || (!visible && !terminal)) return;
@@ -272,11 +327,11 @@ export function renderBoard<T>(
       });
       columnEl.addEventListener('dragleave', () => columnEl.removeClass('is-drop-target'));
       columnEl.addEventListener('drop', (event) => {
-        const item = dragging;
-        if (item === null) return;
+        const dragged = dragging;
+        if (dragged === null) return;
         event.preventDefault();
         columnEl.removeClass('is-drop-target');
-        commitMove(item, column.key);
+        commitMove(dragged.item, column.key, dragged.initiator);
       });
     }
   };
@@ -297,11 +352,21 @@ export function renderWorkNotesBoard(
   container: HTMLElement,
   options: WorkNotesBoardOptions,
 ): BoardViewHandle {
+  const mutation = createWorkNoteBoardMutation(options.statuses, options.onMoveStatus);
   return renderBoard(container, {
     columns: workNoteBoardColumns(options.statuses, options.notes),
-    mutation: createWorkNoteBoardMutation(options.statuses, options.onMoveStatus),
+    mutation,
     itemKey: ({ path }) => path,
     renderItem: options.renderItem,
+    session: options.session,
+    executeMutation:
+      options.executeMutation === undefined
+        ? undefined
+        : (command, initiator) =>
+            options.executeMutation!(
+              async () => (await command()) as WorkNoteCommandResult,
+              initiator,
+            ),
   });
 }
 

@@ -17,6 +17,7 @@ import {
 import type {
   WorkNoteAuditResult,
   WorkNoteAuditSource,
+  WorkNoteCompatibilityAcceptanceResult,
   WorkNoteCompatibilityPreset,
   WorkNoteCompatibilityPreview,
   WorkNoteDiagnostic,
@@ -27,6 +28,32 @@ import type {
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
 type TaskTopologySettlement = Extract<TaskIndexSettledEvent, { readonly reason: 'topology' }>;
+
+interface PendingCompatibilityPreview {
+  readonly token: string;
+  readonly candidate: WorkNoteCompatibilityPreset;
+  readonly signature: string;
+  readonly scanned: number;
+  readonly excluded: number;
+}
+
+function compatibilityAcceptanceSignature(
+  candidate: WorkNoteCompatibilityPreset,
+  audit: WorkNoteAuditResult,
+  scanned: number,
+  excluded: number,
+): string {
+  return JSON.stringify({
+    presetFingerprint: computeWorkNotePresetFingerprint(candidate),
+    eligiblePaths: audit.eligiblePaths,
+    snapshots: audit.snapshots,
+    diagnosticsByPath: audit.diagnosticsByPath,
+    issues: audit.issues,
+    capabilities: audit.capabilities,
+    scanned,
+    excluded,
+  });
+}
 
 function aggregateCompatibilityPreview(
   audit: WorkNoteAuditResult,
@@ -135,6 +162,8 @@ export class WorkNoteIndex {
   private topologyRefreshPending = false;
   private taskSettlementUnsub?: () => void;
   private ready = false;
+  private previewNonce = 0;
+  private pendingCompatibilityPreview: PendingCompatibilityPreview | null = null;
 
   constructor(
     private readonly app: App,
@@ -265,6 +294,7 @@ export class WorkNoteIndex {
     const source = this.source();
     const configured = this.preset();
     if (configured.enabled) {
+      this.pendingCompatibilityPreview = null;
       const audit = auditWorkNotes(source, configured);
       const accepted = isAuditAccepted(configured);
       return Promise.resolve(
@@ -279,19 +309,44 @@ export class WorkNoteIndex {
     }
     const suggestion = suggestWorkNotePreset(source);
     const audit = auditWorkNotes(source, suggestion.preset);
-    return Promise.resolve(
-      aggregateCompatibilityPreview(
+    const candidate: WorkNoteCompatibilityPreset = { ...suggestion.preset, enabled: true };
+    const candidateAudit = auditWorkNotes(source, candidate);
+    this.previewNonce += 1;
+    const token = `work-note-preview-${this.previewNonce.toString(36)}`;
+    this.pendingCompatibilityPreview = {
+      token,
+      candidate,
+      signature: compatibilityAcceptanceSignature(
+        candidate,
+        candidateAudit,
+        suggestion.observations.fileCount,
+        suggestion.preview.rejectedCandidateCount,
+      ),
+      scanned: suggestion.observations.fileCount,
+      excluded: suggestion.preview.rejectedCandidateCount,
+    };
+    return Promise.resolve({
+      ...aggregateCompatibilityPreview(
         audit,
         suggestion.observations.fileCount,
         suggestion.preview.rejectedCandidateCount,
       ),
-    );
+      acceptanceToken: token,
+    });
   }
 
-  acceptSuggestedCompatibility(acceptedAt: string): Promise<{
-    readonly preset: WorkNoteCompatibilityPreset;
-    readonly preview: WorkNoteCompatibilityPreview;
-  }> {
+  acceptSuggestedCompatibility(
+    token: string,
+    acceptedAt: string,
+  ): Promise<WorkNoteCompatibilityAcceptanceResult> {
+    const pending = this.pendingCompatibilityPreview;
+    this.pendingCompatibilityPreview = null;
+    if (!pending || pending.token !== token) {
+      return Promise.resolve({
+        type: 'compatibility-conflict',
+        reason: 'invalid-preview-token',
+      });
+    }
     const source = this.source();
     const suggestion = suggestWorkNotePreset(source);
     const candidate: WorkNoteCompatibilityPreset = {
@@ -299,13 +354,27 @@ export class WorkNoteIndex {
       enabled: true,
     };
     const audit = auditWorkNotes(source, candidate);
-    const preset = acceptWorkNoteAudit(candidate, audit.capabilities, acceptedAt);
+    const signature = compatibilityAcceptanceSignature(
+      candidate,
+      audit,
+      suggestion.observations.fileCount,
+      suggestion.preview.rejectedCandidateCount,
+    );
+    if (
+      computeWorkNotePresetFingerprint(candidate) !==
+        computeWorkNotePresetFingerprint(pending.candidate) ||
+      signature !== pending.signature
+    ) {
+      return Promise.resolve({ type: 'stale-preview' });
+    }
+    const preset = acceptWorkNoteAudit(pending.candidate, audit.capabilities, acceptedAt);
     return Promise.resolve({
+      type: 'ok',
       preset,
       preview: aggregateCompatibilityPreview(
         audit,
-        suggestion.observations.fileCount,
-        suggestion.preview.rejectedCandidateCount,
+        pending.scanned,
+        pending.excluded,
         { enabled: true, accepted: true },
         audit.capabilities,
       ),

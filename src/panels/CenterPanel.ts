@@ -117,6 +117,7 @@ import {
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { renderNextActionControl } from './projects/NextActionControl';
+import { ProjectWorkspaceSession } from './projects/ProjectWorkspaceSession';
 import { renderBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
 import {
@@ -251,6 +252,7 @@ export class CenterPanel {
   // CenterPanel survives the ProjectStore subscriber's full projects-mode redraw; the inner
   // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
   private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
+  private readonly projectWorkspaceSession = new ProjectWorkspaceSession();
   private readonly nextActions: NextActionService | null;
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
@@ -756,6 +758,7 @@ export class CenterPanel {
     if (mode !== 'projects') {
       this.destroyProjectsPanel();
       this.pendingProjectBoardUndo = undefined;
+      this.projectWorkspaceSession.closeProject();
     }
 
     if (mode === 'calendar') {
@@ -806,6 +809,7 @@ export class CenterPanel {
               this.projectStore?.refresh();
             },
             workNoteCommands: this.workNoteCommands,
+            workspaceSession: this.projectWorkspaceSession,
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never

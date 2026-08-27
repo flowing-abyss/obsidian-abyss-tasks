@@ -882,6 +882,7 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
 
   it('offers one explicit audited enable action and reports accepted capabilities', async () => {
     const preview = {
+      acceptanceToken: 'work-note-preview-test',
       preset: { enabled: false, accepted: false },
       notes: { scanned: 12, eligible: 10, excluded: 2 },
       kinds: { ordinary: 9, milestone: 1, ambiguous: 0, missing: 0 },
@@ -905,7 +906,9 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       capabilities: { update: true, create: true },
     } as const;
     const previewWorkNoteCompatibility = vi.fn().mockResolvedValue(preview);
-    const acceptWorkNoteCompatibility = vi.fn().mockResolvedValue(accepted);
+    const acceptWorkNoteCompatibility = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', preset: {}, preview: accepted });
     const { tab, captured } = makeTab(
       {},
       { previewWorkNoteCompatibility, acceptWorkNoteCompatibility },
@@ -922,7 +925,9 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     const enable = body.querySelector<HTMLButtonElement>('[data-work-note-accept]')!;
     expect(enable.textContent).toBe('Enable audited work notes');
     enable.click();
-    await vi.waitFor(() => expect(acceptWorkNoteCompatibility).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(acceptWorkNoteCompatibility).toHaveBeenCalledWith('work-note-preview-test'),
+    );
     expect(body.querySelector('.abyss-work-note-preview')?.textContent).toContain(
       'Updates and creation enabled',
     );

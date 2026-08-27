@@ -7,6 +7,7 @@ import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
+import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -2444,6 +2445,118 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
       await flushMicrotasks();
       expect(undoStatus).toHaveBeenCalledWith('Projects/A.md', 'published', activeStatusId);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('keeps a deep same-Project Work Notes workspace through successful create and outer refresh', async () => {
+    const statusId = DEFAULT_SETTINGS.projects.statuses[0]!.id;
+    const project: Project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const workNotes: WorkNoteSnapshot[] = Array.from({ length: 150 }, (_, index) => ({
+      path: `Work Notes/Work note ${String(index).padStart(3, '0')}.md`,
+      presetRevision: 7,
+      presetFingerprint: 'fixture-fingerprint',
+      kind: 'ordinary',
+      projectPath: project.path,
+      statusId,
+      rawStatus: 'Active',
+      writableStatusShape: true,
+      range: {},
+      blockedByPaths: [],
+      relatedPaths: [],
+      diagnostics: [],
+    }));
+    const snapshot = {
+      ...projectWorkspaceSnapshot(project, []),
+      workNotes,
+      workNoteRollup: { active: workNotes.length, completed: 0, dropped: 0 },
+    };
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    state.set('mode', 'projects');
+    let panel: CenterPanel;
+    const create = vi.fn(async () => {
+      panel.refresh();
+      return { type: 'ok' as const, path: 'Work Notes/Created.md' };
+    });
+    const workNoteCommands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+      create,
+      observe: (current: WorkNoteSnapshot) => current,
+      setStatus: vi.fn(async (current: WorkNoteSnapshot) => ({
+        type: 'ok' as const,
+        path: current.path,
+      })),
+    };
+    panel = new CenterPanel(
+      state,
+      {} as App,
+      DEFAULT_SETTINGS,
+      taskQueryApi(),
+      new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      undefined,
+      {
+        list: () => [project],
+        get: () => project,
+        activeForLeftPanel: () => [project],
+        onUpdate: () => () => {},
+        refresh: () => panel.refresh(),
+      } as never,
+      stubProjectManager(),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [snapshot],
+      workNoteCommands as never,
+    );
+    const container = freshContainer();
+    activeDocument.body.appendChild(container);
+    try {
+      panel.mount(container);
+      container.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      let scroll = container.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
+      scroll.scrollTop = 100 * 52;
+      scroll.dispatchEvent(new Event('scroll'));
+      container.querySelector<HTMLButtonElement>('[aria-label="New work note"]')!.click();
+      const input = container.querySelector<HTMLInputElement>('.abyss-work-note-create-input')!;
+      input.value = 'Created';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+
+      expect(create).toHaveBeenCalledOnce();
+      expect(
+        container.querySelector<HTMLElement>('[data-project-workspace]')?.dataset,
+      ).toMatchObject({ scope: 'work-notes', layout: 'list' });
+      scroll = container.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
+      expect(scroll.scrollTop).toBe(100 * 52);
+      const focused = container.querySelector<HTMLElement>(
+        '[data-work-note-path="Work Notes/Work note 103.md"]',
+      )!;
+      focused.focus();
+      panel.refresh();
+
+      expect((activeDocument.activeElement as HTMLElement).dataset['workNotePath']).toBe(
+        'Work Notes/Work note 103.md',
+      );
+      expect(container.querySelector<HTMLElement>('.abyss-work-notes-scroll')?.scrollTop).toBe(
+        100 * 52,
+      );
     } finally {
       panel.destroy();
       container.remove();

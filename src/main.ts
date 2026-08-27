@@ -5,7 +5,10 @@ import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
-import type { WorkNoteCompatibilityPreview } from './projects/work-notes/types';
+import type {
+  WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityPreview,
+} from './projects/work-notes/types';
 import { WorkNoteCommandService } from './projects/work-notes/WorkNoteCommandService';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
@@ -227,13 +230,16 @@ export default class TaskCalendarPlugin extends Plugin {
     return this.workNoteIndex.previewCompatibility();
   }
 
-  async acceptWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
+  async acceptWorkNoteCompatibility(token: string): Promise<WorkNoteCompatibilityAcceptanceResult> {
     const accepted = await this.workNoteIndex.acceptSuggestedCompatibility(
+      token,
       new Date().toISOString(),
     );
-    this.settings.projects.workNoteCompatibility = accepted.preset;
-    await this.saveSettings();
-    return accepted.preview;
+    if (accepted.type === 'ok') {
+      this.settings.projects.workNoteCompatibility = accepted.preset;
+      await this.saveSettings();
+    }
+    return accepted;
   }
 
   async disableWorkNoteCompatibility(): Promise<void> {

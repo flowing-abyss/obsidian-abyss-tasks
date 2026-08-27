@@ -142,6 +142,8 @@ export interface WorkNoteAuditResult {
 
 /** Aggregate-only compatibility preview safe to render or export without vault identities. */
 export interface WorkNoteCompatibilityPreview {
+  /** Opaque, in-memory handle for accepting this exact disabled-preset preview. */
+  readonly acceptanceToken?: string;
   readonly preset: { readonly enabled: boolean; readonly accepted: boolean };
   readonly notes: {
     readonly scanned: number;
@@ -177,6 +179,15 @@ export interface WorkNoteCompatibilityPreview {
   readonly diagnostics: Readonly<Partial<Record<WorkNoteDiagnostic['type'], number>>>;
   readonly capabilities: { readonly update: boolean; readonly create: boolean };
 }
+
+export type WorkNoteCompatibilityAcceptanceResult =
+  | {
+      readonly type: 'ok';
+      readonly preset: WorkNoteCompatibilityPreset;
+      readonly preview: WorkNoteCompatibilityPreview;
+    }
+  | { readonly type: 'stale-preview' }
+  | { readonly type: 'compatibility-conflict'; readonly reason: string };
 
 export interface WorkNoteIndexEvent {
   readonly cause: 'index' | 'refresh';

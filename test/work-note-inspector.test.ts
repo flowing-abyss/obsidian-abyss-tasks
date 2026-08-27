@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
+import { Menu, type MenuItem } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWorkNoteInspector } from '../src/panels/projects/WorkNoteInspector';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { freshContainer } from './helpers';
+
+afterEach(() => vi.restoreAllMocks());
 
 const snapshot: WorkNoteSnapshot = {
   path: 'Work Notes/Research.md',
@@ -70,5 +73,52 @@ describe('renderWorkNoteInspector', () => {
     const status = root.querySelector<HTMLButtonElement>('.abyss-work-note-status')!;
     expect(status.disabled).toBe(true);
     expect(status.title).toContain('accepted compatibility audit');
+  });
+
+  it('handles a rejected status promise as an accessible io error and restores focus', async () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    let click: (() => unknown) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      const item = {
+        setTitle() {
+          return this;
+        },
+        setIcon() {
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        setDisabled() {
+          return this;
+        },
+        onClick(callback: () => unknown) {
+          click = callback;
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    try {
+      renderWorkNoteInspector(root, snapshot, {
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        onSetStatus: vi.fn().mockRejectedValue(new Error('fixture io failure')),
+        openNote: vi.fn(),
+      });
+      const trigger = root.querySelector<HTMLButtonElement>('.abyss-work-note-status')!;
+      trigger.click();
+      await click?.();
+
+      await vi.waitFor(() => {
+        const feedback = root.querySelector<HTMLElement>('[data-work-note-feedback]');
+        expect(feedback?.dataset['resultType']).toBe('io-error');
+        expect(feedback?.getAttribute('role')).toBe('status');
+        expect(activeDocument.activeElement).toBe(trigger);
+      });
+    } finally {
+      root.remove();
+    }
   });
 });

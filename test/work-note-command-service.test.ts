@@ -381,6 +381,121 @@ describe('WorkNoteCommandService', () => {
     expect(await h.app.vault.read(await fileAt(h.app, h.observed.path))).toBe(before);
   });
 
+  it('reports a missing configured template before creating any destination', async () => {
+    const candidate = enabledPreset({
+      creation: { ...enabledPreset().creation!, templatePath: 'Templates/Missing.md' },
+    });
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\ntags: [work-note/task]\n---\n',
+    });
+    const service = new WorkNoteCommandService(app, candidate, new WorkNoteIndex(app, candidate));
+    const create = vi.spyOn(app.vault, 'create');
+    create.mockClear();
+
+    expect(await service.create({ title: 'Missing', projectPath: 'Projects/P.md' })).toEqual({
+      type: 'compatibility-conflict',
+      reason: 'missing-template',
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(app.vault.getAbstractFileByPath('Work Notes/Missing.md')).toBeNull();
+  });
+
+  it('does not raw-render a Templater template when Templater is unavailable', async () => {
+    const candidate = enabledPreset({
+      creation: { ...enabledPreset().creation!, templatePath: 'Templates/Templater.md' },
+    });
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Templates/Templater.md':
+        '<%* const secret = await tp.system.prompt("Value") %>\n# <% tp.file.title %>\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\ntags: [work-note/task]\n---\n',
+    });
+    const service = new WorkNoteCommandService(app, candidate, new WorkNoteIndex(app, candidate));
+    const create = vi.spyOn(app.vault, 'create');
+    create.mockClear();
+
+    expect(
+      await service.create({ title: 'Needs Templater', projectPath: 'Projects/P.md' }),
+    ).toEqual({
+      type: 'compatibility-conflict',
+      reason: 'templater-unavailable',
+    });
+    expect(create).not.toHaveBeenCalled();
+    expect(app.vault.getAbstractFileByPath('Work Notes/Needs Templater.md')).toBeNull();
+  });
+
+  it('preserves the partial destination when Templater rejects', async () => {
+    const candidate = enabledPreset({
+      creation: { ...enabledPreset().creation!, templatePath: 'Templates/Work note.md' },
+    });
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Templates/Work note.md': '# Template\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\ntags: [work-note/task]\n---\n',
+    });
+    (app as unknown as { plugins: { getPlugin(id: string): unknown } }).plugins = {
+      getPlugin: () => ({
+        templater: { write_template_to_file: () => Promise.reject(new Error('Templater')) },
+      }),
+    };
+    const service = new WorkNoteCommandService(app, candidate, new WorkNoteIndex(app, candidate));
+
+    expect(await service.create({ title: 'Rejected', projectPath: 'Projects/P.md' })).toEqual({
+      type: 'partial',
+      path: 'Work Notes/Rejected.md',
+      reason: 'templater-failure',
+    });
+    expect(app.vault.getAbstractFileByPath('Work Notes/Rejected.md')).toBeInstanceOf(TFile);
+  });
+
+  it.each([
+    {
+      name: 'project-replaced',
+      output:
+        '---\nProject: "[[Projects/Other]]"\nStatus: Active raw\ntags: [work-note/task]\n---\n# User output\n',
+    },
+    {
+      name: 'status-replaced',
+      output:
+        '---\nProject: "[[Projects/P]]"\nStatus: User status\ntags: [work-note/task]\n---\n# User output\n',
+    },
+  ] as const)('preserves partial output for $name', async ({ name, output }) => {
+    const candidate = enabledPreset({
+      creation: { ...enabledPreset().creation!, templatePath: 'Templates/Work note.md' },
+    });
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Projects/Other.md': '# Other\n',
+      'Templates/Work note.md': '# Template\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\ntags: [work-note/task]\n---\n',
+    });
+    (app as unknown as { plugins: { getPlugin(id: string): unknown } }).plugins = {
+      getPlugin: () => ({
+        templater: {
+          write_template_to_file: async (_template: TFile, file: TFile) => {
+            await app.vault.modify(file, output);
+            await flushMicrotasks();
+          },
+        },
+      }),
+    };
+    const service = new WorkNoteCommandService(app, candidate, new WorkNoteIndex(app, candidate));
+
+    expect(await service.create({ title: name, projectPath: 'Projects/P.md' })).toEqual({
+      type: 'partial',
+      path: `Work Notes/${name}.md`,
+      reason: name,
+    });
+    expect(await app.vault.read(await fileAt(app, `Work Notes/${name}.md`))).toContain(
+      'User output',
+    );
+  });
+
   it('preserves raw-template frontmatter and list tags while adding its owned marker', async () => {
     const candidate = enabledPreset({
       creation: {

@@ -3,6 +3,7 @@ import { selectProjectTasks } from '../../projects/selectProjectTasks';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
+import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { joinedNextAction, type ProjectsDashboardContext } from './viewContext';
 
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
@@ -32,6 +33,8 @@ export function renderProjectDashboard(
     return;
   }
   const project = snapshot.project;
+  const session = ctx.workspaceSession ?? new ProjectWorkspaceSession();
+  session.openProject(project.path);
   const selectedTasks = selectProjectTasks({
     actions: snapshot.tasks,
     viewState: ctx.settings.projects.view.tasks,
@@ -91,8 +94,8 @@ export function renderProjectDashboard(
     container.createDiv({ cls: 'abyss-project-description', text: desc });
   }
 
-  let scope: ProjectWorkspaceScope = 'tasks';
-  let layout: ProjectWorkspaceLayout = 'list';
+  let scope: ProjectWorkspaceScope = session.scope;
+  let layout: ProjectWorkspaceLayout = session.layout;
   const workspace = container.createDiv({
     cls: 'abyss-project-tasks',
     attr: { 'data-project-workspace': '' },
@@ -143,6 +146,8 @@ export function renderProjectDashboard(
       button.addEventListener('click', () => {
         scope = value;
         layout = 'list';
+        session.scope = scope;
+        session.layout = layout;
         renderWorkspace();
       });
     }
@@ -158,6 +163,7 @@ export function renderProjectDashboard(
     if (selectable) {
       button.addEventListener('click', () => {
         layout = value;
+        session.layout = layout;
         renderWorkspace();
       });
     }
@@ -182,6 +188,7 @@ export function renderProjectDashboard(
     button.addEventListener('click', () => {
       if (!boardAvailable()) return;
       layout = 'board';
+      session.layout = layout;
       renderWorkspace();
     });
     layoutButtons.push(button);

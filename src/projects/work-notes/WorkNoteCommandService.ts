@@ -350,14 +350,16 @@ export class WorkNoteCommandService {
   async create(request: WorkNoteCreateRequest): Promise<WorkNoteCommandResult> {
     const blocked = this.compatibility('create');
     if (blocked) return blocked;
+    const prepared = this.prepareCreation(request, this.preset());
+    if ('type' in prepared) return prepared;
     const audit = await this.index.audit();
-    const latestBlocked = this.compatibility('create');
+    const latestBlocked = this.creationBlocked(prepared);
     if (latestBlocked) return latestBlocked;
     if (!audit.capabilities.create) {
       return { type: 'compatibility-conflict', reason: 'latest-audit-rejected' };
     }
-    const prepared = this.prepareCreation(request, this.preset());
-    if ('type' in prepared) return prepared;
+    const templateBlocked = await this.creationTemplateBlocked(prepared);
+    if (templateBlocked) return templateBlocked;
     const folderResult = await this.ensureCreationFolder(prepared);
     if (folderResult) return folderResult;
     return this.performCreation(prepared);
@@ -416,6 +418,22 @@ export class WorkNoteCommandService {
     return { type: 'partial', path: plan.path, reason: 'preset-changed-after-create' };
   }
 
+  private async creationTemplateBlocked(
+    plan: PreparedCreation,
+  ): Promise<WorkNoteCommandResult | undefined> {
+    if (!plan.template) return undefined;
+    let raw: string;
+    try {
+      raw = await this.app.vault.cachedRead(plan.template);
+    } catch {
+      return { type: 'compatibility-conflict', reason: 'missing-template' };
+    }
+    if (raw.includes('<%') && raw.includes('%>') && !this.templater()) {
+      return { type: 'compatibility-conflict', reason: 'templater-unavailable' };
+    }
+    return undefined;
+  }
+
   private async ensureCreationFolder(
     plan: PreparedCreation,
   ): Promise<WorkNoteCommandResult | undefined> {
@@ -437,8 +455,12 @@ export class WorkNoteCommandService {
     let created = false;
     try {
       const templater = plan.templatePath ? this.templater() : null;
+      const rawTemplate = plan.template ? await this.app.vault.cachedRead(plan.template) : '';
+      if (rawTemplate.includes('<%') && rawTemplate.includes('%>') && !templater) {
+        return { type: 'compatibility-conflict', reason: 'templater-unavailable' };
+      }
       const initial =
-        plan.template && !templater ? await this.renderRawTemplate(plan.template, plan.title) : '';
+        plan.template && !templater ? this.renderRawTemplate(rawTemplate, plan.title) : '';
       const createBlocked = this.creationBlocked(plan);
       if (createBlocked) return createBlocked;
       if (this.app.vault.getAbstractFileByPath(plan.path)) {
@@ -596,8 +618,7 @@ export class WorkNoteCommandService {
     return null;
   }
 
-  private async renderRawTemplate(template: TFile, title: string): Promise<string> {
-    const raw = await this.app.vault.cachedRead(template);
+  private renderRawTemplate(raw: string, title: string): string {
     const moment = window.moment();
     return raw
       .replace(/\{\{\s*title\s*\}\}/giu, title)

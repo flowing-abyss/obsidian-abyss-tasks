@@ -374,8 +374,14 @@ describe('WorkNoteIndex', () => {
     );
     const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
 
-    const accepted = await index.acceptSuggestedCompatibility('2026-08-27T00:00:00Z');
+    const preview = await index.previewCompatibility();
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
 
+    expect(accepted.type).toBe('ok');
+    if (accepted.type !== 'ok') throw new Error('Expected exact preview acceptance');
     expect(accepted.preset.creation).toMatchObject({
       folder: 'Work Notes',
       defaultKind: 'ordinary',
@@ -386,6 +392,56 @@ describe('WorkNoteIndex', () => {
       },
     });
     expect(accepted.preview.capabilities).toEqual({ update: true, create: true });
+  });
+
+  it('rejects acceptance when vault metadata drifts after the exact preview', async () => {
+    const path = 'Work Notes/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
+    const preview = await index.previewCompatibility();
+    h.setFrontmatter(path, { Project: '[[Projects/A]]', Status: 'Review' });
+
+    expect(
+      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
+    ).toEqual({ type: 'stale-preview' });
+    expect(h.writes).toEqual([]);
+  });
+
+  it('accepts the exact pending preview once without exposing candidate details in its token', async () => {
+    const path = 'Private Notes/Secret.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/Secret]]', Status: 'Private active' },
+        },
+      ],
+      { [`${path}\0Projects/Secret`]: 'Projects/Secret.md' },
+    );
+    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
+
+    const preview = await index.previewCompatibility();
+
+    expect(preview.acceptanceToken).toMatch(/^work-note-preview-[a-z0-9]+$/u);
+    expect(preview.acceptanceToken).not.toContain('Secret');
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
+    expect(accepted.type).toBe('ok');
+    expect(
+      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:01Z'),
+    ).toEqual({ type: 'compatibility-conflict', reason: 'invalid-preview-token' });
   });
 
   it('keeps an eligible unknown status visible and diagnoses non-string dates', () => {

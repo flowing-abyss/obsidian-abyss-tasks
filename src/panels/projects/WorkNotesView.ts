@@ -10,7 +10,13 @@ import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { workNoteStatusMenuModel } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
 import { renderWorkNotesBoard, type BoardViewHandle } from './ProjectsBoardView';
+import type { LogicalViewportSession, WorkNotesSession } from './ProjectWorkspaceSession';
+import { logicalViewportFirst } from './ProjectWorkspaceSession';
 import { renderWorkNoteInspector } from './WorkNoteInspector';
+import {
+  createWorkNoteResultPresenter,
+  type WorkNoteResultPresenter,
+} from './WorkNoteResultPresenter';
 
 export const WORK_NOTE_ROW_EXTENT = 52;
 export const WORK_NOTE_FALLBACK_VISIBLE_ROWS = 12;
@@ -32,6 +38,7 @@ export interface WorkNotesViewOptions {
     statusId: string,
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
+  readonly session?: WorkNotesSession;
 }
 
 export interface WorkNotesViewHandle {
@@ -85,6 +92,8 @@ function renderStatusMenu(
   event: MouseEvent,
   note: WorkNoteSnapshot,
   options: WorkNotesViewOptions,
+  presenter: WorkNoteResultPresenter,
+  initiator: HTMLElement,
 ): void {
   const menu = new Menu();
   for (const action of workNoteStatusMenuModel(options.statuses, note)) {
@@ -95,7 +104,7 @@ function renderStatusMenu(
         .setChecked(action.checked)
         .setDisabled(action.disabled)
         .onClick(() => {
-          Promise.resolve(options.onSetStatus(note, action.columnKey)).catch(() => undefined);
+          void presenter.run(() => options.onSetStatus(note, action.columnKey), initiator);
         }),
     );
   }
@@ -106,6 +115,7 @@ function renderRow(
   host: HTMLElement,
   note: WorkNoteSnapshot,
   options: WorkNotesViewOptions,
+  presenter: WorkNoteResultPresenter,
   select: () => void,
 ): HTMLElement {
   const row = host.createDiv({
@@ -141,7 +151,7 @@ function renderRow(
   status.disabled = options.commandsEnabled === false;
   status.addEventListener('click', (event) => {
     event.stopPropagation();
-    if (!status.disabled) renderStatusMenu(event, note, options);
+    if (!status.disabled) renderStatusMenu(event, note, options, presenter, status);
   });
   const open = row.createEl('button', {
     cls: 'abyss-work-note-open',
@@ -160,6 +170,7 @@ function renderList(
   container: HTMLElement,
   notes: readonly WorkNoteSnapshot[],
   options: WorkNotesViewOptions,
+  presenter: WorkNoteResultPresenter,
 ): WorkNotesViewHandle {
   container.addClass('abyss-work-notes-view');
   if (notes.length === 0) {
@@ -177,6 +188,13 @@ function renderList(
     notes.map(({ path }) => path),
     WORK_NOTE_OVERSCAN,
   );
+  const session: LogicalViewportSession | undefined = options.session?.list;
+  if (session?.focusedKey) bounded.focus(session.focusedKey);
+  const initialFirst = logicalViewportFirst(
+    session,
+    notes.map(({ path }) => path),
+  );
+  scroll.scrollTop = initialFirst * WORK_NOTE_ROW_EXTENT;
   let destroyed = false;
   const viewport = (): { first: number; visible: number } => ({
     first: Math.floor(Math.max(0, scroll.scrollTop) / WORK_NOTE_ROW_EXTENT),
@@ -189,9 +207,8 @@ function renderList(
     renderWorkNoteInspector(inspector, note, {
       statuses: options.statuses,
       commandsEnabled: options.commandsEnabled,
-      onSetStatus: (selected, statusId) => {
-        Promise.resolve(options.onSetStatus(selected, statusId)).catch(() => undefined);
-      },
+      resultPresenter: presenter,
+      onSetStatus: options.onSetStatus,
       openNote: options.openNote,
     });
   };
@@ -203,8 +220,14 @@ function renderList(
       restoreFocus,
       render: (host, _key, logicalIndex) => {
         const note = notes[logicalIndex]!;
-        const row = renderRow(host, note, options, () => select(note));
-        row.addEventListener('focus', () => bounded.focus(note.path));
+        const row = renderRow(host, note, options, presenter, () => select(note));
+        row.addEventListener('focus', () => {
+          bounded.focus(note.path);
+          if (session) {
+            session.focusedKey = note.path;
+            session.restoreFocus = true;
+          }
+        });
         row.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
@@ -224,13 +247,40 @@ function renderList(
     });
     if (restoreFocus) scroll.scrollTop = result.first * WORK_NOTE_ROW_EXTENT;
   };
-  const onScroll = (): void => renderWindow(false);
+  const onFocusIn = (event: FocusEvent): void => {
+    if (!session || !(event.target instanceof HTMLElement)) return;
+    const row = event.target.closest<HTMLElement>('[data-work-note-path]');
+    const path = row?.dataset['workNotePath'];
+    if (!path || !bounded.focus(path)) return;
+    session.focusedKey = path;
+    session.restoreFocus = true;
+  };
+  const onFocusOut = (): void => {
+    queueMicrotask(() => {
+      if (!session || !rows.isConnected || rows.contains(rows.ownerDocument.activeElement)) return;
+      session.restoreFocus = false;
+    });
+  };
+  const rememberViewport = (): void => {
+    if (!session) return;
+    session.firstIndex = viewport().first;
+    session.firstKey = notes[session.firstIndex]?.path ?? null;
+  };
+  const onScroll = (): void => {
+    rememberViewport();
+    renderWindow(false);
+  };
   scroll.addEventListener('scroll', onScroll);
-  renderWindow();
+  rows.addEventListener('focusin', onFocusIn);
+  rows.addEventListener('focusout', onFocusOut);
+  renderWindow(session?.restoreFocus === true);
+  rememberViewport();
   return {
     destroy: () => {
       destroyed = true;
       scroll.removeEventListener('scroll', onScroll);
+      rows.removeEventListener('focusin', onFocusIn);
+      rows.removeEventListener('focusout', onFocusOut);
       container.empty();
     },
   };
@@ -240,12 +290,15 @@ function renderWorkNoteBoard(
   container: HTMLElement,
   notes: readonly WorkNoteSnapshot[],
   options: WorkNotesViewOptions,
+  presenter: WorkNoteResultPresenter,
 ): BoardViewHandle {
   return renderWorkNotesBoard(container, {
     notes,
     statuses: options.statuses,
     onMoveStatus: (note, statusId) => Promise.resolve(options.onSetStatus(note, statusId)),
-    renderItem: (host, note) => renderRow(host, note, options, () => undefined),
+    renderItem: (host, note) => renderRow(host, note, options, presenter, () => undefined),
+    executeMutation: (command, initiator) => presenter.run(command, initiator),
+    session: options.session?.board,
   });
 }
 
@@ -254,6 +307,7 @@ export function renderWorkNotesView(
   options: WorkNotesViewOptions,
 ): WorkNotesViewHandle {
   container.addClass('abyss-work-notes-view');
+  const presenter = createWorkNoteResultPresenter(container);
   const toolbar = container.createDiv({ cls: 'abyss-work-notes-toolbar' });
   const content = container.createDiv({ cls: 'abyss-work-notes-content' });
   if (options.onCreate && options.projectPath) {
@@ -320,8 +374,8 @@ export function renderWorkNotesView(
   const notes = selectedNotes(options);
   const view =
     options.layout === 'board'
-      ? renderWorkNoteBoard(content, notes, options)
-      : renderList(content, notes, options);
+      ? renderWorkNoteBoard(content, notes, options, presenter)
+      : renderList(content, notes, options, presenter);
   return {
     destroy: () => {
       view.destroy();

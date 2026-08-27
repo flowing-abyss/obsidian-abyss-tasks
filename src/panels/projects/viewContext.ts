@@ -2,6 +2,7 @@ import type { AppState } from '../../app/AppState';
 import type { ProjectAction } from '../../projects/types';
 import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
+import type { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 
 export function joinedNextAction(actions: readonly ProjectAction[]): ProjectAction | undefined {
   return actions.find(({ task }) => task.tags?.includes('#task/next_action') === true);
@@ -23,6 +24,7 @@ export interface ProjectsDashboardContext {
   settings: CalendarSettings;
   onSetStatus: (path: string, statusId: string) => void;
   openNote: (path: string) => void;
+  workspaceSession?: ProjectWorkspaceSession;
   /** Renders the project's tasks into `host` (wired by PanelView to reuse task rendering). */
   renderTasks: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
   /** Renders the same task cards through the shared status-board shell. */
