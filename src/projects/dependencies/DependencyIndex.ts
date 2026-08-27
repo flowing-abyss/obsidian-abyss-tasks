@@ -2,18 +2,10 @@ import type { TaskIndexEvent, TaskQueryApi } from '../../tasks/application/TaskA
 import type { TaskRef, TaskSnapshot } from '../../tasks/domain/types';
 
 export type DependencyDiagnostic =
-  | {
-      readonly type: 'missing-prerequisite';
-      readonly id: string;
-    }
-  | {
-      readonly type: 'duplicate-id';
-      readonly id: string;
-      readonly candidates: readonly TaskRef[];
-    }
+  | { readonly type: 'missing-prerequisite'; readonly id: string }
+  | { readonly type: 'duplicate-id'; readonly id: string; readonly candidates: readonly TaskRef[] }
   | { readonly type: 'self-edge'; readonly id: string }
   | { readonly type: 'cycle'; readonly ids: readonly string[] };
-
 export type DependencyProjection =
   | { readonly type: 'ready'; readonly ref: TaskRef }
   | { readonly type: 'blocked'; readonly ref: TaskRef; readonly prerequisites: readonly TaskRef[] }
@@ -22,379 +14,358 @@ export type DependencyProjection =
       readonly ref: TaskRef;
       readonly diagnostics: readonly DependencyDiagnostic[];
     };
-
+interface Node {
+  readonly key: string;
+  task: TaskSnapshot;
+  id?: string;
+  dependencies: readonly string[];
+}
 type Listener = (affected: readonly TaskRef[]) => void;
-
-interface DependencyNode {
-  readonly task: TaskSnapshot;
-  readonly identity: string;
+const refKey = (ref: TaskRef): string => `${ref.filePath}\u0000${ref.line}\u0000${ref.revision}`;
+const compareRefs = (a: TaskRef, b: TaskRef): number =>
+  a.filePath.localeCompare(b.filePath) || a.line - b.line || a.revision.localeCompare(b.revision);
+const copyRef = (ref: TaskRef): TaskRef => ({ ...ref });
+function projectionKey(p: DependencyProjection): string {
+  if (p.type === 'ready') return 'ready';
+  if (p.type === 'blocked') return `blocked:${p.prerequisites.map(refKey).join(',')}`;
+  return JSON.stringify(p.diagnostics);
+}
+function copyProjection(p: DependencyProjection): DependencyProjection {
+  if (p.type === 'ready') return { type: 'ready', ref: copyRef(p.ref) };
+  if (p.type === 'blocked')
+    return { type: 'blocked', ref: copyRef(p.ref), prerequisites: p.prerequisites.map(copyRef) };
+  return {
+    type: 'invalid',
+    ref: copyRef(p.ref),
+    diagnostics: p.diagnostics.map((d) =>
+      d.type === 'duplicate-id' ? { ...d, candidates: d.candidates.map(copyRef) } : { ...d },
+    ),
+  };
 }
 
-function compareRefs(left: TaskRef, right: TaskRef): number {
-  return (
-    left.filePath.localeCompare(right.filePath) ||
-    left.line - right.line ||
-    left.revision.localeCompare(right.revision)
-  );
-}
-
-function cloneRef(ref: TaskRef): TaskRef {
-  return { ...ref };
-}
-
-function diagnosticSignature(diagnostic: DependencyDiagnostic): string {
-  switch (diagnostic.type) {
-    case 'missing-prerequisite':
-    case 'self-edge':
-      return `${diagnostic.type}:${diagnostic.id}`;
-    case 'duplicate-id':
-      return `${diagnostic.type}:${diagnostic.id}:${diagnostic.candidates
-        .map((candidate) => nodeRefSignature(candidate))
-        .join(',')}`;
-    case 'cycle':
-      return `${diagnostic.type}:${diagnostic.ids.join(',')}`;
-  }
-}
-
-function nodeRefSignature(ref: TaskRef): string {
-  return `${ref.filePath}\u0000${ref.line}\u0000${ref.revision}`;
-}
-
-function projectionSignature(projection: DependencyProjection): string {
-  switch (projection.type) {
-    case 'ready':
-      return 'ready';
-    case 'blocked':
-      return `blocked:${projection.prerequisites.map(nodeRefSignature).join(',')}`;
-    case 'invalid':
-      return `invalid:${projection.diagnostics.map(diagnosticSignature).join('|')}`;
-  }
-}
-
-function cloneProjection(projection: DependencyProjection): DependencyProjection {
-  switch (projection.type) {
-    case 'ready':
-      return { type: 'ready', ref: cloneRef(projection.ref) };
-    case 'blocked':
-      return {
-        type: 'blocked',
-        ref: cloneRef(projection.ref),
-        prerequisites: projection.prerequisites.map(cloneRef),
-      };
-    case 'invalid':
-      return {
-        type: 'invalid',
-        ref: cloneRef(projection.ref),
-        diagnostics: projection.diagnostics.map((diagnostic) => {
-          if (diagnostic.type !== 'duplicate-id') return { ...diagnostic };
-          return { ...diagnostic, candidates: diagnostic.candidates.map(cloneRef) };
-        }),
-      };
-  }
-}
-
-/**
- * Read-only graph projection of Obsidian Tasks-compatible task carriers.
- *
- * It owns no task source of truth: files are supplied by TaskIndex (or a caller in tests), and
- * every update reprojects diagnostics before notifying only nodes whose graph input or output
- * changed. No source text is edited or normalized.
- */
+/** Read-only, incrementally maintained graph over TaskIndex snapshots. */
 export class DependencyIndex {
-  private readonly tasksByFile = new Map<string, readonly TaskSnapshot[]>();
-  private projections = new Map<string, DependencyProjection>();
-  private nodes = new Map<string, DependencyNode>();
+  private readonly nodes = new Map<string, Node>();
+  private readonly fileNodes = new Map<string, Set<string>>();
+  private readonly candidates = new Map<string, Set<string>>();
+  private readonly consumers = new Map<string, Set<string>>();
+  private readonly forward = new Map<string, Set<string>>();
+  private readonly reverse = new Map<string, Set<string>>();
+  private readonly cycles = new Map<string, readonly string[]>();
+  private readonly projections = new Map<string, DependencyProjection>();
+  private readonly refs = new Map<string, string>();
   private listeners: Listener[] = [];
   private unsubscribe: (() => void) | undefined;
-
+  private nextKey = 0;
   constructor(source?: Pick<TaskQueryApi, 'list' | 'subscribe'>) {
-    if (!source) return;
-    this.replace(source.list());
-    this.unsubscribe = source.subscribe((event) => this.onTaskIndexEvent(source, event));
+    if (source) {
+      this.replace(source.list());
+      this.unsubscribe = source.subscribe((e) => this.onEvent(source, e));
+    }
   }
-
   get(ref: TaskRef): DependencyProjection | undefined {
-    const projection = [...this.projections.values()].find(
-      (candidate) => nodeRefSignature(candidate.ref) === nodeRefSignature(ref),
-    );
-    return projection === undefined ? undefined : cloneProjection(projection);
+    const p = this.projections.get(this.refs.get(refKey(ref)) ?? '');
+    return p && copyProjection(p);
   }
-
   list(): readonly DependencyProjection[] {
     return [...this.projections.values()]
-      .sort((left, right) => compareRefs(left.ref, right.ref))
-      .map(cloneProjection);
+      .sort((a, b) => compareRefs(a.ref, b.ref))
+      .map(copyProjection);
   }
-
   subscribe(listener: Listener): () => void {
     this.listeners.push(listener);
     return () => {
-      this.listeners = this.listeners.filter((candidate) => candidate !== listener);
+      this.listeners = this.listeners.filter((x) => x !== listener);
     };
   }
-
   destroy(): void {
     this.unsubscribe?.();
-    this.unsubscribe = undefined;
     this.listeners = [];
-    this.tasksByFile.clear();
-    this.nodes.clear();
-    this.projections.clear();
+    for (const state of [
+      this.nodes,
+      this.fileNodes,
+      this.candidates,
+      this.consumers,
+      this.forward,
+      this.reverse,
+      this.cycles,
+      this.projections,
+      this.refs,
+    ])
+      state.clear();
   }
-
   replace(tasks: readonly TaskSnapshot[]): void {
     const byFile = new Map<string, TaskSnapshot[]>();
     for (const task of tasks) {
-      const current = byFile.get(task.source.filePath) ?? [];
-      current.push(task);
-      byFile.set(task.source.filePath, current);
+      const file = byFile.get(task.source.filePath) ?? [];
+      file.push(task);
+      byFile.set(task.source.filePath, file);
     }
-    this.tasksByFile.clear();
-    for (const [path, fileTasks] of byFile) this.tasksByFile.set(path, fileTasks);
-    this.reproject();
+    const paths = new Set([...this.fileNodes.keys(), ...byFile.keys()]);
+    this.updateFiles([...paths].map((path) => [path, byFile.get(path) ?? []] as const));
   }
-
-  updateFile(filePath: string, tasks: readonly TaskSnapshot[]): void {
-    this.updateFiles([[filePath, tasks]]);
+  updateFile(path: string, tasks: readonly TaskSnapshot[]): void {
+    this.updateFiles([[path, tasks]]);
+  }
+  private onEvent(source: Pick<TaskQueryApi, 'list'>, e: TaskIndexEvent): void {
+    if (e.type === 'initialized') return this.replace(source.list());
+    if (e.type === 'changed')
+      return this.updateFiles(
+        e.files.map((path) => [path, source.list({ filePath: path })] as const),
+      );
+    if (e.type === 'deleted') return this.updateFile(e.path, []);
+    if (e.type === 'renamed')
+      this.updateFiles([
+        [e.oldPath, []],
+        [e.newPath, source.list({ filePath: e.newPath })],
+      ]);
   }
 
   private updateFiles(entries: readonly (readonly [string, readonly TaskSnapshot[]])[]): void {
-    for (const [filePath, tasks] of entries) {
-      if (tasks.length === 0) this.tasksByFile.delete(filePath);
-      else this.tasksByFile.set(filePath, [...tasks]);
-    }
-    this.reproject();
-  }
-
-  private onTaskIndexEvent(source: Pick<TaskQueryApi, 'list'>, event: TaskIndexEvent): void {
-    if (event.type === 'initialized') {
-      this.replace(source.list());
-      return;
-    }
-    if (event.type === 'changed') {
-      this.updateFiles(
-        event.files.map((filePath) => [filePath, source.list({ filePath })] as const),
-      );
-      return;
-    }
-    if (event.type === 'deleted') {
-      this.updateFile(event.path, []);
-      return;
-    }
-    if (event.type === 'renamed') {
-      this.updateFiles([
-        [event.oldPath, []],
-        [event.newPath, source.list({ filePath: event.newPath })],
-      ]);
-    }
-  }
-
-  private reproject(): void {
-    const nextNodes = this.buildNodes();
-    const candidates = this.candidatesFor(nextNodes);
-    const { resolvedEdges, diagnosticsByNode } = this.resolveEdges(nextNodes, candidates);
-    const cycleByNode = this.cyclesFor(nextNodes, resolvedEdges);
-    const nextProjections = this.projectNodes(
-      nextNodes,
-      resolvedEdges,
-      diagnosticsByNode,
-      cycleByNode,
+    const old = entries.flatMap(([path]) =>
+      [...(this.fileNodes.get(path) ?? [])].map((key) => this.nodes.get(key)!),
     );
-    this.publishChanges(nextNodes, nextProjections);
-  }
-
-  private buildNodes(): Map<string, DependencyNode> {
-    const nextNodes = new Map<string, DependencyNode>();
-    const tasks = [...this.tasksByFile.values()]
-      .flat()
-      .sort((left, right) => compareRefs(left.ref, right.ref));
-    const idCounts = new Map<string, number>();
-    for (const task of tasks) {
-      const id = task.dependency?.id;
-      if (id !== undefined) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+    const previous = new Map(
+      old.flatMap((node) => {
+        const projection = this.projections.get(node.key);
+        return projection === undefined ? [] : [[node.key, projection] as const];
+      }),
+    );
+    const before = this.connected(old.map((node) => node.key));
+    const changedIds = new Set<string>();
+    for (const node of old) {
+      if (node.id) changedIds.add(node.id);
+      node.dependencies.forEach((id) => changedIds.add(id));
+      this.remove(node);
     }
-    for (const task of tasks) {
-      const id = task.dependency?.id;
-      // A unique ID is intentionally the identity: moving or revising the source must not make
-      // reverse dependents look like a different graph node. Duplicate candidates remain unique
-      // by their raw source without ever choosing a winner.
-      let base = `source:${task.source.filePath}\u0000${task.source.originalBlock}`;
-      if (id !== undefined) {
-        base =
-          idCounts.get(id) === 1 ? `id:${id}` : `duplicate:${id}\u0000${task.source.originalBlock}`;
-      }
-      const identity = nextNodes.has(base) ? `${base}\u0000${nodeRefSignature(task.ref)}` : base;
-      nextNodes.set(identity, { task, identity });
-    }
-    return nextNodes;
-  }
-
-  private candidatesFor(
-    nextNodes: ReadonlyMap<string, DependencyNode>,
-  ): Map<string, DependencyNode[]> {
-    const candidates = new Map<string, DependencyNode[]>();
-    for (const node of nextNodes.values()) {
-      const id = node.task.dependency?.id;
-      if (id === undefined) continue;
-      const entries = candidates.get(id) ?? [];
-      entries.push(node);
-      candidates.set(id, entries);
-    }
-    for (const entries of candidates.values()) {
-      entries.sort((left, right) => compareRefs(left.task.ref, right.task.ref));
-    }
-    return candidates;
-  }
-
-  private resolveEdges(
-    nextNodes: ReadonlyMap<string, DependencyNode>,
-    candidates: ReadonlyMap<string, readonly DependencyNode[]>,
-  ): {
-    readonly resolvedEdges: Map<string, DependencyNode[]>;
-    readonly diagnosticsByNode: Map<string, DependencyDiagnostic[]>;
-  } {
-    const resolvedEdges = new Map<string, DependencyNode[]>();
-    const diagnosticsByNode = new Map<string, DependencyDiagnostic[]>();
-    const addDiagnostic = (node: DependencyNode, diagnostic: DependencyDiagnostic): void => {
-      const diagnostics = diagnosticsByNode.get(node.identity) ?? [];
-      diagnostics.push(diagnostic);
-      diagnosticsByNode.set(node.identity, diagnostics);
-    };
-
-    for (const node of nextNodes.values()) {
-      const ownId = node.task.dependency?.id;
-      if (ownId !== undefined && (candidates.get(ownId)?.length ?? 0) > 1) {
-        addDiagnostic(node, {
-          type: 'duplicate-id',
-          id: ownId,
-          candidates: candidates.get(ownId)!.map((candidate) => cloneRef(candidate.task.ref)),
-        });
-      }
-      const edges: DependencyNode[] = [];
-      for (const dependencyId of node.task.dependency?.dependsOn ?? []) {
-        if (dependencyId === ownId) {
-          addDiagnostic(node, { type: 'self-edge', id: dependencyId });
-          continue;
+    const available = [...old];
+    const transitions = new Map<string, TaskRef>();
+    const inputChanged = new Set<string>();
+    const added: Node[] = [];
+    for (const [path, tasks] of entries)
+      for (const task of tasks) {
+        const match = this.match(task, available);
+        const node = match ?? { key: `node:${this.nextKey++}`, task, dependencies: [] };
+        if (match) {
+          available.splice(available.indexOf(match), 1);
+          if (
+            match.task.status !== task.status ||
+            match.task.title !== task.title ||
+            match.id !== task.dependency?.id ||
+            match.dependencies.join(',') !== (task.dependency?.dependsOn ?? []).join(',')
+          ) {
+            inputChanged.add(node.key);
+          }
+          if (refKey(match.task.ref) !== refKey(task.ref))
+            transitions.set(node.key, copyRef(match.task.ref));
         }
-        const matches = candidates.get(dependencyId) ?? [];
-        if (matches.length === 0) {
-          addDiagnostic(node, { type: 'missing-prerequisite', id: dependencyId });
-        } else if (matches.length > 1) {
-          addDiagnostic(node, {
-            type: 'duplicate-id',
-            id: dependencyId,
-            candidates: matches.map((candidate) => cloneRef(candidate.task.ref)),
-          });
-        } else {
-          edges.push(matches[0]!);
-        }
+        node.task = task;
+        node.id = task.dependency?.id;
+        node.dependencies = task.dependency?.dependsOn ?? [];
+        this.add(path, node);
+        added.push(node);
+        if (node.id) changedIds.add(node.id);
+        node.dependencies.forEach((id) => changedIds.add(id));
       }
-      resolvedEdges.set(node.identity, edges);
-    }
-    return { resolvedEdges, diagnosticsByNode };
+    const seeds = new Set<string>([...before, ...added.map((node) => node.key)]);
+    for (const id of changedIds)
+      for (const key of [...(this.candidates.get(id) ?? []), ...(this.consumers.get(id) ?? [])])
+        seeds.add(key);
+    for (const key of seeds) this.rewire(key);
+    const region = this.connected(seeds);
+    for (const key of region) this.rewire(key);
+    this.recompute(
+      this.connected(region),
+      transitions,
+      available.map((node) => node.task.ref),
+      previous,
+      inputChanged,
+    );
   }
-
-  private cyclesFor(
-    nextNodes: ReadonlyMap<string, DependencyNode>,
-    resolvedEdges: ReadonlyMap<string, readonly DependencyNode[]>,
-  ): Map<string, readonly string[]> {
-    const visiting = new Set<string>();
-    const visited = new Set<string>();
-    const stack: DependencyNode[] = [];
-    const cycleByNode = new Map<string, readonly string[]>();
-    const visit = (node: DependencyNode): void => {
-      if (visited.has(node.identity)) return;
-      if (visiting.has(node.identity)) {
-        const start = stack.findIndex((candidate) => candidate.identity === node.identity);
-        const cycle = stack
-          .slice(start)
-          .map((candidate) => candidate.task.dependency?.id)
-          .filter((id): id is string => id !== undefined)
-          .sort((left, right) => left.localeCompare(right));
-        for (const candidate of stack.slice(start)) cycleByNode.set(candidate.identity, cycle);
-        return;
-      }
-      visiting.add(node.identity);
-      stack.push(node);
-      for (const edge of resolvedEdges.get(node.identity) ?? []) visit(edge);
-      stack.pop();
-      visiting.delete(node.identity);
-      visited.add(node.identity);
-    };
-    for (const node of nextNodes.values()) visit(node);
-    return cycleByNode;
+  private match(task: TaskSnapshot, available: readonly Node[]): Node | undefined {
+    const id = task.dependency?.id;
+    const ids = id === undefined ? [] : available.filter((node) => node.id === id);
+    if (ids.length === 1) return ids[0];
+    const sources = available.filter(
+      (node) => node.task.source.originalBlock === task.source.originalBlock,
+    );
+    if (sources.length === 1) return sources[0];
+    const lines = available.filter(
+      (node) =>
+        node.task.source.filePath === task.source.filePath &&
+        node.task.source.line === task.source.line,
+    );
+    return lines.length === 1 ? lines[0] : undefined;
   }
-
-  private projectNodes(
-    nextNodes: ReadonlyMap<string, DependencyNode>,
-    resolvedEdges: ReadonlyMap<string, readonly DependencyNode[]>,
-    diagnosticsByNode: ReadonlyMap<string, readonly DependencyDiagnostic[]>,
-    cycleByNode: ReadonlyMap<string, readonly string[]>,
-  ): Map<string, DependencyProjection> {
-    const nextProjections = new Map<string, DependencyProjection>();
-    for (const node of nextNodes.values()) {
-      const diagnostics = [...(diagnosticsByNode.get(node.identity) ?? [])];
-      const cycle = cycleByNode.get(node.identity);
-      if (cycle) diagnostics.push({ type: 'cycle', ids: cycle });
-      const orderedDiagnostics = [...diagnostics].sort((left, right) =>
-        diagnosticSignature(left).localeCompare(diagnosticSignature(right)),
+  private add(path: string, node: Node): void {
+    this.nodes.set(node.key, node);
+    (this.fileNodes.get(path) ?? this.fileNodes.set(path, new Set()).get(path)!).add(node.key);
+    if (node.id)
+      (this.candidates.get(node.id) ?? this.candidates.set(node.id, new Set()).get(node.id)!).add(
+        node.key,
       );
-      const ref = cloneRef(node.task.ref);
-      if (orderedDiagnostics.length > 0) {
-        nextProjections.set(node.identity, {
-          type: 'invalid',
-          ref,
-          diagnostics: orderedDiagnostics,
-        });
+    for (const id of node.dependencies)
+      (this.consumers.get(id) ?? this.consumers.set(id, new Set()).get(id)!).add(node.key);
+    this.forward.set(node.key, new Set());
+    this.reverse.set(node.key, new Set());
+  }
+  private remove(node: Node): void {
+    this.detach(node.key);
+    this.nodes.delete(node.key);
+    this.refs.delete(refKey(node.task.ref));
+    this.projections.delete(node.key);
+    this.cycles.delete(node.key);
+    const file = this.fileNodes.get(node.task.source.filePath);
+    file?.delete(node.key);
+    if (file?.size === 0) this.fileNodes.delete(node.task.source.filePath);
+    if (node.id) {
+      const set = this.candidates.get(node.id);
+      set?.delete(node.key);
+      if (set?.size === 0) this.candidates.delete(node.id);
+    }
+    for (const id of node.dependencies) {
+      const set = this.consumers.get(id);
+      set?.delete(node.key);
+      if (set?.size === 0) this.consumers.delete(id);
+    }
+  }
+  private detach(key: string): void {
+    for (const to of this.forward.get(key) ?? []) this.reverse.get(to)?.delete(key);
+    for (const from of this.reverse.get(key) ?? []) this.forward.get(from)?.delete(key);
+    this.forward.delete(key);
+    this.reverse.delete(key);
+  }
+  private rewire(key: string): void {
+    const node = this.nodes.get(key);
+    if (!node) return;
+    for (const to of this.forward.get(key) ?? []) this.reverse.get(to)?.delete(key);
+    const edges = new Set<string>();
+    for (const id of node.dependencies) {
+      if (id === node.id) continue;
+      const candidates = this.candidates.get(id);
+      if (candidates?.size === 1) edges.add([...candidates][0]!);
+    }
+    this.forward.set(key, edges);
+    for (const to of edges)
+      (this.reverse.get(to) ?? this.reverse.set(to, new Set()).get(to)!).add(key);
+  }
+  private connected(seeds: Iterable<string>): Set<string> {
+    const out = new Set<string>();
+    const queue = [...seeds].filter((key) => this.nodes.has(key));
+    queue.forEach((key) => out.add(key));
+    for (let i = 0; i < queue.length; i++)
+      for (const next of [
+        ...(this.forward.get(queue[i]!) ?? []),
+        ...(this.reverse.get(queue[i]!) ?? []),
+      ])
+        if (!out.has(next)) {
+          out.add(next);
+          queue.push(next);
+        }
+    return out;
+  }
+  private recompute(
+    region: ReadonlySet<string>,
+    transitions: ReadonlyMap<string, TaskRef>,
+    deleted: readonly TaskRef[],
+    previous: ReadonlyMap<string, DependencyProjection>,
+    inputChanged: ReadonlySet<string>,
+  ): void {
+    const prior = new Map([...region].map((key) => [key, this.projections.get(key)] as const));
+    for (const [key, projection] of previous) prior.set(key, projection);
+    for (const key of region) this.cycles.delete(key);
+    this.tarjan(region);
+    const affected = new Map<string, TaskRef>();
+    for (const key of region) {
+      const node = this.nodes.get(key);
+      if (!node) continue;
+      const next = this.project(node);
+      const old = prior.get(key);
+      this.projections.set(key, next);
+      this.refs.set(refKey(node.task.ref), key);
+      const from = transitions.get(key);
+      if (from) {
+        affected.set(refKey(from), from);
+        affected.set(refKey(node.task.ref), copyRef(node.task.ref));
+      }
+      if (!old || inputChanged.has(key) || projectionKey(old) !== projectionKey(next))
+        affected.set(refKey(node.task.ref), copyRef(node.task.ref));
+    }
+    for (const ref of deleted) affected.set(refKey(ref), copyRef(ref));
+    const refs = [...affected.values()].sort(compareRefs);
+    if (refs.length) for (const listener of this.listeners) listener(refs);
+  }
+  private tarjan(region: ReadonlySet<string>): void {
+    let n = 0;
+    const at = new Map<string, number>();
+    const low = new Map<string, number>();
+    const stack: string[] = [];
+    const on = new Set<string>();
+    const visit = (key: string): void => {
+      at.set(key, n);
+      low.set(key, n++);
+      stack.push(key);
+      on.add(key);
+      for (const to of this.forward.get(key) ?? []) {
+        if (!region.has(to)) continue;
+        if (!at.has(to)) {
+          visit(to);
+          low.set(key, Math.min(low.get(key)!, low.get(to)!));
+        } else if (on.has(to)) low.set(key, Math.min(low.get(key)!, at.get(to)!));
+      }
+      if (low.get(key) !== at.get(key)) return;
+      const members: string[] = [];
+      let member: string | undefined;
+      do {
+        member = stack.pop();
+        if (member) {
+          on.delete(member);
+          members.push(member);
+        }
+      } while (member !== key);
+      if (members.length > 1) {
+        const ids = members
+          .map((x) => this.nodes.get(x)?.id)
+          .filter((id): id is string => id !== undefined)
+          .sort((a, b) => a.localeCompare(b));
+        for (const x of members) this.cycles.set(x, ids);
+      }
+    };
+    for (const key of region) if (!at.has(key)) visit(key);
+  }
+  private project(node: Node): DependencyProjection {
+    const diagnostics: DependencyDiagnostic[] = [];
+    if (node.id && (this.candidates.get(node.id)?.size ?? 0) > 1)
+      diagnostics.push({
+        type: 'duplicate-id',
+        id: node.id,
+        candidates: this.refsFor(this.candidates.get(node.id)!),
+      });
+    for (const id of node.dependencies) {
+      if (id === node.id) {
+        diagnostics.push({ type: 'self-edge', id });
         continue;
       }
-      const prerequisites = (resolvedEdges.get(node.identity) ?? []).map((edge) => edge.task);
-      const incomplete = prerequisites.filter((prerequisite) => prerequisite.status !== 'done');
-      nextProjections.set(
-        node.identity,
-        incomplete.length === 0
-          ? { type: 'ready', ref }
-          : {
-              type: 'blocked',
-              ref,
-              prerequisites: incomplete.map((prerequisite) => cloneRef(prerequisite.ref)),
-            },
-      );
+      const candidates = this.candidates.get(id);
+      if (!candidates?.size) diagnostics.push({ type: 'missing-prerequisite', id });
+      else if (candidates.size > 1)
+        diagnostics.push({ type: 'duplicate-id', id, candidates: this.refsFor(candidates) });
     }
-    return nextProjections;
+    const cycle = this.cycles.get(node.key);
+    if (cycle) diagnostics.push({ type: 'cycle', ids: cycle });
+    diagnostics.sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+    const ref = copyRef(node.task.ref);
+    if (diagnostics.length) return { type: 'invalid', ref, diagnostics };
+    const blocked = [...(this.forward.get(node.key) ?? [])]
+      .map((key) => this.nodes.get(key)!)
+      .filter((x) => x.task.status !== 'done')
+      .map((x) => copyRef(x.task.ref))
+      .sort(compareRefs);
+    return blocked.length
+      ? { type: 'blocked', ref, prerequisites: blocked }
+      : { type: 'ready', ref };
   }
-
-  private publishChanges(
-    nextNodes: Map<string, DependencyNode>,
-    nextProjections: Map<string, DependencyProjection>,
-  ): void {
-    const affected = new Map<string, TaskRef>();
-    for (const [identity, projection] of nextProjections) {
-      const previous = this.projections.get(identity);
-      const previousNode = this.nodes.get(identity)?.task;
-      const currentNode = nextNodes.get(identity)?.task;
-      const inputChanged =
-        previousNode === undefined ||
-        currentNode === undefined ||
-        previousNode.status !== currentNode.status ||
-        previousNode.dependency?.id !== currentNode.dependency?.id ||
-        (previousNode.dependency?.dependsOn ?? []).join(',') !==
-          (currentNode.dependency?.dependsOn ?? []).join(',');
-      if (
-        !previous ||
-        inputChanged ||
-        projectionSignature(previous) !== projectionSignature(projection)
-      ) {
-        affected.set(identity, cloneRef(projection.ref));
-      }
-    }
-    for (const [identity, projection] of this.projections) {
-      if (!nextProjections.has(identity)) affected.set(identity, cloneRef(projection.ref));
-    }
-
-    this.nodes = nextNodes;
-    this.projections = nextProjections;
-    const refs = [...affected.values()].sort(compareRefs);
-    if (refs.length > 0) for (const listener of this.listeners) listener(refs);
+  private refsFor(keys: Iterable<string>): readonly TaskRef[] {
+    return [...keys].map((key) => copyRef(this.nodes.get(key)!.task.ref)).sort(compareRefs);
   }
 }

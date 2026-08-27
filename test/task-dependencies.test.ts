@@ -91,4 +91,48 @@ describe('DependencyIndex', () => {
 
     expect(published).toEqual([[prerequisite.ref, dependent.ref]]);
   });
+
+  it.each([
+    ['b', 'c'],
+    ['c', 'b'],
+  ])('marks every member of an SCC regardless of a dependency ordering', (first, second) => {
+    const index = new DependencyIndex();
+    const a = task(1, { id: 'a', dependsOn: [first, second] });
+    const b = task(2, { id: 'b', dependsOn: ['a'] });
+    const c = task(3, { id: 'c', dependsOn: ['b'] });
+
+    index.replace([a, b, c]);
+
+    for (const candidate of [a, b, c]) {
+      expect(index.get(candidate.ref)).toMatchObject({
+        type: 'invalid',
+        diagnostics: [expect.objectContaining({ type: 'cycle', ids: ['a', 'b', 'c'] })],
+      });
+    }
+  });
+
+  it('invalidates an old ref and announces its stable-ID successor', () => {
+    const index = new DependencyIndex();
+    const oldTask = task(1, { id: 'stable' });
+    const nextTask = {
+      ...task(9, { id: 'stable' }),
+      ref: { filePath: 'Renamed.md', line: 9, revision: 'r-next' },
+      source: {
+        filePath: 'Renamed.md',
+        line: 9,
+        originalMarkdown: '- [ ] Renamed',
+        originalBlock: '- [ ] Renamed',
+      },
+    } satisfies TaskSnapshot;
+    const published: TaskSnapshot['ref'][][] = [];
+    index.subscribe((refs) => published.push([...refs]));
+    index.replace([oldTask]);
+    published.length = 0;
+
+    index.replace([nextTask]);
+
+    expect(published).toEqual([[nextTask.ref, oldTask.ref]]);
+    expect(index.get(oldTask.ref)).toBeUndefined();
+    expect(index.get(nextTask.ref)).toMatchObject({ type: 'ready', ref: nextTask.ref });
+  });
 });
