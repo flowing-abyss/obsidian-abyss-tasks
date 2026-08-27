@@ -39,6 +39,9 @@ export interface WorkNotesViewOptions {
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
   readonly session?: WorkNotesSession;
+  readonly announce?: (message: string) => void;
+  readonly isNarrow?: boolean;
+  readonly coarsePointer?: boolean;
 }
 
 export interface WorkNotesViewHandle {
@@ -123,15 +126,21 @@ function renderRow(
   const row = host.createDiv({
     cls: 'abyss-work-note-row',
     attr: {
-      role: 'button',
-      tabindex: '0',
+      role: 'listitem',
+      'data-work-note-path': note.path,
+    },
+  });
+  const identity = row.createEl('button', {
+    cls: 'abyss-work-note-identity',
+    attr: {
+      type: 'button',
+      'data-work-note-identity-control': '',
       'data-work-note-path': note.path,
       'aria-label': `${basename(note.path)}, ${statusText(note, options.statuses)}`,
     },
   });
-  const identity = row.createDiv({ cls: 'abyss-work-note-identity' });
   identity.createSpan({ cls: 'abyss-work-note-title', text: basename(note.path) });
-  const meta = identity.createDiv({ cls: 'abyss-work-note-meta' });
+  const meta = identity.createSpan({ cls: 'abyss-work-note-meta' });
   meta.createSpan({
     cls: 'abyss-work-note-kind',
     text: note.kind === 'ordinary' ? 'Ordinary' : 'Milestone',
@@ -164,7 +173,7 @@ function renderRow(
     event.stopPropagation();
     options.openNote(note.path);
   });
-  row.addEventListener('click', select);
+  identity.addEventListener('click', select);
   return row;
 }
 
@@ -183,7 +192,7 @@ function renderList(
   const scroll = split.createDiv({ cls: 'abyss-work-notes-scroll' });
   const rows = scroll.createDiv({
     cls: 'abyss-work-note-rows',
-    attr: { tabindex: '-1', 'aria-label': 'Work Notes' },
+    attr: { tabindex: '-1', role: 'list', 'aria-label': 'Work Notes' },
   });
   const inspector = split.createDiv({ cls: 'abyss-work-note-inspector-host' });
   const bounded = new BoundedWindow(
@@ -191,6 +200,13 @@ function renderList(
     WORK_NOTE_OVERSCAN,
   );
   const session: LogicalViewportSession | undefined = options.session?.list;
+  const pendingCreatedPath = options.session?.pendingCreatedPath;
+  if (pendingCreatedPath && notes.some(({ path }) => path === pendingCreatedPath) && session) {
+    session.focusedKey = pendingCreatedPath;
+    session.restoreFocus = true;
+    session.firstKey = pendingCreatedPath;
+    session.firstIndex = notes.findIndex(({ path }) => path === pendingCreatedPath);
+  }
   if (session?.focusedKey) bounded.focus(session.focusedKey);
   const initialFirst = logicalViewportFirst(
     session,
@@ -205,14 +221,41 @@ function renderList(
         ? Math.ceil(scroll.clientHeight / WORK_NOTE_ROW_EXTENT)
         : WORK_NOTE_FALLBACK_VISIBLE_ROWS,
   });
-  const select = (note: WorkNoteSnapshot): void => {
+  let inspectorReturnTarget: HTMLElement | null = null;
+  const closeInspector = (restoreFocus = true): void => {
+    inspector.empty();
+    inspector.removeAttribute('role');
+    inspector.removeAttribute('aria-label');
+    inspector.removeAttribute('aria-modal');
+    const target = inspectorReturnTarget;
+    inspectorReturnTarget = null;
+    if (options.session) options.session.inspectorPath = null;
+    if (restoreFocus && target?.isConnected) target.focus({ preventScroll: true });
+  };
+  const select = (note: WorkNoteSnapshot, target: HTMLElement): void => {
+    inspectorReturnTarget = target;
+    if (options.session) options.session.inspectorPath = note.path;
+    if (options.isNarrow === true) inspector.setAttribute('role', 'dialog');
+    else inspector.setAttribute('role', 'region');
+    if (options.isNarrow === true) inspector.setAttribute('aria-modal', 'true');
+    else inspector.removeAttribute('aria-modal');
+    /* eslint-disable-next-line obsidianmd/ui/sentence-case -- Work Note is a named product concept. */
+    inspector.setAttribute('aria-label', 'Work Note details');
+    inspector.dataset['narrowDrawer'] = String(options.isNarrow === true);
+    inspector.dataset['coarsePointer'] = String(options.coarsePointer === true);
     renderWorkNoteInspector(inspector, note, {
       statuses: options.statuses,
       commandsEnabled: options.commandsEnabled,
       resultPresenter: presenter,
       onSetStatus: options.onSetStatus,
       openNote: options.openNote,
+      onClose: () => closeInspector(true),
     });
+    if (options.isNarrow === true) {
+      inspector
+        .querySelector<HTMLElement>('[aria-label="Close Work Note details"]')
+        ?.focus({ preventScroll: true });
+    }
   };
   const renderWindow = (restoreFocus = false): void => {
     if (destroyed) return;
@@ -222,18 +265,22 @@ function renderList(
       restoreFocus,
       render: (host, _key, logicalIndex) => {
         const note = notes[logicalIndex]!;
-        const row = renderRow(host, note, options, presenter, () => select(note));
-        row.addEventListener('focus', () => {
+        let identity: HTMLElement | null = null;
+        const row = renderRow(host, note, options, presenter, () => {
+          if (identity) select(note, identity);
+        });
+        identity = row.querySelector<HTMLElement>('[data-work-note-identity-control]');
+        identity?.addEventListener('focus', () => {
           bounded.focus(note.path);
           if (session) {
             session.focusedKey = note.path;
             session.restoreFocus = true;
           }
         });
-        row.addEventListener('keydown', (event) => {
+        identity?.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
-            select(note);
+            if (identity) select(note, identity);
             return;
           }
           if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -244,7 +291,7 @@ function renderList(
           scroll.scrollTop = first * WORK_NOTE_ROW_EXTENT;
           renderWindow(true);
         });
-        return row;
+        return identity ?? row;
       },
     });
     if (restoreFocus) scroll.scrollTop = result.first * WORK_NOTE_ROW_EXTENT;
@@ -275,7 +322,60 @@ function renderList(
   scroll.addEventListener('scroll', onScroll);
   rows.addEventListener('focusin', onFocusIn);
   rows.addEventListener('focusout', onFocusOut);
+  const onInspectorKeydown = (event: KeyboardEvent): void => {
+    if (inspector.childElementCount === 0) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeInspector(true);
+      return;
+    }
+    if (event.key !== 'Tab' || options.isNarrow !== true) return;
+    const controls = Array.from(
+      inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
+    );
+    if (controls.length === 0) return;
+    const activeIndex = controls.indexOf(inspector.ownerDocument.activeElement as HTMLElement);
+    const wrapsForward = !event.shiftKey && activeIndex === controls.length - 1;
+    const wrapsBackward = event.shiftKey && activeIndex <= 0;
+    if (!wrapsForward && !wrapsBackward) return;
+    event.preventDefault();
+    controls[wrapsBackward ? controls.length - 1 : 0]?.focus({ preventScroll: true });
+  };
+  const onOutsidePointer = (event: PointerEvent): void => {
+    if (inspector.childElementCount === 0 || inspector.contains(event.target as Node)) return;
+    if (inspectorReturnTarget?.contains(event.target as Node)) return;
+    closeInspector(false);
+  };
+  inspector.addEventListener('keydown', onInspectorKeydown);
+  inspector.ownerDocument.addEventListener('pointerdown', onOutsidePointer, true);
   renderWindow(session?.restoreFocus === true);
+  const retainedInspectorPath = options.session?.inspectorPath;
+  if (retainedInspectorPath) {
+    const retainedNote = notes.find(({ path }) => path === retainedInspectorPath);
+    if (retainedNote) {
+      const mountedIdentity = (): HTMLElement | undefined =>
+        Array.from(rows.querySelectorAll<HTMLElement>('[data-work-note-identity-control]')).find(
+          ({ dataset }) => dataset['workNotePath'] === retainedInspectorPath,
+        );
+      let retainedTarget = mountedIdentity();
+      if (!retainedTarget) {
+        bounded.focus(retainedInspectorPath);
+        const first = bounded.viewportForFocus(viewport());
+        scroll.scrollTop = first * WORK_NOTE_ROW_EXTENT;
+        renderWindow(false);
+        retainedTarget = mountedIdentity();
+      }
+      if (retainedTarget) select(retainedNote, retainedTarget);
+    } else {
+      if (options.session) options.session.inspectorPath = null;
+    }
+  }
+  if (
+    pendingCreatedPath &&
+    activeDocument.activeElement?.getAttribute('data-work-note-path') === pendingCreatedPath
+  ) {
+    if (options.session) options.session.pendingCreatedPath = null;
+  }
   rememberViewport();
   return {
     destroy: () => {
@@ -283,6 +383,8 @@ function renderList(
       scroll.removeEventListener('scroll', onScroll);
       rows.removeEventListener('focusin', onFocusIn);
       rows.removeEventListener('focusout', onFocusOut);
+      inspector.removeEventListener('keydown', onInspectorKeydown);
+      inspector.ownerDocument.removeEventListener('pointerdown', onOutsidePointer, true);
       container.empty();
     },
   };
@@ -346,6 +448,11 @@ export function renderWorkNotesView(
         void Promise.resolve(options.onCreate!({ title, projectPath: options.projectPath! })).then(
           (result) => {
             if (result.type === 'ok' || result.type === 'unchanged') {
+              const announcement = `Created ${basename(result.path)}.`;
+              if (options.session) {
+                options.session.pendingCreatedPath = result.path;
+              }
+              options.announce?.(announcement);
               input.remove();
               return;
             }

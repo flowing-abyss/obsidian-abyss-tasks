@@ -231,7 +231,8 @@ describe('ProjectCommandService', () => {
 
   it('conditional undo restores the exact observed previous lifecycle status', async () => {
     const app = await createAppWithFiles({
-      'Projects/A.md': '---\ntags:\n  - project/active\n---\n',
+      'Projects/A.md':
+        '---\ntags:\n  - project/active\n  - keep\n---\n\nProject body\n- [ ] Keep #project/active task text\n',
     });
     const service = new ProjectCommandService(app, () => statuses);
     const file = fileAt(app, 'Projects/A.md');
@@ -251,8 +252,38 @@ describe('ProjectCommandService', () => {
     );
 
     expect(undone.type).toBe('ok');
-    expect(await app.vault.read(file)).toContain('project/active');
-    expect(await app.vault.read(file)).not.toContain('project/published');
+    const content = await app.vault.read(file);
+    expect(content).toContain('project/active');
+    expect(content).not.toContain('project/published');
+    expect(content).toContain('  - keep');
+    expect(content).toContain('Project body');
+    expect(content).toContain('- [ ] Keep #project/active task text');
+  });
+
+  it('conditional undo restores a null previous lifecycle without touching body tags or text', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\ntags:\n  - keep\n---\n\nBody #project/published\n- [ ] Task\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses);
+    const file = fileAt(app, 'Projects/A.md');
+
+    const moved = await service.setStatus(observed('Projects/A.md', null, []), 'published');
+    expect(moved).toEqual({
+      type: 'ok',
+      previousStatusId: null,
+      nextStatusId: 'published',
+    });
+    const undone = await service.undoStatus(
+      observed('Projects/A.md', 'published', ['project/published']),
+      null,
+    );
+
+    expect(undone.type).toBe('ok');
+    const content = await app.vault.read(file);
+    expect(content).toContain('  - keep');
+    expect(content).not.toContain('  - project/published');
+    expect(content).toContain('Body #project/published');
+    expect(content).toContain('- [ ] Task');
   });
 
   it('writes nothing when the latest owned frontmatter shape became ambiguous', async () => {

@@ -20,6 +20,7 @@ export interface WorkNoteInspectorOptions {
     statusId: string,
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
+  readonly onClose?: () => void;
 }
 
 function basename(path: string): string {
@@ -82,6 +83,20 @@ export function renderWorkNoteInspector(
   });
   setIcon(open, 'file-text');
   open.addEventListener('click', () => options.openNote(note.path));
+  if (options.onClose) {
+    /* eslint-disable obsidianmd/ui/sentence-case -- Work Note is a named product concept. */
+    const close = header.createEl('button', {
+      cls: 'abyss-work-note-inspector-close',
+      attr: {
+        type: 'button',
+        'aria-label': 'Close Work Note details',
+        title: 'Close Work Note details',
+      },
+    });
+    /* eslint-enable obsidianmd/ui/sentence-case */
+    setIcon(close, 'x');
+    close.addEventListener('click', options.onClose);
+  }
 
   const statusDefinition = note.statusId
     ? options.statuses.find(({ id }) => id === note.statusId)

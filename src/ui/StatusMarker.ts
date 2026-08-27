@@ -81,6 +81,9 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
       event.stopPropagation();
       onLeftClick();
     });
+  } else {
+    el.setAttribute('role', 'img');
+    el.setAttribute('aria-label', `Task status: ${def?.name ?? task.statusSymbol}`);
   }
   return el;
 }

@@ -41,6 +41,7 @@ function renderStatusFilter(
   status: ProjectStatus,
   ctx: ProjectsListContext,
 ): void {
+  let pointerActivation = false;
   const selected = ctx.settings.projects.view.visibleStatusIds.includes(status.id);
   const button = controls.createEl('button', {
     cls: `abyss-filter-chip abyss-project-status-filter${selected ? ' is-active' : ''}`,
@@ -53,7 +54,14 @@ function renderStatusFilter(
   const dot = button.createSpan({ cls: 'abyss-status-dot' });
   if (status.color) dot.style.background = status.color;
   button.createSpan({ cls: 'abyss-filter-chip-label', text: status.label });
+  button.addEventListener('pointerdown', () => {
+    pointerActivation = true;
+  });
   button.addEventListener('click', () => {
+    const ownsFocus = button.ownerDocument.activeElement === button;
+    const restoreKeyboardFocus = ownsFocus && !pointerActivation;
+    pointerActivation = false;
+    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-list');
     const visible = new Set(ctx.settings.projects.view.visibleStatusIds);
     if (visible.has(status.id)) visible.delete(status.id);
     else visible.add(status.id);
@@ -62,10 +70,23 @@ function renderStatusFilter(
       .filter((id) => visible.has(id));
     void ctx.onSaveSettings();
     ctx.onFiltersChanged?.();
+    const active = button.ownerDocument.activeElement;
+    const focusIsUnclaimed =
+      active === button ||
+      active === button.ownerDocument.body ||
+      !(active instanceof HTMLElement) ||
+      !active.isConnected;
+    if (restoreKeyboardFocus && focusIsUnclaimed) {
+      const replacement = Array.from(
+        projectsRoot?.querySelectorAll<HTMLElement>('[data-project-status-filter]') ?? [],
+      ).find(({ dataset }) => dataset['projectStatusFilter'] === status.id);
+      replacement?.focus({ preventScroll: true });
+    }
   });
 }
 
 function renderUnmappedFilter(controls: HTMLElement, ctx: ProjectsListContext): void {
+  let pointerActivation = false;
   const selected = ctx.settings.projects.view.includeUnmapped;
   const button = controls.createEl('button', {
     cls: `abyss-filter-chip abyss-project-status-filter${selected ? ' is-active' : ''}`,
@@ -77,10 +98,28 @@ function renderUnmappedFilter(controls: HTMLElement, ctx: ProjectsListContext): 
   });
   button.createSpan({ cls: 'abyss-status-dot' });
   button.createSpan({ cls: 'abyss-filter-chip-label', text: 'Unmapped' });
+  button.addEventListener('pointerdown', () => {
+    pointerActivation = true;
+  });
   button.addEventListener('click', () => {
+    const ownsFocus = button.ownerDocument.activeElement === button;
+    const restoreKeyboardFocus = ownsFocus && !pointerActivation;
+    pointerActivation = false;
+    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-list');
     ctx.settings.projects.view.includeUnmapped = !selected;
     void ctx.onSaveSettings();
     ctx.onFiltersChanged?.();
+    const active = button.ownerDocument.activeElement;
+    const focusIsUnclaimed =
+      active === button ||
+      active === button.ownerDocument.body ||
+      !(active instanceof HTMLElement) ||
+      !active.isConnected;
+    if (restoreKeyboardFocus && focusIsUnclaimed) {
+      projectsRoot
+        ?.querySelector<HTMLElement>('[data-project-unmapped-filter]')
+        ?.focus({ preventScroll: true });
+    }
   });
 }
 

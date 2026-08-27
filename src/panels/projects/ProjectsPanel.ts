@@ -1,4 +1,4 @@
-import { TFile, type App } from 'obsidian';
+import { Platform, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type {
   ProjectCommandService,
@@ -18,20 +18,25 @@ import { renderProjectsTimeline, renderWorkNotesTimeline } from './ProjectsTimel
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderWorkNotesView, selectWorkNotes } from './WorkNotesView';
 import { projectTimelineItem } from './timelineProjection';
+import type { ProjectChildRenderHandle } from './viewContext';
 
 export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
-  renderTasks?: (host: HTMLElement, path: string, tasks: ProjectWorkspaceSnapshot['tasks']) => void;
+  renderTasks?: (
+    host: HTMLElement,
+    path: string,
+    tasks: ProjectWorkspaceSnapshot['tasks'],
+  ) => ProjectChildRenderHandle;
   renderTaskBoard?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
-  ) => void;
+  ) => ProjectChildRenderHandle;
   renderTaskTimeline?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
-  ) => void;
+  ) => ProjectChildRenderHandle;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
   pendingBoardUndo?: PendingProjectBoardUndo;
@@ -40,6 +45,7 @@ export interface ProjectsPanelOptions {
   workNoteCommands?: WorkNoteCommandService;
   projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
+  onAnnounce?: (message: string) => void;
 }
 
 export interface PendingProjectBoardUndo {
@@ -67,6 +73,7 @@ export class ProjectsPanel {
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
   private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
+  private readonly onAnnounce: (message: string) => void;
   private viewCleanup: (() => void) | null = null;
 
   constructor(
@@ -77,7 +84,7 @@ export class ProjectsPanel {
     private app: App,
     opts: ProjectsPanelOptions = {},
   ) {
-    this.renderTasks = opts.renderTasks ?? ((): void => {});
+    this.renderTasks = opts.renderTasks ?? (() => ({ destroy: () => undefined }));
     this.renderTaskBoard = opts.renderTaskBoard;
     this.renderTaskTimeline = opts.renderTaskTimeline;
     this.snapshots = opts.snapshots ?? [];
@@ -88,6 +95,7 @@ export class ProjectsPanel {
     this.workNoteCommands = opts.workNoteCommands;
     this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
+    this.onAnnounce = opts.onAnnounce ?? ((): void => {});
   }
 
   private async createProject(name: string): Promise<void> {
@@ -145,10 +153,16 @@ export class ProjectsPanel {
     projectPath: string,
     notes: ProjectWorkspaceSnapshot['workNotes'],
     layout: 'list' | 'board',
-  ): void {
-    if (!this.workNoteCommands) return;
+  ): ProjectChildRenderHandle {
+    if (!this.workNoteCommands) return { destroy: () => undefined };
     const capabilities = this.workNoteCommands.capabilities();
-    renderWorkNotesView(host, {
+    const coarsePointer =
+      Platform.isMobile ||
+      host.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches === true;
+    const narrow = (): boolean =>
+      Platform.isMobile || (host.clientWidth > 0 && host.clientWidth <= 672);
+    let isNarrow = narrow();
+    let child = renderWorkNotesView(host, {
       notes,
       statuses: this.workNoteCommands.statuses(),
       layout,
@@ -160,15 +174,54 @@ export class ProjectsPanel {
       onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
       openNote: (path) => this.openNote(path),
       session: this.workspaceSession.workNotes,
+      announce: this.onAnnounce,
+      isNarrow,
+      coarsePointer,
     });
+    let destroyed = false;
+    const ResizeObserverCtor = host.ownerDocument.defaultView?.ResizeObserver;
+    const observer = ResizeObserverCtor
+      ? new ResizeObserverCtor(() => {
+          if (destroyed) return;
+          const next = narrow();
+          if (next === isNarrow) return;
+          isNarrow = next;
+          child.destroy();
+          child = renderWorkNotesView(host, {
+            notes,
+            statuses: this.workNoteCommands!.statuses(),
+            layout,
+            viewState: this.settings.projects.view.workNotes,
+            commandsEnabled: capabilities.update,
+            createEnabled: capabilities.create,
+            projectPath,
+            onCreate: (request) => this.workNoteCommands!.create(request),
+            onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
+            openNote: (path) => this.openNote(path),
+            session: this.workspaceSession.workNotes,
+            announce: this.onAnnounce,
+            isNarrow,
+            coarsePointer,
+          });
+        })
+      : null;
+    observer?.observe(host);
+    return {
+      destroy: () => {
+        if (destroyed) return;
+        destroyed = true;
+        observer?.disconnect();
+        child.destroy();
+      },
+    };
   }
 
   private renderWorkNoteTimeline(
     host: HTMLElement,
     notes: ProjectWorkspaceSnapshot['workNotes'],
-  ): void {
-    if (!this.workNoteCommands) return;
-    renderWorkNotesTimeline(host, {
+  ): ProjectChildRenderHandle {
+    if (!this.workNoteCommands) return { destroy: () => undefined };
+    return renderWorkNotesTimeline(host, {
       notes,
       commands: this.workNoteCommands,
       commandsEnabled: this.workNoteCommands.capabilities().update,
@@ -185,7 +238,7 @@ export class ProjectsPanel {
 
     if (view.view === 'dashboard') {
       const container = this.el.createDiv();
-      renderProjectDashboard(
+      const dashboard = renderProjectDashboard(
         container,
         this.snapshots.find(({ project }) => project.path === view.path),
         {
@@ -215,6 +268,7 @@ export class ProjectsPanel {
             : {}),
         },
       );
+      this.viewCleanup = () => dashboard.destroy();
       return;
     }
 
@@ -276,6 +330,7 @@ export class ProjectsPanel {
         onUndoResolved: () => {
           this.onBoardUndoResolved?.();
         },
+        session: this.workspaceSession.portfolioBoard,
       });
       this.viewCleanup = () => board.destroy();
     } else {

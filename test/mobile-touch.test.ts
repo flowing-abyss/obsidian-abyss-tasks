@@ -1,5 +1,8 @@
+import { Menu, type MenuItem } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
 import { attachLongPress } from '../src/ui/MobileTouch';
+import { freshContainer } from './helpers';
 
 describe('attachLongPress', () => {
   beforeEach(() => {
@@ -125,5 +128,53 @@ describe('attachLongPress', () => {
     el.dispatchEvent(new TouchEvent('touchstart'));
     vi.advanceTimersByTime(500);
     expect(onLongPress).not.toHaveBeenCalled();
+  });
+
+  it('opens the explicit Board status action after a short coarse-pointer tap', () => {
+    const menuActions: Array<() => void> = [];
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      const item = {
+        setTitle() {
+          return this;
+        },
+        setIcon() {
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        setDisabled() {
+          return this;
+        },
+        onClick(action: () => void) {
+          menuActions.push(action);
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    const root = freshContainer();
+    renderBoard(root, {
+      columns: [
+        { key: 'active', label: 'Active', role: 'regular', items: [{ id: 'a' }] },
+        { key: 'done', label: 'Done', role: 'regular', items: [] },
+      ],
+      mutation: {
+        move: vi.fn().mockResolvedValue({ type: 'ok' }),
+        menuItems: () => [
+          { columnKey: 'done', label: 'Done', icon: 'check', checked: false, disabled: false },
+        ],
+      },
+      itemKey: ({ id }) => id,
+      renderItem: (host) => host.createDiv({ text: 'A' }),
+    });
+    const action = root.querySelector<HTMLButtonElement>('[data-board-status-menu="a"]')!;
+
+    action.dispatchEvent(new TouchEvent('touchstart', { bubbles: true }));
+    action.dispatchEvent(new TouchEvent('touchend', { bubbles: true }));
+    action.click();
+
+    expect(menuActions).toHaveLength(1);
   });
 });

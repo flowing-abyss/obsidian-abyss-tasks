@@ -5,7 +5,11 @@ import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { renderProgressBar } from './progressBar';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { taskTimelineItem, workNoteTimelineItem } from './timelineProjection';
-import { joinedNextAction, type ProjectsDashboardContext } from './viewContext';
+import {
+  joinedNextAction,
+  type ProjectChildRenderHandle,
+  type ProjectsDashboardContext,
+} from './viewContext';
 
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
 export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
@@ -15,7 +19,7 @@ export function renderProjectDashboard(
   container: HTMLElement,
   snapshot: ProjectWorkspaceSnapshot | undefined,
   ctx: ProjectsDashboardContext,
-): void {
+): ProjectChildRenderHandle {
   container.addClass('abyss-projects-dashboard');
 
   const back = container.createEl('button', { cls: 'abyss-project-back' });
@@ -25,7 +29,7 @@ export function renderProjectDashboard(
 
   if (!snapshot) {
     container.createDiv({ cls: 'abyss-projects-empty', text: 'Project not found' });
-    return;
+    return { destroy: () => container.empty() };
   }
   const project = snapshot.project;
   const session = ctx.workspaceSession ?? new ProjectWorkspaceSession();
@@ -43,8 +47,11 @@ export function renderProjectDashboard(
   const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
   header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
 
-  const pill = header.createEl('button', { cls: 'abyss-status-pill' });
-  if (status?.color) pill.style.background = status.color;
+  const pill = header.createEl('button', {
+    cls: 'abyss-status-pill',
+    attr: { type: 'button', 'aria-label': 'Change project status', title: 'Change project status' },
+  });
+  if (status?.color) pill.style.setProperty('--abyss-project-status-accent', status.color);
   pill.setText(status?.label ?? project.rawStatus ?? 'No status');
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
@@ -67,7 +74,12 @@ export function renderProjectDashboard(
   open.addEventListener('click', () => ctx.openNote(project.path));
 
   const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
-  renderProgressBar(stats, snapshot.taskRollup.done, snapshot.taskRollup.total);
+  renderProgressBar(
+    stats,
+    snapshot.taskRollup.done,
+    snapshot.taskRollup.total,
+    `${project.name} task progress`,
+  );
   const nextAction = joinedNextAction(snapshot.tasks);
   if (nextAction) {
     /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
@@ -109,8 +121,13 @@ export function renderProjectDashboard(
         selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
       : ctx.renderWorkNoteTimeline !== undefined &&
         selectedWorkNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
+  let syncTimelineButton = (): void => undefined;
+  let child: ProjectChildRenderHandle | null = null;
+  let destroyed = false;
 
   const renderWorkspace = (): void => {
+    if (destroyed) return;
+    syncTimelineButton();
     workspace.dataset['scope'] = scope;
     workspace.dataset['layout'] = layout;
     for (const button of scopeButtons) {
@@ -126,21 +143,23 @@ export function renderProjectDashboard(
         button.setAttribute('aria-disabled', String(button.disabled));
       }
     }
+    child?.destroy();
+    child = null;
     content.empty();
     if (scope === 'work-notes') {
       if (layout === 'timeline' && ctx.renderWorkNoteTimeline) {
-        ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes);
+        child = ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes);
       } else if (layout === 'board' && ctx.renderWorkNoteBoard) {
-        ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
+        child = ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
       } else {
-        ctx.renderWorkNotes?.(content, project.path, snapshot.workNotes);
+        child = ctx.renderWorkNotes?.(content, project.path, snapshot.workNotes) ?? null;
       }
     } else if (layout === 'timeline' && ctx.renderTaskTimeline) {
-      ctx.renderTaskTimeline(content, project.path, selectedTasks);
+      child = ctx.renderTaskTimeline(content, project.path, selectedTasks);
     } else if (layout === 'board' && ctx.renderTaskBoard) {
-      ctx.renderTaskBoard(content, project.path, selectedTasks);
+      child = ctx.renderTaskBoard(content, project.path, selectedTasks);
     } else {
-      ctx.renderTasks(content, project.path, selectedTasks);
+      child = ctx.renderTasks(content, project.path, selectedTasks);
     }
   };
 
@@ -202,21 +221,42 @@ export function renderProjectDashboard(
     });
     layoutButtons.push(button);
   }
-  const hasTimelineContent =
-    selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated') ||
-    snapshot.workNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
-  if (hasTimelineContent) {
-    const button = toolbar.createEl('button', {
+  let timelineButton: HTMLButtonElement | null = null;
+  syncTimelineButton = (): void => {
+    if (!timelineAvailable()) {
+      if (layout === 'timeline') {
+        layout = 'list';
+        session.layout = layout;
+      }
+      if (timelineButton) {
+        const index = layoutButtons.indexOf(timelineButton);
+        if (index >= 0) layoutButtons.splice(index, 1);
+        timelineButton.remove();
+        timelineButton = null;
+      }
+      return;
+    }
+    if (timelineButton) return;
+    timelineButton = toolbar.createEl('button', {
       text: 'Timeline',
       attr: { type: 'button', 'data-project-layout': 'timeline' },
     });
-    button.addEventListener('click', () => {
+    timelineButton.addEventListener('click', () => {
       if (!timelineAvailable()) return;
       layout = 'timeline';
       session.layout = layout;
       renderWorkspace();
     });
-    layoutButtons.push(button);
-  }
+    layoutButtons.push(timelineButton);
+  };
   renderWorkspace();
+  return {
+    destroy: () => {
+      if (destroyed) return;
+      destroyed = true;
+      child?.destroy();
+      child = null;
+      container.empty();
+    },
+  };
 }

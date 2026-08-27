@@ -8,10 +8,40 @@ function declarationsFor(selector: string): string {
   return declarationsForSource(css, selector);
 }
 
+function normalizeSelector(selector: string): string {
+  return selector
+    .replace(/\s+/gu, ' ')
+    .replace(/\s*,\s*/gu, ', ')
+    .trim();
+}
+
 function declarationsForSource(source: string, selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&').replace(/\\,/gu, ',');
-  const match = new RegExp(`${escaped}\\s*\\{(?<body>[^}]*)\\}`, 'u').exec(source);
-  return match?.groups?.['body'] ?? '';
+  const normalized = normalizeSelector(selector);
+  const matches: string[] = [];
+  let depth = 0;
+  let headerStart = 0;
+  let bodyStart = 0;
+  let header = '';
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] === '{') {
+      if (depth === 0) {
+        header = normalizeSelector(
+          source.slice(headerStart, index).replace(/\/\*[\s\S]*?\*\//gu, ''),
+        );
+        bodyStart = index + 1;
+      }
+      depth += 1;
+    } else if (source[index] === '}') {
+      depth -= 1;
+      if (depth !== 0) continue;
+      const selectors = header.split(', ');
+      if (header === normalized || (!normalized.includes(', ') && selectors.includes(normalized))) {
+        matches.push(source.slice(bodyStart, index));
+      }
+      headerStart = index + 1;
+    }
+  }
+  return matches.join('\n');
 }
 
 function atRuleBlock(header: string): string {

@@ -4,6 +4,11 @@ import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
 import type { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 
+/** Lifecycle owned by a Project dashboard child renderer. */
+export interface ProjectChildRenderHandle {
+  destroy(): void;
+}
+
 export function joinedNextAction(actions: readonly ProjectAction[]): ProjectAction | undefined {
   return actions.find(({ task }) => task.tags?.includes('#task/next_action') === true);
 }
@@ -27,25 +32,41 @@ export interface ProjectsDashboardContext {
   openNote: (path: string) => void;
   workspaceSession?: ProjectWorkspaceSession;
   /** Renders the project's tasks into `host` (wired by PanelView to reuse task rendering). */
-  renderTasks: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  renderTasks: (
+    host: HTMLElement,
+    path: string,
+    tasks: readonly ProjectAction[],
+  ) => ProjectChildRenderHandle;
   /** Renders the same task cards through the shared status-board shell. */
-  renderTaskBoard?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  renderTaskBoard?: (
+    host: HTMLElement,
+    path: string,
+    tasks: readonly ProjectAction[],
+  ) => ProjectChildRenderHandle;
   /** Renders dated Project Tasks through the shared Timeline shell. */
-  renderTaskTimeline?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  renderTaskTimeline?: (
+    host: HTMLElement,
+    path: string,
+    tasks: readonly ProjectAction[],
+  ) => ProjectChildRenderHandle;
   /** Renders rich supporting notes without projecting them into checkbox Tasks. */
-  renderWorkNotes?: (host: HTMLElement, path: string, notes: readonly WorkNoteSnapshot[]) => void;
+  renderWorkNotes?: (
+    host: HTMLElement,
+    path: string,
+    notes: readonly WorkNoteSnapshot[],
+  ) => ProjectChildRenderHandle;
   /** Renders the same Work Notes through the shared guarded board shell. */
   renderWorkNoteBoard?: (
     host: HTMLElement,
     path: string,
     notes: readonly WorkNoteSnapshot[],
-  ) => void;
+  ) => ProjectChildRenderHandle;
   /** Renders dated Work Notes through the shared Timeline shell. */
   renderWorkNoteTimeline?: (
     host: HTMLElement,
     path: string,
     notes: readonly WorkNoteSnapshot[],
-  ) => void;
+  ) => ProjectChildRenderHandle;
   /** Applies the configured Work Note filter/sort before alternate layouts render. */
   selectWorkNotes?: (notes: readonly WorkNoteSnapshot[]) => readonly WorkNoteSnapshot[];
 }

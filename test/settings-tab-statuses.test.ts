@@ -154,7 +154,8 @@ describe('CalendarSettingsTab — custom statuses section', () => {
       expect(marker).not.toBeNull();
       const click = new MouseEvent('click', { bubbles: true, cancelable: true });
       marker!.dispatchEvent(click);
-      expect(marker!.hasAttribute('role')).toBe(false);
+      expect(marker!.getAttribute('role')).toBe('img');
+      expect(marker!.getAttribute('aria-label')).toMatch(/^Task status: /u);
       expect(marker!.hasAttribute('tabindex')).toBe(false);
       expect(marker!.classList.contains('abyss-status-marker--inert')).toBe(true);
       expect(click.defaultPrevented).toBe(false);

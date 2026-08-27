@@ -8,12 +8,14 @@ import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
+import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
+import type { ProjectChildRenderHandle } from '../src/panels/projects/viewContext';
 import { selectWorkNotes } from '../src/panels/projects/WorkNotesView';
 import { parseProjectRange } from '../src/projects/projectDates';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer, task } from './helpers';
+import { deferred, freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
 const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
@@ -251,7 +253,7 @@ describe('renderProjectsList', () => {
       expect(
         el.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
       ).toBe('1584px');
-      deepRow.focus();
+      deepRow.querySelector<HTMLElement>('[data-board-item-focus="Projects/22.md"]')!.focus();
       for (let index = 0; index < 5; index += 1) {
         activeDocument.activeElement?.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
@@ -262,7 +264,7 @@ describe('renderProjectsList', () => {
         'Projects/27.md',
       );
       expect(scroll.scrollTop).toBe(26 * 88);
-      expect(el.querySelector('[data-board-item="Projects/27.md"]')).not.toBeNull();
+      expect(el.querySelector('[data-board-item-focus="Projects/27.md"]')).not.toBeNull();
     } finally {
       style.remove();
       el.remove();
@@ -273,7 +275,7 @@ describe('renderProjectsList', () => {
     const state = new AppState();
     const el = freshContainer();
     renderProjectsList(el, [workspace()], { ...ctx, state });
-    (el.querySelector('.abyss-project-row') as HTMLElement).click();
+    el.querySelector<HTMLButtonElement>('[data-project-identity-control]')!.click();
     expect(state.get('projectsPanel')).toEqual({ view: 'dashboard', path: 'Projects/A.md' });
   });
 
@@ -326,6 +328,62 @@ describe('renderProjectsList', () => {
     expect(onSaveSettings).toHaveBeenCalledOnce();
     expect(onSetStatus).not.toHaveBeenCalled();
     expect(openNote).not.toHaveBeenCalled();
+  });
+
+  it('restores a persisted filter semantically only when that filter owned focus', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const root = attachedContainer();
+    const outside = activeDocument.body.createEl('button');
+    const save = deferred<void>();
+    let forceOutsideFocus = false;
+    let cleanup = (): void => undefined;
+    const context = {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      onSaveSettings: vi.fn().mockReturnValue(save.promise),
+      onFiltersChanged: () => {
+        cleanup();
+        root.empty();
+        cleanup = renderProjectsList(root, [workspace()], context);
+        if (forceOutsideFocus) outside.focus();
+      },
+    };
+    try {
+      cleanup = renderProjectsList(root, [workspace()], context);
+      const active = root.querySelector<HTMLButtonElement>(
+        `[data-project-status-filter="${ACTIVE_ID}"]`,
+      )!;
+      active.focus();
+      active.click();
+      await Promise.resolve();
+      expect(activeDocument.activeElement?.getAttribute('data-project-status-filter')).toBe(
+        ACTIVE_ID,
+      );
+
+      const unmapped = root.querySelector<HTMLButtonElement>('[data-project-unmapped-filter]')!;
+      unmapped.focus();
+      unmapped.click();
+      await Promise.resolve();
+      expect(activeDocument.activeElement?.hasAttribute('data-project-unmapped-filter')).toBe(true);
+
+      const pointerFilter = root.querySelector<HTMLButtonElement>(
+        `[data-project-status-filter="${ACTIVE_ID}"]`,
+      )!;
+      pointerFilter.focus();
+      pointerFilter.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      forceOutsideFocus = true;
+      pointerFilter.click();
+      expect(activeDocument.activeElement).toBe(outside);
+      save.resolve();
+      await save.promise;
+      await Promise.resolve();
+      expect(activeDocument.activeElement).toBe(outside);
+    } finally {
+      cleanup();
+      outside.remove();
+      root.remove();
+    }
   });
 
   it('persists the Unmapped filter through the same settings-only path', async () => {
@@ -593,13 +651,13 @@ describe('renderProjectsList', () => {
     );
     renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
     const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
-    const focused = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    const focused = el.querySelector<HTMLElement>('[data-project-identity-control]')!;
     focused.focus();
 
     scroll.scrollTop = 1;
     scroll.dispatchEvent(new Event('scroll'));
 
-    expect(el.querySelector<HTMLElement>('.abyss-project-row')).toBe(focused);
+    expect(el.querySelector<HTMLElement>('[data-project-identity-control]')).toBe(focused);
     expect(activeDocument.activeElement).toBe(focused);
   });
 
@@ -615,15 +673,15 @@ describe('renderProjectsList', () => {
     );
     renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
     const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
-    const focused = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    const focused = el.querySelector<HTMLElement>('[data-project-identity-control]')!;
     focused.focus();
 
     scroll.scrollTop = 52;
     scroll.dispatchEvent(new Event('scroll'));
 
-    const remounted = el.querySelector<HTMLElement>(
-      '[data-bounded-key="project:Projects/P00.md"]',
-    )!;
+    const remounted = el
+      .querySelector<HTMLElement>('[data-bounded-key="project:Projects/P00.md"]')!
+      .querySelector<HTMLElement>('[data-project-identity-control]')!;
     expect(remounted).not.toBe(focused);
     expect(activeDocument.activeElement).toBe(remounted);
   });
@@ -641,7 +699,7 @@ describe('renderProjectsList', () => {
     renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
     const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
     const windowOwner = el.querySelector<HTMLElement>('.abyss-projects-window')!;
-    el.querySelector<HTMLElement>('.abyss-project-row')!.focus();
+    el.querySelector<HTMLElement>('[data-project-identity-control]')!.focus();
 
     scroll.scrollTop = 20 * 52;
     scroll.dispatchEvent(new Event('scroll'));
@@ -650,7 +708,9 @@ describe('renderProjectsList', () => {
     expect(windowOwner.dataset['boundedFocusKey']).toBe('project:Projects/P00.md');
     windowOwner.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     expect(activeDocument.activeElement).toBe(
-      el.querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]'),
+      el
+        .querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]')
+        ?.querySelector<HTMLElement>('[data-project-identity-control]'),
     );
   });
 
@@ -666,19 +726,21 @@ describe('renderProjectsList', () => {
     );
     renderProjectsList(el, snapshots, { ...ctx, state: new AppState() });
     const scroll = el.querySelector<HTMLElement>('.abyss-projects-scroll')!;
-    const first = el.querySelector<HTMLElement>('.abyss-project-row')!;
+    const first = el.querySelector<HTMLElement>('[data-project-identity-control]')!;
     first.focus();
     first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
-    const keyboardFocused = el.querySelector<HTMLElement>(
-      '[data-bounded-key="project:Projects/P01.md"]',
-    )!;
+    const keyboardFocused = el
+      .querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]')!
+      .querySelector<HTMLElement>('[data-project-identity-control]')!;
     expect(activeDocument.activeElement).toBe(keyboardFocused);
 
     scroll.dispatchEvent(new Event('scroll'));
 
-    expect(el.querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]')).toBe(
-      keyboardFocused,
-    );
+    expect(
+      el
+        .querySelector<HTMLElement>('[data-bounded-key="project:Projects/P01.md"]')
+        ?.querySelector<HTMLElement>('[data-project-identity-control]'),
+    ).toBe(keyboardFocused);
     expect(activeDocument.activeElement).toBe(keyboardFocused);
   });
 
@@ -814,6 +876,25 @@ describe('renderProjectDashboard', () => {
     expect(el.querySelector('.abyss-project-time')).toBeNull();
   });
 
+  it('uses configured Project status color only as an accent on the themed dashboard status', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.statuses[0] = { ...settings.projects.statuses[0]!, color: '#123456' };
+    const el = freshContainer();
+
+    renderProjectDashboard(el, workspace(), {
+      state: new AppState(),
+      settings,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(),
+    });
+
+    const status = el.querySelector<HTMLElement>('.abyss-status-pill')!;
+    expect(status.style.getPropertyValue('--abyss-project-status-accent')).toBe('#123456');
+    expect(status.style.background).toBe('');
+    expect(status.style.color).toBe('');
+  });
+
   it('applies the configured Work Note filter and sort before Timeline availability/rendering', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.workNotes = {
@@ -862,6 +943,67 @@ describe('renderProjectDashboard', () => {
     expect(
       renderWorkNoteTimeline.mock.lastCall?.[2].map((note: WorkNoteSnapshot) => note.path),
     ).toEqual(['Work Notes/B.md', 'Work Notes/Z.md']);
+  });
+
+  it('omits a dead Timeline control when the selected Work Note projection has no dated rows', () => {
+    const el = freshContainer();
+    const datedTask = task({ planning: { due: '2026-08-30' } });
+    renderProjectDashboard(
+      el,
+      workspace(proj({}), {
+        tasks: [
+          {
+            task: datedTask,
+            projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' },
+            owner: { type: 'project', path: 'Projects/A.md' },
+          },
+        ],
+        workNotes: [workNote('Work Notes/Filtered dated.md', 'done', '2026-08-29')],
+      }),
+      {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(),
+        renderTaskTimeline: vi.fn(),
+        renderWorkNotes: vi.fn(),
+        renderWorkNoteTimeline: vi.fn(),
+        selectWorkNotes: () => [],
+      },
+    );
+
+    expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    expect(el.querySelector('[data-project-layout="timeline"]')).toBeNull();
+    el.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!.click();
+    expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
+  });
+
+  it('adds Timeline only in Work Notes scope when only the selected Work Notes are dated', () => {
+    const el = freshContainer();
+    renderProjectDashboard(
+      el,
+      workspace(proj({}), {
+        workNotes: [workNote('Work Notes/Selected dated.md', 'done', '2026-08-29')],
+      }),
+      {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(),
+        renderTaskTimeline: vi.fn(),
+        renderWorkNotes: vi.fn(),
+        renderWorkNoteTimeline: vi.fn(),
+        selectWorkNotes: (notes) => notes,
+      },
+    );
+
+    expect(el.querySelector('[data-project-layout="timeline"]')).toBeNull();
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
   });
 
   it('renders the compact-summary Next Action as an icon only and nothing when unset', () => {
@@ -1064,6 +1206,366 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
+  });
+
+  it('destroys the active dashboard child renderer when the real ProjectsPanel is destroyed', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const childDestroy = vi.fn();
+    const renderTasks = (host: HTMLElement): ProjectChildRenderHandle => {
+      const owned = host.createDiv({ attr: { 'data-test-panel-child': '' } });
+      return {
+        destroy: () => {
+          expect(owned.isConnected).toBe(true);
+          childDestroy();
+        },
+      };
+    };
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+      renderTasks,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+
+    panel.destroy();
+
+    expect(childDestroy).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the portfolio Board selected column and semantic focus through mutation settlement and refresh', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const secondStatus = settings.projects.statuses.find(({ id }) => id !== ACTIVE_ID)!;
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = [ACTIVE_ID, secondStatus.id];
+    const projectA = proj({ path: 'Projects/A.md', name: 'A', statusId: ACTIVE_ID });
+    const projectB = proj({ path: 'Projects/B.md', name: 'B', statusId: secondStatus.id });
+    const snapshots = [workspace(projectA), workspace(projectB)];
+    const pending = deferred<{
+      readonly type: 'ok';
+      readonly previousStatusId: string;
+      readonly nextStatusId: string;
+    }>();
+    const manager = {
+      setStatus: vi.fn(() => pending.promise),
+      undoStatus: vi.fn(),
+      create: vi.fn(),
+    } as never;
+    const store = {
+      list: () => [projectA, projectB],
+      get: () => projectA,
+      activeForLeftPanel: () => [projectA, projectB],
+      onUpdate: () => () => {},
+      refresh: () => {},
+    } as never;
+    const session = new ProjectWorkspaceSession();
+    const portfolioBoard = session.portfolioBoard;
+    portfolioBoard.selectedColumnKey = secondStatus.id;
+    portfolioBoard.focusedKey = projectB.path;
+    portfolioBoard.restoreFocus = true;
+    const panel = new ProjectsPanel(new AppState(), store, manager, settings, null as never, {
+      snapshots,
+      workspaceSession: session,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    expect(
+      el.querySelector<HTMLElement>('[data-board-column-tab][aria-selected="true"]')?.dataset[
+        'boardColumnTab'
+      ],
+    ).toBe(secondStatus.id);
+    const item = el.querySelector<HTMLElement>('[data-board-item="Projects/B.md"]')!;
+    const identity = item.querySelector<HTMLElement>('[data-project-identity-control]')!;
+    expect(activeDocument.activeElement).toBe(identity);
+    item.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    el.querySelector<HTMLElement>(`[data-board-column="${ACTIVE_ID}"]`)!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    pending.resolve({
+      type: 'ok',
+      previousStatusId: secondStatus.id,
+      nextStatusId: ACTIVE_ID,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    portfolioBoard.selectedColumnKey = ACTIVE_ID;
+    portfolioBoard.focusedKey = projectA.path;
+    portfolioBoard.restoreFocus = true;
+    panel.refresh();
+
+    expect(session.portfolioBoard).toMatchObject({
+      selectedColumnKey: ACTIVE_ID,
+      focusedKey: 'Projects/A.md',
+      restoreFocus: true,
+    });
+    expect(
+      el.querySelector<HTMLElement>('[data-board-column-tab][aria-selected="true"]')?.dataset[
+        'boardColumnTab'
+      ],
+    ).toBe(ACTIVE_ID);
+    expect(activeDocument.activeElement).toBe(
+      el
+        .querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')
+        ?.querySelector<HTMLElement>('[data-project-identity-control]'),
+    );
+  });
+
+  it('prevents a replaced portfolio Board Undo from clearing a newer pending owner', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const secondStatus = settings.projects.statuses.find(({ id }) => id !== ACTIVE_ID)!;
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = [ACTIVE_ID, secondStatus.id];
+    const projectA = proj({ path: 'Projects/A.md', name: 'A', statusId: ACTIVE_ID });
+    const projectB = proj({ path: 'Projects/B.md', name: 'B', statusId: secondStatus.id });
+    const snapshots = [workspace(projectA), workspace(projectB)];
+    const pendingA = {
+      path: projectA.path,
+      columnKey: ACTIVE_ID,
+      result: {
+        type: 'ok' as const,
+        previousStatusId: secondStatus.id,
+        nextStatusId: ACTIVE_ID,
+      },
+    };
+    const pendingB = {
+      path: projectB.path,
+      columnKey: secondStatus.id,
+      result: {
+        type: 'ok' as const,
+        previousStatusId: ACTIVE_ID,
+        nextStatusId: secondStatus.id,
+      },
+    };
+    const undoA = deferred<typeof pendingA.result>();
+    const undoB = deferred<typeof pendingB.result>();
+    const manager = {
+      setStatus: vi.fn(),
+      undoStatus: vi.fn((path: string) => (path === projectA.path ? undoA.promise : undoB.promise)),
+      create: vi.fn(),
+    };
+    const refresh = vi.fn();
+    const store = {
+      list: () => [projectA, projectB],
+      get: () => projectA,
+      activeForLeftPanel: () => [projectA, projectB],
+      onUpdate: () => () => {},
+      refresh,
+    };
+    let parentPending: typeof pendingA | typeof pendingB | undefined = pendingA;
+    const onUndoResolved = vi.fn(() => {
+      parentPending = undefined;
+      refresh();
+    });
+    const session = new ProjectWorkspaceSession();
+    const first = new ProjectsPanel(
+      new AppState(),
+      store as never,
+      manager as never,
+      settings,
+      null as never,
+      {
+        snapshots,
+        pendingBoardUndo: pendingA,
+        onBoardUndoResolved: onUndoResolved,
+        workspaceSession: session,
+      },
+    );
+    const firstRoot = attachedContainer();
+    first.mount(firstRoot);
+    firstRoot.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    expect(manager.undoStatus).toHaveBeenLastCalledWith(projectA.path, ACTIVE_ID, secondStatus.id);
+    first.destroy();
+
+    parentPending = pendingB;
+    session.portfolioBoard.selectedColumnKey = secondStatus.id;
+    session.portfolioBoard.focusedKey = projectB.path;
+    session.portfolioBoard.restoreFocus = true;
+    const current = new ProjectsPanel(
+      new AppState(),
+      store as never,
+      manager as never,
+      settings,
+      null as never,
+      {
+        snapshots,
+        pendingBoardUndo: pendingB,
+        onBoardUndoResolved: onUndoResolved,
+        workspaceSession: session,
+      },
+    );
+    const currentRoot = attachedContainer();
+    current.mount(currentRoot);
+    const currentBoard = currentRoot.querySelector<HTMLElement>('.abyss-board')!;
+    const currentIdentity = currentRoot
+      .querySelector<HTMLElement>(`[data-board-item="${projectB.path}"]`)!
+      .querySelector<HTMLElement>('[data-project-identity-control]')!;
+    expect(activeDocument.activeElement).toBe(currentIdentity);
+
+    undoA.resolve(pendingA.result);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onUndoResolved).not.toHaveBeenCalled();
+    expect(parentPending).toBe(pendingB);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(currentBoard.isConnected).toBe(true);
+    expect(currentRoot.querySelector('[data-board-undo]')).not.toBeNull();
+    expect(activeDocument.activeElement).toBe(currentIdentity);
+    expect(session.portfolioBoard).toMatchObject({
+      selectedColumnKey: secondStatus.id,
+      focusedKey: projectB.path,
+      restoreFocus: true,
+    });
+
+    currentRoot.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    expect(manager.undoStatus).toHaveBeenLastCalledWith(projectB.path, secondStatus.id, ACTIVE_ID);
+    current.destroy();
+  });
+
+  it('updates open Work Note drawer semantics at the real owner breakpoint and cleans its observer', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const note = workNote('Work Notes/A.md', ACTIVE_ID, '2026-08-28');
+    const snapshot = workspace(proj({}), {
+      workNotes: [note],
+      workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+    });
+    let ownerWidth = 900;
+    const originalWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('abyss-project-tasks-content') ? ownerWidth : 900;
+      },
+    });
+    const records: Array<{
+      readonly callback: ResizeObserverCallback;
+      readonly targets: Set<Element>;
+      readonly disconnect: () => void;
+    }> = [];
+    class ControlledResizeObserver implements ResizeObserver {
+      private readonly record: (typeof records)[number];
+
+      constructor(callback: ResizeObserverCallback) {
+        this.record = { callback, targets: new Set(), disconnect: vi.fn() };
+        records.push(this.record);
+      }
+
+      observe(target: Element): void {
+        this.record.targets.add(target);
+      }
+
+      unobserve(target: Element): void {
+        this.record.targets.delete(target);
+      }
+
+      disconnect(): void {
+        this.record.targets.clear();
+        this.record.disconnect();
+      }
+    }
+    vi.stubGlobal('ResizeObserver', ControlledResizeObserver);
+    const commands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+      observe: (current: WorkNoteSnapshot) => current,
+      setStatus: vi.fn().mockResolvedValue({ type: 'ok', path: note.path }),
+      create: vi.fn(),
+    } as never;
+    const session = new ProjectWorkspaceSession();
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [snapshot],
+      workNoteCommands: commands,
+      workspaceSession: session,
+    });
+    const el = attachedContainer();
+    try {
+      panel.mount(el);
+      el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      const owner = el.querySelector<HTMLElement>('.abyss-project-tasks-content')!;
+      const ownerRecord = records.find(({ targets }) => targets.has(owner));
+      expect(ownerRecord).toBeDefined();
+      el.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!.click();
+      let inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
+      expect(inspector.getAttribute('role')).toBe('region');
+      expect(inspector.hasAttribute('aria-modal')).toBe(false);
+      expect(session.workNotes.inspectorPath).toBe(note.path);
+
+      ownerWidth = 600;
+      ownerRecord!.callback(
+        [
+          {
+            target: owner,
+            contentRect: owner.getBoundingClientRect(),
+          } as unknown as ResizeObserverEntry,
+        ],
+        {} as ResizeObserver,
+      );
+      inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
+      expect(inspector.getAttribute('role')).toBe('dialog');
+      expect(inspector.getAttribute('aria-modal')).toBe('true');
+      expect(inspector.contains(activeDocument.activeElement)).toBe(true);
+      expect(session.workNotes.inspectorPath).toBe(note.path);
+      const narrowControls = Array.from(
+        inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
+      );
+      const narrowLast = narrowControls[narrowControls.length - 1]!;
+      narrowLast.focus();
+      const trappedTab = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        cancelable: true,
+      });
+      narrowLast.dispatchEvent(trappedTab);
+      expect(trappedTab.defaultPrevented).toBe(true);
+      expect(activeDocument.activeElement).toBe(narrowControls[0]);
+
+      ownerWidth = 900;
+      ownerRecord!.callback(
+        [
+          {
+            target: owner,
+            contentRect: owner.getBoundingClientRect(),
+          } as unknown as ResizeObserverEntry,
+        ],
+        {} as ResizeObserver,
+      );
+      inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
+      expect(inspector.getAttribute('role')).toBe('region');
+      expect(inspector.hasAttribute('aria-modal')).toBe(false);
+      expect(session.workNotes.inspectorPath).toBe(note.path);
+      const wideControls = Array.from(
+        inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
+      );
+      const wideControl = wideControls[wideControls.length - 1]!;
+      wideControl.focus();
+      const releasedTab = new KeyboardEvent('keydown', {
+        key: 'Tab',
+        bubbles: true,
+        cancelable: true,
+      });
+      wideControl.dispatchEvent(releasedTab);
+      expect(releasedTab.defaultPrevented).toBe(false);
+      expect(activeDocument.activeElement).not.toBe(wideControls[0]);
+      const returnTarget = el.querySelector<HTMLElement>(
+        `[data-work-note-identity-control][data-work-note-path="${note.path}"]`,
+      )!;
+      inspector.querySelector<HTMLButtonElement>('[aria-label="Close Work Note details"]')!.click();
+      expect(activeDocument.activeElement).toBe(returnTarget);
+      expect(session.workNotes.inspectorPath).toBeNull();
+
+      el.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!.click();
+      expect(ownerRecord!.disconnect).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      vi.unstubAllGlobals();
+      if (originalWidth) {
+        Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalWidth);
+      } else {
+        Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+      }
+    }
   });
 
   it('renders the dated portfolio Timeline and delegates endpoint changes to ProjectCommandService', async () => {

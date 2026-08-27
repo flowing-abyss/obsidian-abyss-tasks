@@ -94,9 +94,16 @@ function modelFixture(
   dependencies?: DependencyPolicy,
 ): ProjectWorkspaceReadModel {
   const model = new ProjectWorkspaceReadModel({
-    projects: { list: () => [project()] },
+    projects: {
+      list: () => [project()],
+      get: (path) => (path === projectPath ? project() : undefined),
+    },
     tasks: { list: () => tasks },
-    workNotes: { list: () => workNotes, diagnosticsFor: () => [] },
+    workNotes: {
+      list: () => workNotes,
+      get: (path) => workNotes.find((note) => note.path === path),
+      diagnosticsFor: () => [],
+    },
     statuses: () => statuses,
     now: () => now,
     today: () => '2026-08-26',
@@ -370,6 +377,10 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     const coordinator = new ProjectWorkspaceCoordinator(
       {
         list: () => [project(prerequisitePath), project(dependentPath)],
+        get: (path) =>
+          [project(prerequisitePath), project(dependentPath)].find(
+            (candidate) => candidate.path === path,
+          ),
         onUpdate: (listener) => {
           projectListeners.push(listener);
           return () => {};
@@ -392,6 +403,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => [],
+        get: () => undefined,
         diagnosticsFor: () => [],
         onUpdate: () => () => {},
       },
@@ -471,6 +483,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     const coordinator = new ProjectWorkspaceCoordinator(
       {
         list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
         onUpdate: (listener) => {
           projectListeners.push(listener);
           return () => {};
@@ -493,6 +506,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => [],
+        get: () => undefined,
         diagnosticsFor: () => [],
         onUpdate: () => () => {},
       },
@@ -551,7 +565,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     > = [];
     let tasks: readonly TaskSnapshot[] = [action('Work/A.md', 1, 'open')];
     const coordinator = new ProjectWorkspaceCoordinator(
-      { list: () => [project()], onUpdate: () => () => {} },
+      {
+        list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
+        onUpdate: () => () => {},
+      },
       {
         list: () => tasks,
         subscribe: () => () => {},
@@ -562,13 +580,14 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => [workNote('Work/A.md')],
+        get: (path) => (path === 'Work/A.md' ? workNote('Work/A.md') : undefined),
         diagnosticsFor: () => [],
         onUpdate: (listener) => {
           workListeners.push(listener);
           return () => {};
         },
         onSettled: (listener) => {
-          workSettled.push(listener as never);
+          workSettled.push(listener);
           return () => {};
         },
       },
@@ -585,7 +604,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
         changedPaths: ['Work/A.md'],
         invalidatedProjectPaths: [projectPath],
         taskBarriers: [{ path: 'Work/A.md', generation: 2 }],
-      } as WorkNoteIndexEvent),
+      }),
     );
     workSettled.forEach((listener) =>
       listener({ reason: 'index', files: [{ path: 'Work/A.md', generation: 2 }] }),
@@ -613,7 +632,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     > = [];
     let tasks: readonly TaskSnapshot[] = [action('Work/A.md', 1, 'open')];
     const coordinator = new ProjectWorkspaceCoordinator(
-      { list: () => [project()], onUpdate: () => () => {} },
+      {
+        list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
+        onUpdate: () => () => {},
+      },
       {
         list: () => tasks,
         subscribe: () => () => {},
@@ -624,13 +647,14 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => [workNote('Work/A.md')],
+        get: (path) => (path === 'Work/A.md' ? workNote('Work/A.md') : undefined),
         diagnosticsFor: () => [],
         onUpdate: (listener) => {
           workListeners.push(listener);
           return () => {};
         },
         onSettled: (listener) => {
-          workSettled.push(listener as never);
+          workSettled.push(listener);
           return () => {};
         },
       },
@@ -654,7 +678,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
         changedPaths: ['Work/A.md'],
         invalidatedProjectPaths: [projectPath],
         taskBarriers: [{ path: 'Work/A.md', generation: 9 }],
-      } as WorkNoteIndexEvent),
+      }),
     );
     workSettled.forEach((listener) =>
       listener({ reason: 'index', files: [{ path: 'Work/A.md', generation: 2 }] }),
@@ -678,7 +702,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       workNote('Work/Other.md'),
     ];
     const coordinator = new ProjectWorkspaceCoordinator(
-      { list: () => [project()], onUpdate: () => () => {} },
+      {
+        list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
+        onUpdate: () => () => {},
+      },
       {
         list: () => tasks,
         subscribe: (listener) => {
@@ -692,13 +720,14 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => notes,
+        get: (path) => notes.find((note) => note.path === path),
         diagnosticsFor: () => [],
         onUpdate: (listener) => {
           workListeners.push(listener);
           return () => {};
         },
         onSettled: (listener) => {
-          workSettled.push(listener as never);
+          workSettled.push(listener);
           return () => {};
         },
       },
@@ -806,6 +835,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     const projectSource = {
       isReady: () => false,
       list: () => [project()],
+      get: (path: string) => (path === projectPath ? project() : undefined),
       onUpdate: () => () => {},
       onSettled: (listener: (event: never) => void) => {
         projectSettled.push(listener);
@@ -826,6 +856,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     const workSource = {
       isReady: () => false,
       list: () => notes,
+      get: (path: string) => notes.find((note) => note.path === path),
       diagnosticsFor: () => [],
       onUpdate: () => () => {},
       onSettled: (listener: (event: never) => void) => {
@@ -883,7 +914,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     > = [];
     let tasks: readonly TaskSnapshot[] = [action('Work/A.md', 1, 'open')];
     const coordinator = new ProjectWorkspaceCoordinator(
-      { list: () => [project()], onUpdate: () => () => {} },
+      {
+        list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
+        onUpdate: () => () => {},
+      },
       {
         list: () => tasks,
         subscribe: (listener) => {
@@ -897,10 +932,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       },
       {
         list: () => [workNote('Work/A.md')],
+        get: (path) => (path === 'Work/A.md' ? workNote('Work/A.md') : undefined),
         diagnosticsFor: () => [],
         onUpdate: () => () => {},
         onSettled: (listener) => {
-          workSettled.push(listener as never);
+          workSettled.push(listener);
           return () => {};
         },
       },
@@ -947,12 +983,13 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       const coordinator = new ProjectWorkspaceCoordinator(
         {
           list: () => [project()],
+          get: (path) => (path === projectPath ? project() : undefined),
           onUpdate: (listener) => {
             projectListeners.push(listener);
             return () => {};
           },
           onSettled: (listener) => {
-            projectSettled.push(listener as never);
+            projectSettled.push(listener);
             return () => {};
           },
         },
@@ -967,7 +1004,12 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
             return () => {};
           },
         },
-        { list: () => [], diagnosticsFor: () => [], onUpdate: () => () => {} },
+        {
+          list: () => [],
+          get: () => undefined,
+          diagnosticsFor: () => [],
+          onUpdate: () => () => {},
+        },
         () => statuses,
       );
       coordinator.start();
@@ -1025,12 +1067,13 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
     const coordinator = new ProjectWorkspaceCoordinator(
       {
         list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
         onUpdate: (listener) => {
           projectListeners.push(listener);
           return () => {};
         },
         onSettled: (listener) => {
-          projectSettled.push(listener as never);
+          projectSettled.push(listener);
           return () => {};
         },
       },
@@ -1045,7 +1088,7 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
           return () => {};
         },
       },
-      { list: () => [], diagnosticsFor: () => [], onUpdate: () => () => {} },
+      { list: () => [], get: () => undefined, diagnosticsFor: () => [], onUpdate: () => () => {} },
       () => statuses,
     );
     coordinator.start();
@@ -1095,7 +1138,11 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
       const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
       let notes: readonly WorkNoteSnapshot[] = [workNote('Work/Old.md')];
       const coordinator = new ProjectWorkspaceCoordinator(
-        { list: () => [project()], onUpdate: () => () => {} },
+        {
+          list: () => [project()],
+          get: (path) => (path === projectPath ? project() : undefined),
+          onUpdate: () => () => {},
+        },
         {
           list: () => [],
           subscribe: () => () => {},
@@ -1106,13 +1153,14 @@ describe('ProjectWorkspaceCoordinator convergence', () => {
         },
         {
           list: () => notes,
+          get: (path) => notes.find((note) => note.path === path),
           diagnosticsFor: () => [],
           onUpdate: (listener) => {
             workNoteListeners.push(listener);
             return () => {};
           },
           onSettled: (listener) => {
-            workNoteSettled.push(listener as never);
+            workNoteSettled.push(listener);
             return () => {};
           },
         },

@@ -109,9 +109,17 @@ export function buildWorkNoteRelationProjections(
   sourcePaths?: ReadonlySet<string>,
 ): readonly WorkNoteRelationProjection[] {
   const notes = new Map(workNotes.map((note) => [note.path, note]));
+  const sources = sourcePaths ? workNotes.filter((note) => sourcePaths.has(note.path)) : workNotes;
+  return buildWorkNoteRelationProjectionsFromIndex(notes, sources, statuses);
+}
+
+export function buildWorkNoteRelationProjectionsFromIndex(
+  notes: ReadonlyMap<string, WorkNoteSnapshot>,
+  sourceNotes: readonly WorkNoteSnapshot[],
+  statuses: readonly ProjectStatus[],
+): readonly WorkNoteRelationProjection[] {
   const projections: WorkNoteRelationProjection[] = [];
-  for (const note of [...workNotes].sort((left, right) => left.path.localeCompare(right.path))) {
-    if (sourcePaths && !sourcePaths.has(note.path)) continue;
+  for (const note of [...sourceNotes].sort((left, right) => left.path.localeCompare(right.path))) {
     for (const diagnostic of note.diagnostics) {
       const projection = diagnosticInvalid(note, diagnostic);
       if (projection) projections.push(projection);

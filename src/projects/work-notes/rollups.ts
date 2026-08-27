@@ -59,19 +59,27 @@ export function computeMilestoneRollups(
   const milestones = notes.filter(({ kind }) => kind === 'milestone');
   const result = new Map<string, MilestoneRollup>();
   for (const milestone of milestones) {
-    const members = notes.filter(
-      (note) =>
-        note.kind === 'ordinary' &&
-        note.projectPath === milestone.projectPath &&
-        note.milestonePath === milestone.path &&
-        !note.diagnostics.some(({ type }) => type === 'multiple-milestones'),
-    );
-    const rollup = countLifecycle(members, statuses);
-    const denominator = rollup.active + rollup.completed;
-    result.set(milestone.path, {
-      ...rollup,
-      progress: denominator === 0 ? null : rollup.completed / denominator,
-    });
+    result.set(milestone.path, computeMilestoneRollup(milestone, notes, statuses));
   }
   return result;
+}
+
+export function computeMilestoneRollup(
+  milestone: WorkNoteSnapshot,
+  projectNotes: readonly WorkNoteSnapshot[],
+  statuses: readonly ProjectStatus[],
+): MilestoneRollup {
+  const members = projectNotes.filter(
+    (note) =>
+      note.kind === 'ordinary' &&
+      note.projectPath === milestone.projectPath &&
+      note.milestonePath === milestone.path &&
+      !note.diagnostics.some(({ type }) => type === 'multiple-milestones'),
+  );
+  const rollup = countLifecycle(members, statuses);
+  const denominator = rollup.active + rollup.completed;
+  return {
+    ...rollup,
+    progress: denominator === 0 ? null : rollup.completed / denominator,
+  };
 }

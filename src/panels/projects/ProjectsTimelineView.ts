@@ -7,8 +7,9 @@ import { parseProjectDate, projectDateOnLocalDate } from '../../projects/project
 import type { Project, ProjectAction, ProjectDateValue } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
-import type { TaskCommandResult, TaskSnapshot } from '../../tasks';
+import { taskReconciliationKey, type TaskCommandResult, type TaskSnapshot } from '../../tasks';
 import { BoundedWindow } from './BoundedWindow';
+import type { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
 import { logicalViewportFirst, type LogicalViewportSession } from './ProjectWorkspaceSession';
 import type { TimelineItem, TimelinePointRole, TimelineProjection } from './timelineProjection';
 import {
@@ -39,6 +40,10 @@ export interface TimelineViewOptions<T> {
   ) => Promise<TimelineMutationResult> | TimelineMutationResult;
   readonly dateWindow?: { readonly from: string; readonly to: string };
   readonly session?: LogicalViewportSession;
+  readonly focusedItemKey?: () => string | null;
+  readonly shouldRestoreItemFocus?: () => boolean;
+  readonly onItemFocus?: (entry: TimelineEntry<T>) => void;
+  readonly onItemBlur?: () => void;
   readonly isNarrow?: boolean;
   readonly renderIdentity?: (host: HTMLElement, entry: TimelineEntry<T>) => void;
 }
@@ -67,6 +72,7 @@ export interface WorkNotesTimelineOptions {
 export interface TasksTimelineOptions {
   readonly actions: readonly ProjectAction[];
   readonly session?: LogicalViewportSession;
+  readonly collectionSession?: ProjectTaskCollectionSession;
   readonly isNarrow?: boolean;
   readonly renderTask?: (host: HTMLElement, action: ProjectAction) => void;
   readonly onSetDate: (
@@ -146,6 +152,10 @@ function roleLabel(role: TimelinePointRole): string {
 
 function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
+}
+
+function timelineIdentityAttributes(key: string, editable: boolean): Record<string, string> {
+  return editable ? {} : { tabindex: '0', 'data-timeline-key': key };
 }
 
 function renderEntryIdentity<T>(
@@ -233,14 +243,15 @@ export function renderTimeline<T>(
     const scroll = datedSection.createDiv({ cls: 'abyss-timeline-scroll' });
     const rows = scroll.createDiv({
       cls: 'abyss-timeline-rows',
-      attr: { tabindex: '-1', 'aria-label': 'Timeline items' },
+      attr: { tabindex: '-1', role: 'list', 'aria-label': 'Timeline items' },
     });
     const bounded = new BoundedWindow(
       dated.map(({ item }) => item.key),
       TIMELINE_OVERSCAN,
     );
     const session = options.session;
-    if (session?.focusedKey) bounded.focus(session.focusedKey);
+    const focusedKey = options.focusedItemKey?.() ?? session?.focusedKey;
+    if (focusedKey) bounded.focus(focusedKey);
     const initialFirst = logicalViewportFirst(
       session,
       dated.map(({ item }) => item.key),
@@ -264,13 +275,15 @@ export function renderTimeline<T>(
           const row = host.createDiv({
             cls: `abyss-timeline-row${isAgenda ? ' abyss-timeline-agenda-row' : ''}`,
             attr: {
-              role: 'group',
-              tabindex: '0',
+              role: 'listitem',
               'data-timeline-key': entry.item.key,
               'aria-label': entry.label,
             },
           });
-          const identity = row.createDiv({ cls: 'abyss-timeline-identity' });
+          const identity = row.createDiv({
+            cls: 'abyss-timeline-identity',
+            attr: timelineIdentityAttributes(entry.item.key, options.onSetDate !== undefined),
+          });
           renderEntryIdentity(identity, entry, options.renderIdentity);
           const roles = pointRoles(entry.item);
           if (isAgenda) {
@@ -348,6 +361,7 @@ export function renderTimeline<T>(
               attr: {
                 type: 'button',
                 draggable: 'true',
+                'data-timeline-key': entry.item.key,
                 'data-timeline-role': role,
                 'aria-label': `Move ${entry.label} ${role} date`,
                 title: `Move ${role} date`,
@@ -371,8 +385,10 @@ export function renderTimeline<T>(
               cls: 'abyss-timeline-date-picker',
               attr: {
                 type: 'date',
+                'data-timeline-key': entry.item.key,
                 'data-timeline-date-picker': role,
                 'aria-label': `Choose ${entry.label} ${role} date`,
+                title: `Choose ${role} date`,
                 ...(current ? { value: current } : {}),
               },
             });
@@ -390,12 +406,15 @@ export function renderTimeline<T>(
           }
           row.addEventListener('focusin', () => {
             bounded.focus(entry.item.key);
+            options.onItemFocus?.(entry);
             if (session) {
               session.focusedKey = entry.item.key;
               session.restoreFocus = true;
             }
           });
-          return row;
+          return (
+            row.querySelector<HTMLElement>('.abyss-timeline-date-handle:not(:disabled)') ?? identity
+          );
         },
       });
       if (restoreFocus || seedFirst !== undefined) {
@@ -413,7 +432,20 @@ export function renderTimeline<T>(
     };
     scroll.addEventListener('scroll', onScroll);
     cleanups.push(() => scroll.removeEventListener('scroll', onScroll));
-    renderWindow(session?.restoreFocus === true, initialFirst);
+    const onFocusOut = (): void => {
+      queueMicrotask(() => {
+        if (!container.isConnected || container.contains(container.ownerDocument.activeElement)) {
+          return;
+        }
+        options.onItemBlur?.();
+      });
+    };
+    rows.addEventListener('focusout', onFocusOut);
+    cleanups.push(() => rows.removeEventListener('focusout', onFocusOut));
+    renderWindow(
+      options.shouldRestoreItemFocus?.() ?? session?.restoreFocus === true,
+      initialFirst,
+    );
     rememberViewport();
   }
 
@@ -536,12 +568,32 @@ export function renderTasksTimeline(
   container: HTMLElement,
   options: TasksTimelineOptions,
 ): TimelineViewHandle {
+  const entries = options.actions.map((action) => ({
+    ...taskTimelineEntry(action.task),
+    value: action,
+  }));
+  const collection = options.collectionSession;
+  const focusedItemKey = (): string | null => {
+    const focused = collection?.focusedRef();
+    if (!focused) return null;
+    return (
+      entries.find(
+        ({ value }) => taskReconciliationKey(value.task.ref) === taskReconciliationKey(focused),
+      )?.item.key ?? null
+    );
+  };
   return renderTimeline(container, {
-    entries: options.actions.map((action) => ({
-      ...taskTimelineEntry(action.task),
-      value: action,
-    })),
-    ...(options.session && { session: options.session }),
+    entries,
+    ...(!collection && options.session ? { session: options.session } : {}),
+    ...(collection
+      ? {
+          focusedItemKey,
+          shouldRestoreItemFocus: () => collection.shouldRestoreFocus(),
+          onItemFocus: (entry: TimelineEntry<ProjectAction>) =>
+            collection.focusOnly(entry.value.task.ref),
+          onItemBlur: () => collection.intentionalBlur(),
+        }
+      : {}),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
     ...(options.renderTask
       ? {

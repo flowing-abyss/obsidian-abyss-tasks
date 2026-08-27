@@ -155,7 +155,7 @@ export function renderProjectsList(
 
   const rowsHost = scroll.createDiv({
     cls: 'abyss-projects-window',
-    attr: { tabindex: '-1', 'aria-label': 'Projects list' },
+    attr: { tabindex: '-1', role: 'list', 'aria-label': 'Projects list' },
   });
   const bounded = new BoundedWindow(
     entries.map(({ key }) => key),
@@ -244,14 +244,26 @@ export function renderProjectRow(
   const project = snapshot.project;
   const row = parent.createDiv({
     cls: 'abyss-project-row',
-    attr: { tabindex: '0' },
+    attr: { role: 'listitem' },
   });
 
   const status = project.statusId ? statusById.get(project.statusId) : undefined;
   const dot = row.createSpan({ cls: 'abyss-status-dot' });
   if (status?.color) dot.style.background = status.color;
+  dot.setAttribute('role', 'img');
+  dot.setAttribute(
+    'aria-label',
+    `Project status: ${status?.label ?? project.rawStatus ?? 'No status'}`,
+  );
 
-  const nameWrap = row.createDiv({ cls: 'abyss-project-row-name' });
+  const nameWrap = row.createEl('button', {
+    cls: 'abyss-project-row-name abyss-project-identity-control',
+    attr: {
+      type: 'button',
+      'data-project-identity-control': '',
+      'aria-label': `Open project ${project.name}`,
+    },
+  });
   nameWrap.createSpan({ cls: 'abyss-project-name', text: project.name });
   if ((nameCounts.get(project.name) ?? 0) > 1) {
     nameWrap.createSpan({ cls: 'abyss-project-folder', text: parentFolder(project.path) });
@@ -276,15 +288,29 @@ export function renderProjectRow(
     if (snapshot.taskRollup.total > 0) {
       const taskProgress = meta.createDiv({ cls: 'abyss-project-task-progress' });
       taskProgress.createSpan({ cls: 'abyss-project-metric-label', text: 'Tasks' });
-      renderProgressBar(taskProgress, snapshot.taskRollup.done, snapshot.taskRollup.total);
+      renderProgressBar(
+        taskProgress,
+        snapshot.taskRollup.done,
+        snapshot.taskRollup.total,
+        `${project.name} task progress`,
+      );
     }
     if (workNoteCount > 0) {
-      meta.createSpan({ cls: 'abyss-project-work-notes', text: `Work Notes ${workNoteCount}` });
+      meta.createSpan({
+        cls: 'abyss-project-work-notes',
+        text: `Work Notes ${workNoteCount}`,
+        attr: {
+          'aria-label': `${String(workNoteCount)} Work Note${workNoteCount === 1 ? '' : 's'}`,
+        },
+      });
     }
     if (overdueCount > 0) {
       const overdue = meta.createSpan({
         cls: 'abyss-project-attention abyss-project-overdue',
-        attr: { title: `${String(overdueCount)} overdue` },
+        attr: {
+          title: `${String(overdueCount)} overdue`,
+          'aria-label': `${String(overdueCount)} overdue item${overdueCount === 1 ? '' : 's'}`,
+        },
       });
       const icon = overdue.createSpan({ cls: 'abyss-project-attention-icon' });
       setIcon(icon, 'clock-alert');
@@ -293,7 +319,10 @@ export function renderProjectRow(
     if (snapshot.diagnostics.length > 0) {
       const diagnostics = meta.createSpan({
         cls: 'abyss-project-attention abyss-project-diagnostics',
-        attr: { title: `${String(snapshot.diagnostics.length)} diagnostics` },
+        attr: {
+          title: `${String(snapshot.diagnostics.length)} diagnostics`,
+          'aria-label': `${String(snapshot.diagnostics.length)} diagnostic${snapshot.diagnostics.length === 1 ? '' : 's'}`,
+        },
       });
       const icon = diagnostics.createSpan({ cls: 'abyss-project-attention-icon' });
       setIcon(icon, 'triangle-alert');
@@ -350,13 +379,13 @@ export function renderProjectRow(
     ctx.openNote(project.path);
   });
 
-  row.addEventListener('click', () => {
+  nameWrap.addEventListener('click', () => {
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
   });
-  row.addEventListener('keydown', (event) => {
+  nameWrap.addEventListener('keydown', (event) => {
     if (
       ownsArrowNavigation &&
-      event.target === row &&
+      event.target === nameWrap &&
       (event.key === 'ArrowDown' || event.key === 'ArrowUp')
     ) {
       event.preventDefault();
@@ -364,10 +393,10 @@ export function renderProjectRow(
       return;
     }
     if (event.key !== 'Enter' && event.key !== ' ') return;
-    if (event.target !== row) return;
+    if (event.target !== nameWrap) return;
     event.preventDefault();
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
   });
-  row.addEventListener('focus', () => onFocus(project.path));
+  nameWrap.addEventListener('focus', () => onFocus(project.path));
   return row;
 }

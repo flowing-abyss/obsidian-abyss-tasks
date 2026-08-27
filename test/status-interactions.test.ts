@@ -297,7 +297,8 @@ describe('status and priority consumer delegation', () => {
     const click = new MouseEvent('click', { bubbles: true, cancelable: true });
     marker.dispatchEvent(click);
 
-    expect(marker.hasAttribute('role')).toBe(false);
+    expect(marker.getAttribute('role')).toBe('img');
+    expect(marker.getAttribute('aria-label')).toMatch(/^Task status: /u);
     expect(marker.hasAttribute('tabindex')).toBe(false);
     expect(click.defaultPrevented).toBe(false);
   });
@@ -316,7 +317,8 @@ describe('status and priority consumer delegation', () => {
 
     marker.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 
-    expect(marker.hasAttribute('role')).toBe(false);
+    expect(marker.getAttribute('role')).toBe('img');
+    expect(marker.getAttribute('aria-label')).toMatch(/^Task status: /u);
     expect(marker.hasAttribute('tabindex')).toBe(false);
     expect(onPickStatus).toHaveBeenCalledOnce();
   });

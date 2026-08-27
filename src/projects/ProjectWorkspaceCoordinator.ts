@@ -2,7 +2,11 @@ import type { ProjectStatus } from '../settings/types';
 import type { TaskIndexEvent, TaskIndexSettledEvent, TaskQueryApi } from '../tasks';
 import type { DependencyProjectionPort } from '../tasks/application/DependencyPolicyPort';
 import type { ProjectStoreEvent, ProjectStoreSettledEvent } from './ProjectStore';
-import { ProjectWorkspaceReadModel } from './ProjectWorkspaceReadModel';
+import {
+  ProjectWorkspaceReadModel,
+  type ProjectWorkspaceBucketDelta,
+  type ProjectWorkspaceOwnership,
+} from './ProjectWorkspaceReadModel';
 import type { Project, ProjectWorkspaceSnapshot } from './types';
 import type {
   WorkNoteIndexEvent,
@@ -15,6 +19,7 @@ type Source = 'project' | 'task' | 'work-note';
 interface ProjectSource {
   isReady?(): boolean;
   list(): readonly Project[];
+  get(path: string): Project | undefined;
   onUpdate(listener: (event: ProjectStoreEvent) => void): () => void;
   onSettled?(listener: (event: ProjectStoreSettledEvent) => void): () => void;
 }
@@ -24,6 +29,7 @@ type TaskSource = Pick<TaskQueryApi, 'isReady' | 'list' | 'subscribe' | 'subscri
 interface WorkNoteSource {
   isReady?(): boolean;
   list(): readonly WorkNoteSnapshot[];
+  get(path: string): WorkNoteSnapshot | undefined;
   diagnosticsFor(path: string): readonly WorkNoteSnapshot['diagnostics'][number][];
   onUpdate(listener: (event: WorkNoteIndexEvent) => void): () => void;
   onSettled?(listener: (event: WorkNoteIndexSettledEvent) => void): () => void;
@@ -69,9 +75,19 @@ export class ProjectWorkspaceCoordinator {
   private pending = new Map<string, PendingPath>();
   private projectPaths = new Set<string>();
   private workNotePaths = new Set<string>();
+  private workNoteOwnership = new Map<string, ProjectWorkspaceOwnership>();
+  private pendingWorkNoteDeltas = new Map<
+    string,
+    NonNullable<ProjectWorkspaceBucketDelta['workNotes']>[number]
+  >();
+  private pendingTaskSources = new Map<
+    string,
+    NonNullable<ProjectWorkspaceBucketDelta['taskSources']>[number]
+  >();
   private ownCommitPaths = new Set<string>();
   private taskInFlight = new Map<string, number>();
   private invalidatedProjectPaths = new Set<string>();
+  private dependencyProjectPaths = new Set<string>();
   private publishScheduled = false;
   private started = false;
   private signature = '[]';
@@ -160,7 +176,46 @@ export class ProjectWorkspaceCoordinator {
 
   private captureOwnership(): void {
     this.projectPaths = new Set(this.projects.list().map(({ path }) => path));
-    this.workNotePaths = new Set(this.workNotes.list().map(({ path }) => path));
+    const workNotes = this.workNotes.list();
+    this.workNotePaths = new Set(workNotes.map(({ path }) => path));
+    this.workNoteOwnership = new Map(
+      workNotes.map((note) => [
+        note.path,
+        {
+          projectPath: note.projectPath,
+          kind: note.kind,
+          milestonePath: note.milestonePath ?? null,
+        },
+      ]),
+    );
+  }
+
+  private currentWorkNoteOwnership(path: string): ProjectWorkspaceOwnership | null {
+    const note = this.workNotes.get(path);
+    return note
+      ? {
+          projectPath: note.projectPath,
+          kind: note.kind,
+          milestonePath: note.milestonePath ?? null,
+        }
+      : null;
+  }
+
+  private recordTaskSource(path: string): void {
+    const before = new Set<string>();
+    if (this.projectPaths.has(path)) before.add(path);
+    const previousOwner = this.workNoteOwnership.get(path);
+    if (previousOwner) before.add(previousOwner.projectPath);
+    const after = new Set<string>();
+    if (this.projects.get(path)) after.add(path);
+    const currentOwner = this.currentWorkNoteOwnership(path);
+    if (currentOwner) after.add(currentOwner.projectPath);
+    const existing = this.pendingTaskSources.get(path);
+    this.pendingTaskSources.set(path, {
+      path,
+      beforeProjectPaths: existing?.beforeProjectPaths ?? [...before],
+      afterProjectPaths: [...after],
+    });
   }
 
   private requireAtLeast(path: string, source: Source, generation: number): void {
@@ -185,12 +240,16 @@ export class ProjectWorkspaceCoordinator {
 
   private onProjectUpdate(event: ProjectStoreEvent | undefined): void {
     const paths = event?.invalidatedProjectPaths ?? [...this.projectPaths];
-    for (const path of paths) this.requireNext(path, 'project');
+    for (const path of paths) {
+      this.invalidatedProjectPaths.add(path);
+      this.requireNext(path, 'project');
+    }
   }
 
   private onTaskEvent(event: TaskIndexEvent): void {
     if (event.type === 'initialized' || event.type === 'settled') return;
     for (const path of taskEventPaths(event)) {
+      this.recordTaskSource(path);
       const taskGeneration = (this.latest.get('task')?.get(path) ?? 0) + 1;
       this.taskInFlight.set(path, taskGeneration);
       const sources = this.sourcesFor(path);
@@ -203,13 +262,19 @@ export class ProjectWorkspaceCoordinator {
   }
 
   private onWorkNoteUpdate(event: WorkNoteIndexEvent): void {
-    const currentPaths = new Set(this.workNotes.list().map(({ path }) => path));
     for (const { path, generation } of event.taskBarriers) {
+      this.recordTaskSource(path);
       this.requireAtLeast(path, 'task', generation);
     }
     for (const path of event.changedPaths) {
+      const existing = this.pendingWorkNoteDeltas.get(path);
+      this.pendingWorkNoteDeltas.set(path, {
+        path,
+        before: existing?.before ?? this.workNoteOwnership.get(path) ?? null,
+        after: this.currentWorkNoteOwnership(path),
+      });
       this.requireNext(path, 'work-note');
-      if (currentPaths.has(path)) this.workNotePaths.add(path);
+      if (this.workNotes.get(path)) this.workNotePaths.add(path);
     }
     for (const projectPath of event.invalidatedProjectPaths) {
       this.invalidatedProjectPaths.add(projectPath);
@@ -219,13 +284,13 @@ export class ProjectWorkspaceCoordinator {
   private onDependencyUpdate(
     event: import('../tasks/application/DependencyPolicyPort').DependencyProjectionUpdate,
   ): void {
-    const workNoteProjects = new Map(
-      this.workNotes.list().map((note) => [note.path, note.projectPath] as const),
-    );
     for (const path of new Set(event.affected.map((ref) => ref.filePath))) {
-      const projectPath = this.projectPaths.has(path) ? path : workNoteProjects.get(path);
+      const projectPath = this.projectPaths.has(path)
+        ? path
+        : (this.workNotes.get(path)?.projectPath ?? this.workNoteOwnership.get(path)?.projectPath);
       if (!projectPath) continue;
       this.invalidatedProjectPaths.add(projectPath);
+      this.dependencyProjectPaths.add(projectPath);
     }
     for (const path of event.causalTaskPaths) this.requireNext(path, 'task');
   }
@@ -241,6 +306,9 @@ export class ProjectWorkspaceCoordinator {
     this.awaitingInitialization = false;
     this.pending.clear();
     this.invalidatedProjectPaths.clear();
+    this.pendingWorkNoteDeltas.clear();
+    this.pendingTaskSources.clear();
+    this.dependencyProjectPaths.clear();
     const snapshots = this.readModel.rebuild();
     this.captureOwnership();
     this.signature = snapshotSignature(snapshots);
@@ -269,6 +337,7 @@ export class ProjectWorkspaceCoordinator {
       if (!this.pending.has(file.path)) {
         const sources = this.sourcesFor(file.path);
         if (sources.length > 0) {
+          this.recordTaskSource(file.path);
           this.requireAtLeast(file.path, 'task', file.generation);
           for (const source of sources) {
             if (source !== 'task') this.requireNext(file.path, source);
@@ -302,26 +371,44 @@ export class ProjectWorkspaceCoordinator {
     void Promise.resolve().then(() => {
       this.publishScheduled = false;
       if (!this.started || !this.allPendingReady()) return;
-      const affectedProjectPaths = new Set<string>();
-      for (const path of this.invalidatedProjectPaths) affectedProjectPaths.add(path);
-      for (const path of this.pending.keys()) {
-        if (this.projectPaths.has(path)) affectedProjectPaths.add(path);
-        const note = this.workNotes.list().find((candidate) => candidate.path === path);
-        if (note) affectedProjectPaths.add(note.projectPath);
-      }
+      const delta: ProjectWorkspaceBucketDelta = {
+        projectPaths: [...this.invalidatedProjectPaths],
+        workNotes: [...this.pendingWorkNoteDeltas.values()],
+        taskSources: [...this.pendingTaskSources.values()],
+        dependencyProjectPaths: [...this.dependencyProjectPaths],
+      };
       this.pending.clear();
       this.invalidatedProjectPaths.clear();
-      const snapshots = this.readModel.rebuild();
-      this.captureOwnership();
-      const nextSignature = snapshotSignature(snapshots);
-      if (nextSignature === this.signature) return;
-      this.signature = nextSignature;
+      this.pendingWorkNoteDeltas.clear();
+      this.pendingTaskSources.clear();
+      this.dependencyProjectPaths.clear();
+      const result = this.readModel.rebuildBuckets(delta);
+      const snapshots = result.snapshots;
+      this.applyOwnershipDelta(delta);
+      if (result.changedProjectPaths.length === 0) return;
+      this.signature = snapshotSignature(snapshots);
       const event: ProjectWorkspacePublication = {
         snapshots,
-        projectPaths: [...affectedProjectPaths].sort((left, right) => left.localeCompare(right)),
+        projectPaths: result.changedProjectPaths,
       };
       for (const listener of this.listeners) listener(snapshots, event);
     });
+  }
+
+  private applyOwnershipDelta(delta: ProjectWorkspaceBucketDelta): void {
+    for (const projectPath of delta.projectPaths ?? []) {
+      if (this.projects.get(projectPath)) this.projectPaths.add(projectPath);
+      else this.projectPaths.delete(projectPath);
+    }
+    for (const change of delta.workNotes ?? []) {
+      if (change.before && change.after === null) {
+        this.workNotePaths.delete(change.path);
+        this.workNoteOwnership.delete(change.path);
+      } else if (change.after) {
+        this.workNotePaths.add(change.path);
+        this.workNoteOwnership.set(change.path, change.after);
+      }
+    }
   }
 
   destroy(): void {
@@ -334,6 +421,9 @@ export class ProjectWorkspaceCoordinator {
     this.ownCommitPaths.clear();
     this.taskInFlight.clear();
     this.invalidatedProjectPaths.clear();
+    this.pendingWorkNoteDeltas.clear();
+    this.pendingTaskSources.clear();
+    this.dependencyProjectPaths.clear();
     this.readySources.clear();
     this.awaitingInitialization = false;
     this.publishScheduled = false;

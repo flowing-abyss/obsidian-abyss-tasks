@@ -121,7 +121,7 @@ describe('renderWorkNotesView', () => {
       scroll.scrollTop = WORK_NOTE_ROW_EXTENT * 100;
       scroll.dispatchEvent(new Event('scroll'));
       const current = root.querySelector<HTMLElement>(
-        '[data-work-note-path="Work Notes/Work note 100.md"]',
+        '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 100.md"]',
       )!;
       current.focus();
       for (let index = 0; index < 7; index += 1) {
@@ -166,7 +166,9 @@ describe('renderWorkNotesView', () => {
       scroll.scrollTop = WORK_NOTE_ROW_EXTENT * 100;
       scroll.dispatchEvent(new Event('scroll'));
       root
-        .querySelector<HTMLElement>('[data-work-note-path="Work Notes/Work note 103.md"]')!
+        .querySelector<HTMLElement>(
+          '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 103.md"]',
+        )!
         .focus();
 
       handle.destroy();
@@ -204,7 +206,7 @@ describe('renderWorkNotesView', () => {
     expect(row.textContent).toContain('Milestone');
     expect(row.textContent).toContain('Review');
     expect(row.textContent).toContain('Canonical');
-    row.click();
+    row.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!.click();
     expect(root.querySelector('.abyss-work-note-inspector')?.textContent).toContain(
       'Work note 001',
     );
@@ -238,6 +240,159 @@ describe('renderWorkNotesView', () => {
       projectPath: 'Projects/P.md',
     });
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('announces successful creation once and focuses its stable row after projection settlement', async () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/P.md');
+    const created = note(999, { path: 'Work Notes/New research.md' });
+    const existing = Array.from({ length: 249 }, (_, index) => note(index));
+    const settled = [...existing.slice(0, 180), created, ...existing.slice(180)];
+    const announce = vi.fn();
+    const base = {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list' as const,
+      projectPath: 'Projects/P.md',
+      createEnabled: true,
+      session: session.workNotes,
+      onCreate: vi.fn().mockResolvedValue({ type: 'ok', path: created.path }),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      announce,
+    };
+    try {
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.classList.contains('abyss-work-notes-scroll') ? WORK_NOTE_ROW_EXTENT * 5 : 0;
+      });
+      let handle = renderWorkNotesView(root, { ...base, notes: existing });
+      root.querySelector<HTMLButtonElement>('[aria-label="New work note"]')!.click();
+      const input = root.querySelector<HTMLInputElement>('.abyss-work-note-create-input')!;
+      input.value = 'New research';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+
+      expect(announce).toHaveBeenCalledOnce();
+      expect(announce).toHaveBeenCalledWith('Created New research.');
+      handle.destroy();
+      handle = renderWorkNotesView(root, { ...base, notes: settled });
+      const scroll = root.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
+      expect(activeDocument.activeElement?.getAttribute('data-work-note-path')).toBe(created.path);
+      expect(scroll.scrollTop).toBeGreaterThan(0);
+      expect(root.querySelectorAll('.abyss-work-note-row').length).toBeLessThanOrEqual(60);
+      expect(root.querySelector(`[data-work-note-path="${created.path}"]`)).not.toBeNull();
+      expect(announce).toHaveBeenCalledTimes(1);
+      expect(session.workNotes.pendingCreatedPath).toBeNull();
+      handle.destroy();
+    } finally {
+      root.remove();
+    }
+  });
+
+  it('contains focus in a forced narrow/coarse drawer and closes without stealing outside focus', () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const outside = activeDocument.body.createEl('button');
+    try {
+      renderWorkNotesView(root, {
+        notes: [note(1)],
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        layout: 'list',
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        isNarrow: true,
+        coarsePointer: true,
+      });
+      const identity = root.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!;
+      identity.focus();
+      identity.click();
+      const drawer = root.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
+      expect(drawer.getAttribute('role')).toBe('dialog');
+      expect(drawer.getAttribute('aria-label')).toBe('Work Note details');
+      expect(drawer.dataset['narrowDrawer']).toBe('true');
+      expect(drawer.dataset['coarsePointer']).toBe('true');
+      const close = drawer.querySelector<HTMLButtonElement>(
+        '[aria-label="Close Work Note details"]',
+      )!;
+      expect(close).not.toBeNull();
+      expect(drawer.contains(activeDocument.activeElement)).toBe(true);
+
+      const controls = Array.from(drawer.querySelectorAll<HTMLElement>('button, input'));
+      const lastControl = controls[controls.length - 1]!;
+      lastControl.focus();
+      lastControl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+      expect(activeDocument.activeElement).toBe(controls[0]);
+
+      controls[0]!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+      );
+      expect(activeDocument.activeElement).toBe(lastControl);
+
+      close.click();
+      expect(drawer.textContent).toBe('');
+      expect(activeDocument.activeElement).toBe(identity);
+
+      identity.click();
+
+      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      outside.focus();
+      expect(drawer.textContent).toBe('');
+      expect(activeDocument.activeElement).toBe(outside);
+
+      identity.click();
+      expect(drawer.textContent).not.toBe('');
+
+      const activeDrawerControl = activeDocument.activeElement as HTMLElement;
+      expect(drawer.contains(activeDrawerControl)).toBe(true);
+      activeDrawerControl.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+      expect(drawer.textContent).toBe('');
+      expect(activeDocument.activeElement).toBe(identity);
+    } finally {
+      root.remove();
+      outside.remove();
+    }
+  });
+
+  it('restores drawer focus by stable path after the list is replaced and reordered', () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/P.md');
+    const notes = [note(1), note(2), note(3)];
+    const base = {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list' as const,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      session: session.workNotes,
+      isNarrow: true,
+    };
+    try {
+      let handle = renderWorkNotesView(root, { ...base, notes });
+      root
+        .querySelector<HTMLButtonElement>(
+          '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 002.md"]',
+        )!
+        .click();
+      expect(root.querySelector('[role="dialog"]')).not.toBeNull();
+
+      handle.destroy();
+      handle = renderWorkNotesView(root, { ...base, notes: [notes[2]!, notes[1]!, notes[0]!] });
+      const drawer = root.querySelector<HTMLElement>('[role="dialog"]')!;
+      expect(drawer).not.toBeNull();
+      drawer.querySelector<HTMLButtonElement>('[aria-label="Close Work Note details"]')!.click();
+      expect(activeDocument.activeElement?.getAttribute('data-work-note-path')).toBe(
+        'Work Notes/Work note 002.md',
+      );
+      handle.destroy();
+    } finally {
+      root.remove();
+    }
   });
 
   it('keeps the creation input and surfaces a typed partial result', async () => {
@@ -326,10 +481,14 @@ describe('renderWorkNotesView', () => {
 
   it('makes Work Notes selectable while every dashboard still opens in Tasks/List', () => {
     const root = freshContainer();
-    const renderTasks = vi.fn((host: HTMLElement) => host.createDiv({ text: 'Tasks list' }));
-    const renderWorkNotes = vi.fn((host: HTMLElement) =>
-      host.createDiv({ text: 'Work Notes list' }),
-    );
+    const renderTasks = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Tasks list' });
+      return { destroy: () => host.empty() };
+    });
+    const renderWorkNotes = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Work Notes list' });
+      return { destroy: () => host.empty() };
+    });
     const snapshot: ProjectWorkspaceSnapshot = {
       project: {
         path: 'Projects/P.md',
@@ -359,7 +518,7 @@ describe('renderWorkNotesView', () => {
       openNote: vi.fn(),
       renderTasks,
       renderWorkNotes,
-      renderWorkNoteBoard: vi.fn(),
+      renderWorkNoteBoard: vi.fn(() => ({ destroy: () => undefined })),
     });
 
     const workspace = root.querySelector<HTMLElement>('[data-project-workspace]')!;
@@ -382,9 +541,9 @@ describe('renderWorkNotesView', () => {
       workspaceSession: session,
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
-      renderTasks: vi.fn(),
-      renderWorkNotes: vi.fn(),
-      renderWorkNoteBoard: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      renderWorkNotes: vi.fn(() => ({ destroy: () => undefined })),
+      renderWorkNoteBoard: vi.fn(() => ({ destroy: () => undefined })),
     };
     const snapshot = (path: string): ProjectWorkspaceSnapshot => ({
       project: {
@@ -467,7 +626,7 @@ describe('renderWorkNotesView', () => {
         settings: DEFAULT_SETTINGS,
         onSetStatus: vi.fn(),
         openNote: vi.fn(),
-        renderTasks: vi.fn(),
+        renderTasks: vi.fn(() => ({ destroy: () => undefined })),
         renderWorkNotes,
       },
     );
@@ -523,7 +682,7 @@ describe('Work Note board adapter', () => {
         onSetStatus: vi.fn().mockResolvedValue({ type: 'conflict', field: 'status' }),
         openNote: vi.fn(),
       });
-      const card = root.querySelector<HTMLElement>('[data-board-item]')!;
+      const card = root.querySelector<HTMLElement>('[data-board-item-focus]')!;
       const source = card.closest<HTMLElement>('[data-board-column]')!;
       card.focus();
       card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
@@ -556,7 +715,7 @@ describe('Work Note board adapter', () => {
           .mockResolvedValue({ type: 'compatibility-conflict', reason: 'latest-audit-rejected' }),
         openNote: vi.fn(),
       });
-      const card = root.querySelector<HTMLElement>('[data-board-item]')!;
+      const card = root.querySelector<HTMLElement>('[data-board-item-focus]')!;
       const source = card.closest<HTMLElement>('[data-board-column]')!;
       const target = root.querySelector<HTMLElement>(
         `[data-board-column="${DEFAULT_SETTINGS.projects.statuses[2]!.id}"]`,
@@ -605,7 +764,7 @@ describe('Work Note board adapter', () => {
       sourceScroll.scrollTop = 100 * 88;
       sourceScroll.dispatchEvent(new Event('scroll'));
       const card = root.querySelector<HTMLElement>(
-        '[data-board-item="Work Notes/Work note 103.md"]',
+        '[data-board-item-focus="Work Notes/Work note 103.md"]',
       )!;
       card.focus();
       card.dispatchEvent(new Event('dragstart', { bubbles: true }));

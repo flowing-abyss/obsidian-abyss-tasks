@@ -64,9 +64,9 @@ describe('renderStatusMarker', () => {
 
     expect(el.getAttribute('data-status-type')).toBe('in-progress');
     expect(el.getAttribute('data-priority')).toBe('A');
-    expect(el.hasAttribute('role')).toBe(false);
+    expect(el.getAttribute('role')).toBe('img');
     expect(el.hasAttribute('aria-checked')).toBe(false);
-    expect(el.hasAttribute('aria-label')).toBe(false);
+    expect(el.getAttribute('aria-label')).toBe('Task status: In progress');
     expect(el.hasAttribute('tabindex')).toBe(false);
     expect(el.classList.contains('abyss-status-marker--inert')).toBe(true);
     expect(left).not.toHaveBeenCalled();

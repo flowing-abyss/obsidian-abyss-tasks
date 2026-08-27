@@ -28,6 +28,7 @@ import { TaskModal } from '../src/ui/TaskModal';
 import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/interactionOwnership';
 import { PanelShortcutRouter } from '../src/ui/panelShortcutRouter';
 import type { CaptureTarget } from '../src/ui/taskCapture/CaptureTargetResolver';
+import { taskPresentationKey } from '../src/ui/taskPresentationIdentity';
 import { TodayView } from '../src/views/TodayView';
 import { WeekTimeGridView } from '../src/views/WeekTimeGridView';
 import { PanelNavigator } from '../src/views/panelNavigation';
@@ -2329,21 +2330,27 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       scroll.scrollTop = 22 * 88;
       scroll.dispatchEvent(new Event('scroll'));
 
-      const deepCard = host.querySelector<HTMLElement>('[data-board-item="Projects/A.md:22"]')!;
+      const deepKey = taskPresentationKey(tasks[22]!.ref);
+      const finalKey = taskPresentationKey(tasks[27]!.ref);
+      const deepCard = Array.from(host.querySelectorAll<HTMLElement>('[data-board-item]')).find(
+        ({ dataset }) => dataset['boardItem'] === deepKey,
+      )!;
       expect(getComputedStyle(deepCard).blockSize).toBe('88px');
       expect(getComputedStyle(deepCard).overflow).toBe('hidden');
-      deepCard.focus();
+      deepCard.querySelector<HTMLElement>('[data-board-item-focus]')!.focus();
       for (let index = 0; index < 5; index += 1) {
         activeDocument.activeElement?.dispatchEvent(
           new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
         );
       }
 
-      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(
-        'Projects/A.md:27',
-      );
+      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(finalKey);
       expect(scroll.scrollTop).toBe(26 * 88);
-      expect(host.querySelector('[data-board-item="Projects/A.md:27"]')).not.toBeNull();
+      expect(
+        Array.from(host.querySelectorAll<HTMLElement>('[data-board-item]')).some(
+          ({ dataset }) => dataset['boardItem'] === finalKey,
+        ),
+      ).toBe(true);
     } finally {
       panel.destroy();
       style.remove();
@@ -2762,7 +2769,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       scroll = container.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
       expect(scroll.scrollTop).toBe(100 * 52);
       const focused = container.querySelector<HTMLElement>(
-        '[data-work-note-path="Work Notes/Work note 103.md"]',
+        '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 103.md"]',
       )!;
       focused.focus();
       panel.refresh();

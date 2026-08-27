@@ -75,7 +75,7 @@ import {
   type CreationResultDescription,
 } from '../ui/taskCommandResult';
 import { openInFile } from '../ui/taskNavigation';
-import { applyTaskPresentationIdentity } from '../ui/taskPresentationIdentity';
+import { applyTaskPresentationIdentity, taskPresentationKey } from '../ui/taskPresentationIdentity';
 import { rootTaskRef, taskNodeLine } from '../ui/taskSelection';
 import { TimedBlockKeyboardQueue } from '../ui/timedBlockKeyboardQueue';
 import { MonthGridView } from '../views/MonthGridView';
@@ -122,6 +122,10 @@ import {
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
 import { renderNextActionControl } from './projects/NextActionControl';
+import type {
+  ProjectTaskCollectionEffect,
+  ProjectTaskCollectionSession,
+} from './projects/ProjectTaskCollectionSession';
 import { ProjectWorkspaceSession } from './projects/ProjectWorkspaceSession';
 import { renderBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
@@ -133,6 +137,7 @@ import {
   type BoardMutation,
 } from './projects/boardProjection';
 import type { TimelinePointRole } from './projects/timelineProjection';
+import type { ProjectChildRenderHandle } from './projects/viewContext';
 import { visibleCalendarDates } from './visibleCalendarDates';
 
 interface TimedBlockFocusLocator {
@@ -148,6 +153,22 @@ interface PendingTimedBlockRestoration {
   readonly queueSequence: number;
   readonly focusSequence: number;
   readonly renderGeneration: number;
+}
+
+type ProjectTaskVirtualRow =
+  | {
+      readonly kind: 'group-header';
+      readonly key: string;
+      readonly label: string;
+      readonly count: number;
+    }
+  | { readonly kind: 'task'; readonly key: string; readonly action: ProjectAction };
+
+interface MountedProjectTaskList {
+  readonly owner: HTMLElement;
+  readonly rows: readonly ProjectTaskVirtualRow[];
+  readonly taskRowIndex: ReadonlyMap<string, number>;
+  renderWindow(): void;
 }
 
 type CalendarCapturePlacement =
@@ -240,6 +261,7 @@ export class CenterPanel {
   private calendarRenderGeneration = 0;
   private taskModal: TaskModal | null = null;
   private selectedTaskKeys = new Set<string>();
+  private selectionLiveEl: HTMLElement | null = null;
   private lastAnnouncedSelectionCount = 0;
   private selectionAnchorKey: string | null = null;
   private selectionFocusKey: string | null = null;
@@ -260,6 +282,8 @@ export class CenterPanel {
   // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
   private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
   private readonly projectWorkspaceSession = new ProjectWorkspaceSession();
+  private projectTaskList: MountedProjectTaskList | null = null;
+  private projectTaskListCleanup: (() => void) | null = null;
   private readonly nextActions: NextActionService | null;
   private readonly captureApplication: (TaskApplicationApi & TaskCaptureApplicationApi) | null;
   private readonly captureTargets: CaptureTargetResolver | null;
@@ -360,6 +384,139 @@ export class CenterPanel {
     }
   }
 
+  private handleCollectionKeyDown(event: KeyboardEvent): void {
+    const projectSession =
+      this.state.get('mode') === 'projects' && this.projectTaskList
+        ? this.projectWorkspaceSession.tasks
+        : null;
+    if (this.clearCollectionSelection(event, projectSession)) return;
+    if (projectSession && this.handleProjectCollectionKey(event, projectSession)) return;
+    this.handleTaskCollectionKey(event);
+  }
+
+  private clearCollectionSelection(
+    event: KeyboardEvent,
+    projectSession: ProjectTaskCollectionSession | null,
+  ): boolean {
+    if (event.key !== 'Escape') return false;
+    const hasSelection =
+      (projectSession?.selectedCount() ?? 0) > 0 ||
+      this.selectedTaskKeys.size > 0 ||
+      this.selectionAnchorKey !== null ||
+      this.selectionFocusKey !== null;
+    if (!hasSelection) return false;
+    projectSession?.clearSelection();
+    this.selectedTaskKeys.clear();
+    this.selectionAnchorKey = null;
+    this.selectionFocusKey = null;
+    this.updateSelectionVisuals();
+    return true;
+  }
+
+  private handleProjectCollectionKey(
+    event: KeyboardEvent,
+    session: ProjectTaskCollectionSession,
+  ): boolean {
+    const keys = new Set(['ArrowDown', 'ArrowUp', 'Home', 'End', 'PageDown', 'PageUp']);
+    if (!keys.has(event.key) || !this.projectTaskList) return false;
+    const target = event.target;
+    if (
+      isRealmHTMLElement(target) &&
+      target.closest(
+        'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-popover',
+      )
+    ) {
+      return true;
+    }
+    event.preventDefault();
+    if (event.key === 'Home' || event.key === 'End') {
+      session.moveFocus({
+        type: event.key === 'Home' ? 'home' : 'end',
+        extendSelection: event.shiftKey,
+      });
+    } else if (event.key === 'PageDown' || event.key === 'PageUp') {
+      session.moveFocus({
+        type: 'page',
+        pages: event.key === 'PageDown' ? 1 : -1,
+        pageSize: Math.max(1, Math.floor(this.projectTaskList.owner.clientHeight / 56)),
+        extendSelection: event.shiftKey,
+      });
+    } else {
+      session.moveFocus({
+        type: 'step',
+        delta: event.key === 'ArrowDown' ? 1 : -1,
+        extendSelection: event.shiftKey,
+      });
+    }
+    this.updateSelectionVisuals();
+    this.applyProjectTaskEffect(session.consumeEffect());
+    return true;
+  }
+
+  private handleTaskCollectionKey(event: KeyboardEvent): void {
+    if (
+      (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') ||
+      this.state.get('mode') !== 'tasks'
+    ) {
+      return;
+    }
+    const target = event.target;
+    if (
+      isRealmHTMLElement(target) &&
+      target.closest(
+        'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-popover',
+      )
+    ) {
+      return;
+    }
+    const keys = this.visibleTaskKeys();
+    if (keys.length === 0) return;
+    event.preventDefault();
+    const targetCard = isRealmHTMLElement(target)
+      ? target.closest<HTMLElement>('.abyss-task-card')
+      : null;
+    const targetKey =
+      targetCard && this.el.contains(targetCard)
+        ? `${targetCard.dataset['filePath'] ?? ''}:${targetCard.dataset['line'] ?? ''}`
+        : null;
+    const detailCard = this.visibleTaskCards().find((card) =>
+      card.classList.contains('is-selected'),
+    );
+    const detailKey = detailCard
+      ? `${detailCard.dataset['filePath'] ?? ''}:${detailCard.dataset['line'] ?? ''}`
+      : null;
+    const currentKey = [this.selectionFocusKey, targetKey, detailKey].find(
+      (candidate): candidate is string => candidate !== null && keys.includes(candidate),
+    );
+    const currentIndex = currentKey ? keys.indexOf(currentKey) : -1;
+    const delta = event.key === 'ArrowDown' ? 1 : -1;
+    let nextIndex: number;
+    if (currentIndex >= 0) {
+      nextIndex = Math.max(0, Math.min(keys.length - 1, currentIndex + delta));
+    } else {
+      nextIndex = event.key === 'ArrowDown' ? 0 : keys.length - 1;
+    }
+    const nextKey = keys[nextIndex];
+    if (!nextKey) return;
+    if (event.shiftKey) {
+      const anchor =
+        this.selectionAnchorKey && keys.includes(this.selectionAnchorKey)
+          ? this.selectionAnchorKey
+          : currentKey;
+      this.selectionAnchorKey = anchor ?? nextKey;
+      this.selectionFocusKey = nextKey;
+      this.replaceRangeSelection(this.selectionAnchorKey, nextKey, keys);
+    } else {
+      this.selectedTaskKeys.clear();
+      this.selectionAnchorKey = nextKey;
+      this.selectionFocusKey = nextKey;
+      this.updateSelectionVisuals();
+      const task = this.taskForKey(nextKey);
+      if (task) this.state.set('taskStack', [task]);
+    }
+    this.focusTaskKey(nextKey);
+  }
+
   mount(container: HTMLElement): void {
     this.el = container;
     this.forecastMenuOwner = createForecastContextMenuOwner(
@@ -393,12 +550,24 @@ export class CenterPanel {
       this.state.on('mode', () => {
         this.cancelStaleListCapture();
         this.cancelKeyboardInteraction();
+        this.selectedTaskKeys.clear();
+        this.selectionAnchorKey = null;
+        this.selectionFocusKey = null;
       }),
       this.state.on('searchQuery', (query) => this.handleSearchQueryChanged(query)),
       this.state.on('taskStack', () => {
         const stack = this.state.get('taskStack');
         const root = stack[0];
         const current = stack[stack.length - 1];
+        if (
+          this.state.get('mode') === 'projects' &&
+          this.projectWorkspaceSession.tasks.orderedActions().length > 0
+        ) {
+          const session = this.projectWorkspaceSession.tasks;
+          if (root) session.setInspector(rootTaskRef(root));
+          else session.setInspector(null);
+          this.applyProjectTaskEffect(session.consumeEffect());
+        }
         this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
           const isSelected =
             root !== undefined &&
@@ -425,81 +594,7 @@ export class CenterPanel {
     );
     this.render();
     this.el.setAttribute('tabindex', '0');
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (
-        e.key === 'Escape' &&
-        (this.selectedTaskKeys.size > 0 ||
-          this.selectionAnchorKey !== null ||
-          this.selectionFocusKey !== null)
-      ) {
-        this.selectedTaskKeys.clear();
-        this.selectionAnchorKey = null;
-        this.selectionFocusKey = null;
-        this.updateSelectionVisuals();
-        return;
-      }
-
-      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-      if (this.state.get('mode') !== 'tasks') return;
-      const target = e.target;
-      if (
-        isRealmHTMLElement(target) &&
-        target.closest(
-          'input, textarea, select, button, a, [contenteditable]:not([contenteditable="false"]), .abyss-status-marker, .abyss-popover',
-        )
-      ) {
-        return;
-      }
-
-      const keys = this.visibleTaskKeys();
-      if (keys.length === 0) return;
-      e.preventDefault();
-
-      const targetCard = isRealmHTMLElement(target)
-        ? target.closest<HTMLElement>('.abyss-task-card')
-        : null;
-      const targetKey =
-        targetCard && this.el.contains(targetCard)
-          ? `${targetCard.dataset['filePath'] ?? ''}:${targetCard.dataset['line'] ?? ''}`
-          : null;
-      const detailCard = this.visibleTaskCards().find((card) =>
-        card.classList.contains('is-selected'),
-      );
-      const detailKey = detailCard
-        ? `${detailCard.dataset['filePath'] ?? ''}:${detailCard.dataset['line'] ?? ''}`
-        : null;
-      const currentKey = [this.selectionFocusKey, targetKey, detailKey].find(
-        (candidate): candidate is string => candidate !== null && keys.includes(candidate),
-      );
-      const delta = e.key === 'ArrowDown' ? 1 : -1;
-      const currentIndex = currentKey ? keys.indexOf(currentKey) : -1;
-      let nextIndex: number;
-      if (currentIndex === -1) {
-        nextIndex = e.key === 'ArrowDown' ? 0 : keys.length - 1;
-      } else {
-        nextIndex = Math.max(0, Math.min(keys.length - 1, currentIndex + delta));
-      }
-      const nextKey = keys[nextIndex];
-      if (!nextKey) return;
-
-      if (e.shiftKey) {
-        const anchor =
-          this.selectionAnchorKey && keys.includes(this.selectionAnchorKey)
-            ? this.selectionAnchorKey
-            : currentKey;
-        this.selectionAnchorKey = anchor ?? nextKey;
-        this.selectionFocusKey = nextKey;
-        this.replaceRangeSelection(this.selectionAnchorKey, nextKey, keys);
-      } else {
-        this.selectedTaskKeys.clear();
-        this.selectionAnchorKey = nextKey;
-        this.selectionFocusKey = nextKey;
-        this.updateSelectionVisuals();
-        const task = this.taskForKey(nextKey);
-        if (task) this.state.set('taskStack', [task]);
-      }
-      this.focusTaskKey(nextKey);
-    };
+    const onKeyDown = (e: KeyboardEvent): void => this.handleCollectionKeyDown(e);
     this.el.addEventListener('keydown', onKeyDown);
     this.offs.push(() => this.el.removeEventListener('keydown', onKeyDown));
     const onFocusIn = (event: FocusEvent): void => {
@@ -509,6 +604,14 @@ export class CenterPanel {
         this.abandonTaskDateFocus();
       }
       if (!isRealmHTMLElement(target)) return;
+      const projectWorkspace = this.el.querySelector<HTMLElement>('[data-project-workspace]');
+      if (
+        this.state.get('mode') === 'projects' &&
+        projectWorkspace &&
+        !projectWorkspace.contains(target)
+      ) {
+        this.projectWorkspaceSession.tasks.intentionalBlur();
+      }
       const ownerDocument = this.el.ownerDocument;
       // Calendar remount removal can leave body as activeElement without emitting focusin. An
       // actual body focusin has already revoked task-date ownership above; timed-block restoration
@@ -581,9 +684,11 @@ export class CenterPanel {
     window.clearTimeout(this.filterDebounce);
     this.offs.forEach((f) => f());
     this.destroyCalendarView();
+    this.destroyProjectTaskList();
     this.destroyProjectsPanel();
     this.md.unload();
     this.el?.empty();
+    this.selectionLiveEl = null;
   }
 
   private destroyProjectsPanel(): void {
@@ -591,29 +696,340 @@ export class CenterPanel {
     this.projectsPanel = null;
   }
 
+  private destroyProjectTaskList(): void {
+    this.projectTaskListCleanup?.();
+    this.projectTaskListCleanup = null;
+    this.projectTaskList = null;
+  }
+
   /** Renders a project's tasks (reusing the card component) plus an add bar that writes into the note. */
   private renderProjectTasks(
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-  ): void {
+  ): ProjectChildRenderHandle {
+    this.destroyProjectTaskList();
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
+    scroll.dataset['virtualScrollOwner'] = 'project-tasks';
     if (actions.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      this.renderProjectTaskCollection(scroll, path, actions);
+      this.mountProjectTaskCollection(scroll, path, actions);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
     this.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender();
+    return {
+      destroy: () => {
+        if (this.projectTaskList?.owner === scroll) this.destroyProjectTaskList();
+        host.empty();
+      },
+    };
+  }
+
+  private projectTaskRows(actions: readonly ProjectAction[]): {
+    readonly rows: readonly ProjectTaskVirtualRow[];
+    readonly orderedActions: readonly ProjectAction[];
+  } {
+    const actionByKey = new Map(
+      actions.map((action) => [taskPresentationKey(action.task.ref), action] as const),
+    );
+    const taskRow = (task: TaskSnapshot): ProjectTaskVirtualRow => {
+      const key = taskPresentationKey(task.ref);
+      const action = actionByKey.get(key);
+      if (!action) throw new Error(`Missing ProjectAction for ${key}`);
+      return { kind: 'task', key, action };
+    };
+    const groupBy = this.settings.projects.view.tasks.groupBy;
+    if (groupBy === 'none') {
+      return {
+        rows: actions.map(({ task }) => taskRow(task)),
+        orderedActions: [...actions],
+      };
+    }
+    const tasks = actions.map(({ task }) => task);
+    const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
+    let groups;
+    switch (groupBy) {
+      case 'date':
+        groups = groupTasksByDate([...tasks], today, tomorrow);
+        break;
+      case 'priority':
+        groups = groupTasksByPriority([...tasks]);
+        break;
+      case 'status':
+        groups = groupTasksByStatus([...tasks], this.statusRegistry);
+        break;
+      case 'tag':
+        groups = groupTasksByTag([...tasks]);
+        break;
+    }
+    const rows: ProjectTaskVirtualRow[] = [];
+    const orderedActions: ProjectAction[] = [];
+    let groupIndex = 0;
+    for (const group of groups) {
+      if (group.tasks.length === 0) continue;
+      rows.push({
+        kind: 'group-header',
+        key: `group:${groupBy}:${String(groupIndex)}:${group.label}`,
+        label: group.label,
+        count: group.tasks.length,
+      });
+      groupIndex += 1;
+      for (const task of group.tasks) {
+        const key = taskPresentationKey(task.ref);
+        const action = actionByKey.get(key);
+        if (!action) throw new Error(`Missing ProjectAction for ${key}`);
+        const row: ProjectTaskVirtualRow = { kind: 'task', key, action };
+        rows.push(row);
+        orderedActions.push(action);
+      }
+    }
+    return { rows, orderedActions };
+  }
+
+  private mountProjectTaskCollection(
+    owner: HTMLElement,
+    projectPath: string,
+    actions: readonly ProjectAction[],
+  ): void {
+    const { rows, orderedActions } = this.projectTaskRows(actions);
+    const session = this.projectWorkspaceSession.tasks;
+    session.setResolver((ref) => this.queries.resolve(ref));
+    session.reconcile(orderedActions);
+    const geometry = this.projectWorkspaceSession.taskListGeometry;
+    const rowKeys = rows.map(({ key }) => key);
+    geometry.setKeys(rowKeys);
+    for (const row of rows) {
+      if (geometry.hasMeasurement(row.key)) continue;
+      let estimate = 56;
+      if (row.kind === 'group-header') estimate = 36;
+      else if (row.action.task.description) estimate = 88;
+      geometry.measure(row.key, estimate);
+    }
+
+    const topSpacer = owner.createDiv({
+      cls: 'abyss-project-virtual-spacer',
+      attr: { 'data-virtual-spacer': 'top', 'aria-hidden': 'true' },
+    });
+    const rowsHost = owner.createDiv({ cls: 'abyss-project-virtual-rows' });
+    const bottomSpacer = owner.createDiv({
+      cls: 'abyss-project-virtual-spacer',
+      attr: { 'data-virtual-spacer': 'bottom', 'aria-hidden': 'true' },
+    });
+    const viewport = this.projectWorkspaceSession.taskListViewport;
+    const viewportExtent = Math.max(1, owner.clientHeight);
+    const seeded = geometry.seed({
+      firstKey: viewport.firstRowKey,
+      firstIndex: viewport.firstIndex,
+      viewportExtent,
+    });
+    owner.dataset['virtualTotalExtent'] = String(seeded.totalExtent);
+    bottomSpacer.style.height = `${String(seeded.totalExtent)}px`;
+    if (seeded.scrollTop > 0) owner.scrollTop = seeded.scrollTop;
+
+    const taskRowIndex = new Map<string, number>();
+    rows.forEach((row, index) => {
+      if (row.kind === 'task') taskRowIndex.set(taskPresentationKey(row.action.task.ref), index);
+    });
+    let rendering = false;
+    let rerenderAfterMeasurement = false;
+    let lastRangeStart = -1;
+    let lastRangeEnd = -1;
+    let renderWindow: () => void = () => {};
+    const captureAnchor = (): {
+      readonly key: string | null;
+      readonly intraRowOffset: number;
+    } => {
+      const range = geometry.range({
+        scrollTop: owner.scrollTop,
+        viewportExtent: Math.max(1, owner.clientHeight),
+      });
+      return {
+        key: rows[range.firstVisible]?.key ?? null,
+        intraRowOffset: owner.scrollTop - geometry.offsetOf(range.firstVisible),
+      };
+    };
+    const restoreAnchor = (anchor: {
+      readonly key: string | null;
+      readonly intraRowOffset: number;
+    }): void => {
+      if (anchor.key === null) return;
+      const index = rowKeys.indexOf(anchor.key);
+      if (index < 0) return;
+      owner.scrollTop = geometry.offsetOf(index) + anchor.intraRowOffset;
+    };
+    const measureRows = (
+      measurements: readonly { readonly element: HTMLElement; readonly extent: number }[],
+    ): void => {
+      if (measurements.length === 0) return;
+      const anchor = captureAnchor();
+      let changed = false;
+      for (const { element, extent } of measurements) {
+        const key = element.dataset['virtualRowKey'];
+        if (key && extent > 0) changed = geometry.measure(key, extent) || changed;
+      }
+      if (!changed) return;
+      restoreAnchor(anchor);
+      lastRangeStart = -1;
+      lastRangeEnd = -1;
+      if (rendering) rerenderAfterMeasurement = true;
+      else renderWindow();
+    };
+    const ResizeObserverCtor = owner.ownerDocument.defaultView?.ResizeObserver;
+    const resizeObserver = ResizeObserverCtor
+      ? new ResizeObserverCtor((entries: ResizeObserverEntry[]) => {
+          measureRows(
+            entries.flatMap((entry) => {
+              if (!isRealmHTMLElement(entry.target)) return [];
+              const borderBox = entry.borderBoxSize?.[0];
+              const extent = borderBox?.blockSize ?? entry.contentRect.height;
+              return [{ element: entry.target, extent }];
+            }),
+          );
+        })
+      : null;
+    renderWindow = (): void => {
+      if (rendering) return;
+      rendering = true;
+      rerenderAfterMeasurement = false;
+      try {
+        const range = geometry.range({
+          scrollTop: owner.scrollTop,
+          viewportExtent: Math.max(1, owner.clientHeight),
+        });
+        viewport.firstIndex = range.firstVisible;
+        viewport.firstRowKey = rows[range.firstVisible]?.key ?? null;
+        owner.dataset['virtualFirstVisible'] = viewport.firstRowKey ?? '';
+        owner.dataset['virtualTotalExtent'] = String(range.totalExtent);
+        topSpacer.style.height = `${String(range.startSpacer)}px`;
+        bottomSpacer.style.height = `${String(range.endSpacer)}px`;
+        if (range.start !== lastRangeStart || range.end !== lastRangeEnd) {
+          resizeObserver?.disconnect();
+          rowsHost.empty();
+          const mountedRows: HTMLElement[] = [];
+          for (let index = range.start; index < range.end; index += 1) {
+            const row = rows[index]!;
+            if (row.kind === 'group-header') {
+              const element = rowsHost.createDiv({
+                cls:
+                  index === 0
+                    ? 'abyss-group-header abyss-group-header--first'
+                    : 'abyss-group-header',
+                text: `${row.label}  ${String(row.count)}`,
+                attr: {
+                  'data-virtual-row-kind': 'group-header',
+                  'data-virtual-row-key': row.key,
+                  'data-virtual-row-index': String(index),
+                },
+              });
+              mountedRows.push(element);
+            } else {
+              const card = this.renderTaskCard(rowsHost, row.action.task, {
+                projectPath,
+                dependencyDecision: row.action.dependency,
+                projectTaskCollection: true,
+              });
+              card.dataset['virtualRowKind'] = 'task';
+              card.dataset['virtualRowKey'] = row.key;
+              card.dataset['virtualRowIndex'] = String(index);
+              mountedRows.push(card);
+            }
+          }
+          for (const element of mountedRows) resizeObserver?.observe(element);
+          lastRangeStart = range.start;
+          lastRangeEnd = range.end;
+          this.updateSelectionVisuals();
+          measureRows(
+            mountedRows.map((element) => ({
+              element,
+              extent: element.getBoundingClientRect().height,
+            })),
+          );
+        }
+      } finally {
+        rendering = false;
+      }
+      if (rerenderAfterMeasurement) renderWindow();
+    };
+    const onScroll = (): void => renderWindow();
+    const onResize = (): void => {
+      lastRangeStart = -1;
+      lastRangeEnd = -1;
+      renderWindow();
+    };
+    const ownerResizeObserver = ResizeObserverCtor
+      ? new ResizeObserverCtor(() => onResize())
+      : null;
+    owner.addEventListener('scroll', onScroll);
+    owner.ownerDocument.defaultView?.addEventListener('resize', onResize);
+    ownerResizeObserver?.observe(owner);
+    this.projectTaskList = { owner, rows, taskRowIndex, renderWindow };
+    this.projectTaskListCleanup = () => {
+      resizeObserver?.disconnect();
+      ownerResizeObserver?.disconnect();
+      owner.removeEventListener('scroll', onScroll);
+      owner.ownerDocument.defaultView?.removeEventListener('resize', onResize);
+    };
+    renderWindow();
+    this.applyProjectTaskEffect(session.consumeEffect() ?? session.restoreEffect());
+  }
+
+  private applyProjectTaskEffect(effect: ProjectTaskCollectionEffect | null): void {
+    if (!effect) return;
+    const mounted = this.projectTaskList;
+    if (mounted && effect.scrollTo) {
+      const rowIndex = mounted.taskRowIndex.get(taskPresentationKey(effect.scrollTo));
+      if (rowIndex !== undefined) {
+        const geometry = this.projectWorkspaceSession.taskListGeometry;
+        const rowTop = geometry.offsetOf(rowIndex);
+        const rowBottom = rowTop + geometry.extentOf(mounted.rows[rowIndex]!.key);
+        const viewportBottom = mounted.owner.scrollTop + mounted.owner.clientHeight;
+        if (rowTop < mounted.owner.scrollTop) mounted.owner.scrollTop = rowTop;
+        else if (rowBottom > viewportBottom) {
+          mounted.owner.scrollTop = Math.max(0, rowBottom - mounted.owner.clientHeight);
+        }
+        mounted.renderWindow();
+      }
+    }
+    if (mounted && effect.focus) {
+      const wanted = taskPresentationKey(effect.focus);
+      const cards = Array.from(mounted.owner.querySelectorAll<HTMLElement>('.abyss-task-card'));
+      for (const card of cards) card.tabIndex = -1;
+      const target = cards.find((card) => card.getAttribute('data-abyss-task-ref-key') === wanted);
+      if (target) {
+        target.tabIndex = 0;
+        target.focus({ preventScroll: true });
+      }
+    }
+    if ('inspect' in effect) {
+      const action = effect.inspect
+        ? this.projectWorkspaceSession.tasks.actionForRef(effect.inspect)
+        : undefined;
+      this.state.set('taskStack', action ? [action.task] : []);
+    }
+    if (effect.notice) {
+      const live = this.selectionLiveRegion();
+      const message =
+        effect.notice === 'focused-item-ambiguous'
+          ? 'Focused task is ambiguous and is no longer selected'
+          : 'Focused task is no longer available';
+      if (live.textContent !== message) live.textContent = message;
+    }
   }
 
   private renderProjectTaskBoard(
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-  ): void {
+  ): ProjectChildRenderHandle {
+    this.destroyProjectTaskList();
+    const session = this.projectWorkspaceSession.tasks;
+    session.setResolver((ref) => this.queries.resolve(ref));
+    session.reconcile(actions);
+    let board: ProjectChildRenderHandle | null = null;
     if (actions.length === 0) {
       host.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
@@ -626,22 +1042,39 @@ export class CenterPanel {
           )
           .map(({ id }) => id),
       );
-      renderBoard(host, {
+      const boardHost = host.createDiv();
+      board = renderBoard(boardHost, {
         columns: projectActionBoardColumns(statuses, actions),
         visibleColumnKeys: visibleStatusIds,
         mutation: this.projectActionBoardMutation(),
-        itemKey: ({ task }) => this.taskKey(task),
+        itemKey: ({ task }) => taskPresentationKey(task.ref),
         manageStatusMenu: false,
+        focusedItemKey: () => {
+          const focused = session.focusedRef();
+          return focused ? taskPresentationKey(focused) : null;
+        },
+        shouldRestoreItemFocus: () => session.shouldRestoreFocus(),
+        onItemFocus: ({ task }) => session.focusOnly(task.ref),
+        onItemBlur: () => session.intentionalBlur(),
         renderItem: (container, action) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
             dependencyDecision: action.dependency,
+            projectTaskCollection: true,
           }),
       });
     }
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
     this.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender();
+    this.updateSelectionVisuals();
+    this.applyProjectTaskEffect(session.consumeEffect());
+    return {
+      destroy: () => {
+        board?.destroy();
+        host.empty();
+      },
+    };
   }
 
   private async setProjectTimelineTaskDate(
@@ -676,19 +1109,32 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-  ): void {
-    renderTasksTimeline(host, {
+  ): ProjectChildRenderHandle {
+    this.destroyProjectTaskList();
+    const session = this.projectWorkspaceSession.tasks;
+    session.setResolver((ref) => this.queries.resolve(ref));
+    session.reconcile(actions);
+    const timeline = renderTasksTimeline(host, {
       actions,
-      session: this.projectWorkspaceSession.timelines.tasks,
+      collectionSession: session,
       renderTask: (identity, action) => {
         this.renderTaskCard(identity, action.task, {
           projectPath: path,
           dependencyDecision: action.dependency,
+          projectTaskCollection: true,
         });
       },
       onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
     });
     this.completeTaskCardRender();
+    this.updateSelectionVisuals();
+    this.applyProjectTaskEffect(session.consumeEffect());
+    return {
+      destroy: () => {
+        timeline.destroy();
+        host.empty();
+      },
+    };
   }
 
   private projectActionBoardMutation(): BoardMutation<ProjectAction> {
@@ -702,53 +1148,6 @@ export class CenterPanel {
     return createTaskBoardMutation(this.statusRegistry.all(), (task, symbol) =>
       this.setTaskStatus(task, symbol),
     );
-  }
-
-  private renderProjectTaskCollection(
-    container: HTMLElement,
-    projectPath: string,
-    actions: readonly ProjectAction[],
-  ): void {
-    const tasks = actions.map(({ task }) => task);
-    const actionByKey = new Map(actions.map((action) => [this.taskKey(action.task), action]));
-    const render = (task: TaskSnapshot): void => {
-      this.renderTaskCard(container, task, {
-        projectPath,
-        dependencyDecision: actionByKey.get(this.taskKey(task))?.dependency,
-      });
-    };
-    const groupBy = this.settings.projects.view.tasks.groupBy;
-    if (groupBy === 'none') {
-      for (const task of tasks) render(task);
-      return;
-    }
-    const today = localDate(window.moment().format('YYYY-MM-DD'));
-    const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
-    let groups;
-    switch (groupBy) {
-      case 'date':
-        groups = groupTasksByDate([...tasks], today, tomorrow);
-        break;
-      case 'priority':
-        groups = groupTasksByPriority([...tasks]);
-        break;
-      case 'status':
-        groups = groupTasksByStatus([...tasks], this.statusRegistry);
-        break;
-      case 'tag':
-        groups = groupTasksByTag([...tasks]);
-        break;
-    }
-    let first = true;
-    for (const group of groups) {
-      if (group.tasks.length === 0) continue;
-      container.createDiv({
-        cls: first ? 'abyss-group-header abyss-group-header--first' : 'abyss-group-header',
-        text: `${group.label}  ${group.tasks.length}`,
-      });
-      first = false;
-      for (const task of group.tasks) render(task);
-    }
   }
 
   private destroyCalendarView(): void {
@@ -816,6 +1215,7 @@ export class CenterPanel {
     this.dismissRecurrenceEditor();
     this.viewStatePopoverCleanup?.();
     this.clearSearchShell();
+    this.destroyProjectTaskList();
 
     const mode = this.state.get('mode');
 
@@ -883,6 +1283,9 @@ export class CenterPanel {
             workNoteCommands: this.workNoteCommands,
             projectCommands: this.projectCommands,
             workspaceSession: this.projectWorkspaceSession,
+            onAnnounce: (message) => {
+              this.selectionLiveRegion().textContent = message;
+            },
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never
@@ -1878,6 +2281,7 @@ export class CenterPanel {
       readonly manageStatusMenu?: boolean;
       readonly manageStatusMarker?: boolean;
       readonly dependencyDecision?: DependencyCompletionDecision;
+      readonly projectTaskCollection?: boolean;
     } = {},
   ): HTMLElement {
     const dependencyDecision =
@@ -2067,6 +2471,16 @@ export class CenterPanel {
     card.addEventListener('click', (e) => {
       const key = this.taskKey(task);
 
+      if (context.projectTaskCollection) {
+        const session = this.projectWorkspaceSession.tasks;
+        if (e.ctrlKey || e.metaKey) session.toggle(task.ref);
+        else if (e.shiftKey) session.extendTo(task.ref);
+        else session.activate(task.ref);
+        this.updateSelectionVisuals();
+        this.applyProjectTaskEffect(session.consumeEffect());
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey) {
         // Ctrl/Cmd+Click: toggle this task in selection
         if (this.selectedTaskKeys.has(key)) {
@@ -2174,18 +2588,37 @@ export class CenterPanel {
         e.preventDefault();
         const key = this.taskKey(task);
 
-        // If right-clicking an unselected card while others are selected → clear and show single menu
-        if (this.selectedTaskKeys.size > 0 && !this.selectedTaskKeys.has(key)) {
-          this.selectedTaskKeys.clear();
-          this.selectionAnchorKey = null;
-          this.selectionFocusKey = null;
-          this.updateSelectionVisuals();
+        if (context.projectTaskCollection) {
+          const session = this.projectWorkspaceSession.tasks;
+          if (session.selectedCount() > 0 && !session.isSelected(task.ref)) {
+            session.clearSelection();
+            this.updateSelectionVisuals();
+          }
+          const selected = session.selectedActions();
+          if (selected.length >= 2) {
+            this.showBulkContextMenu(
+              e,
+              card,
+              selected.map(({ task: selectedTask }) => selectedTask),
+            );
+            return;
+          }
         }
 
-        // ── BULK MENU (2+ tasks selected) ─────────────────────
-        if (this.selectedTaskKeys.size >= 2) {
-          this.showBulkContextMenu(e, card);
-          return;
+        if (!context.projectTaskCollection) {
+          // If right-clicking an unselected card while others are selected → clear and show single menu
+          if (this.selectedTaskKeys.size > 0 && !this.selectedTaskKeys.has(key)) {
+            this.selectedTaskKeys.clear();
+            this.selectionAnchorKey = null;
+            this.selectionFocusKey = null;
+            this.updateSelectionVisuals();
+          }
+
+          // ── BULK MENU (2+ tasks selected) ─────────────────────
+          if (this.selectedTaskKeys.size >= 2) {
+            this.showBulkContextMenu(e, card);
+            return;
+          }
         }
 
         // ── SINGLE TASK MENU ─────────────────────────────────
@@ -2487,17 +2920,17 @@ export class CenterPanel {
     ).open();
   }
 
-  private showBulkContextMenu(e: MouseEvent, _card: HTMLElement): void {
-    const selectedKeys = this.visibleTaskKeys().filter((key) => this.selectedTaskKeys.has(key));
-    const allTasks = [...this.queries.list()];
-    const selectedTasks = selectedKeys
-      .map((k) => {
-        const lastColon = k.lastIndexOf(':');
-        const fp = k.slice(0, lastColon);
-        const lineNum = parseInt(k.slice(lastColon + 1), 10);
-        return allTasks.find((t) => t.source.filePath === fp && t.source.line === lineNum);
-      })
-      .filter((t) => t !== undefined);
+  private showBulkContextMenu(
+    e: MouseEvent,
+    _card: HTMLElement,
+    projectSelectedTasks?: readonly TaskSnapshot[],
+  ): void {
+    const selectedTasks = projectSelectedTasks
+      ? [...projectSelectedTasks]
+      : this.visibleTaskKeys()
+          .filter((key) => this.selectedTaskKeys.has(key))
+          .map((key) => this.taskForKey(key))
+          .filter((task): task is TaskSnapshot => task !== undefined);
 
     const menu = new Menu();
     const today = localDate(window.moment().format('YYYY-MM-DD'));
@@ -3863,10 +4296,25 @@ export class CenterPanel {
   }
 
   private updateSelectionVisuals(): void {
+    const projectWorkspaceActive =
+      this.state.get('mode') === 'projects' &&
+      this.projectWorkspaceSession.tasks.orderedActions().length > 0;
+    const projectSelection = projectWorkspaceActive
+      ? new Set(
+          this.projectWorkspaceSession.tasks
+            .selectedActions()
+            .map(({ task }) => taskPresentationKey(task.ref)),
+        )
+      : null;
     this.el.querySelectorAll<HTMLElement>('.abyss-task-card').forEach((card) => {
       const key = `${card.dataset['filePath'] ?? ''}:${card.dataset['line'] ?? ''}`;
-      const isSelected = this.selectedTaskKeys.has(key);
-      const selectedStateId = `abyss-selected-state-${encodeURIComponent(key)}`;
+      const presentationKey = card.getAttribute('data-abyss-task-ref-key') ?? key;
+      const isProjectCard = card.closest('[data-project-workspace]') !== null;
+      const isSelected =
+        projectSelection && isProjectCard
+          ? projectSelection.has(presentationKey)
+          : this.selectedTaskKeys.has(key);
+      const selectedStateId = `abyss-selected-state-${encodeURIComponent(presentationKey)}`;
       const selectedState = card.querySelector<HTMLElement>('.abyss-selected-state');
       card.classList.toggle('abyss-multi-selected', isSelected);
 
@@ -3894,17 +4342,26 @@ export class CenterPanel {
       }
     });
 
-    const live =
-      this.el.querySelector<HTMLElement>('.abyss-selection-live') ??
-      this.el.createDiv({
-        cls: 'abyss-selection-live abyss-sr-only',
-        attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
-      });
-    const count = this.selectedTaskKeys.size;
+    const live = this.selectionLiveRegion();
+    const count = projectWorkspaceActive
+      ? this.projectWorkspaceSession.tasks.selectedCount()
+      : this.selectedTaskKeys.size;
     if (count !== this.lastAnnouncedSelectionCount) {
       this.lastAnnouncedSelectionCount = count;
       live.textContent = `${count} ${count === 1 ? 'task' : 'tasks'} selected`;
     }
+  }
+
+  private selectionLiveRegion(): HTMLElement {
+    const live = this.selectionLiveEl ?? this.el.ownerDocument.createElement('div');
+    if (this.selectionLiveEl === null) {
+      live.className = 'abyss-selection-live abyss-sr-only';
+      live.setAttribute('aria-live', 'polite');
+      live.setAttribute('aria-atomic', 'true');
+      this.selectionLiveEl = live;
+    }
+    if (!live.isConnected || live.parentElement !== this.el) this.el.append(live);
+    return live;
   }
 
   private async setPriority(

@@ -1,4 +1,6 @@
+import { MeasuredWindow } from './BoundedWindow';
 import type { ProjectWorkspaceLayout, ProjectWorkspaceScope } from './ProjectsDashboardView';
+import { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
 
 export interface LogicalViewportSession {
   firstKey: string | null;
@@ -17,6 +19,8 @@ export interface WorkNoteBoardSession {
 export interface WorkNotesSession {
   readonly list: LogicalViewportSession;
   readonly board: WorkNoteBoardSession;
+  pendingCreatedPath: string | null;
+  inspectorPath: string | null;
 }
 
 function viewport(): LogicalViewportSession {
@@ -49,8 +53,18 @@ export class ProjectWorkspaceSession {
   private projectPath: string | null = null;
   scope: ProjectWorkspaceScope = 'tasks';
   layout: ProjectWorkspaceLayout = 'list';
+  /** Sole logical authority for Project Tasks/List selection, focus, inspector, and bulk inputs. */
+  readonly tasks = new ProjectTaskCollectionSession();
+  /** Geometry-only companion; it never owns semantic selection or focus. */
+  readonly taskListGeometry = new MeasuredWindow<string>([], {
+    estimateExtent: 56,
+    overscan: 8,
+  });
+  readonly taskListViewport = { firstRowKey: null as string | null, firstIndex: 0 };
   readonly workNotes: WorkNotesSession = {
     list: viewport(),
+    pendingCreatedPath: null,
+    inspectorPath: null,
     board: {
       selectedColumnKey: null,
       focusedKey: null,
@@ -64,6 +78,13 @@ export class ProjectWorkspaceSession {
   };
   /** Portfolio continuity is independent of whichever Project workspace is open. */
   readonly portfolioTimeline = viewport();
+  /** Portfolio Board continuity is independent of Project dashboard scope/layout state. */
+  readonly portfolioBoard: WorkNoteBoardSession = {
+    selectedColumnKey: null,
+    focusedKey: null,
+    restoreFocus: false,
+    columns: {},
+  };
 
   openProject(path: string): void {
     if (this.projectPath === path) return;
@@ -79,7 +100,13 @@ export class ProjectWorkspaceSession {
   private reset(): void {
     this.scope = 'tasks';
     this.layout = 'list';
+    this.tasks.reset();
+    this.taskListGeometry.setKeys([]);
+    this.taskListViewport.firstRowKey = null;
+    this.taskListViewport.firstIndex = 0;
     Object.assign(this.workNotes.list, viewport());
+    this.workNotes.pendingCreatedPath = null;
+    this.workNotes.inspectorPath = null;
     this.workNotes.board.selectedColumnKey = null;
     this.workNotes.board.focusedKey = null;
     this.workNotes.board.restoreFocus = false;

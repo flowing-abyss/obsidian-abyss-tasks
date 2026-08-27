@@ -1,13 +1,22 @@
-import { describe, expect, it, vi } from 'vitest';
-import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
+import { Menu, type MenuItem } from 'obsidian';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   projectActionBoardColumns,
   type BoardColumn,
   type BoardMutation,
 } from '../src/panels/projects/boardProjection';
+import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
+import type { WorkNoteBoardSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectAction } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { flushMicrotasks, freshContainer, task } from './helpers';
+import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  activeDocument
+    .querySelectorAll('[data-board-roving-test]')
+    .forEach((element) => element.remove());
+});
 
 interface Item {
   readonly id: string;
@@ -23,6 +32,255 @@ function column(
 }
 
 describe('shared board view', () => {
+  it('exposes one roving selected tab/tabpanel and reaches both terminal bookends by keyboard', () => {
+    const el = freshContainer();
+    el.dataset['boardRovingTest'] = '';
+    activeDocument.body.appendChild(el);
+    renderBoard(el, {
+      columns: [
+        column('dropped', 'terminal-left'),
+        column('active', 'regular', [{ id: 'a', name: 'A' }]),
+        column('published', 'terminal-right'),
+      ],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+
+    const tabs = Array.from(el.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.map(({ dataset }) => dataset['boardColumnTab'])).toEqual([
+      'dropped',
+      'active',
+      'published',
+    ]);
+    expect(tabs.filter(({ tabIndex }) => tabIndex === 0)).toHaveLength(1);
+    expect(tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true')).toHaveLength(1);
+    expect(el.querySelectorAll('[role="tabpanel"][data-selected-column="true"]')).toHaveLength(1);
+    for (const tab of tabs) {
+      const key = tab.dataset['boardColumnTab']!;
+      const panel = el.querySelector<HTMLElement>(`[role="tabpanel"][data-board-column="${key}"]`)!;
+      expect(tab.getAttribute('aria-controls')).toBe(panel.id);
+      expect(panel.getAttribute('aria-labelledby')).toBe(tab.id);
+    }
+
+    tabs[0]!.focus();
+    tabs[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    const published = el.querySelector<HTMLButtonElement>('[data-board-column-tab="published"]')!;
+    expect(activeDocument.activeElement).toBe(published);
+    expect(published.getAttribute('aria-selected')).toBe('true');
+    published.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }));
+    expect(activeDocument.activeElement?.getAttribute('data-board-column-tab')).toBe('dropped');
+    for (const [key, name] of [
+      ['dropped', '0 items in dropped'],
+      ['active', '1 item in active'],
+      ['published', '0 items in published'],
+    ] as const) {
+      expect(
+        el
+          .querySelector(`[data-board-column="${key}"] .abyss-board-column-count`)
+          ?.getAttribute('aria-label'),
+      ).toBe(name);
+    }
+  });
+
+  it('offers the same status menu through an explicit compact touch affordance', async () => {
+    const item = { id: 'a', name: 'A' };
+    const move = vi.fn().mockResolvedValue({ type: 'ok' });
+    const menuItems: Array<{
+      title: string;
+      icon: string;
+      checked: boolean;
+      disabled: boolean;
+      activate: () => void;
+    }> = [];
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      let title = '';
+      let icon = '';
+      let checked = false;
+      let disabled = false;
+      let activate = (): void => undefined;
+      const menuItem = {
+        setTitle(value: string) {
+          title = value;
+          return this;
+        },
+        setIcon(value: string) {
+          icon = value;
+          return this;
+        },
+        setChecked(value: boolean) {
+          checked = value;
+          return this;
+        },
+        setDisabled(value: boolean) {
+          disabled = value;
+          return this;
+        },
+        onClick(callback: () => void) {
+          activate = callback;
+          menuItems.push({
+            get title() {
+              return title;
+            },
+            get icon() {
+              return icon;
+            },
+            get checked() {
+              return checked;
+            },
+            get disabled() {
+              return disabled;
+            },
+            activate: () => activate(),
+          });
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(menuItem);
+      return this;
+    });
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('published', 'terminal-right')],
+      mutation: {
+        move,
+        menuItems: () => [
+          {
+            columnKey: 'published',
+            label: 'Published',
+            icon: 'send',
+            checked: false,
+            disabled: false,
+          },
+          {
+            columnKey: 'active',
+            label: 'Active',
+            icon: 'circle',
+            checked: true,
+            disabled: true,
+          },
+        ],
+      },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+
+    const affordance = el.querySelector<HTMLButtonElement>('[data-board-status-menu="a"]')!;
+    expect(affordance).toBeInstanceOf(HTMLButtonElement);
+    expect(affordance.getAttribute('aria-label')).toBe('Change status');
+    expect(affordance.getAttribute('title')).toBe('Change status');
+    affordance.click();
+    expect(show).toHaveBeenCalledOnce();
+    expect(
+      menuItems.map(({ title, icon, checked, disabled }) => ({ title, icon, checked, disabled })),
+    ).toEqual([
+      { title: 'Published', icon: 'send', checked: false, disabled: false },
+      { title: 'Active', icon: 'circle', checked: true, disabled: true },
+    ]);
+    const clickModel = menuItems.map(({ title, icon, checked, disabled }) => ({
+      title,
+      icon,
+      checked,
+      disabled,
+    }));
+    menuItems.length = 0;
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    expect(
+      menuItems.map(({ title, icon, checked, disabled }) => ({ title, icon, checked, disabled })),
+    ).toEqual(clickModel);
+    menuItems[0]!.activate();
+    await flushMicrotasks();
+    expect(move).toHaveBeenCalledWith(item, 'published');
+  });
+
+  it.each(['outside control', 'Board tab'] as const)(
+    'does not resurrect a card when an async move settles after focus moved to %s',
+    async (destination) => {
+      const pending = deferred<{
+        type: 'ok';
+        previousStatusId: null;
+        nextStatusId: string;
+      }>();
+      const session: WorkNoteBoardSession = {
+        selectedColumnKey: null,
+        focusedKey: null,
+        restoreFocus: false,
+        columns: {},
+      };
+      const root = freshContainer();
+      const outside = activeDocument.body.createEl('button');
+      activeDocument.body.appendChild(root);
+      renderBoard(root, {
+        columns: [
+          column('active', 'regular', [{ id: 'a', name: 'A' }]),
+          column('published', 'terminal-right'),
+        ],
+        mutation: { move: () => pending.promise, menuItems: () => [] },
+        itemKey: ({ id }) => id,
+        renderItem: (host, current) => host.createEl('button', { text: current.name }),
+        session,
+      });
+      const card = root.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+      card.focus();
+      expect(activeDocument.activeElement).toBe(card);
+      card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      root
+        .querySelector<HTMLElement>('[data-board-column="published"]')!
+        .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      const target =
+        destination === 'Board tab'
+          ? root.querySelector<HTMLButtonElement>('[data-board-column-tab="published"]')!
+          : outside;
+      target.focus();
+      await flushMicrotasks();
+      pending.resolve({ type: 'ok', previousStatusId: null, nextStatusId: 'published' });
+      await flushMicrotasks();
+
+      const replacementTarget =
+        destination === 'Board tab'
+          ? root.querySelector<HTMLButtonElement>('[data-board-column-tab="published"]')
+          : outside;
+      expect(activeDocument.activeElement).toBe(replacementTarget);
+      root.remove();
+      outside.remove();
+    },
+  );
+
+  it('revokes Board-owned focus after intentional blur and never resurrects the old card', async () => {
+    const session: WorkNoteBoardSession = {
+      selectedColumnKey: null,
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    };
+    const el = freshContainer();
+    const outside = activeDocument.createElement('button');
+    activeDocument.body.append(el, outside);
+    const options = {
+      columns: [column('active', 'regular', [{ id: 'a', name: 'A' }])],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }: Item) => id,
+      renderItem: (host: HTMLElement, current: Item) => host.createDiv({ text: current.name }),
+      session,
+    };
+    const handle = renderBoard(el, options);
+    const cardControl = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    cardControl.focus();
+    expect(activeDocument.activeElement).toBe(cardControl);
+    outside.focus();
+    await flushMicrotasks();
+
+    expect(session.restoreFocus).toBe(false);
+    handle.destroy();
+    renderBoard(el, options);
+    expect(activeDocument.activeElement).toBe(outside);
+    el.remove();
+    outside.remove();
+  });
+
   it('keeps the dependency projection attached to Project actions through board columns', () => {
     const current = task({ title: 'Blocked project task' });
     const action: ProjectAction = {

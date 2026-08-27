@@ -1,4 +1,4 @@
-import { Menu } from 'obsidian';
+import { Menu, setIcon } from 'obsidian';
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type {
@@ -24,6 +24,7 @@ import type { ProjectsListContext } from './viewContext';
 const BOARD_ITEM_EXTENT = 88;
 const BOARD_FALLBACK_VISIBLE_ITEMS = 10;
 const BOARD_OVERSCAN = 4;
+let nextBoardId = 0;
 
 export interface BoardViewOptions<T> {
   readonly columns: readonly BoardColumn<T>[];
@@ -38,6 +39,11 @@ export interface BoardViewOptions<T> {
     initiator: HTMLElement,
   ) => Promise<BoardMutationResult>;
   readonly session?: WorkNoteBoardSession;
+  /** Semantic collection focus owned outside Board geometry (for Project Tasks). */
+  readonly focusedItemKey?: () => string | null;
+  readonly shouldRestoreItemFocus?: () => boolean;
+  readonly onItemFocus?: (item: T) => void;
+  readonly onItemBlur?: () => void;
   readonly initialUndo?: {
     readonly item: T;
     readonly columnKey: string;
@@ -79,6 +85,14 @@ function isProjectStatusMove(
   return result !== undefined && result.type === 'ok' && 'nextStatusId' in result;
 }
 
+function adjacentTabIndex(key: string, current: number, count: number): number | null {
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowLeft') return Math.max(0, current - 1);
+  if (key === 'ArrowRight') return Math.min(count - 1, current + 1);
+  return null;
+}
+
 /** Semantically neutral, bounded Kanban shell shared by Project and Task adapters. */
 /* eslint-disable sonarjs/no-nested-functions -- Per-column DOM listeners share the bounded window lifecycle. */
 export function renderBoard<T>(
@@ -86,6 +100,7 @@ export function renderBoard<T>(
   options: BoardViewOptions<T>,
 ): BoardViewHandle {
   container.addClass('abyss-board');
+  const boardId = `abyss-board-${String(++nextBoardId)}`;
   const overrides = new Map<string, string>();
   let dragging: { readonly item: T; readonly initiator: HTMLElement } | null = null;
   const selectedFromSession = options.session?.selectedColumnKey;
@@ -105,6 +120,25 @@ export function renderBoard<T>(
     readonly result: BoardMutationResult;
   } | null = options.initialUndo ?? null;
   const cleanups: Array<() => void> = [];
+
+  const showStatusMenu = (event: MouseEvent, item: T, initiator: HTMLElement): void => {
+    const actions = options.mutation.menuItems(item);
+    if (actions.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const menu = new Menu();
+    for (const action of actions) {
+      menu.addItem((menuItem) =>
+        menuItem
+          .setTitle(action.label)
+          .setIcon(action.icon)
+          .setChecked(action.checked)
+          .setDisabled(action.disabled)
+          .onClick(() => commitMove(item, action.columnKey, initiator)),
+      );
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  };
 
   const projectedItems = (column: BoardColumn<T>): readonly T[] => {
     const retained = column.items.filter((item) => {
@@ -132,6 +166,7 @@ export function renderBoard<T>(
     const pending = options.executeMutation?.(command, initiator) ?? command();
     void pending
       .then((result) => {
+        if (destroyed) return;
         if (!successful(result)) return;
         overrides.set(options.itemKey(item), columnKey);
         dragging = null;
@@ -142,30 +177,39 @@ export function renderBoard<T>(
       .catch(() => undefined);
   };
 
+  const renderUndo = (): void => {
+    if (!undoPending || !options.undo) return;
+    const pending = undoPending;
+    const undo = container.createEl('button', {
+      cls: 'abyss-board-undo',
+      text: 'Undo',
+      attr: { type: 'button', 'data-board-undo': '' },
+    });
+    undo.addEventListener('click', () => {
+      void options.undo?.(pending.item, pending.columnKey, pending.result).then((result) => {
+        if (destroyed) return;
+        if (!successful(result)) return;
+        overrides.delete(options.itemKey(pending.item));
+        undoPending = null;
+        render();
+      });
+    });
+  };
+
   const render = (): void => {
+    const focusedTabKey =
+      container.ownerDocument.activeElement?.getAttribute('data-board-column-tab');
     for (const cleanup of cleanups.splice(0)) cleanup();
     container.empty();
-    if (undoPending && options.undo) {
-      const pending = undoPending;
-      const undo = container.createEl('button', {
-        cls: 'abyss-board-undo',
-        text: 'Undo',
-        attr: { type: 'button', 'data-board-undo': '' },
-      });
-      undo.addEventListener('click', () => {
-        void options.undo?.(pending.item, pending.columnKey, pending.result).then((result) => {
-          if (!successful(result)) return;
-          overrides.delete(options.itemKey(pending.item));
-          undoPending = null;
-          render();
-        });
-      });
-    }
+    renderUndo();
     const tabs = container.createDiv({
       cls: 'abyss-board-column-tabs',
       attr: { role: 'tablist', 'aria-label': 'Board columns' },
     });
     const board = container.createDiv({ cls: 'abyss-board-columns' });
+    const tabColumns = options.columns.filter(
+      (column) => options.visibleColumnKeys?.has(column.key) !== false,
+    );
 
     const setDraggingState = (active: boolean): void => {
       board.classList.toggle('is-drag-active', active);
@@ -187,12 +231,17 @@ export function renderBoard<T>(
       const terminal = column.role === 'terminal-left' || column.role === 'terminal-right';
       if (!visible && !terminal) continue;
       if (visible || !terminal) {
+        const tabId = `${boardId}-tab-${column.key.replace(/[^a-zA-Z0-9_-]/gu, '-')}`;
+        const panelId = `${boardId}-panel-${column.key.replace(/[^a-zA-Z0-9_-]/gu, '-')}`;
         const tab = tabs.createEl('button', {
           cls: `abyss-board-column-tab${selectedColumnKey === column.key ? ' is-active' : ''}`,
           text: column.label,
           attr: {
             type: 'button',
             role: 'tab',
+            id: tabId,
+            tabindex: selectedColumnKey === column.key ? '0' : '-1',
+            'aria-controls': panelId,
             'aria-selected': String(selectedColumnKey === column.key),
             'data-board-column-tab': column.key,
           },
@@ -202,8 +251,23 @@ export function renderBoard<T>(
           if (options.session) options.session.selectedColumnKey = column.key;
           render();
         });
+        tab.addEventListener('keydown', (event) => {
+          const current = tabColumns.findIndex(({ key }) => key === column.key);
+          const next = adjacentTabIndex(event.key, current, tabColumns.length);
+          if (next === null) return;
+          event.preventDefault();
+          const nextColumn = tabColumns[next];
+          if (!nextColumn) return;
+          selectedColumnKey = nextColumn.key;
+          if (options.session) options.session.selectedColumnKey = nextColumn.key;
+          render();
+          container
+            .querySelector<HTMLElement>(`[data-board-column-tab="${nextColumn.key}"]`)
+            ?.focus({ preventScroll: true });
+        });
       }
 
+      const columnToken = column.key.replace(/[^a-zA-Z0-9_-]/gu, '-');
       const columnEl = board.createDiv({
         cls: `abyss-board-column${selectedColumnKey === column.key ? ' is-active' : ''}${
           !visible && terminal ? ' is-collapsed' : ''
@@ -211,13 +275,23 @@ export function renderBoard<T>(
         attr: {
           'data-board-column': column.key,
           'data-board-column-role': column.role,
+          'data-selected-column': String(selectedColumnKey === column.key),
+          role: 'tabpanel',
+          id: `${boardId}-panel-${columnToken}`,
+          'aria-labelledby': `${boardId}-tab-${columnToken}`,
           ...(terminal && !visible ? { 'data-terminal-filtered': 'true' } : {}),
         },
       });
       const items = visible ? projectedItems(column) : [];
       const header = columnEl.createDiv({ cls: 'abyss-board-column-header' });
       header.createSpan({ cls: 'abyss-board-column-label', text: column.label });
-      header.createSpan({ cls: 'abyss-board-column-count', text: String(items.length) });
+      header.createSpan({
+        cls: 'abyss-board-column-count',
+        text: String(items.length),
+        attr: {
+          'aria-label': `${String(items.length)} item${items.length === 1 ? '' : 's'} in ${column.label}`,
+        },
+      });
       const scroll = columnEl.createDiv({ cls: 'abyss-board-column-scroll' });
       const itemsHost = scroll.createDiv({
         cls: 'abyss-board-items',
@@ -229,7 +303,7 @@ export function renderBoard<T>(
         options.session,
         column.key,
       );
-      const focusedKey = options.session?.focusedKey;
+      const focusedKey = options.focusedItemKey?.() ?? options.session?.focusedKey;
       if (focusedKey) bounded.focus(focusedKey);
       const initialFirst = logicalViewportFirst(sessionColumn, keys);
       scroll.scrollTop = initialFirst * BOARD_ITEM_EXTENT;
@@ -251,16 +325,29 @@ export function renderBoard<T>(
             const item = items[logicalIndex]!;
             const itemEl = options.renderItem(host, item);
             itemEl.dataset['boardItem'] = key;
-            if (itemEl.tabIndex < 0) itemEl.tabIndex = 0;
+            const itemIsInteractive = itemEl.matches(
+              'button, a[href], input, select, textarea, [role="button"], [role="checkbox"], [tabindex]:not([tabindex="-1"])',
+            );
+            if (!itemIsInteractive) itemEl.setAttribute('role', 'group');
+            const focusTarget =
+              (itemIsInteractive
+                ? itemEl
+                : itemEl.querySelector<HTMLElement>(
+                    '[data-project-identity-control], [data-work-note-identity-control], .abyss-status-marker[role="checkbox"], button, a[href], input, select, textarea',
+                  )) ?? itemEl;
+            if (focusTarget.tabIndex < 0) focusTarget.tabIndex = 0;
+            focusTarget.dataset['boardItemFocus'] = key;
+            focusTarget.dataset['boardItem'] = key;
             itemEl.setAttribute('draggable', 'true');
-            itemEl.addEventListener('focus', () => {
+            focusTarget.addEventListener('focus', () => {
               bounded.focus(key);
+              options.onItemFocus?.(item);
               if (options.session) {
                 options.session.focusedKey = key;
                 options.session.restoreFocus = true;
               }
             });
-            itemEl.addEventListener('keydown', (event) => {
+            focusTarget.addEventListener('keydown', (event) => {
               if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
               event.preventDefault();
               bounded.focus(key);
@@ -270,7 +357,7 @@ export function renderBoard<T>(
               renderWindow(true);
             });
             itemEl.addEventListener('dragstart', () => {
-              dragging = { item, initiator: itemEl };
+              dragging = { item, initiator: focusTarget };
               setDraggingState(true);
             });
             itemEl.addEventListener('dragend', () => {
@@ -279,24 +366,24 @@ export function renderBoard<T>(
             });
             if (options.manageStatusMenu !== false) {
               itemEl.addEventListener('contextmenu', (event) => {
-                const actions = options.mutation.menuItems(item);
-                if (actions.length === 0) return;
-                event.preventDefault();
-                const menu = new Menu();
-                for (const action of actions) {
-                  menu.addItem((menuItem) =>
-                    menuItem
-                      .setTitle(action.label)
-                      .setIcon(action.icon)
-                      .setChecked(action.checked)
-                      .setDisabled(action.disabled)
-                      .onClick(() => commitMove(item, action.columnKey, itemEl)),
-                  );
-                }
-                showMenuAtMouseEventWithFocus(menu, event);
+                showStatusMenu(event, item, focusTarget);
               });
+              const statusMenu = itemEl.createEl('button', {
+                cls: 'abyss-board-status-menu',
+                attr: {
+                  type: 'button',
+                  'data-board-status-menu': key,
+                  'aria-label': 'Change status',
+                  title: 'Change status',
+                },
+              });
+              if (focusTarget === itemEl) host.appendChild(statusMenu);
+              setIcon(statusMenu, 'ellipsis');
+              statusMenu.addEventListener('click', (event) =>
+                showStatusMenu(event, item, statusMenu),
+              );
             }
-            return itemEl;
+            return focusTarget;
           },
         });
         if (restoreFocus) scroll.scrollTop = result.first * BOARD_ITEM_EXTENT;
@@ -312,8 +399,19 @@ export function renderBoard<T>(
       };
       scroll.addEventListener('scroll', onScroll);
       cleanups.push(() => scroll.removeEventListener('scroll', onScroll));
+      const onFocusOut = (): void => {
+        queueMicrotask(() => {
+          if (!container.isConnected || container.contains(container.ownerDocument.activeElement)) {
+            return;
+          }
+          if (options.session) options.session.restoreFocus = false;
+          options.onItemBlur?.();
+        });
+      };
+      itemsHost.addEventListener('focusout', onFocusOut);
+      cleanups.push(() => itemsHost.removeEventListener('focusout', onFocusOut));
       renderWindow(
-        options.session?.restoreFocus === true &&
+        (options.shouldRestoreItemFocus?.() ?? options.session?.restoreFocus === true) &&
           focusedKey !== undefined &&
           focusedKey !== null &&
           keys.includes(focusedKey),
@@ -333,6 +431,11 @@ export function renderBoard<T>(
         columnEl.removeClass('is-drop-target');
         commitMove(dragged.item, column.key, dragged.initiator);
       });
+    }
+    if (focusedTabKey !== null) {
+      Array.from(container.querySelectorAll<HTMLElement>('[data-board-column-tab]'))
+        .find(({ dataset }) => dataset['boardColumnTab'] === focusedTabKey)
+        ?.focus({ preventScroll: true });
     }
   };
 
@@ -385,6 +488,7 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
   };
   readonly onUndoPending?: (pending: NonNullable<ProjectsBoardOptions['pendingUndo']>) => void;
   readonly onUndoResolved?: () => void;
+  readonly session?: WorkNoteBoardSession;
 }
 
 /** Adapts Project lifecycle records to the shared board shell. */
@@ -392,6 +496,7 @@ export function renderProjectsBoard(
   container: HTMLElement,
   options: ProjectsBoardOptions,
 ): BoardViewHandle {
+  let destroyed = false;
   const { newProjectButton } = renderProjectsToolbar(container, options);
   const newProjectInputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
   const boardHost = container.createDiv();
@@ -423,7 +528,7 @@ export function renderProjectsBoard(
           const item = projects.find((project) => project.path === pendingUndo.path);
           return item === undefined ? undefined : { ...pendingUndo, item };
         })();
-  return renderBoard(boardHost, {
+  const board = renderBoard(boardHost, {
     columns: projectBoardColumns(statuses, projects),
     visibleColumnKeys,
     mutation,
@@ -432,7 +537,7 @@ export function renderProjectsBoard(
       return options
         .onUndoStatus(project.path, result.nextStatusId, result.previousStatusId)
         .then((undoResult) => {
-          if (successful(undoResult)) options.onUndoResolved?.();
+          if (!destroyed && successful(undoResult)) options.onUndoResolved?.();
           return undoResult;
         });
     },
@@ -458,5 +563,12 @@ export function renderProjectsBoard(
         false,
       );
     },
+    session: options.session,
   });
+  return {
+    destroy: () => {
+      destroyed = true;
+      board.destroy();
+    },
+  };
 }

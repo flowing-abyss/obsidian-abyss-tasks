@@ -1,10 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
+import type { ProjectsPanelOptions } from '../src/panels/projects/ProjectsPanel';
 import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
+import type {
+  ProjectChildRenderHandle,
+  ProjectsDashboardContext,
+} from '../src/panels/projects/viewContext';
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer, task } from './helpers';
+import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 function snapshot(
   fixture: 'empty' | 'small' | 'dated' | 'with-work-notes',
@@ -91,12 +97,191 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
     settings: DEFAULT_SETTINGS,
     onSetStatus: vi.fn(),
     openNote: vi.fn(),
-    renderTasks: vi.fn(),
+    renderTasks: vi.fn(() => ({ destroy: () => undefined })),
   });
   return container;
 }
 
 describe('Project Tasks workspace', () => {
+  it('requires the shared cleanup handle from every child renderer hook', () => {
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderTasks']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderTaskBoard']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderTaskTimeline']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderWorkNotes']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderWorkNoteBoard']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsDashboardContext['renderWorkNoteTimeline']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsPanelOptions['renderTasks']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsPanelOptions['renderTaskBoard']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+    expectTypeOf<
+      ReturnType<NonNullable<ProjectsPanelOptions['renderTaskTimeline']>>
+    >().toEqualTypeOf<ProjectChildRenderHandle>();
+  });
+
+  it('destroys each child renderer before replacement and destroys the active child with the dashboard', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const listDestroy = vi.fn();
+    const boardDestroy = vi.fn();
+    const sequence: string[] = [];
+    const renderTasks = (host: HTMLElement): ProjectChildRenderHandle => {
+      sequence.push('list-render');
+      const owned = host.createDiv({ attr: { 'data-test-child-owner': 'list' } });
+      return {
+        destroy: () => {
+          expect(owned.isConnected).toBe(true);
+          sequence.push('list-destroy');
+          listDestroy();
+        },
+      };
+    };
+    const renderTaskBoard = (host: HTMLElement): ProjectChildRenderHandle => {
+      sequence.push('board-render');
+      const owned = host.createDiv({ attr: { 'data-test-child-owner': 'board' } });
+      return {
+        destroy: () => {
+          expect(owned.isConnected).toBe(true);
+          sequence.push('board-destroy');
+          boardDestroy();
+        },
+      };
+    };
+    const dashboard: ProjectChildRenderHandle = renderProjectDashboard(
+      container,
+      snapshot('small'),
+      {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks,
+        renderTaskBoard,
+      },
+    );
+    expect(dashboard).toEqual(expect.objectContaining({ destroy: expect.any(Function) }));
+
+    container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    expect(listDestroy).toHaveBeenCalledOnce();
+    expect(sequence).toEqual(['list-render', 'list-destroy', 'board-render']);
+    container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    expect(boardDestroy).toHaveBeenCalledOnce();
+    expect(sequence).toEqual([
+      'list-render',
+      'list-destroy',
+      'board-render',
+      'board-destroy',
+      'list-render',
+    ]);
+
+    dashboard.destroy();
+    expect(listDestroy).toHaveBeenCalledTimes(2);
+    container.remove();
+  });
+
+  it('does not let a late Board mutation erase the replacement layout', async () => {
+    const container = freshContainer();
+    const pending = deferred<{ readonly type: 'ok'; readonly path: string }>();
+    renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: (host) => {
+        host.createDiv({ cls: 'replacement-list', text: 'Replacement list' });
+        return { destroy: () => host.empty() };
+      },
+      renderTaskBoard: (host) =>
+        renderBoard(host, {
+          columns: [
+            { key: 'active', label: 'Active', role: 'regular', items: [{ key: 'task' }] },
+            { key: 'done', label: 'Done', role: 'regular', items: [] },
+          ],
+          mutation: {
+            move: () => pending.promise,
+            menuItems: () => [],
+          },
+          itemKey: ({ key }) => key,
+          renderItem: (row, item) =>
+            row.createEl('button', {
+              text: item.key,
+              attr: { type: 'button', 'data-test-board-task': item.key },
+            }),
+        }),
+    });
+    container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    const item = container.querySelector<HTMLElement>('[data-board-item="task"]')!;
+    item.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    container
+      .querySelector<HTMLElement>('[data-board-column="done"]')!
+      .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+
+    container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    expect(container.querySelector('.replacement-list')).not.toBeNull();
+    pending.resolve({ type: 'ok', path: 'task' });
+    await flushMicrotasks();
+
+    expect(container.querySelector('.replacement-list')?.textContent).toBe('Replacement list');
+    expect(container.querySelector('[data-test-board-task]')).toBeNull();
+  });
+
+  it('does not let a late Board Undo erase the replacement layout', async () => {
+    const container = freshContainer();
+    const pending = deferred<{ readonly type: 'ok'; readonly path: string }>();
+    const item = { key: 'task' };
+    renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: (host) => {
+        host.createDiv({ cls: 'replacement-after-undo', text: 'Replacement after Undo' });
+        return { destroy: () => host.empty() };
+      },
+      renderTaskBoard: (host) =>
+        renderBoard(host, {
+          columns: [
+            { key: 'active', label: 'Active', role: 'regular', items: [item] },
+            { key: 'done', label: 'Done', role: 'regular', items: [] },
+          ],
+          mutation: { move: vi.fn(), menuItems: () => [] },
+          undo: () => pending.promise,
+          initialUndo: {
+            item,
+            columnKey: 'done',
+            result: { type: 'ok', path: 'task' },
+          },
+          itemKey: ({ key }) => key,
+          renderItem: (row, current) =>
+            row.createEl('button', { text: current.key, attr: { type: 'button' } }),
+        }),
+    });
+    container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    pending.resolve({ type: 'ok', path: 'task' });
+    await flushMicrotasks();
+
+    expect(container.querySelector('.replacement-after-undo')?.textContent).toBe(
+      'Replacement after Undo',
+    );
+  });
+
   it('retains the portfolio Timeline viewport while project workspaces open and close', () => {
     const session = new ProjectWorkspaceSession();
     Object.assign(session.portfolioTimeline, {
@@ -147,7 +332,7 @@ describe('Project Tasks workspace', () => {
   it.each([
     ['empty', false, false, false],
     ['small', false, true, false],
-    ['dated', false, true, true],
+    ['dated', false, true, false],
     ['with-work-notes', true, false, false],
   ] as const)(
     'opens %s Project in Tasks/List with conditional scopes and layouts',
@@ -167,15 +352,13 @@ describe('Project Tasks workspace', () => {
     },
   );
 
-  it.each([
-    ['with-work-notes', '[data-project-scope="work-notes"]'],
-    ['dated', '[data-project-layout="timeline"]'],
-  ] as const)(
+  it.each([['with-work-notes', '[data-project-scope="work-notes"]']] as const)(
     'keeps the visible %s future control disabled without leaving Tasks/List',
     (fixture, selector) => {
       const container = freshContainer();
       const renderTasks = vi.fn((host: HTMLElement) => {
         host.createDiv({ text: 'Shared task list' });
+        return { destroy: () => host.empty() };
       });
       renderProjectDashboard(container, snapshot(fixture), {
         state: new AppState(),
@@ -202,10 +385,14 @@ describe('Project Tasks workspace', () => {
 
   it('activates the Board route and preserves Tasks/List as the default', () => {
     const container = freshContainer();
-    const renderTasks = vi.fn((host: HTMLElement) => host.createDiv({ text: 'Shared task list' }));
-    const renderTaskBoard = vi.fn((host: HTMLElement) =>
-      host.createDiv({ text: 'Shared task board' }),
-    );
+    const renderTasks = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Shared task list' });
+      return { destroy: () => host.empty() };
+    });
+    const renderTaskBoard = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Shared task board' });
+      return { destroy: () => host.empty() };
+    });
     renderProjectDashboard(container, snapshot('small'), {
       state: new AppState(),
       settings: DEFAULT_SETTINGS,
@@ -231,15 +418,16 @@ describe('Project Tasks workspace', () => {
 
   it('enables Timeline only when the active scope has dated data and a real renderer', () => {
     const container = freshContainer();
-    const renderTaskTimeline = vi.fn((host: HTMLElement) =>
-      host.createDiv({ text: 'Shared task Timeline' }),
-    );
+    const renderTaskTimeline = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Shared task Timeline' });
+      return { destroy: () => host.empty() };
+    });
     renderProjectDashboard(container, snapshot('dated'), {
       state: new AppState(),
       settings: DEFAULT_SETTINGS,
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
-      renderTasks: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
       renderTaskTimeline,
     });
     const workspace = container.querySelector<HTMLElement>('[data-project-workspace]')!;
@@ -274,16 +462,17 @@ describe('Project Tasks workspace', () => {
         },
       ],
     };
-    const renderWorkNoteTimeline = vi.fn((host: HTMLElement) =>
-      host.createDiv({ text: 'Shared Work Note Timeline' }),
-    );
+    const renderWorkNoteTimeline = vi.fn((host: HTMLElement) => {
+      host.createDiv({ text: 'Shared Work Note Timeline' });
+      return { destroy: () => host.empty() };
+    });
     renderProjectDashboard(container, dated, {
       state: new AppState(),
       settings: DEFAULT_SETTINGS,
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
-      renderTasks: vi.fn(),
-      renderWorkNotes: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      renderWorkNotes: vi.fn(() => ({ destroy: () => undefined })),
       renderWorkNoteTimeline,
     });
 
@@ -350,7 +539,13 @@ describe('Project Tasks workspace', () => {
       dependency: { type: 'allowed' as const },
       owner: { type: 'project' as const, path: base.project.path },
     };
-    const renderTasks = vi.fn();
+    const renderTasks = vi.fn(
+      (
+        _host: HTMLElement,
+        _path: string,
+        _tasks: ProjectWorkspaceSnapshot['tasks'],
+      ): ProjectChildRenderHandle => ({ destroy: () => undefined }),
+    );
     const container = freshContainer();
 
     renderProjectDashboard(

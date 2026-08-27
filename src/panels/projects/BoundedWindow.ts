@@ -25,8 +25,136 @@ export interface BoundedWindowRenderResult extends BoundedWindowRange {
   readonly first: number;
 }
 
+export interface MeasuredWindowRange extends BoundedWindowRange {
+  readonly firstVisible: number;
+  readonly startSpacer: number;
+  readonly endSpacer: number;
+  readonly totalExtent: number;
+}
+
+export type LogicalCollectionMove =
+  | { readonly type: 'home'; readonly extendSelection: boolean }
+  | { readonly type: 'end'; readonly extendSelection: boolean }
+  | {
+      readonly type: 'page';
+      readonly pages: number;
+      readonly pageSize: number;
+      readonly extendSelection: boolean;
+    }
+  | { readonly type: 'step'; readonly delta: number; readonly extendSelection: boolean };
+
 function natural(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+function positive(value: number, fallback: number): number {
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+/**
+ * Variable-height window model. Measurements are keyed by stable identity; estimates preserve the
+ * complete virtual extent before any row has mounted, so a deep restored scroll position cannot be
+ * clamped against an empty collection.
+ */
+export class MeasuredWindow<Key extends string> {
+  private readonly extents = new Map<Key, number>();
+  private keys: readonly Key[];
+  private readonly estimateExtent: number;
+  private readonly overscan: number;
+
+  constructor(
+    keys: readonly Key[],
+    options: { readonly estimateExtent: number; readonly overscan: number },
+  ) {
+    this.keys = [...keys];
+    this.estimateExtent = positive(options.estimateExtent, 1);
+    this.overscan = natural(options.overscan);
+  }
+
+  setKeys(keys: readonly Key[]): void {
+    this.keys = [...keys];
+    const retained = new Set(keys);
+    for (const key of this.extents.keys()) if (!retained.has(key)) this.extents.delete(key);
+  }
+
+  measure(key: Key, extent: number): boolean {
+    if (!this.keys.includes(key)) return false;
+    const measured = positive(extent, this.estimateExtent);
+    if (this.extents.get(key) === measured) return false;
+    this.extents.set(key, measured);
+    return true;
+  }
+
+  hasMeasurement(key: Key): boolean {
+    return this.extents.has(key);
+  }
+
+  extentOf(key: Key): number {
+    return this.extents.get(key) ?? this.estimateExtent;
+  }
+
+  totalExtent(): number {
+    return this.keys.reduce((sum, key) => sum + this.extentOf(key), 0);
+  }
+
+  offsetOf(index: number): number {
+    const end = Math.min(natural(index), this.keys.length);
+    let offset = 0;
+    for (let cursor = 0; cursor < end; cursor += 1) offset += this.extentOf(this.keys[cursor]!);
+    return offset;
+  }
+
+  range(viewport: {
+    readonly scrollTop: number;
+    readonly viewportExtent: number;
+  }): MeasuredWindowRange {
+    const totalExtent = this.totalExtent();
+    const top = Math.min(Math.max(0, viewport.scrollTop), totalExtent);
+    const bottom = Math.min(totalExtent, top + Math.max(0, viewport.viewportExtent));
+    let firstVisible = 0;
+    let cursorOffset = 0;
+    while (
+      firstVisible < this.keys.length &&
+      cursorOffset + this.extentOf(this.keys[firstVisible]!) <= top
+    ) {
+      cursorOffset += this.extentOf(this.keys[firstVisible]!);
+      firstVisible += 1;
+    }
+    let visibleEnd = firstVisible;
+    let visibleOffset = cursorOffset;
+    while (visibleEnd < this.keys.length && visibleOffset < bottom) {
+      visibleOffset += this.extentOf(this.keys[visibleEnd]!);
+      visibleEnd += 1;
+    }
+    const start = Math.max(0, firstVisible - this.overscan);
+    const end = Math.min(this.keys.length, visibleEnd + this.overscan);
+    const startSpacer = this.offsetOf(start);
+    const endOffset = this.offsetOf(end);
+    return {
+      start,
+      end,
+      firstVisible,
+      startSpacer,
+      endSpacer: Math.max(0, totalExtent - endOffset),
+      totalExtent,
+    };
+  }
+
+  seed(input: {
+    readonly firstKey: Key | null;
+    readonly firstIndex: number;
+    readonly viewportExtent: number;
+  }): {
+    readonly scrollTop: number;
+    readonly totalExtent: number;
+    readonly range: MeasuredWindowRange;
+  } {
+    const keyed = input.firstKey === null ? -1 : this.keys.indexOf(input.firstKey);
+    const index = Math.min(this.keys.length, keyed >= 0 ? keyed : natural(input.firstIndex));
+    const scrollTop = this.offsetOf(index);
+    const range = this.range({ scrollTop, viewportExtent: input.viewportExtent });
+    return { scrollTop, totalExtent: range.totalExtent, range };
+  }
 }
 
 /** Returns the exact logical viewport plus a fixed overscan on both sides. */
@@ -131,9 +259,13 @@ export class BoundedWindow<Key extends string> {
     }
 
     const activeElement = container.ownerDocument.activeElement;
+    const activeOwner =
+      activeElement instanceof HTMLElement
+        ? activeElement.closest<HTMLElement>('[data-bounded-key]')
+        : null;
     const activeKey =
-      activeElement instanceof HTMLElement && activeElement.parentElement === container
-        ? (activeElement.dataset['boundedKey'] as Key | undefined)
+      activeOwner !== null && container.contains(activeOwner)
+        ? (activeOwner.dataset['boundedKey'] as Key | undefined)
         : undefined;
     const replaceFocusedRow = activeKey !== undefined && activeKey === this.focused;
     const focusedWillRemain = this.focused !== null && rangeKeys.includes(this.focused);
@@ -185,9 +317,15 @@ export class BoundedWindow<Key extends string> {
       (candidate) => candidate.dataset['boundedKey'] === String(this.focused),
     );
     if (!element) return false;
+    const focusTarget =
+      (element.matches('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+        ? element
+        : element.querySelector<HTMLElement>(
+            '[data-project-identity-control], [data-work-note-identity-control], [data-board-item-focus]',
+          )) ?? element;
     delete container.dataset['boundedFocusKey'];
-    if (scroll) element.scrollIntoView?.({ block: 'nearest' });
-    element.focus({ preventScroll: true });
+    if (scroll) focusTarget.scrollIntoView?.({ block: 'nearest' });
+    focusTarget.focus({ preventScroll: true });
     return true;
   }
 
