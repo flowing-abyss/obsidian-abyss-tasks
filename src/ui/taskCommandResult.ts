@@ -163,6 +163,14 @@ function describeCommandError(
       return { message: 'This task no longer exists.', requiresRecovery: true };
     case 'invalid':
       return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
+    case 'blocked':
+      return {
+        message:
+          result.dependency.type === 'blocked'
+            ? 'Complete the prerequisite tasks first.'
+            : 'Task dependencies are invalid and completion was not saved.',
+        requiresRecovery: false,
+      };
     case 'io-error':
       return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
     case 'partial':

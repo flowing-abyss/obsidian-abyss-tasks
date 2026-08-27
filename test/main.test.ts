@@ -29,6 +29,7 @@ interface PluginLike {
     destroy: () => void;
     constructor: { name: string };
   };
+  dependencyPolicy: object;
   settings: CalendarSettings;
   data__: unknown;
   commands: Map<string, { id: string; name: string }>;
@@ -132,6 +133,20 @@ describe('TaskCalendarPlugin onload', () => {
     await plugin.onload();
     expect(plugin.taskIndex).toBeDefined();
     expect(plugin.taskIndex.constructor.name).toBe('TaskIndex');
+  });
+
+  it('shares one dependency policy between Task commands and Project workspace reads', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const internals = plugin as unknown as {
+      dependencyPolicy: object;
+      tasks: { dependencyPolicy: object };
+      projectWorkspace: { dependencies: object };
+    };
+
+    expect(internals.dependencyPolicy).toBeDefined();
+    expect(internals.tasks.dependencyPolicy).toBe(internals.dependencyPolicy);
+    expect(internals.projectWorkspace.dependencies).toBe(internals.dependencyPolicy);
   });
 
   it('registers the panel view with PANEL_VIEW_TYPE', async () => {

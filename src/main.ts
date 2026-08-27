@@ -2,6 +2,7 @@ import { Notice, Plugin } from 'obsidian';
 import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { DependencyIndex } from './projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from './projects/dependencies/DependencyPolicy';
 import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
@@ -49,6 +50,7 @@ export default class TaskCalendarPlugin extends Plugin {
   tasks!: TaskApplicationApi & TaskCaptureApplicationApi;
   private taskIndex!: TaskIndex;
   private dependencyIndex!: DependencyIndex;
+  private dependencyPolicy!: DependencyPolicy;
   private statusCatalog!: StatusCatalog;
   private statusRegistry!: StatusRegistry;
   private projectCommands!: ProjectCommandService;
@@ -71,6 +73,7 @@ export default class TaskCalendarPlugin extends Plugin {
       refAuthority,
     });
     this.dependencyIndex = new DependencyIndex(this.taskIndex);
+    this.dependencyPolicy = new DependencyPolicy(this.dependencyIndex);
     const codec = new TaskMarkdownCodec(this.statusCatalog);
     const repository = new ObsidianTaskRepository(this.app, {
       codec,
@@ -100,6 +103,7 @@ export default class TaskCalendarPlugin extends Plugin {
         recurrence: this.settings.recurrence,
       }),
       this.dependencyIndex,
+      this.dependencyPolicy,
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());
@@ -123,7 +127,10 @@ export default class TaskCalendarPlugin extends Plugin {
       this.queries,
       this.workNoteIndex,
       () => this.settings.projects.statuses,
-      { today: () => window.moment().format('YYYY-MM-DD') },
+      {
+        today: () => window.moment().format('YYYY-MM-DD'),
+        dependencies: this.dependencyPolicy,
+      },
     );
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 

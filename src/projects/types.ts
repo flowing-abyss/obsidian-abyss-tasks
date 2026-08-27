@@ -36,6 +36,7 @@ export interface Project {
 export interface ProjectAction {
   readonly task: TaskSnapshot;
   readonly projectPath: string;
+  readonly dependency: DependencyCompletionDecision;
   readonly owner:
     | { readonly type: 'project'; readonly path: string }
     | { readonly type: 'work-note'; readonly path: string };
@@ -63,9 +64,21 @@ export interface ProjectWorkspaceSnapshot {
   readonly milestoneRollups: ReadonlyMap<string, MilestoneRollup>;
   readonly workNoteRelations: readonly WorkNoteRelationProjection[];
   readonly overdue: { readonly tasks: number; readonly workNotes: number };
+  readonly dependencies: {
+    readonly blocked: number;
+    readonly invalid: number;
+    readonly diagnostics: readonly {
+      readonly ref: TaskSnapshot['ref'];
+      readonly diagnostics: Extract<
+        DependencyCompletionDecision,
+        { readonly type: 'invalid' }
+      >['diagnostics'];
+    }[];
+  };
   readonly diagnostics: readonly ProjectWorkspaceDiagnostic[];
 }
 import type { TaskSnapshot } from '../tasks';
+import type { DependencyCompletionDecision } from '../tasks/application/DependencyPolicyPort';
 import type { WorkNoteRelationProjection } from './work-notes/WorkNoteRelationProjection';
 import type { MilestoneRollup, WorkNoteRollup } from './work-notes/rollups';
 import type { WorkNoteDiagnostic, WorkNoteSnapshot } from './work-notes/types';

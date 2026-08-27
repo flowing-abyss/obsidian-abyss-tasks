@@ -2,6 +2,8 @@ import { TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
+import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { StatusRegistry } from '../src/status/StatusRegistry';
@@ -259,6 +261,76 @@ describe('RightPanel recurrence editor integration', () => {
       ownerRemove.mockRestore();
       replacementAdd.mockRestore();
     }
+  });
+});
+
+describe('RightPanel dependency completion policy', () => {
+  it('blocks Done from the status menu and keyboard marker before repository mutation', async () => {
+    const prerequisite = task({
+      title: 'Prepare',
+      dependency: { id: 'prep', dependsOn: [] },
+      source: { filePath: 'Tasks.md', line: 0, originalBlock: '- [ ] Prepare 🆔 prep' },
+    });
+    const dependent = task({
+      title: 'Ship',
+      dependency: { dependsOn: ['prep'] },
+      source: { filePath: 'Tasks.md', line: 1, originalBlock: '- [ ] Ship ⛔ prep' },
+    });
+    const queries = taskQueryApi({
+      list: () => [prerequisite, dependent],
+      resolve: (ref) => {
+        const current = [prerequisite, dependent].find(
+          (candidate) => candidate.ref.revision === ref.revision,
+        );
+        return current
+          ? { type: 'exact' as const, task: current, basis: { observed: current } }
+          : { type: 'not-found' as const, ref };
+      },
+    });
+    const edit = vi.fn();
+    const graph = new DependencyIndex();
+    graph.replace([prerequisite, dependent]);
+    const policy = new DependencyPolicy(graph);
+    const application = new TaskApplicationService(
+      queries,
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+      { today: () => localDate('2026-08-28') },
+      undefined,
+      undefined,
+      graph,
+      policy,
+    );
+    const execute = vi.spyOn(application, 'execute');
+    const { panel, state, el } = await makePanel({}, application);
+    state.set('taskStack', [dependent]);
+
+    el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!.dispatchEvent(
+      new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+    );
+    const done = Array.from(
+      activeDocument.querySelectorAll<HTMLElement>('.abyss-status-popover-row'),
+    ).find((row) => row.textContent?.includes('Done'))!;
+    expect(done).toBeDefined();
+    click(done);
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledOnce();
+    await expect(execute.mock.results[0]?.value).resolves.toMatchObject({
+      type: 'blocked',
+      operation: 'completion',
+    });
+    const marker = el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!;
+    marker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledTimes(2);
+    await expect(execute.mock.results[1]?.value).resolves.toMatchObject({
+      type: 'blocked',
+      operation: 'completion',
+    });
+    expect(edit).not.toHaveBeenCalled();
+    panel.destroy();
   });
 });
 

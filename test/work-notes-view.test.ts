@@ -349,6 +349,7 @@ describe('renderWorkNotesView', () => {
       milestoneRollups: new Map(),
       workNoteRelations: [],
       overdue: { tasks: 0, workNotes: 0 },
+      dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
       diagnostics: [],
     };
     renderProjectDashboard(root, snapshot, {
@@ -404,6 +405,7 @@ describe('renderWorkNotesView', () => {
       milestoneRollups: new Map(),
       workNoteRelations: [],
       overdue: { tasks: 0, workNotes: 0 },
+      dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
       diagnostics: [],
     });
 
@@ -457,6 +459,7 @@ describe('renderWorkNotesView', () => {
         milestoneRollups: new Map(),
         workNoteRelations: [],
         overdue: { tasks: 0, workNotes: 0 },
+        dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
         diagnostics: [],
       },
       {

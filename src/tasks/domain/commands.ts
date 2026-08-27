@@ -177,6 +177,17 @@ interface DependencyRecovery {
   readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'invalid' | 'io-error';
 }
 
+type DependencyCompletionDiagnostic =
+  | { readonly type: 'unresolved-projection' }
+  | { readonly type: 'missing-prerequisite'; readonly id: string }
+  | { readonly type: 'duplicate-id'; readonly id: string; readonly candidates: readonly TaskRef[] }
+  | { readonly type: 'self-edge'; readonly id: string }
+  | { readonly type: 'cycle'; readonly ids: readonly string[] };
+
+type DependencyCompletionBlock =
+  | { readonly type: 'blocked'; readonly prerequisites: readonly TaskRef[] }
+  | { readonly type: 'invalid'; readonly diagnostics: readonly DependencyCompletionDiagnostic[] };
+
 export type TaskCommandResult =
   | { readonly type: 'ok'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
@@ -193,6 +204,11 @@ export type TaskCommandResult =
       readonly type: 'partial';
       readonly operation: 'dependency';
       readonly recovery: DependencyRecovery;
+    }
+  | {
+      readonly type: 'blocked';
+      readonly operation: 'completion';
+      readonly dependency: DependencyCompletionBlock;
     }
   | {
       readonly type: 'io-error';

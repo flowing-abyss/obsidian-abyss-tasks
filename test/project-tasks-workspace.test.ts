@@ -20,6 +20,7 @@ function snapshot(
               source: { filePath: 'Projects/A.md', line: 2 },
             }),
             projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' as const },
             owner: { type: 'project' as const, path: 'Projects/A.md' },
           },
         ];
@@ -78,6 +79,7 @@ function snapshot(
     milestoneRollups: new Map(),
     workNoteRelations: [],
     overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
     diagnostics: [],
   };
 }
@@ -318,6 +320,7 @@ describe('Project Tasks workspace', () => {
         source: { filePath: 'Notes/B.md', line: 2 },
       }),
       projectPath: base.project.path,
+      dependency: { type: 'allowed' as const },
       owner: { type: 'work-note' as const, path: 'Notes/B.md' },
     };
     const directAlpha = {
@@ -327,11 +330,13 @@ describe('Project Tasks workspace', () => {
         source: { filePath: base.project.path, line: 7 },
       }),
       projectPath: base.project.path,
+      dependency: { type: 'allowed' as const },
       owner: { type: 'project' as const, path: base.project.path },
     };
     const inheritedBeta = {
       task: task({ title: 'Beta', source: { filePath: 'Notes/A.md', line: 1 } }),
       projectPath: base.project.path,
+      dependency: { type: 'allowed' as const },
       owner: { type: 'work-note' as const, path: 'Notes/A.md' },
     };
     const done = {
@@ -342,6 +347,7 @@ describe('Project Tasks workspace', () => {
         source: { filePath: base.project.path, line: 9 },
       }),
       projectPath: base.project.path,
+      dependency: { type: 'allowed' as const },
       owner: { type: 'project' as const, path: base.project.path },
     };
     const renderTasks = vi.fn();

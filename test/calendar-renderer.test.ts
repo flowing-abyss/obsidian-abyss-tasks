@@ -1,5 +1,7 @@
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import { buildDefaultTaskStatuses, DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { StatusRegistry } from '../src/status/StatusRegistry';
@@ -474,6 +476,71 @@ describe('CalendarRenderer', () => {
         },
       });
       r.destroy();
+    });
+
+    it('blocks a dependent completion from the rendered calendar before repository mutation', async () => {
+      const path = 'Tasks.md';
+      const source = '- [ ] Prepare 🆔 prep\n' + '- [ ] Ship ⛔ prep 📅 2026-08-28\n';
+      const app = await createAppWithFiles({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const authority = new TaskRefAuthority('calendar-dependency-policy');
+      const index = new TaskIndex(app, {
+        statusCatalog,
+        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+        refAuthority: authority,
+      });
+      await index.initialize();
+      index.installCommittedContent(path, source);
+      const graph = new DependencyIndex(index);
+      const policy = new DependencyPolicy(graph);
+      const repository = new InMemoryTaskRepository({
+        files: { [path]: source },
+        codec: new TaskMarkdownCodec(statusCatalog),
+        snapshotsFromContent: (filePath, content) => index.previewContent(filePath, content),
+        locator: new TaskLocator(authority),
+        refAuthority: authority,
+        snapshotState: index,
+      });
+      const application = new TaskApplicationService(
+        index,
+        repository,
+        statusCatalog,
+        { today: () => localDate('2026-08-28') },
+        undefined,
+        undefined,
+        graph,
+        policy,
+      );
+      const execute = vi.spyOn(application, 'execute');
+      const root = freshContainer();
+      const renderer = new CalendarRenderer(
+        root,
+        resolvedConfig({ defaultView: 'month', startPosition: '2026-08' }),
+        app,
+        index,
+        application,
+        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      );
+      renderer.mount();
+
+      const cards = Array.from(root.querySelectorAll<HTMLElement>('.task'));
+      expect(cards.map((card) => card.textContent)).toContainEqual(expect.stringContaining('Ship'));
+      const ship = cards.find((card) => card.textContent?.includes('Ship'));
+      expect(ship).toBeDefined();
+      ship
+        ?.querySelector<HTMLElement>('.abyss-status-marker')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledOnce();
+      await expect(execute.mock.results[0]?.value).resolves.toMatchObject({
+        type: 'blocked',
+        operation: 'completion',
+      });
+      expect(repository.content(path)).toBe(source);
+      renderer.destroy();
+      graph.destroy();
+      index.destroy();
     });
 
     it('renders forecast badges without counting or mutating projected occurrences', () => {

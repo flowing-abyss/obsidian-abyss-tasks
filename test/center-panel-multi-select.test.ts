@@ -3,14 +3,22 @@ import { Menu } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
+import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import { TagManager } from '../src/tags/TagManager';
-import type { TaskSnapshot } from '../src/tasks';
+import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
+import { localDate } from '../src/tasks/domain/validation';
 import {
+  flushMicrotasks,
   freshContainer,
   makeCenterPanelForTest,
   makeStubStore,
   task,
+  taskQueryApi,
   useRealMoment,
 } from './helpers';
 
@@ -22,7 +30,10 @@ afterEach(() => {
     .forEach((element) => element.remove());
 });
 
-function makeCenter(tasks: TaskSnapshot[]): {
+function makeCenter(
+  tasks: TaskSnapshot[],
+  application?: TaskApplicationApi,
+): {
   el: HTMLElement;
   state: AppState;
   panel: CenterPanel;
@@ -32,7 +43,17 @@ function makeCenter(tasks: TaskSnapshot[]): {
   const save = vi.fn().mockResolvedValue(undefined);
   const tm = new TagManager(null as never, DEFAULT_SETTINGS, save);
   const store = makeStubStore(tasks);
-  const panel = makeCenterPanelForTest(state, store, null as never, DEFAULT_SETTINGS, tm);
+  const panel = makeCenterPanelForTest(
+    state,
+    store,
+    null as never,
+    DEFAULT_SETTINGS,
+    tm,
+    undefined,
+    undefined,
+    undefined,
+    application,
+  );
   const el = freshContainer();
   panel.mount(el);
   return { el, state, panel };
@@ -98,6 +119,102 @@ describe('CenterPanel multi-selection', () => {
       originalMarkdown: '- [ ] Task 3 #task/inbox',
       originalBlock: '- [ ] Task 3 #task/inbox',
     },
+  });
+
+  it('blocks every dependent in the real bulk Done route before repository mutation', async () => {
+    const prerequisite = task({
+      title: 'Prepare',
+      tags: ['#task/inbox'],
+      dependency: { id: 'prep', dependsOn: [] },
+      source: { filePath: 'a.md', line: 0, originalBlock: '- [ ] Prepare 🆔 prep' },
+    });
+    const first = task({
+      title: 'First dependent',
+      tags: ['#task/inbox'],
+      dependency: { dependsOn: ['prep'] },
+      source: { filePath: 'a.md', line: 1, originalBlock: '- [ ] First dependent ⛔ prep' },
+    });
+    const second = task({
+      title: 'Second dependent',
+      tags: ['#task/inbox'],
+      dependency: { dependsOn: ['prep'] },
+      source: { filePath: 'a.md', line: 2, originalBlock: '- [ ] Second dependent ⛔ prep' },
+    });
+    const roots = [prerequisite, first, second];
+    const queries = taskQueryApi({
+      list: () => roots,
+      resolve: (ref) => {
+        const current = roots.find((candidate) => candidate.ref.revision === ref.revision);
+        return current
+          ? { type: 'exact' as const, task: current, basis: { observed: current } }
+          : { type: 'not-found' as const, ref };
+      },
+    });
+    const edit = vi.fn();
+    const graph = new DependencyIndex();
+    graph.replace(roots);
+    const policy = new DependencyPolicy(graph);
+    const application = new TaskApplicationService(
+      queries,
+      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses)),
+      { today: () => localDate('2026-08-28') },
+      undefined,
+      undefined,
+      graph,
+      policy,
+    );
+    const execute = vi.spyOn(application, 'execute');
+    const { el, panel } = makeCenter(roots, application);
+    const actions = new Map<string, () => void>();
+    const makeMenu = (): Menu =>
+      ({
+        addItem(callback: (item: never) => unknown) {
+          let title = '';
+          const item = {
+            dom: document.createElement('div'),
+            setTitle(value: string) {
+              title = value;
+              return item;
+            },
+            setSection: () => item,
+            setDisabled: () => item,
+            setIcon: () => item,
+            setChecked: () => item,
+            onClick(handler: () => void) {
+              actions.set(title, handler);
+              return item;
+            },
+            setSubmenu: () => makeMenu(),
+          };
+          callback(item as never);
+          return this;
+        },
+      }) as unknown as Menu;
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      callback,
+    ) {
+      makeMenu().addItem(callback);
+      return this;
+    });
+    try {
+      const rendered = cards(el);
+      click(rendered[1]!, { ctrlKey: true });
+      click(rendered[2]!, { ctrlKey: true });
+      rendered[2]!.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      expect(actions.get('Done')).toBeDefined();
+      actions.get('Done')!();
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(edit).not.toHaveBeenCalled();
+    } finally {
+      addItem.mockRestore();
+      panel.destroy();
+    }
   });
 
   it('plain click selects only one card (no abyss-multi-selected)', () => {

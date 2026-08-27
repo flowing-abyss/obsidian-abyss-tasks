@@ -123,6 +123,7 @@ function projectWorkspaceSnapshot(
     tasks: tasks.map((task) => ({
       task,
       projectPath: project.path,
+      dependency: { type: 'allowed' },
       owner: { type: 'project', path: project.path },
     })),
     workNotes: [],
@@ -139,6 +140,7 @@ function projectWorkspaceSnapshot(
     milestoneRollups: new Map(),
     workNoteRelations: [],
     overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
     diagnostics: [],
   };
 }
@@ -2308,6 +2310,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         tasks.map((task) => ({
           task,
           projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' as const },
           owner: { type: 'project' as const, path: 'Projects/A.md' },
         })),
       );
@@ -2353,6 +2356,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         {
           task: current,
           projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
           owner: { type: 'project', path: 'Projects/A.md' },
         },
       ]);

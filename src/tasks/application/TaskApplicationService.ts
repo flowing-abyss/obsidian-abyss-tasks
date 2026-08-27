@@ -24,6 +24,7 @@ import {
   type DependencyCommandIntent,
   type DependencyCommittedProjection,
 } from './DependencyCommandCoordinator';
+import { unavailableDependencyPolicy, type DependencyPolicyPort } from './DependencyPolicyPort';
 import type {
   CreateTaskCommand,
   CreateTaskCommandDestination,
@@ -169,6 +170,10 @@ const DEFAULT_BEHAVIOR_SETTINGS: TaskBehaviorSettings = {
   recurrence: { newOccurrencePlacement: 'before', removeScheduledDate: false },
 };
 type EditableTaskCommand = Exclude<TaskCommand, { readonly type: 'create' | 'move' }>;
+type StatusMutationCommand = Extract<
+  EditableTaskCommand,
+  { readonly type: 'set-status' | 'toggle-completion' }
+>;
 type PreparedTaskCommand =
   | { readonly command: TaskEditCommand }
   | { readonly recurrence: RecurrenceCompletionRequest }
@@ -442,6 +447,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     private readonly behaviorSettings: TaskBehaviorSettingsProvider = () =>
       DEFAULT_BEHAVIOR_SETTINGS,
     dependencyProjection?: DependencyCommittedProjection,
+    private readonly dependencyPolicy: DependencyPolicyPort = unavailableDependencyPolicy,
   ) {
     this.dependencyCommands = new DependencyCommandCoordinator(
       { resolve: (ref) => this.resolveRecentRoot(ref) },
@@ -752,7 +758,10 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       addCreatedDate: settings.taskLifecycle.addCreatedDate,
     });
     if (result.type !== 'committed') return this.terminalRepositoryResult(result);
-    if (result.outcome.type === 'task') this.remember(result.outcome.task);
+    if (result.outcome.type === 'task') {
+      this.remember(result.outcome.task);
+      this.acceptDependencyDelta([], [result.outcome.task]);
+    }
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
   }
 
@@ -862,6 +871,15 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       return { command };
     }
 
+    return this.prepareStatusMutation(command, settings, reading, resolution);
+  }
+
+  private prepareStatusMutation(
+    command: StatusMutationCommand,
+    settings: TaskBehaviorSettings,
+    reading: ClockReading | { readonly localDate: ClockReading['localDate'] },
+    resolution: ProvenResolution,
+  ): PreparedTaskCommand {
     const requestedRule =
       command.type === 'set-status' ? this.statusCatalog.ruleForSymbol(command.symbol) : undefined;
     if (command.type === 'set-status' && !requestedRule) {
@@ -899,6 +917,15 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
 
     const sameConfiguredStatus = currentRule?.symbol === rule.symbol;
     const requestedSemanticStatus = statusForRuleType(rule.type);
+    const completionBlock = this.dependencyCompletionBlock(
+      resolved.root,
+      resolved.target,
+      currentSemanticStatus,
+      requestedSemanticStatus,
+    );
+    if (completionBlock) {
+      return { result: completionBlock };
+    }
     const entersStampedState =
       currentSemanticStatus !== requestedSemanticStatus &&
       (rule.type === 'done' || rule.type === 'cancelled');
@@ -1050,6 +1077,9 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     prepared: PreparedMutation,
     result: Extract<TaskRepositoryResult, { readonly type: 'committed' }>,
   ): TaskCommandResult {
+    if (result.outcome.type === 'deleted' || prepared.publicCommand.type === 'move') {
+      this.forget(prepared.repositoryRequest.baseRoot.ref);
+    }
     if (result.outcome.type === 'task') this.remember(result.outcome.task);
     if (result.outcome.type === 'recurrence') {
       if ('baseOwnedDescendants' in prepared.repositoryRequest) {
@@ -1057,7 +1087,70 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       }
       this.remember(result.outcome.active.root, result.outcome.active.target);
     }
+    if (result.changed) this.synchronizeDependencyOutcome(prepared, result.outcome);
     return { type: 'ok', outcome: result.outcome, changed: result.changed };
+  }
+
+  private synchronizeDependencyOutcome(
+    prepared: PreparedMutation,
+    outcome: Extract<TaskRepositoryResult, { readonly type: 'committed' }>['outcome'],
+  ): void {
+    const replaced = [prepared.repositoryRequest.baseRoot];
+    if (outcome.type === 'deleted') {
+      this.acceptDependencyDelta(replaced, []);
+      return;
+    }
+    if (outcome.type === 'recurrence') {
+      const roots = [outcome.active.root, ...(outcome.completed ? [outcome.completed.root] : [])];
+      const seen = new Set<string>();
+      this.acceptDependencyDelta(
+        replaced,
+        roots.filter((root) => {
+          const key = refKey(root.ref);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }),
+      );
+      return;
+    }
+    this.acceptDependencyDelta(replaced, [outcome.task]);
+  }
+
+  private acceptDependencyDelta(
+    replaced: readonly TaskSnapshot[],
+    roots: readonly TaskSnapshot[],
+  ): void {
+    try {
+      this.dependencyPolicy.acceptCommittedDelta({ replaced, roots });
+    } catch {
+      // Repository outcomes remain authoritative when a read projection fails.
+    }
+  }
+
+  private evaluateDependencyCompletion(
+    task: TaskSnapshot,
+  ): import('./DependencyPolicyPort').DependencyCompletionDecision {
+    try {
+      return this.dependencyPolicy.evaluateCompletion(task);
+    } catch {
+      return { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] };
+    }
+  }
+
+  private dependencyCompletionBlock(
+    root: TaskSnapshot,
+    target: TaskMutationTarget,
+    currentStatus: TaskStatus,
+    requestedStatus: TaskStatus,
+  ): Extract<TaskCommandResult, { readonly type: 'blocked' }> | undefined {
+    if (target.type !== 'task' || currentStatus === 'done' || requestedStatus !== 'done') {
+      return undefined;
+    }
+    const dependency = this.evaluateDependencyCompletion(root);
+    return dependency.type === 'allowed'
+      ? undefined
+      : { type: 'blocked', operation: 'completion', dependency };
   }
 
   private terminalRepositoryResult(result: TaskRepositoryResult): TaskCommandResult {

@@ -50,7 +50,9 @@ function candidates(
   }));
 }
 
-function terminalRepositoryResult(result: TaskRepositoryResult): TaskCommandResult {
+type RepositoryTerminalResult = Exclude<TaskCommandResult, { readonly type: 'blocked' }>;
+
+function terminalRepositoryResult(result: TaskRepositoryResult): RepositoryTerminalResult {
   switch (result.type) {
     case 'committed':
       return { type: 'ok', outcome: result.outcome, changed: result.changed };
@@ -64,7 +66,7 @@ function terminalRepositoryResult(result: TaskRepositoryResult): TaskCommandResu
 }
 
 function failureCause(
-  result: Exclude<TaskCommandResult, { readonly type: 'ok' | 'partial' }>,
+  result: Exclude<RepositoryTerminalResult, { readonly type: 'ok' | 'partial' }>,
 ): 'conflict' | 'not-found' | 'ambiguous' | 'invalid' | 'io-error' {
   return result.type;
 }

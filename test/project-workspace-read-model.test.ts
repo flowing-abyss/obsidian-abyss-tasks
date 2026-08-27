@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectStoreEvent } from '../src/projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from '../src/projects/ProjectWorkspaceCoordinator';
 import { ProjectWorkspaceReadModel } from '../src/projects/ProjectWorkspaceReadModel';
+import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import type { Project } from '../src/projects/types';
 import { buildWorkNoteRelationProjections } from '../src/projects/work-notes/WorkNoteRelationProjection';
 import type { WorkNoteIndexEvent, WorkNoteSnapshot } from '../src/projects/work-notes/types';
@@ -89,6 +91,7 @@ function modelFixture(
   tasks: readonly TaskSnapshot[],
   workNotes: readonly WorkNoteSnapshot[],
   now = Date.parse('2026-08-26T12:00:00.000Z'),
+  dependencies?: DependencyPolicy,
 ): ProjectWorkspaceReadModel {
   const model = new ProjectWorkspaceReadModel({
     projects: { list: () => [project()] },
@@ -97,6 +100,7 @@ function modelFixture(
     statuses: () => statuses,
     now: () => now,
     today: () => '2026-08-26',
+    ...(dependencies && { dependencies }),
   });
   model.rebuild();
   return model;
@@ -202,6 +206,44 @@ describe('ProjectWorkspaceReadModel', () => {
     expect(readModel.get(projectPath)?.overdue).toEqual({ tasks: 1, workNotes: 1 });
   });
 
+  it('exposes per-Task dependency state, blocked count, and invalid diagnostics', () => {
+    const prerequisite = {
+      ...action(projectPath, 1, 'open'),
+      dependency: { id: 'prep', dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const blocked = {
+      ...action(projectPath, 2, 'open'),
+      dependency: { dependsOn: ['prep'] },
+    } satisfies TaskSnapshot;
+    const invalid = {
+      ...action(projectPath, 3, 'open'),
+      dependency: { dependsOn: ['missing'] },
+    } satisfies TaskSnapshot;
+    const index = new DependencyIndex();
+    index.replace([prerequisite, blocked, invalid]);
+    const snapshot = modelFixture(
+      [prerequisite, blocked, invalid],
+      [],
+      Date.parse('2026-08-26T12:00:00.000Z'),
+      new DependencyPolicy(index),
+    ).get(projectPath)!;
+
+    expect(
+      snapshot.tasks.find(({ task: candidate }) => candidate.ref.line === blocked.ref.line)
+        ?.dependency,
+    ).toEqual({ type: 'blocked', prerequisites: [prerequisite.ref] });
+    expect(snapshot.dependencies).toEqual({
+      blocked: 1,
+      invalid: 1,
+      diagnostics: [
+        {
+          ref: invalid.ref,
+          diagnostics: [{ type: 'missing-prerequisite', id: 'missing' }],
+        },
+      ],
+    });
+  });
+
   it('reports an existing relation target in another Project as cross-project', () => {
     const readModel = modelFixture(
       [],
@@ -304,6 +346,203 @@ describe('Work Note relation projection', () => {
 });
 
 describe('ProjectWorkspaceCoordinator convergence', () => {
+  it('settles a cross-Project dependency projection on the causal prerequisite file only', async () => {
+    const prerequisitePath = 'Projects/A.md';
+    const dependentPath = 'Projects/B.md';
+    const prerequisite = {
+      ...action(prerequisitePath, 1, 'open'),
+      dependency: { id: 'prep', dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const dependent = {
+      ...action(dependentPath, 1, 'open'),
+      dependency: { dependsOn: ['prep'] },
+    } satisfies TaskSnapshot;
+    let tasks: readonly TaskSnapshot[] = [prerequisite, dependent];
+    const dependencyIndex = new DependencyIndex();
+    dependencyIndex.replace(tasks);
+    const dependencies = new DependencyPolicy(dependencyIndex);
+    const projectListeners: Array<(event: ProjectStoreEvent) => void> = [];
+    const projectSettled: Array<
+      (event: { reason: 'index'; files: readonly { path: string; generation: number }[] }) => void
+    > = [];
+    const taskListeners: Array<(event: TaskIndexEvent) => void> = [];
+    const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
+    const coordinator = new ProjectWorkspaceCoordinator(
+      {
+        list: () => [project(prerequisitePath), project(dependentPath)],
+        onUpdate: (listener) => {
+          projectListeners.push(listener);
+          return () => {};
+        },
+        onSettled: (listener) => {
+          projectSettled.push(listener as never);
+          return () => {};
+        },
+      },
+      {
+        list: () => tasks,
+        subscribe: (listener) => {
+          taskListeners.push(listener);
+          return () => {};
+        },
+        subscribeSettled: (listener) => {
+          taskSettled.push(listener);
+          return () => {};
+        },
+      },
+      {
+        list: () => [],
+        diagnosticsFor: () => [],
+        onUpdate: () => () => {},
+      },
+      () => statuses,
+      { dependencies },
+    );
+    coordinator.start();
+    const publications: Array<{
+      projectPaths: readonly string[];
+      dependentBlocked: number;
+    }> = [];
+    coordinator.onUpdate((snapshots, event) =>
+      publications.push({
+        projectPaths: event.projectPaths,
+        dependentBlocked:
+          snapshots.find(({ project: snapshot }) => snapshot.path === dependentPath)?.dependencies
+            .blocked ?? -1,
+      }),
+    );
+
+    const completedPrerequisite = {
+      ...prerequisite,
+      ref: { ...prerequisite.ref, revision: 'completed' },
+      status: 'done' as const,
+      statusSymbol: 'x',
+    } satisfies TaskSnapshot;
+    tasks = [completedPrerequisite, dependent];
+    dependencyIndex.acceptCommittedRoots([completedPrerequisite]);
+    taskListeners.forEach((listener) => listener({ type: 'changed', files: [prerequisitePath] }));
+    projectListeners.forEach((listener) =>
+      listener({
+        cause: 'metadata',
+        changedPaths: [prerequisitePath],
+        invalidatedProjectPaths: [prerequisitePath],
+      } as ProjectStoreEvent),
+    );
+    taskSettled.forEach((listener) =>
+      listener({
+        type: 'settled',
+        reason: 'index',
+        files: [{ path: prerequisitePath, generation: 1 }],
+      }),
+    );
+    projectSettled.forEach((listener) =>
+      listener({ reason: 'index', files: [{ path: prerequisitePath, generation: 1 }] }),
+    );
+    await Promise.resolve();
+
+    expect(publications).toEqual([
+      {
+        projectPaths: [prerequisitePath, dependentPath],
+        dependentBlocked: 0,
+      },
+    ]);
+    coordinator.destroy();
+  });
+
+  it('coalesces a synchronous dependency status delta into one settled Project publication', async () => {
+    const prerequisite = {
+      ...action(projectPath, 1, 'open'),
+      dependency: { id: 'prep', dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const dependent = {
+      ...action(projectPath, 2, 'open'),
+      dependency: { dependsOn: ['prep'] },
+    } satisfies TaskSnapshot;
+    let tasks: readonly TaskSnapshot[] = [prerequisite, dependent];
+    const dependencyIndex = new DependencyIndex();
+    dependencyIndex.replace(tasks);
+    const dependencies = new DependencyPolicy(dependencyIndex);
+    const projectListeners: Array<(event: ProjectStoreEvent) => void> = [];
+    const projectSettled: Array<
+      (event: { reason: 'index'; files: readonly { path: string; generation: number }[] }) => void
+    > = [];
+    const taskListeners: Array<(event: TaskIndexEvent) => void> = [];
+    const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
+    const coordinator = new ProjectWorkspaceCoordinator(
+      {
+        list: () => [project()],
+        onUpdate: (listener) => {
+          projectListeners.push(listener);
+          return () => {};
+        },
+        onSettled: (listener) => {
+          projectSettled.push(listener as never);
+          return () => {};
+        },
+      },
+      {
+        list: () => tasks,
+        subscribe: (listener) => {
+          taskListeners.push(listener);
+          return () => {};
+        },
+        subscribeSettled: (listener) => {
+          taskSettled.push(listener);
+          return () => {};
+        },
+      },
+      {
+        list: () => [],
+        diagnosticsFor: () => [],
+        onUpdate: () => () => {},
+      },
+      () => statuses,
+      { dependencies },
+    );
+    coordinator.start();
+    const publications: Array<{ projectPaths: readonly string[]; blocked: number }> = [];
+    coordinator.onUpdate((snapshots, event) =>
+      publications.push({
+        projectPaths: event.projectPaths,
+        blocked: snapshots[0]!.dependencies.blocked,
+      }),
+    );
+
+    const completedPrerequisite = {
+      ...prerequisite,
+      ref: { ...prerequisite.ref, revision: 'completed' },
+      status: 'done' as const,
+      statusSymbol: 'x',
+    } satisfies TaskSnapshot;
+    tasks = [completedPrerequisite, dependent];
+    dependencyIndex.acceptCommittedRoots([completedPrerequisite]);
+    await Promise.resolve();
+    expect(publications).toEqual([]);
+
+    taskListeners.forEach((listener) => listener({ type: 'changed', files: [projectPath] }));
+    projectListeners.forEach((listener) =>
+      listener({
+        cause: 'metadata',
+        changedPaths: [projectPath],
+        invalidatedProjectPaths: [projectPath],
+      } as ProjectStoreEvent),
+    );
+    taskSettled.forEach((listener) =>
+      listener({
+        type: 'settled',
+        reason: 'index',
+        files: [{ path: projectPath, generation: 1 }],
+      }),
+    );
+    projectSettled.forEach((listener) =>
+      listener({ reason: 'index', files: [{ path: projectPath, generation: 1 }] }),
+    );
+    await Promise.resolve();
+
+    expect(publications).toEqual([{ projectPaths: [projectPath], blocked: 0 }]);
+    coordinator.destroy();
+  });
+
   it('waits for the exact Task barrier when Work Note projection settles first', async () => {
     const taskSettled: Array<(event: Extract<TaskIndexEvent, { type: 'settled' }>) => void> = [];
     const workListeners: Array<(event: WorkNoteIndexEvent) => void> = [];

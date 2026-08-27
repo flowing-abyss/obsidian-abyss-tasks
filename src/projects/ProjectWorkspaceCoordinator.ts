@@ -1,5 +1,6 @@
 import type { ProjectStatus } from '../settings/types';
 import type { TaskIndexEvent, TaskIndexSettledEvent, TaskQueryApi } from '../tasks';
+import type { DependencyProjectionPort } from '../tasks/application/DependencyPolicyPort';
 import type { ProjectStoreEvent, ProjectStoreSettledEvent } from './ProjectStore';
 import { ProjectWorkspaceReadModel } from './ProjectWorkspaceReadModel';
 import type { Project, ProjectWorkspaceSnapshot } from './types';
@@ -85,6 +86,7 @@ export class ProjectWorkspaceCoordinator {
     options: {
       readonly now?: () => number;
       readonly today?: () => string;
+      readonly dependencies?: DependencyProjectionPort;
     } = {},
   ) {
     this.readModel = new ProjectWorkspaceReadModel({
@@ -94,7 +96,10 @@ export class ProjectWorkspaceCoordinator {
       statuses,
       ...options,
     });
+    this.dependencies = options.dependencies;
   }
+
+  private readonly dependencies: DependencyProjectionPort | undefined;
 
   start(): void {
     if (this.started) return;
@@ -104,6 +109,9 @@ export class ProjectWorkspaceCoordinator {
       this.tasks.subscribe((event) => this.onTaskEvent(event)),
       this.workNotes.onUpdate((event) => this.onWorkNoteUpdate(event)),
     );
+    if (this.dependencies) {
+      this.unsubs.push(this.dependencies.subscribe((event) => this.onDependencyUpdate(event)));
+    }
     if (this.projects.onSettled) {
       this.unsubs.push(this.projects.onSettled((event) => this.onProjectSettled(event)));
     }
@@ -206,6 +214,20 @@ export class ProjectWorkspaceCoordinator {
     for (const projectPath of event.invalidatedProjectPaths) {
       this.invalidatedProjectPaths.add(projectPath);
     }
+  }
+
+  private onDependencyUpdate(
+    event: import('../tasks/application/DependencyPolicyPort').DependencyProjectionUpdate,
+  ): void {
+    const workNoteProjects = new Map(
+      this.workNotes.list().map((note) => [note.path, note.projectPath] as const),
+    );
+    for (const path of new Set(event.affected.map((ref) => ref.filePath))) {
+      const projectPath = this.projectPaths.has(path) ? path : workNoteProjects.get(path);
+      if (!projectPath) continue;
+      this.invalidatedProjectPaths.add(projectPath);
+    }
+    for (const path of event.causalTaskPaths) this.requireNext(path, 'task');
   }
 
   private observe(source: Source, path: string, generation: number): void {

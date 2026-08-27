@@ -1282,6 +1282,7 @@ describe('LeftPanel collapsible sections, projects, and tags +', () => {
       milestoneRollups: new Map(),
       workNoteRelations: [],
       overdue: { tasks: 0, workNotes: 0 },
+      dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
       diagnostics: [],
     }));
     const projectStore = {

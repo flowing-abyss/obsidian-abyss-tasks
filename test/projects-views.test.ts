@@ -76,6 +76,7 @@ function workspace(
     milestoneRollups: new Map(),
     workNoteRelations: [],
     overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
     diagnostics: [],
     ...over,
   };
@@ -390,6 +391,7 @@ describe('renderProjectsList', () => {
             {
               task: next,
               projectPath: 'Projects/A.md',
+              dependency: { type: 'allowed' },
               owner: { type: 'project', path: 'Projects/A.md' },
             },
           ],
@@ -429,6 +431,7 @@ describe('renderProjectsList', () => {
           {
             task: marked,
             projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' },
             owner: { type: 'project', path: 'Projects/A.md' },
           },
         ],
@@ -866,6 +869,7 @@ describe('renderProjectDashboard', () => {
     const action = {
       task: next,
       projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
       owner: { type: 'project' as const, path: 'Projects/A.md' },
     };
     const ctx = {

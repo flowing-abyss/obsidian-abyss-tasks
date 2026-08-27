@@ -1,6 +1,7 @@
 import { getTaskDateCategory } from '../domain/taskDateCategory';
 import type { ProjectStatus } from '../settings/types';
 import type { TaskQueryApi, TaskSnapshot } from '../tasks';
+import type { DependencyProjectionPort } from '../tasks/application/DependencyPolicyPort';
 import { computeTaskRollup } from './ProjectStore';
 import type {
   Project,
@@ -32,6 +33,7 @@ export interface ProjectWorkspaceReadModelOptions {
   readonly statuses: () => readonly ProjectStatus[];
   readonly now?: () => number;
   readonly today?: () => string;
+  readonly dependencies?: Pick<DependencyProjectionPort, 'evaluateCompletion'>;
 }
 
 function taskIdentity(task: TaskSnapshot): string {
@@ -97,7 +99,12 @@ export class ProjectWorkspaceReadModel {
         const key = taskIdentity(task);
         if (seen.has(key)) return;
         seen.add(key);
-        projectActions.push({ task, projectPath: project.path, owner });
+        projectActions.push({
+          task,
+          projectPath: project.path,
+          owner,
+          dependency: this.options.dependencies?.evaluateCompletion(task) ?? { type: 'allowed' },
+        });
       };
       for (const task of tasksByPath.get(project.path) ?? []) {
         append(task, { type: 'project', path: project.path });
@@ -130,6 +137,12 @@ export class ProjectWorkspaceReadModel {
       const ordinary = projectNotes.filter(({ kind }) => kind === 'ordinary');
       const milestones = projectNotes.filter(({ kind }) => kind === 'milestone');
       const snapshotTasks = projectActions.map(({ task }) => task);
+      const actionableDependencies = projectActions.filter(
+        ({ task }) => task.status !== 'done' && task.status !== 'cancelled',
+      );
+      const invalidDependencies = actionableDependencies.filter(
+        ({ dependency }) => dependency.type === 'invalid',
+      );
       next.set(project.path, {
         project,
         tasks: projectActions,
@@ -146,6 +159,25 @@ export class ProjectWorkspaceReadModel {
               workNoteLifecycleBehavior(note, statuses) === 'regular' &&
               projectRangeIsOverdue(note.range, now),
           ).length,
+        },
+        dependencies: {
+          blocked: actionableDependencies.filter(({ dependency }) => dependency.type === 'blocked')
+            .length,
+          invalid: invalidDependencies.length,
+          diagnostics: invalidDependencies.map(({ task, dependency }) => ({
+            ref: { ...task.ref },
+            diagnostics:
+              dependency.type === 'invalid'
+                ? dependency.diagnostics.map((diagnostic) =>
+                    diagnostic.type === 'duplicate-id'
+                      ? {
+                          ...diagnostic,
+                          candidates: diagnostic.candidates.map((candidate) => ({ ...candidate })),
+                        }
+                      : { ...diagnostic },
+                  )
+                : [],
+          })),
         },
         diagnostics,
       });

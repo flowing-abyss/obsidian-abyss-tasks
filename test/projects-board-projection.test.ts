@@ -114,11 +114,13 @@ describe('board projections', () => {
         {
           task: direct,
           projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
           owner: { type: 'project', path: 'Projects/A.md' },
         },
         {
           task: inherited,
           projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
           owner: { type: 'work-note', path: 'Notes/Work.md' },
         },
       ]),

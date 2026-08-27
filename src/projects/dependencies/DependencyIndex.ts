@@ -21,6 +21,11 @@ interface Node {
   dependencies: readonly string[];
 }
 type Listener = (affected: readonly TaskRef[]) => void;
+interface DependencyIndexUpdate {
+  readonly affected: readonly TaskRef[];
+  readonly causalTaskPaths: readonly string[];
+}
+type UpdateListener = (event: DependencyIndexUpdate) => void;
 const refKey = (ref: TaskRef): string => `${ref.filePath}\u0000${ref.line}\u0000${ref.revision}`;
 const compareRefs = (a: TaskRef, b: TaskRef): number =>
   a.filePath.localeCompare(b.filePath) || a.line - b.line || a.revision.localeCompare(b.revision);
@@ -55,6 +60,7 @@ export class DependencyIndex {
   private readonly projections = new Map<string, DependencyProjection>();
   private readonly refs = new Map<string, string>();
   private listeners: Listener[] = [];
+  private updateListeners: UpdateListener[] = [];
   private unsubscribe: (() => void) | undefined;
   private nextKey = 0;
   constructor(source?: Pick<TaskQueryApi, 'list' | 'subscribe'>) {
@@ -67,6 +73,12 @@ export class DependencyIndex {
     const p = this.projections.get(this.refs.get(refKey(ref)) ?? '');
     return p && copyProjection(p);
   }
+  /** Resolves a synchronously re-indexed snapshot while the graph still carries its prior ref. */
+  projectionFor(task: TaskSnapshot): DependencyProjection | undefined {
+    const node = this.nodeForSnapshot(task);
+    const projection = node && this.projections.get(node.key);
+    return projection && copyProjection(projection);
+  }
   list(): readonly DependencyProjection[] {
     return [...this.projections.values()]
       .sort((a, b) => compareRefs(a.ref, b.ref))
@@ -78,9 +90,16 @@ export class DependencyIndex {
       this.listeners = this.listeners.filter((x) => x !== listener);
     };
   }
+  subscribeUpdates(listener: UpdateListener): () => void {
+    this.updateListeners.push(listener);
+    return () => {
+      this.updateListeners = this.updateListeners.filter((candidate) => candidate !== listener);
+    };
+  }
   destroy(): void {
     this.unsubscribe?.();
     this.listeners = [];
+    this.updateListeners = [];
     for (const state of [
       this.nodes,
       this.fileNodes,
@@ -124,6 +143,81 @@ export class DependencyIndex {
       byFile.set(path, tasks);
     }
     this.updateFiles([...byFile]);
+  }
+  /** Applies an operation-aware repository delta without inferring identity from shifted lines. */
+  acceptCommittedDelta(delta: {
+    readonly replaced: readonly TaskSnapshot[];
+    readonly roots: readonly TaskSnapshot[];
+  }): void {
+    const removedKeys = new Set(
+      delta.replaced.flatMap((task) => {
+        const node = this.nodeForSnapshot(task);
+        return node === undefined ? [] : [node.key];
+      }),
+    );
+    const removedNodes = [...removedKeys].flatMap((key) => {
+      const node = this.nodes.get(key);
+      return node === undefined ? [] : [node];
+    });
+    const previous = new Map(
+      removedNodes.flatMap((node) => {
+        const projection = this.projections.get(node.key);
+        return projection === undefined ? [] : [[node.key, projection] as const];
+      }),
+    );
+    const before = this.connected(removedKeys);
+    const changedIds = new Set<string>();
+    for (const node of removedNodes) {
+      if (node.id) changedIds.add(node.id);
+      node.dependencies.forEach((id) => changedIds.add(id));
+      this.remove(node);
+    }
+    const added: Node[] = [];
+    for (const task of delta.roots) {
+      const node: Node = {
+        key: `node:${this.nextKey++}`,
+        task,
+        ...(task.dependency?.id !== undefined && { id: task.dependency.id }),
+        dependencies: task.dependency?.dependsOn ?? [],
+      };
+      this.add(task.ref.filePath, node);
+      added.push(node);
+      if (node.id) changedIds.add(node.id);
+      node.dependencies.forEach((id) => changedIds.add(id));
+    }
+    const seeds = new Set<string>([...before, ...added.map((node) => node.key)]);
+    for (const id of changedIds) {
+      for (const key of [...(this.candidates.get(id) ?? []), ...(this.consumers.get(id) ?? [])]) {
+        seeds.add(key);
+      }
+    }
+    for (const key of seeds) this.rewire(key);
+    const region = this.connected(seeds);
+    for (const key of region) this.rewire(key);
+    this.recompute(
+      this.connected(region),
+      new Map(),
+      removedNodes.map((node) => node.task.ref),
+      previous,
+      new Set(added.map((node) => node.key)),
+      [...delta.replaced.map((root) => root.ref), ...delta.roots.map((root) => root.ref)].map(
+        (ref) => ref.filePath,
+      ),
+    );
+  }
+  /** Removes repository-authoritative roots before eventual TaskIndex deletion/move events. */
+  acceptDeletedRefs(refs: readonly TaskRef[]): void {
+    const removed = new Set(refs.map(refKey));
+    const byFile = new Map<string, TaskSnapshot[]>();
+    for (const ref of refs) {
+      if (byFile.has(ref.filePath)) continue;
+      const tasks = [...(this.fileNodes.get(ref.filePath) ?? [])].flatMap((key) => {
+        const node = this.nodes.get(key);
+        return node && !removed.has(refKey(node.task.ref)) ? [node.task] : [];
+      });
+      byFile.set(ref.filePath, tasks);
+    }
+    if (byFile.size > 0) this.updateFiles([...byFile]);
   }
   private onEvent(source: Pick<TaskQueryApi, 'list'>, e: TaskIndexEvent): void {
     if (e.type === 'initialized') return this.replace(source.list());
@@ -198,6 +292,7 @@ export class DependencyIndex {
       available.map((node) => node.task.ref),
       previous,
       inputChanged,
+      entries.map(([path]) => path),
     );
   }
   private match(task: TaskSnapshot, available: readonly Node[]): Node | undefined {
@@ -214,6 +309,21 @@ export class DependencyIndex {
         node.task.source.line === task.source.line,
     );
     return lines.length === 1 ? lines[0] : undefined;
+  }
+  private nodeForSnapshot(task: TaskSnapshot): Node | undefined {
+    const exact = this.nodes.get(this.refs.get(refKey(task.ref)) ?? '');
+    if (exact !== undefined) return exact;
+    const nodes = [...(this.fileNodes.get(task.ref.filePath) ?? [])].flatMap((key) => {
+      const node = this.nodes.get(key);
+      return node === undefined ? [] : [node];
+    });
+    const id = task.dependency?.id;
+    const ids = id === undefined ? [] : nodes.filter((node) => node.id === id);
+    if (ids.length === 1) return ids[0];
+    const sources = nodes.filter(
+      (node) => node.task.source.originalBlock === task.source.originalBlock,
+    );
+    return sources.length === 1 ? sources[0] : undefined;
   }
   private add(path: string, node: Node): void {
     this.nodes.set(node.key, node);
@@ -288,6 +398,7 @@ export class DependencyIndex {
     deleted: readonly TaskRef[],
     previous: ReadonlyMap<string, DependencyProjection>,
     inputChanged: ReadonlySet<string>,
+    causalTaskPaths: readonly string[],
   ): void {
     const prior = new Map([...region].map((key) => [key, this.projections.get(key)] as const));
     for (const [key, projection] of previous) prior.set(key, projection);
@@ -311,7 +422,7 @@ export class DependencyIndex {
     }
     for (const ref of deleted) affected.set(refKey(ref), copyRef(ref));
     const refs = [...affected.values()].sort(compareRefs);
-    if (refs.length)
+    if (refs.length) {
       for (const listener of [...this.listeners]) {
         try {
           listener(refs);
@@ -319,6 +430,20 @@ export class DependencyIndex {
           // A failed subscriber cannot hide the committed projection from later subscribers.
         }
       }
+      const event: DependencyIndexUpdate = {
+        affected: refs,
+        causalTaskPaths: [...new Set(causalTaskPaths)].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+      };
+      for (const listener of [...this.updateListeners]) {
+        try {
+          listener(event);
+        } catch {
+          // Projection observers are isolated from the committed graph state and one another.
+        }
+      }
+    }
   }
   private tarjan(region: ReadonlySet<string>): void {
     let n = 0;

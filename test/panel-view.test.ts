@@ -90,6 +90,7 @@ function joinedProjectSnapshot(statuses: readonly ('open' | 'done')[]): ProjectW
     return {
       task: snapshot,
       projectPath: project.path,
+      dependency: { type: 'allowed' as const },
       owner: { type: 'work-note' as const, path: 'Work/A.md' },
     };
   });
@@ -112,6 +113,7 @@ function joinedProjectSnapshot(statuses: readonly ('open' | 'done')[]): ProjectW
     milestoneRollups: new Map(),
     workNoteRelations: [],
     overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
     diagnostics: [],
   };
 }
