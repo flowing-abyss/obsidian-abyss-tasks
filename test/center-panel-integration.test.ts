@@ -3419,6 +3419,120 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     expect(timedBlock?.querySelector('[data-resize-edge]')).toBeNull();
   });
 
+  it.each(
+    (['Month', 'Day', 'Week'] as const).flatMap((view) =>
+      [
+        { activation: 'click' as const, label: 'click' },
+        { activation: 'Enter' as const, label: 'Enter' },
+        { activation: ' ' as const, label: 'Space' },
+      ].map((entry) => ({ ...entry, view })),
+    ),
+  )(
+    'keeps the concrete CenterPanel $view subtask occurrence available on $label under a blocked root',
+    async ({ activation, view }) => {
+      const baseRoot = task({
+        title: 'Blocked root',
+        dependency: { dependsOn: ['prep'] },
+      });
+      const child = {
+        ref: {
+          parent: { type: 'task' as const, ref: baseRoot.ref },
+          relativeLine: 1,
+          originalBlock: '  - [ ] Nested repeat 🔁 every day 📅 2026-08-28',
+        },
+        title: 'Nested repeat',
+        markdownTitle: 'Nested repeat',
+        status: 'open' as const,
+        statusSymbol: ' ',
+        priority: 'D' as const,
+        planning: { due: '2026-08-28' as LocalDate },
+        tags: [],
+        recurrence: 'every day',
+        onCompletion: 'keep' as const,
+        onCompletionExplicit: false,
+        subtasks: [],
+        comments: [],
+      };
+      const root = { ...baseRoot, subtasks: [child] };
+      const source = {
+        root,
+        target: { type: 'subtask' as const, ref: child.ref },
+        node: child,
+      };
+      const queries = taskQueryApi({
+        list: () => [root],
+        forCalendarProjection: () => ({ materialized: [source], recurringSources: [] }),
+      });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'ok',
+        changed: false,
+        outcome: { type: 'task', task: root },
+      });
+      const evaluateCompletion = vi.fn<DependencyProjectionPort['evaluateCompletion']>(() => ({
+        type: 'blocked',
+        prerequisites: [baseRoot.ref],
+      }));
+      const projection: DependencyProjectionPort = {
+        evaluateCompletion,
+        inspect: () => ({
+          decision: { type: 'blocked', prerequisites: [baseRoot.ref] },
+          relations: [],
+        }),
+        subscribe: () => () => undefined,
+      };
+      const state = new AppState();
+      const panel = new CenterPanel(
+        state,
+        {} as App,
+        DEFAULT_SETTINGS,
+        queries,
+        new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+        undefined,
+        null,
+        null,
+        { queries, execute },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        [],
+        undefined,
+        undefined,
+        projection,
+      );
+      const el = freshContainer();
+      panel.mount(el);
+      (panel as unknown as { calDate: moment.Moment }).calDate = moment('2026-08-28');
+      state.set('mode', 'calendar');
+      if (view !== 'Month') clickCalendarView(el, view);
+
+      expect(el.textContent).toContain('Nested repeat');
+      const marker = el.querySelector<HTMLElement>('.abyss-status-marker')!;
+      expect(marker).not.toBeNull();
+      expect(marker.hasAttribute('aria-disabled')).toBe(false);
+      marker.dispatchEvent(
+        activation === 'click'
+          ? new MouseEvent('click', { bubbles: true, cancelable: true })
+          : new KeyboardEvent('keydown', {
+              key: activation,
+              bubbles: true,
+              cancelable: true,
+            }),
+      );
+      await flushMicrotasks();
+
+      expect(evaluateCompletion).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledWith({
+        type: 'toggle-completion',
+        target: source.target,
+      });
+      panel.destroy();
+      el.remove();
+    },
+  );
+
   it('keeps direct RightPanel and modal completion on the same exact application target seam', async () => {
     const app = await createAppWithFiles({
       'repeat.md': '- [ ] Shared surface repeat 🔁 every day 📅 2026-08-09\n',

@@ -30,6 +30,7 @@ import {
   createAppWithFiles,
   deferred,
   flushMicrotasks,
+  queryApiForTasks,
   seedTaskCache,
   task,
   useRealMoment,
@@ -151,6 +152,93 @@ function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
+  it('forwards application dependency IDs into a calendar TaskModal', async () => {
+    const app = await createAppWithFiles({});
+    const today = window.moment().format('YYYY-MM-DD');
+    const dependent = task({
+      title: 'Calendar dependent',
+      planning: { due: today },
+      source: { filePath: 'Tasks.md', line: 0 },
+    });
+    const candidate = task({
+      title: 'Candidate without ID',
+      source: { filePath: 'Tasks.md', line: 1 },
+    });
+    const queries = queryApiForTasks(() => [dependent, candidate]);
+    const newDependencyId = vi.fn(() => 'modal-generated');
+    const setDependency = vi.fn().mockResolvedValue({
+      type: 'invalid' as const,
+      issues: [{ code: 'invalid-target' as const, field: 'dependency' }],
+    });
+    const tasks = {
+      queries,
+      execute: vi.fn().mockResolvedValue({
+        type: 'invalid' as const,
+        issues: [{ code: 'invalid-target' as const }],
+      }),
+      planCreate: vi.fn().mockResolvedValue({
+        type: 'unavailable' as const,
+        execute: vi.fn(),
+      }),
+      newDependencyId,
+      setDependency,
+    } satisfies TaskApplicationApi & TaskCaptureApplicationApi;
+    const projection = {
+      evaluateCompletion: () => ({ type: 'allowed' as const }),
+      inspect: () => ({ decision: { type: 'allowed' as const }, relations: [] }),
+      subscribe: () => () => undefined,
+    };
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const view = new PanelView(
+      leaf,
+      structuredClone(DEFAULT_SETTINGS),
+      makeTagManager(app),
+      queries,
+      tasks,
+      configuredTaskApplication(app, DEFAULT_SETTINGS).statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      projection,
+    );
+    await view.onOpen();
+    const state = (view as unknown as { state: AppState }).state;
+    const center = view as unknown as {
+      center: { setCalendarView(view: 'today'): void; render(): void };
+    };
+    state.set('mode', 'calendar');
+    center.center.setCalendarView('today');
+    center.center.render();
+    await flushMicrotasks();
+    const occurrence = Array.from(
+      view.contentEl.querySelectorAll<HTMLElement>('.abyss-tg-body'),
+    ).find((element) => element.textContent?.includes('Calendar dependent'));
+    expect(occurrence).toBeDefined();
+    occurrence!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    activeDocument
+      .querySelector<HTMLButtonElement>('.abyss-modal [data-dependency-trigger]')!
+      .click();
+    const button = activeDocument.querySelector<HTMLButtonElement>(
+      '.abyss-modal [data-dependency-candidate]',
+    )!;
+
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    button.click();
+    await flushMicrotasks();
+    expect(newDependencyId).toHaveBeenCalledOnce();
+    expect(setDependency).toHaveBeenCalledWith({
+      prerequisite: candidate.ref,
+      dependent: dependent.ref,
+      dependencyId: 'modal-generated',
+      enabled: true,
+    });
+    await view.onClose();
+  });
+
   it('renders Project surfaces from coordinator snapshots instead of component indexes', async () => {
     const app = await createAppWithFiles({});
     const settings = structuredClone(DEFAULT_SETTINGS);

@@ -568,6 +568,43 @@ describe('task command result presentation', () => {
     expect(noticeCalls()).toEqual([['Complete the prerequisite tasks first.']]);
   });
 
+  it.each([
+    ['cycle', { type: 'cycle' as const, ids: ['a', 'b'] }, 'create a dependency cycle'],
+    ['self edge', { type: 'self-edge' as const, id: 'a' }, 'cannot depend on itself'],
+    [
+      'duplicate ID',
+      { type: 'duplicate-id' as const, id: 'a', candidates: [] },
+      'Multiple tasks use the same dependency ID',
+    ],
+    [
+      'missing prerequisite',
+      { type: 'missing-prerequisite' as const, id: 'a' },
+      'prerequisite task could not be found',
+    ],
+    [
+      'unresolved projection',
+      { type: 'unresolved-projection' as const },
+      'Dependency data is not ready',
+    ],
+  ])('announces a concise safe dependency rejection for %s', (_name, diagnostic, copy) => {
+    const announce = vi.fn();
+    presentTaskCommandResult(
+      {
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'dependency' }],
+        dependency: { diagnostics: [diagnostic] },
+      },
+      { announce },
+    );
+
+    expect(noticeCalls()).toEqual([[expect.stringContaining(copy)]]);
+    expect(announce).toHaveBeenCalledOnce();
+    expect(announce).toHaveBeenCalledWith({
+      message: expect.stringContaining(copy),
+      ariaLive: 'assertive',
+    });
+  });
+
   it('describes a partial dependency write without referring to task tags', () => {
     presentTaskCommandResult({
       type: 'partial',

@@ -82,6 +82,7 @@ import { MonthGridView } from '../views/MonthGridView';
 import { TodayView } from '../views/TodayView';
 import { WeekTimeGridView } from '../views/WeekTimeGridView';
 import {
+  calendarDependencyDecision,
   calendarMutationTarget,
   calendarOccurrenceForTask,
   calendarPatchCommand,
@@ -1219,7 +1220,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -1255,7 +1256,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -1304,7 +1305,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
-          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
           onDrop: handleDrop,
           onSpanMove: handleSpanMove,
           onSpanBoundary: handleSpanBoundary,

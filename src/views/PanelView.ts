@@ -237,6 +237,9 @@ export class PanelView extends ItemView {
           type: 'invalid',
           issues: [{ code: 'invalid-target', field: 'dependency' }],
         }),
+      ...(this.tasks.newDependencyId && {
+        newDependencyId: () => this.tasks.newDependencyId!(),
+      }),
       execute: async (command) => {
         const initiatingRef = commandRootRef(command);
         const result = await this.tasks.execute(command);

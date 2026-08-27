@@ -1,10 +1,22 @@
+import { TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
+import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
 import type { DependencyProjectionPort } from '../src/tasks/application/DependencyPolicyPort';
+import { TaskApplicationService } from '../src/tasks/application/TaskApplicationService';
+import { StatusCatalog } from '../src/tasks/domain/StatusCatalog';
 import type { CommentRef, TaskRef } from '../src/tasks/domain/types';
+import { localDate } from '../src/tasks/domain/validation';
+import { TaskIndex } from '../src/tasks/infrastructure/TaskIndex';
+import { TaskBlockEditor } from '../src/tasks/infrastructure/markdown/TaskBlockEditor';
+import { TaskLocator } from '../src/tasks/infrastructure/markdown/TaskLocator';
+import { TaskMarkdownCodec } from '../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import { ObsidianTaskRepository } from '../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import {
   createAppWithFiles,
@@ -55,6 +67,47 @@ function snapshot(revision: string, description = 'old description'): TaskSnapsh
       originalBlock: '- [ ] root',
     },
     presentation: { linkCount: 0 },
+  };
+}
+
+async function realDependencyApplication(
+  source: string,
+  dependencyIdGenerator: () => string = () => 'generated-id',
+) {
+  const app = await createAppWithFiles({ 'Tasks.md': source });
+  const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+  const index = new TaskIndex(app, {
+    statusCatalog,
+    dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+  });
+  await index.initialize();
+  const graph = new DependencyIndex();
+  graph.replace(index.list());
+  const policy = new DependencyPolicy(graph);
+  const repository = new ObsidianTaskRepository(app, {
+    codec: new TaskMarkdownCodec(statusCatalog),
+    editor: new TaskBlockEditor(),
+    locator: new TaskLocator(),
+    snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
+  });
+  const tasks = new TaskApplicationService(
+    index,
+    repository,
+    statusCatalog,
+    { today: () => localDate('2026-08-28') },
+    undefined,
+    undefined,
+    graph,
+    policy,
+    dependencyIdGenerator,
+  );
+  return {
+    app,
+    graph,
+    index,
+    policy,
+    tasks,
+    read: async () => app.vault.read(app.vault.getAbstractFileByPath('Tasks.md') as TFile),
   };
 }
 
@@ -234,6 +287,93 @@ describe('RightPanel block editing', () => {
       }
     },
   );
+
+  it('repairs one explicit missing dependency with its carrier ID and restores focus on Escape', async () => {
+    const dependent = {
+      ...snapshot('dependent'),
+      dependency: { dependsOn: ['wanted'] },
+    } satisfies TaskSnapshot;
+    const candidate = {
+      ...snapshot('candidate'),
+      ref: { filePath: 'candidate.md', line: 0, revision: 'candidate' },
+      title: 'Candidate without ID',
+      markdownTitle: 'Candidate without ID',
+    } satisfies TaskSnapshot;
+    const newDependencyId = vi.fn(() => 'generated-id');
+    const setDependency = vi.fn().mockResolvedValue({
+      type: 'invalid' as const,
+      issues: [{ code: 'invalid-target' as const, field: 'dependency' }],
+    });
+    const tasks = {
+      queries: taskQueryApi({ list: () => [dependent, candidate] }),
+      execute: vi.fn(),
+      setDependency,
+      newDependencyId,
+    } satisfies TaskApplicationApi & { newDependencyId(): string };
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: (task) =>
+        task === dependent
+          ? {
+              type: 'invalid',
+              diagnostics: [{ type: 'missing-prerequisite', id: 'wanted' }],
+            }
+          : { type: 'allowed' },
+      inspect: () => ({
+        decision: {
+          type: 'invalid',
+          diagnostics: [{ type: 'missing-prerequisite', id: 'wanted' }],
+        },
+        relations: [{ id: 'wanted', resolution: { type: 'missing' } }],
+      }),
+      subscribe: () => () => undefined,
+    };
+    const app = await createAppWithFiles({
+      'tasks.md': '- [ ] root ⛔ wanted\n',
+      'candidate.md': '- [ ] Candidate without ID\n',
+    });
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    const trigger = container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!;
+    trigger.click();
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-repair="wanted"]')!.click();
+    const search = container.querySelector<HTMLInputElement>('[data-dependency-search]')!;
+    expect(activeDocument.activeElement).toBe(search);
+    container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
+    await flushMicrotasks();
+
+    expect(newDependencyId).not.toHaveBeenCalled();
+    expect(setDependency).toHaveBeenCalledWith({
+      prerequisite: candidate.ref,
+      dependent: dependent.ref,
+      dependencyId: 'wanted',
+      enabled: true,
+    });
+    activeDocument.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(container.querySelector('[data-dependency-editor]')).toBeNull();
+    expect(activeDocument.activeElement).toBe(trigger);
+    panel.destroy();
+    container.remove();
+  });
 
   it('orders dependency search Project-first, dispatches set/clear, and restores focus on Escape', async () => {
     const dependent = {
@@ -491,6 +631,311 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
+  it('requests a fresh dependency ID from the application boundary for an unlabelled prerequisite', async () => {
+    const dependent = snapshot('dependent');
+    const candidate = {
+      ...snapshot('candidate'),
+      ref: { filePath: 'candidate.md', line: 0, revision: 'candidate' },
+      title: 'Candidate',
+      markdownTitle: 'Candidate',
+      source: {
+        filePath: 'candidate.md',
+        line: 0,
+        originalMarkdown: '- [ ] Candidate',
+        originalBlock: '- [ ] Candidate',
+      },
+    } satisfies TaskSnapshot;
+    const newDependencyId = vi.fn(() => 'generated-id');
+    const setDependency = vi.fn().mockResolvedValue({
+      type: 'invalid' as const,
+      issues: [{ code: 'invalid-target' as const, field: 'dependency' }],
+    });
+    const tasks = {
+      queries: taskQueryApi({ list: () => [dependent, candidate] }),
+      execute: vi.fn(),
+      setDependency,
+      newDependencyId,
+    } satisfies TaskApplicationApi & { newDependencyId(): string };
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({ type: 'allowed' }),
+      inspect: () => ({ decision: { type: 'allowed' }, relations: [] }),
+      subscribe: () => () => undefined,
+    };
+    const app = await createAppWithFiles({
+      'tasks.md': '- [ ] root\n',
+      'candidate.md': '- [ ] Candidate\n',
+    });
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
+    await flushMicrotasks();
+
+    expect(newDependencyId).toHaveBeenCalledOnce();
+    expect(setDependency).toHaveBeenCalledWith({
+      prerequisite: candidate.ref,
+      dependent: dependent.ref,
+      dependencyId: 'generated-id',
+      enabled: true,
+    });
+    panel.destroy();
+  });
+
+  it('rejects an application-generated ID collision without writing and succeeds with the next ID', async () => {
+    const generateId = vi
+      .fn<() => string>()
+      .mockReturnValueOnce('collision')
+      .mockReturnValueOnce('fresh');
+    const source = [
+      '- [ ] Existing 🆔 collision',
+      '',
+      '- [ ] Dependent',
+      '',
+      '- [ ] Candidate without ID',
+      '',
+    ].join('\n');
+    const harness = await realDependencyApplication(source, generateId);
+    expect(harness.index.list().map(({ title, source: item }) => [title, item.line])).toEqual([
+      ['Existing', 0],
+      ['Dependent', 2],
+      ['Candidate without ID', 4],
+    ]);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 4)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    activeDocument.querySelector('.abyss-task-command-live-region')?.remove();
+    const process = vi.spyOn(harness.app.vault, 'process');
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    const firstCandidate = container.querySelector<HTMLButtonElement>(
+      '[data-dependency-candidate]',
+    )!;
+
+    firstCandidate.click();
+    await flushMicrotasks(20);
+
+    expect(generateId).toHaveBeenCalledTimes(1);
+    expect(process).not.toHaveBeenCalled();
+    expect(await harness.read()).toBe(source);
+    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(1);
+    expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toContain(
+      'same dependency ID',
+    );
+
+    firstCandidate.click();
+    await flushMicrotasks(30);
+
+    expect(generateId).toHaveBeenCalledTimes(2);
+    expect(process).toHaveBeenCalledOnce();
+    expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 fresh');
+    expect(await harness.read()).toContain('- [ ] Dependent ⛔ fresh');
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
+  it('announces a real prospective cycle once and leaves the vault unchanged', async () => {
+    const source = [
+      '- [ ] Dependent 🆔 dependent',
+      '',
+      '- [ ] Candidate 🆔 candidate ⛔ dependent',
+      '',
+    ].join('\n');
+    const harness = await realDependencyApplication(source);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    activeDocument.querySelector('.abyss-task-command-live-region')?.remove();
+    const process = vi.spyOn(harness.app.vault, 'process');
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
+    await flushMicrotasks(20);
+
+    expect(process).not.toHaveBeenCalled();
+    expect(await harness.read()).toBe(source);
+    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(1);
+    expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toContain(
+      'dependency cycle',
+    );
+    expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
+  it('repairs a real missing dependency by assigning the exact carrier ID', async () => {
+    const generateId = vi.fn(() => 'generated-id');
+    const source = ['- [ ] Dependent ⛔ wanted', '', '- [ ] Candidate without ID', ''].join('\n');
+    const harness = await realDependencyApplication(source, generateId);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-dependency-repair="wanted"]')!.click();
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
+    await flushMicrotasks(30);
+
+    expect(generateId).not.toHaveBeenCalled();
+    expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 wanted');
+    expect(await harness.read()).toContain('- [ ] Dependent ⛔ wanted');
+    expect(container.querySelector('[data-dependency-editor]')).toBeNull();
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
+  it.each(['click', 'Enter', ' '] as const)(
+    'keeps a duplicate-ID candidate focusable and non-dispatchable on %s',
+    async (activation) => {
+      const dependent = snapshot('dependent');
+      const candidate = {
+        ...snapshot('candidate'),
+        ref: { filePath: 'candidate.md', line: 0, revision: 'candidate' },
+        title: 'Duplicate candidate',
+        markdownTitle: 'Duplicate candidate',
+        dependency: { id: 'duplicate', dependsOn: [] },
+        source: {
+          filePath: 'candidate.md',
+          line: 0,
+          originalMarkdown: '- [ ] Duplicate candidate 🆔 duplicate',
+          originalBlock: '- [ ] Duplicate candidate 🆔 duplicate',
+        },
+      } satisfies TaskSnapshot;
+      const setDependency = vi.fn();
+      const tasks: TaskApplicationApi = {
+        queries: taskQueryApi({ list: () => [dependent, candidate] }),
+        execute: vi.fn(),
+        setDependency,
+      };
+      const projection: DependencyProjectionPort = {
+        evaluateCompletion: (task) =>
+          task === candidate
+            ? {
+                type: 'invalid',
+                diagnostics: [
+                  { type: 'duplicate-id', id: 'duplicate', candidates: [candidate.ref] },
+                ],
+              }
+            : { type: 'allowed' },
+        inspect: () => ({ decision: { type: 'allowed' }, relations: [] }),
+        subscribe: () => () => undefined,
+      };
+      const app = await createAppWithFiles({
+        'tasks.md': '- [ ] root\n',
+        'candidate.md': '- [ ] Duplicate candidate 🆔 duplicate\n',
+      });
+      const state = new AppState();
+      state.set('taskStack', [dependent]);
+      const panel = new RightPanel(
+        state,
+        app,
+        testStatusRegistry(),
+        DEFAULT_SETTINGS,
+        undefined,
+        tasks,
+        undefined,
+        undefined,
+        undefined,
+        noInteractionOwnership,
+        projection,
+        () => ({ project: [candidate], other: [] }),
+      );
+      const container = freshContainer();
+      panel.mount(container);
+      container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+      const button = container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!;
+
+      expect(button.disabled).toBe(false);
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(button.textContent).toContain('Duplicate ID');
+      expect(button.getAttribute('aria-label')).toContain('Duplicate ID');
+      button.dispatchEvent(
+        activation === 'click'
+          ? new MouseEvent('click', { bubbles: true, cancelable: true })
+          : new KeyboardEvent('keydown', {
+              key: activation,
+              bubbles: true,
+              cancelable: true,
+            }),
+      );
+      await flushMicrotasks();
+
+      expect(setDependency).not.toHaveBeenCalled();
+      panel.destroy();
+    },
+  );
+
   it('routes the RightPanel Done status-menu item through the shared blocked command path', async () => {
     const selected = snapshot('selected');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
@@ -547,9 +992,23 @@ describe('RightPanel block editing', () => {
   });
 
   it('renders resolved, missing, and duplicate direct relations from inspection without guessing', async () => {
+    const ready = {
+      ...snapshot('ready'),
+      ref: { filePath: 'Ready.md', line: 0, revision: 'ready' },
+      title: 'Ready prerequisite',
+      markdownTitle: 'Ready prerequisite',
+      status: 'done',
+      statusSymbol: 'x',
+    } satisfies TaskSnapshot;
+    const open = {
+      ...snapshot('open'),
+      ref: { filePath: 'Open.md', line: 0, revision: 'open' },
+      title: 'Open prerequisite',
+      markdownTitle: 'Open prerequisite',
+    } satisfies TaskSnapshot;
     const selected = {
       ...snapshot('selected'),
-      dependency: { dependsOn: ['ready', 'missing', 'duplicate'] },
+      dependency: { dependsOn: ['ready', 'open', 'missing', 'duplicate'] },
     } satisfies TaskSnapshot;
     const firstDuplicate: TaskRef = { filePath: 'A.md', line: 1, revision: 'a' };
     const secondDuplicate: TaskRef = { filePath: 'B.md', line: 2, revision: 'b' };
@@ -586,8 +1045,16 @@ describe('RightPanel block editing', () => {
             id: 'ready',
             resolution: {
               type: 'resolved',
-              prerequisite: { filePath: 'Ready.md', line: 0, revision: 'ready' },
+              prerequisite: ready.ref,
               complete: true,
+            },
+          },
+          {
+            id: 'open',
+            resolution: {
+              type: 'resolved',
+              prerequisite: open.ref,
+              complete: false,
             },
           },
           { id: 'missing', resolution: { type: 'missing' } },
@@ -605,7 +1072,7 @@ describe('RightPanel block editing', () => {
       outcome: { type: 'task', task: selected },
     });
     const tasks: TaskApplicationApi = {
-      queries: taskQueryApi({ list: () => [selected] }),
+      queries: taskQueryApi({ list: () => [selected, ready, open] }),
       execute: vi.fn(),
       setDependency: vi.fn(),
       clearDependency,
@@ -636,11 +1103,20 @@ describe('RightPanel block editing', () => {
     );
     expect(relations.map((row) => row.dataset['dependencyResolution'])).toEqual([
       'resolved',
+      'resolved',
       'missing',
       'duplicate',
     ]);
-    expect(relations[1]?.textContent).toContain('Missing');
-    expect(relations[2]?.textContent).toContain('2 matches');
+    expect(relations[0]?.querySelector('.abyss-status-marker')?.getAttribute('aria-label')).toBe(
+      'Prerequisite complete',
+    );
+    expect(relations[1]?.querySelector('.abyss-status-marker')?.getAttribute('aria-label')).toBe(
+      'Prerequisite open',
+    );
+    expect(relations[0]?.querySelector('.abyss-status-marker--inert')).not.toBeNull();
+    expect(relations[1]?.querySelector('.abyss-status-marker--inert')).not.toBeNull();
+    expect(relations[2]?.textContent).toContain('Missing');
+    expect(relations[3]?.textContent).toContain('2 matches');
     expect(
       container.querySelector('[data-dependency-diagnostic="self-edge"]')?.textContent,
     ).toContain('depends on itself');
@@ -707,7 +1183,9 @@ describe('RightPanel block editing', () => {
     const candidateButton = container.querySelector<HTMLButtonElement>(
       '[data-dependency-candidate]',
     )!;
-    expect(candidateButton.disabled).toBe(true);
+    expect(candidateButton.disabled).toBe(false);
+    expect(candidateButton.getAttribute('aria-disabled')).toBe('true');
+    expect(candidateButton.textContent).toContain('Resolve dependency issue');
     candidateButton.click();
     await flushMicrotasks();
     expect(setDependency).not.toHaveBeenCalled();

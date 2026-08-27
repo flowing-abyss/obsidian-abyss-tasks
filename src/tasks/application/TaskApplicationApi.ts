@@ -72,6 +72,8 @@ export interface TaskQueryApi {
 export interface TaskApplicationApi {
   readonly queries: TaskQueryApi;
   execute(command: TaskCommand): Promise<TaskCommandResult>;
+  /** Produces a fresh Tasks-compatible ID; uniqueness remains validator-authoritative. */
+  newDependencyId?(): string;
   setDependency?(intent: DependencyCommandIntent): Promise<TaskCommandResult>;
   clearDependency?(intent: DependencyClearIntent): Promise<TaskCommandResult>;
   applyRootTagChanges?(intent: TaskRootTagChangesIntent): Promise<TaskCommandResult>;

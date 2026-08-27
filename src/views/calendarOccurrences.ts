@@ -7,6 +7,8 @@ import {
   type CalendarProjectionSources,
   type CalendarTaskSource,
   type DateRange,
+  type DependencyCompletionDecision,
+  type DependencyProjectionPort,
   type LocalDate,
   type RecurrencePolicy,
   type TaskApplicationApi,
@@ -403,6 +405,16 @@ export function calendarMutationTarget(task: TaskSnapshot): TaskNodeRef | undefi
   const occurrence = occurrenceBySnapshot.get(task);
   if (occurrence?.kind === 'forecast') return undefined;
   return occurrence?.source.target ?? { type: 'task', ref: task.ref };
+}
+
+/** Applies the root-only dependency gate to a rendered Calendar occurrence. */
+export function calendarDependencyDecision(
+  task: TaskSnapshot,
+  projection?: Pick<DependencyProjectionPort, 'evaluateCompletion'>,
+): DependencyCompletionDecision | undefined {
+  const target = calendarMutationTarget(task);
+  if (target?.type !== 'task') return undefined;
+  return projection?.evaluateCompletion(task);
 }
 
 /** Builds a patch only for an authoritative materialized target. */

@@ -249,6 +249,12 @@ function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefine
   return undefined;
 }
 
+function randomDependencyId(): string {
+  const entropy = new Uint32Array(4);
+  crypto.getRandomValues(entropy);
+  return `abyss-${Array.from(entropy, (value) => value.toString(36).padStart(7, '0')).join('')}`;
+}
+
 type BlockCommand = Extract<TaskCommand, { readonly type: 'set-description' | 'add-comment' }>;
 
 function isBlockCommand(command: TaskCommand): command is BlockCommand {
@@ -449,6 +455,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       DEFAULT_BEHAVIOR_SETTINGS,
     dependencyProjection?: DependencyCommittedProjection,
     private readonly dependencyPolicy: DependencyPolicyPort = unavailableDependencyPolicy,
+    private readonly dependencyIdGenerator: () => string = randomDependencyId,
   ) {
     this.dependencyCommands = new DependencyCommandCoordinator(
       { resolve: (ref) => this.resolveRecentRoot(ref) },
@@ -457,6 +464,12 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       (task) => this.remember(task),
       dependencyPolicy,
     );
+  }
+
+  newDependencyId(): string {
+    const id = this.dependencyIdGenerator();
+    if (!isTaskDependencyId(id)) throw new Error('invalid-task-dependency-id');
+    return id;
   }
 
   setDependency(intent: DependencyCommandIntent): Promise<TaskCommandResult> {

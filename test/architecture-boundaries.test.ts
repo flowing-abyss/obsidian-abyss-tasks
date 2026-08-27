@@ -137,6 +137,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskApplicationApi.applyRootTagChanges': 'src/projects/NextActionService.ts',
   'TaskApplicationApi.clearDependency': 'src/views/PanelView.ts',
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
+  'TaskApplicationApi.newDependencyId': 'src/panels/RightPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskApplicationApi.setDependency': 'src/views/PanelView.ts',
   'TaskQueryApi.isReady': 'src/projects/ProjectStore.ts',

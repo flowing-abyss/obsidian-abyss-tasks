@@ -15,6 +15,7 @@ import {
 } from '../tasks';
 import { BaseView } from '../views/BaseView';
 import {
+  calendarDependencyDecision,
   calendarMutationTarget,
   calendarOccurrenceForTask,
   calendarPatchCommand,
@@ -394,7 +395,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.completionDecisionFor(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
         });
       } else if (this.activeViewType === 'week') {
         this.activeView = new WeekView({
@@ -411,7 +412,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.completionDecisionFor(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
         });
       } else {
         this.activeView = new ListView({
@@ -421,7 +422,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
-          dependencyDecision: (task) => this.completionDecisionFor(task),
+          dependencyDecision: (task) => calendarDependencyDecision(task, this.dependencyProjection),
         });
       }
     }
@@ -429,12 +430,6 @@ export class CalendarRenderer {
     this.activeView.render(this.viewContainer, tasks, config);
     this.projectionDiagnosticOwner.update(this.viewContainer, this.projectionIssues);
     this.updateToolbar();
-  }
-
-  private completionDecisionFor(task: TaskSnapshot) {
-    const target = calendarMutationTarget(task);
-    if (target?.type !== 'task') return undefined;
-    return this.dependencyProjection?.evaluateCompletion(task);
   }
 
   private isSameViewType(): boolean {

@@ -1595,17 +1595,6 @@ export class RightPanel {
     });
   }
 
-  private dependencyIdFor(task: TaskSnapshot): string {
-    if (task.dependency?.id) return task.dependency.id;
-    const seed = `${task.ref.filePath}\u0000${String(task.ref.line)}\u0000${task.ref.revision}`;
-    let hash = 2166136261;
-    for (let index = 0; index < seed.length; index += 1) {
-      hash ^= seed.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
-    }
-    return `abyss-${(hash >>> 0).toString(36)}`;
-  }
-
   private showDependencyEditor(anchor: HTMLButtonElement, task: TaskSnapshot): void {
     this.clearPopovers();
     const inspection = this.dependencyInspection(task);
@@ -1620,6 +1609,9 @@ export class RightPanel {
         'data-dependency-editor': '',
       },
     });
+    let repairDependencyId: string | undefined;
+    const repairButtons: HTMLButtonElement[] = [];
+    let beginRepair: ((dependencyId: string) => void) | undefined;
     if (inspection.decision.type === 'invalid') {
       for (const diagnostic of inspection.decision.diagnostics) {
         if (diagnostic.type === 'missing-prerequisite' || diagnostic.type === 'duplicate-id') {
@@ -1657,9 +1649,39 @@ export class RightPanel {
       });
       if (relation.resolution.type === 'resolved') {
         const prerequisite = snapshotByRef(relation.resolution.prerequisite);
+        const fallbackStatus = relation.resolution.complete
+          ? this.statusRegistry.defaultDone()
+          : this.statusRegistry.defaultTodo();
+        const marker = renderStatusMarker(row, {
+          task: {
+            statusSymbol: fallbackStatus.symbol,
+            status: relation.resolution.complete ? 'done' : 'open',
+          },
+          registry: this.statusRegistry,
+          interactive: false,
+          onLeftClick: () => undefined,
+          onContextMenu: () => undefined,
+        });
+        marker.setAttr(
+          'aria-label',
+          relation.resolution.complete ? 'Prerequisite complete' : 'Prerequisite open',
+        );
         row.createSpan({ text: prerequisite?.title ?? relation.id });
       } else if (relation.resolution.type === 'missing') {
         row.createSpan({ text: `${relation.id} · Missing` });
+        const repair = row.createEl('button', {
+          cls: 'abyss-dependency-repair',
+          attr: {
+            type: 'button',
+            title: `Find task for ${relation.id}`,
+            'aria-label': `Repair missing dependency ${relation.id}`,
+            'aria-pressed': 'false',
+            'data-dependency-repair': relation.id,
+          },
+        });
+        setIcon(repair, 'link');
+        repair.addEventListener('click', () => beginRepair?.(relation.id));
+        repairButtons.push(repair);
       } else {
         row.createSpan({
           text: `${relation.id} · ${String(relation.resolution.candidates.length)} matches`,
@@ -1758,20 +1780,28 @@ export class RightPanel {
               (diagnostic) =>
                 diagnostic.type === 'duplicate-id' && diagnostic.id === candidate.dependency?.id,
             );
-          let candidateTitle = `${candidate.title} — ${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`;
-          if (duplicateId) {
-            candidateTitle = `${candidate.title} — duplicate task ID`;
-          } else if (selectionUnavailable) {
-            candidateTitle = `${candidate.title} — resolve the dependency issue before changing prerequisites`;
-          }
+          const dependencyIdAvailable =
+            repairDependencyId !== undefined ||
+            candidate.dependency?.id !== undefined ||
+            this.tasks?.newDependencyId !== undefined;
+          let unavailableReason: string | undefined;
+          if (duplicateId) unavailableReason = 'Duplicate ID';
+          else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
+          else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
+            unavailableReason = 'Already has an ID';
+          } else if (!dependencyIdAvailable) unavailableReason = 'Dependency ID unavailable';
+          const diagnosticTitle = unavailableReason ? ` — ${unavailableReason}` : '';
+          const diagnosticLabel = unavailableReason ? `, ${unavailableReason}` : '';
+          const candidateTitle = `${candidate.title} — ${candidate.ref.filePath}:${String(candidate.ref.line + 1)}${diagnosticTitle}`;
           const button = results.createEl('button', {
             cls: 'abyss-dependency-candidate',
             attr: {
               type: 'button',
               role: 'option',
               title: candidateTitle,
-              'aria-label': `${candidate.title}, ${candidate.ref.filePath}, line ${String(candidate.ref.line + 1)}`,
+              'aria-label': `${candidate.title}, ${candidate.ref.filePath}, line ${String(candidate.ref.line + 1)}${diagnosticLabel}`,
               'data-dependency-candidate': '',
+              ...(unavailableReason && { 'aria-disabled': 'true' }),
             },
           });
           button.createSpan({
@@ -1783,8 +1813,19 @@ export class RightPanel {
             text: `${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`,
             attr: { 'aria-hidden': 'true' },
           });
-          button.disabled = duplicateId || selectionUnavailable;
+          if (unavailableReason) {
+            button.createSpan({
+              cls: 'abyss-dependency-candidate-diagnostic',
+              text: unavailableReason,
+              attr: { 'aria-hidden': 'true' },
+            });
+          }
           button.addEventListener('keydown', (event) => {
+            if (unavailableReason && (event.key === 'Enter' || event.key === ' ')) {
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
             if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
             event.preventDefault();
             const buttons = candidateButtons();
@@ -1793,12 +1834,16 @@ export class RightPanel {
             (next ?? search).focus({ preventScroll: true });
           });
           button.addEventListener('click', () => {
+            if (unavailableReason) return;
             if (!this.tasks?.setDependency) return;
+            const dependencyId =
+              repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
+            if (dependencyId === undefined) return;
             void this.tasks
               .setDependency({
                 prerequisite: candidate.ref,
                 dependent: task.ref,
-                dependencyId: this.dependencyIdFor(candidate),
+                dependencyId,
                 enabled: true,
               })
               .then((result) => {
@@ -1812,6 +1857,19 @@ export class RightPanel {
         }
       }
       if (count === 0) results.createDiv({ cls: 'abyss-dependency-empty', text: 'No tasks found' });
+    };
+    beginRepair = (dependencyId) => {
+      repairDependencyId = dependencyId;
+      editor.setAttr('data-dependency-repairing', dependencyId);
+      for (const button of repairButtons) {
+        button.setAttr(
+          'aria-pressed',
+          button.getAttribute('data-dependency-repair') === dependencyId ? 'true' : 'false',
+        );
+      }
+      search.setAttr('placeholder', `Find task for ${dependencyId}`);
+      renderCandidates(search.value);
+      search.focus({ preventScroll: true });
     };
     renderCandidates('');
     search.addEventListener('keydown', (event) => {

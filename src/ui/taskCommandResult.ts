@@ -190,6 +190,26 @@ interface CommandErrorDescription {
   readonly requiresRecovery: boolean;
 }
 
+function dependencyRejectionMessage(
+  diagnostics: NonNullable<
+    Extract<TaskCommandResult, { readonly type: 'invalid' }>['dependency']
+  >['diagnostics'],
+): string {
+  if (diagnostics.some(({ type }) => type === 'cycle')) {
+    return 'This would create a dependency cycle and was not saved.';
+  }
+  if (diagnostics.some(({ type }) => type === 'self-edge')) {
+    return 'A task cannot depend on itself.';
+  }
+  if (diagnostics.some(({ type }) => type === 'duplicate-id')) {
+    return 'Multiple tasks use the same dependency ID. Resolve the duplicate IDs first.';
+  }
+  if (diagnostics.some(({ type }) => type === 'missing-prerequisite')) {
+    return 'The prerequisite task could not be found. Reopen and inspect the dependency.';
+  }
+  return 'Dependency data is not ready. Reopen and inspect the task before trying again.';
+}
+
 function describeCommandError(
   result: Exclude<TaskCommandResult, { readonly type: 'ok' }>,
 ): CommandErrorDescription {
@@ -207,7 +227,13 @@ function describeCommandError(
     case 'not-found':
       return { message: 'This task no longer exists.', requiresRecovery: true };
     case 'invalid':
-      return { message: 'The task update is invalid and was not saved.', requiresRecovery: false };
+      return {
+        message:
+          result.dependency !== undefined
+            ? dependencyRejectionMessage(result.dependency.diagnostics)
+            : 'The task update is invalid and was not saved.',
+        requiresRecovery: false,
+      };
     case 'blocked':
       return {
         message:
