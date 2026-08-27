@@ -47,6 +47,12 @@ export type LineEdit =
   | { readonly type: 'set-duration'; readonly value: number | null }
   | { readonly type: 'set-recurrence'; readonly value: string | null }
   | { readonly type: 'set-on-completion'; readonly value: OnCompletion | null }
+  | { readonly type: 'set-task-id'; readonly id: string | null }
+  | {
+      readonly type: 'set-task-dependency';
+      readonly dependencyId: string;
+      readonly enabled: boolean;
+    }
   | {
       readonly type: 'change-tags';
       readonly add: readonly string[];
@@ -260,6 +266,19 @@ function semanticTitleFragments(
 }
 
 function insertionPoint(parsed: ParsedTaskLine, kind: TaskSpanKind): number {
+  if (kind === 'task-id') {
+    return Math.min(
+      parsed.occurrences.get('depends-on')?.[0]?.from ?? Infinity,
+      parsed.occurrences.get('block-id')?.[0]?.from ?? Infinity,
+      parsed.original.length - parsed.lineEnding.length,
+    );
+  }
+  if (kind === 'depends-on') {
+    return (
+      parsed.occurrences.get('block-id')?.[0]?.from ??
+      parsed.original.length - parsed.lineEnding.length
+    );
+  }
   const rank = TOKEN_RANK[kind];
   if (rank !== undefined) {
     const later = parsed.spans.find((span) => {
@@ -429,6 +448,71 @@ export class TaskMarkdownCodec {
         : spliceSource(parsed.original, occurrence.from, occurrence.to, token);
     }
     return token === null ? parsed.original : insertToken(parsed, kind, token);
+  }
+
+  private replaceAllKnownCarriers(
+    parsed: ParsedTaskLine,
+    kind: 'task-id' | 'depends-on',
+    token: string | null,
+  ): string {
+    const occurrences = parsed.occurrences.get(kind) ?? [];
+    if (occurrences.length === 0) {
+      return token === null ? parsed.original : insertToken(parsed, kind, token);
+    }
+
+    let content = parsed.original;
+    for (const occurrence of [...occurrences.slice(1)].reverse()) {
+      content = removeSpan(content, occurrence);
+    }
+    const first = occurrences[0]!;
+    return token === null
+      ? removeSpan(content, first)
+      : spliceSource(content, first.from, first.to, token);
+  }
+
+  private prepareTaskIdEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-task-id' }>,
+  ): PreparedLineEdit {
+    if (edit.id !== null) {
+      try {
+        taskDependencyId(edit.id);
+      } catch {
+        return invalid('invalid-target', 'task-id');
+      }
+    }
+    const token = edit.id === null ? null : `🆔 ${edit.id}`;
+    const content = this.replaceAllKnownCarriers(parsed, 'task-id', token);
+    return content === parsed.original
+      ? { type: 'unchanged', content }
+      : { type: 'prepared', content, fields: [] };
+  }
+
+  private prepareTaskDependencyEdit(
+    parsed: ParsedTaskLine,
+    edit: Extract<LineEdit, { readonly type: 'set-task-dependency' }>,
+  ): PreparedLineEdit {
+    try {
+      taskDependencyId(edit.dependencyId);
+    } catch {
+      return invalid('invalid-target', 'dependency');
+    }
+    if (typeof edit.enabled !== 'boolean') return invalid('invalid-target', 'dependency');
+
+    const existing = [...new Set(parsed.dependency.dependsOn)];
+    let dependencies: readonly string[];
+    if (edit.enabled) {
+      dependencies = existing.includes(edit.dependencyId)
+        ? existing
+        : [...existing, edit.dependencyId];
+    } else {
+      dependencies = existing.filter((id) => id !== edit.dependencyId);
+    }
+    const token = dependencies.length === 0 ? null : `⛔ ${dependencies.join(', ')}`;
+    const content = this.replaceAllKnownCarriers(parsed, 'depends-on', token);
+    return content === parsed.original
+      ? { type: 'unchanged', content }
+      : { type: 'prepared', content, fields: [] };
   }
 
   private editableTitleFragments(parsed: ParsedTaskLine): readonly SourceSpan[] {
@@ -826,6 +910,10 @@ export class TaskMarkdownCodec {
         return this.prepareRecurrenceEdit(parsed, edit);
       case 'set-on-completion':
         return this.prepareOnCompletionEdit(parsed, edit);
+      case 'set-task-id':
+        return this.prepareTaskIdEdit(parsed, edit);
+      case 'set-task-dependency':
+        return this.prepareTaskDependencyEdit(parsed, edit);
       case 'change-tags':
         return this.prepareTagChange(parsed, edit.add, edit.remove);
     }

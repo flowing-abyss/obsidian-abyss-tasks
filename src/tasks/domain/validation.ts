@@ -85,10 +85,15 @@ export function durationMinutes(value: number): DurationMinutes {
 
 /** Accept only the IDs already supported by the source-line parser. */
 export function taskDependencyId(value: string): string {
-  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/u.test(value)) {
+  if (!isTaskDependencyId(value)) {
     throw new Error('invalid-task-dependency-id');
   }
   return value;
+}
+
+/** Runtime guard for commands entering through application/plugin boundaries. */
+export function isTaskDependencyId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]+$/u.test(value);
 }
 
 /** Defensively validates arrays before they cross into immutable task snapshots. */

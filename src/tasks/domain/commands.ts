@@ -93,6 +93,13 @@ export type TaskCommand =
       readonly duration?: DurationMinutes;
     }
   | { readonly type: 'convert-to-all-day'; readonly ref: TaskRef; readonly date: LocalDate }
+  | { readonly type: 'set-task-id'; readonly ref: TaskRef; readonly id: string | null }
+  | {
+      readonly type: 'set-task-dependency';
+      readonly ref: TaskRef;
+      readonly dependencyId: string;
+      readonly enabled: boolean;
+    }
   | {
       readonly type: 'set-span-boundary';
       readonly ref: TaskRef;

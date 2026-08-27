@@ -262,6 +262,18 @@ export function applyTaskCommand(
       ];
       break;
     }
+    case 'set-task-id':
+      edits = [{ type: 'set-task-id', id: command.id }];
+      break;
+    case 'set-task-dependency':
+      edits = [
+        {
+          type: 'set-task-dependency',
+          dependencyId: command.dependencyId,
+          enabled: command.enabled,
+        },
+      ];
+      break;
     case 'set-span-boundary':
       requestedFields = [command.boundary];
       edits = [{ type: 'set-date', field: command.boundary, value: command.date }];

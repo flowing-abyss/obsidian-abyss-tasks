@@ -18,7 +18,7 @@ import type {
   TaskStatusRule,
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
-import { isSingleLineText } from '../domain/validation';
+import { isSingleLineText, isTaskDependencyId } from '../domain/validation';
 import type {
   CreateTaskCommand,
   CreateTaskCommandDestination,
@@ -189,6 +189,15 @@ function moveExceedsDateBounds(task: TaskSnapshot, command: MoveScheduleCommand)
 }
 
 function multilineInputIssue(command: TaskCommand): TaskCommandResult | undefined {
+  if (command.type === 'set-task-id' && command.id !== null && !isTaskDependencyId(command.id)) {
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'task-id' }] };
+  }
+  if (
+    command.type === 'set-task-dependency' &&
+    (!isTaskDependencyId(command.dependencyId) || typeof command.enabled !== 'boolean')
+  ) {
+    return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'dependency' }] };
+  }
   if (
     (command.type === 'shift-schedule' ||
       command.type === 'move-time-slot' ||
