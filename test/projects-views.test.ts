@@ -148,6 +148,13 @@ describe('renderProjectsList', () => {
   it('keeps the shared toolbar available while the lifecycle Board is active', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
     const onPortfolioLayoutChanged = vi.fn();
     const el = freshContainer();
 
@@ -163,6 +170,50 @@ describe('renderProjectsList', () => {
     expect(el.querySelector('[data-project-portfolio-layout="overview"]')).not.toBeNull();
     expect(el.querySelector('[data-project-status-filter]')).not.toBeNull();
     expect(el.querySelector('[aria-label="New project"]')).not.toBeNull();
+  });
+
+  it('keeps deep reused Project rows constrained to the Board extent while keyboard traversal remounts', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
+    const el = attachedContainer();
+    try {
+      const snapshots = Array.from({ length: 40 }, (_, index) =>
+        workspace(proj({ path: `Projects/${String(index)}.md`, name: `Project ${String(index)}` })),
+      );
+      renderProjectsBoard(el, {
+        ...ctx,
+        state: new AppState(),
+        settings,
+        snapshots,
+        onMoveStatus: vi.fn(),
+        onUndoStatus: vi.fn(),
+      });
+      const scroll = el.querySelector<HTMLElement>('.abyss-board-column-scroll')!;
+      Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 176 });
+      scroll.scrollTop = 22 * 88;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      const deepRow = el.querySelector<HTMLElement>('[data-board-item="Projects/22.md"]')!;
+      expect(getComputedStyle(deepRow).blockSize).toBe('88px');
+      expect(getComputedStyle(deepRow).overflow).toBe('hidden');
+      deepRow.focus();
+      for (let index = 0; index < 5; index += 1) {
+        activeDocument.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+        );
+      }
+
+      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(
+        'Projects/27.md',
+      );
+      expect(scroll.scrollTop).toBe(26 * 88);
+      expect(el.querySelector('[data-board-item="Projects/27.md"]')).not.toBeNull();
+    } finally {
+      style.remove();
+      el.remove();
+    }
   });
 
   it('row click switches to the dashboard view', () => {
@@ -907,5 +958,58 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
+  });
+
+  it('retains pending Undo through a synchronous Project store refresh', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const state = new AppState();
+    const setStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: ACTIVE_ID,
+      nextStatusId: 'published',
+    });
+    const undoStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: ACTIVE_ID,
+      nextStatusId: 'published',
+    });
+    const manager = {
+      setStatus,
+      undoStatus,
+      create: vi.fn(),
+    } as never;
+    let panel: ProjectsPanel;
+    const store = {
+      list: () => [proj({})],
+      get: () => proj({}),
+      activeForLeftPanel: () => [],
+      onUpdate: () => () => {},
+      refresh: () => panel.refresh(),
+    } as never;
+    panel = new ProjectsPanel(state, store, manager, settings, null as never, {
+      snapshots: [workspace()],
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+    const target = el.querySelector<HTMLElement>('[data-board-column="published"]')!;
+    card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    el.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(undoStatus).toHaveBeenCalledWith('Projects/A.md', 'published', ACTIVE_ID);
   });
 });

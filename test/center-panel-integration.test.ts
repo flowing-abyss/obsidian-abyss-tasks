@@ -1,4 +1,6 @@
 import moment from 'moment';
+// eslint-disable-next-line import/no-nodejs-modules -- geometry contract loads the shipped CSS.
+import { readFileSync } from 'node:fs';
 import { addIcon, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -42,6 +44,7 @@ import {
 } from './helpers';
 
 const TODAY = moment().format('YYYY-MM-DD');
+const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
 
 useRealMoment();
 
@@ -2279,6 +2282,62 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     panel.mount(el);
     return { panel, state, el };
   }
+
+  it('keeps deep reused Task cards constrained to the Board extent while keyboard traversal remounts', () => {
+    const tasks = Array.from({ length: 40 }, (_, index) =>
+      task({
+        title: `Task ${String(index)}`,
+        source: { filePath: 'Projects/A.md', line: index },
+      }),
+    );
+    const state = new AppState();
+    const panel = makeStaticPanel(state, tasks);
+    const container = freshContainer();
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(
+        panel,
+        'renderProjectTaskBoard',
+        host,
+        'Projects/A.md',
+        tasks.map((task) => ({
+          task,
+          projectPath: 'Projects/A.md',
+          owner: { type: 'project' as const, path: 'Projects/A.md' },
+        })),
+      );
+      const scroll = Array.from(
+        host.querySelectorAll<HTMLElement>('.abyss-board-column-scroll'),
+      ).find((candidate) => candidate.querySelector('.abyss-task-card') !== null)!;
+      Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 176 });
+      scroll.scrollTop = 22 * 88;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      const deepCard = host.querySelector<HTMLElement>('[data-board-item="Projects/A.md:22"]')!;
+      expect(getComputedStyle(deepCard).blockSize).toBe('88px');
+      expect(getComputedStyle(deepCard).overflow).toBe('hidden');
+      deepCard.focus();
+      for (let index = 0; index < 5; index += 1) {
+        activeDocument.activeElement?.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+        );
+      }
+
+      expect((activeDocument.activeElement as HTMLElement).dataset['boardItem']).toBe(
+        'Projects/A.md:27',
+      );
+      expect(scroll.scrollTop).toBe(26 * 88);
+      expect(host.querySelector('[data-board-item="Projects/A.md:27"]')).not.toBeNull();
+    } finally {
+      panel.destroy();
+      style.remove();
+      container.remove();
+    }
+  });
 
   function projectCaptureSuccess(): TaskCommandResult {
     return {
