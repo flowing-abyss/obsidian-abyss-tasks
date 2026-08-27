@@ -221,6 +221,61 @@ describe('WorkNoteCommandService', () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
+  it.each(['Only code remains: ``#work-note/task``\n', '````md\n```\n#work-note/task\n````\n'])(
+    'does not treat tags inside Markdown code as latest membership',
+    async (codedMembership) => {
+      const candidate = enabledPreset();
+      const app = await createAppWithFiles({
+        'Projects/P.md': '# P\n',
+        'Work Notes/A.md':
+          '---\nProject: "[[Projects/P]]"\nStatus: Active raw\n---\n# A\n#work-note/task\n',
+      });
+      const file = await fileAt(app, 'Work Notes/A.md');
+      const staleCache = app.metadataCache.getFileCache(file);
+      const index = new WorkNoteIndex(app, candidate);
+      const service = new WorkNoteCommandService(app, candidate, index);
+      const snapshot = (await index.audit()).snapshots[0]!;
+      const latestObserved = service.observe(snapshot)!;
+      vi.spyOn(app.metadataCache, 'getFileCache').mockReturnValue(staleCache);
+      await app.vault.modify(
+        file,
+        `---\nProject: "[[Projects/P]]"\nStatus: Active raw\n---\n# A\n${codedMembership}`,
+      );
+      const writes = vi.spyOn(app.vault, 'modify');
+      writes.mockClear();
+
+      expect((await service.setStatus(latestObserved, 'done')).type).toBe('compatibility-conflict');
+      expect(writes).not.toHaveBeenCalled();
+    },
+  );
+
+  it('validates inline eligibility inside the same atomic content transform as the write', async () => {
+    const candidate = enabledPreset();
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\n---\n# A\n#work-note/task\n',
+    });
+    const file = await fileAt(app, 'Work Notes/A.md');
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index);
+    const snapshot = (await index.audit()).snapshots[0]!;
+    const latestObserved = service.observe(snapshot)!;
+    const originalProcess = app.vault.process.bind(app.vault);
+    vi.spyOn(app.vault, 'process').mockImplementation((target, update, options) =>
+      originalProcess(
+        target,
+        (markdown) => update(markdown.replace('#work-note/task', 'membership removed')),
+        options,
+      ),
+    );
+    const writes = vi.spyOn(app.vault, 'modify');
+    writes.mockClear();
+
+    expect((await service.setStatus(latestObserved, 'done')).type).toBe('compatibility-conflict');
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it('writes the configured raw status and preserves unrelated frontmatter', async () => {
     const h = await fixture();
 

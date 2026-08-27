@@ -33,11 +33,17 @@ interface AllowedWriter {
     | 'single-task transaction'
     | 'destination provisioning'
     | 'project metadata'
+    | 'work-note metadata'
     | 'vault-wide tag rename';
   readonly reason: string;
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.setStatus#process#1': {
+    mutation: 'work-note metadata',
+    reason:
+      'Atomically revalidates current Markdown eligibility and updates one accepted Work Note status property.',
+  },
   'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.performCreation#vault.create#1':
     {
       mutation: 'destination provisioning',
