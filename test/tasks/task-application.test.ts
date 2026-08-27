@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { DependencyPolicyPort } from '../../src/tasks/application/DependencyPolicyPort';
 import type { TaskQueryApi } from '../../src/tasks/application/TaskApplicationApi';
 import { TaskApplicationService } from '../../src/tasks/application/TaskApplicationService';
 import type {
@@ -19,6 +20,14 @@ import { durationMinutes, localDate, localTime } from '../../src/tasks/domain/va
 import { taskQueryApi } from '../helpers';
 
 const ref: TaskRef = { filePath: 'tasks.md', line: 0, revision: 'block:test' };
+
+const allowingDependencyPolicy: DependencyPolicyPort = {
+  evaluateCompletion: () => ({ type: 'allowed' }),
+  inspect: () => ({ decision: { type: 'allowed' }, relations: [] }),
+  validateLink: () => ({ type: 'allowed' }),
+  subscribe: () => () => undefined,
+  acceptCommittedDelta: () => undefined,
+};
 
 function snapshot(): TaskSnapshot {
   return {
@@ -147,6 +156,10 @@ describe('TaskApplicationService planning commands', () => {
       },
       statuses,
       clock,
+      undefined,
+      undefined,
+      undefined,
+      allowingDependencyPolicy,
     );
 
     await expect(
@@ -256,6 +269,7 @@ describe('TaskApplicationService planning commands', () => {
       undefined,
       undefined,
       projection,
+      allowingDependencyPolicy,
     );
 
     const first = await application.setDependency({

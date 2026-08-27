@@ -401,6 +401,7 @@ export class MonthGridView extends BaseView {
       task: t,
       registry: this.callbacks.statusRegistry,
       interactive: true,
+      completionDecision: this.callbacks.dependencyDecision?.(t),
       onLeftClick: () => this.callbacks.onToggle(t),
       onContextMenu: (ev) => {
         ev.stopPropagation();

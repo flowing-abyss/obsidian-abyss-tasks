@@ -1,10 +1,12 @@
 import type { App } from 'obsidian';
 import { AppState } from '../app/AppState';
+import type { DependencyCandidateProvider } from '../panels/RightPanel';
 import { RightPanel } from '../panels/RightPanel';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type {
   CommentTimeContextProvider,
+  DependencyProjectionPort,
   TaskApplicationApi,
   TaskIndexEvent,
   TaskQueryApi,
@@ -41,6 +43,8 @@ export class TaskModal {
     private tasks?: TaskApplicationApi,
     private commentTimeContext?: CommentTimeContextProvider,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    private readonly dependencyProjection?: DependencyProjectionPort,
+    private readonly dependencyCandidates?: DependencyCandidateProvider,
   ) {}
 
   open(task: TaskSnapshot, context?: string): void {
@@ -88,6 +92,8 @@ export class TaskModal {
       (event) => this.trackOwnWrite(event),
       this.commentTimeContext,
       this.interactionOwnership,
+      this.dependencyProjection,
+      this.dependencyCandidates,
     );
     this.innerPanel.mount(panelEl);
 

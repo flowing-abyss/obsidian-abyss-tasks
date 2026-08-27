@@ -549,4 +549,64 @@ describe('task command result presentation', () => {
     presentTaskCreationResult(result as TaskCommandResult);
     expect(noticeCalls()).toEqual([[message]]);
   });
+
+  it('publishes dependency failures through the shared accessible announcement sink', () => {
+    const announce = vi.fn();
+    const result: TaskCommandResult = {
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'blocked', prerequisites: [] },
+    };
+
+    presentTaskCommandResult(result, { announce });
+
+    expect(announce).toHaveBeenCalledOnce();
+    expect(announce).toHaveBeenCalledWith({
+      message: 'Complete the prerequisite tasks first.',
+      ariaLive: 'assertive',
+    });
+    expect(noticeCalls()).toEqual([['Complete the prerequisite tasks first.']]);
+  });
+
+  it('describes a partial dependency write without referring to task tags', () => {
+    presentTaskCommandResult({
+      type: 'partial',
+      operation: 'dependency',
+      recovery: {
+        state: 'prerequisite-id-committed-dependent-edge-remains',
+        prerequisite: {} as TaskSnapshot,
+        dependent: {} as TaskSnapshot,
+        dependencyId: 'prep',
+        enabled: true,
+        cause: 'conflict',
+      },
+    });
+
+    expect(noticeCalls()).toEqual([
+      [
+        'The prerequisite was saved, but the dependency was not changed. Reopen and inspect the task, then retry.',
+      ],
+    ]);
+  });
+
+  it('describes an unknown dependency write without offering a blind retry', () => {
+    presentTaskCommandResult({
+      type: 'partial',
+      operation: 'dependency',
+      recovery: {
+        state: 'prerequisite-id-committed-dependent-edge-unknown',
+        prerequisite: {} as TaskSnapshot,
+        dependent: {} as TaskSnapshot,
+        dependencyId: 'prep',
+        enabled: true,
+        cause: 'io-error',
+      },
+    });
+
+    const message = String(noticeCalls()[0]?.[0]);
+    expect(message.toLocaleLowerCase()).toContain('could not confirm');
+    expect(message).toContain('Inspect');
+    expect(message).toContain('Do not retry');
+    expect(message).not.toContain('tags');
+  });
 });

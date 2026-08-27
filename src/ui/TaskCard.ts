@@ -1,8 +1,9 @@
 import { Notice, Platform, type App, type Component } from 'obsidian';
 import type { LinkToken } from '../parser/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskSnapshot } from '../tasks';
+import type { DependencyCompletionDecision, TaskSnapshot } from '../tasks';
 import { isForecastCalendarTask } from '../views/calendarOccurrences';
+import { renderDependencyBadge } from './dependencyPresentation';
 import { attachLongPress } from './MobileTouch';
 import { recurrenceBadgeInput, renderRecurrenceBadge } from './recurrence/renderRecurrenceBadge';
 import { renderTaskText } from './renderTaskText';
@@ -21,6 +22,7 @@ export interface TaskCardOptions {
   statusRegistry?: StatusRegistry;
   onContextMenu?: (ev: MouseEvent, task: TaskSnapshot) => void;
   onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
+  dependencyDecision?: DependencyCompletionDecision;
 }
 
 const TASK_ICONS: Record<string, string> = {
@@ -88,6 +90,7 @@ export function createTaskCard(
       task,
       registry: options.statusRegistry,
       interactive: !isForecastCalendarTask(task),
+      ...(options.dependencyDecision && { completionDecision: options.dependencyDecision }),
       onLeftClick: () => onToggle?.(task),
       onContextMenu: (e) => options.onContextMenu?.(e, task),
     });
@@ -119,6 +122,7 @@ export function createTaskCard(
   });
 
   content.appendChild(iconEl);
+  if (options.dependencyDecision) renderDependencyBadge(content, options.dependencyDecision);
   content.appendChild(descEl);
   // Clicking anywhere on the card (except a link) opens the source note.
   content.addEventListener('click', () => options.onOpenNote(task));

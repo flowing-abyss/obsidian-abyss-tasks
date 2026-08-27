@@ -73,6 +73,7 @@ export interface TaskApplicationApi {
   readonly queries: TaskQueryApi;
   execute(command: TaskCommand): Promise<TaskCommandResult>;
   setDependency?(intent: DependencyCommandIntent): Promise<TaskCommandResult>;
+  clearDependency?(intent: DependencyClearIntent): Promise<TaskCommandResult>;
   applyRootTagChanges?(intent: TaskRootTagChangesIntent): Promise<TaskCommandResult>;
 }
 
@@ -82,6 +83,11 @@ export interface DependencyCommandIntent {
   /** Proposed Tasks-compatible ID, used only when the prerequisite has no ID yet. */
   readonly dependencyId: string;
   readonly enabled: boolean;
+}
+
+export interface DependencyClearIntent {
+  readonly dependent: TaskRef;
+  readonly dependencyId: string;
 }
 
 export interface TaskRootTagChange {

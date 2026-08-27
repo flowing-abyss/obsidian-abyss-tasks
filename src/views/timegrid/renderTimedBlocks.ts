@@ -192,6 +192,7 @@ function renderTimedBlockControl(
     task,
     registry: callbacks.statusRegistry,
     interactive: true,
+    completionDecision: callbacks.dependencyDecision?.(task),
     onLeftClick: () => callbacks.onToggle(task),
     onContextMenu: (event) => {
       event.stopPropagation();

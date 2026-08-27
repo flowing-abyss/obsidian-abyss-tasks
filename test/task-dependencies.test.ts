@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../src/projects/dependencies/DependencyPolicy';
 import type { TaskSnapshot } from '../src/tasks/domain/types';
 
 function task(
@@ -76,6 +77,73 @@ describe('DependencyIndex', () => {
       type: 'invalid',
       diagnostics: [expect.objectContaining({ type: 'cycle' })],
     });
+  });
+
+  it('projects every direct relation for inspection without asking UI to resolve IDs', () => {
+    const index = new DependencyIndex();
+    const resolved = task(1, { id: 'ready' });
+    const duplicateA = task(2, { id: 'duplicate' });
+    const duplicateB = task(3, { id: 'duplicate' });
+    const dependent = task(4, {
+      id: 'ship',
+      dependsOn: ['ready', 'missing', 'duplicate'],
+    });
+    index.replace([resolved, duplicateA, duplicateB, dependent]);
+
+    expect(new DependencyPolicy(index).inspect(dependent)).toEqual({
+      decision: expect.objectContaining({ type: 'invalid' }),
+      relations: [
+        {
+          id: 'ready',
+          resolution: { type: 'resolved', prerequisite: resolved.ref, complete: false },
+        },
+        { id: 'missing', resolution: { type: 'missing' } },
+        {
+          id: 'duplicate',
+          resolution: { type: 'duplicate', candidates: [duplicateA.ref, duplicateB.ref] },
+        },
+      ],
+    });
+  });
+
+  it('retains raw carrier IDs when inspection is unresolved so every relation remains clearable', () => {
+    const unresolved = task(7, { dependsOn: ['first', 'second'] });
+    const policy = new DependencyPolicy(new DependencyIndex());
+
+    expect(policy.inspect(unresolved)).toEqual({
+      decision: { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] },
+      relations: [
+        { id: 'first', resolution: { type: 'missing' } },
+        { id: 'second', resolution: { type: 'missing' } },
+      ],
+    });
+  });
+
+  it('returns defensive inspection copies including resolved completion state', () => {
+    const completed = task(8, { id: 'done' }, 'done');
+    const duplicateA = task(9, { id: 'same' });
+    const duplicateB = task(10, { id: 'same' });
+    const dependent = task(11, { dependsOn: ['done', 'same'] });
+    const index = new DependencyIndex();
+    const policy = new DependencyPolicy(index);
+    index.replace([completed, duplicateA, duplicateB, dependent]);
+    const first = policy.inspect(dependent);
+    const resolved = first.relations[0]!.resolution;
+    const duplicate = first.relations[1]!.resolution;
+    if (resolved.type !== 'resolved' || duplicate.type !== 'duplicate') throw new Error('fixture');
+    (resolved.prerequisite as { filePath: string }).filePath = 'mutated.md';
+    (duplicate.candidates[0] as { line: number }).line = 999;
+
+    expect(policy.inspect(dependent).relations).toEqual([
+      {
+        id: 'done',
+        resolution: { type: 'resolved', prerequisite: completed.ref, complete: true },
+      },
+      {
+        id: 'same',
+        resolution: { type: 'duplicate', candidates: [duplicateA.ref, duplicateB.ref] },
+      },
+    ]);
   });
 
   it('publishes the changed task and reverse dependent when prerequisite completion changes', () => {

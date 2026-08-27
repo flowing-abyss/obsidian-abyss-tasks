@@ -23,6 +23,11 @@ export {
   type CommentTimeContext,
   type CommentTimeContextProvider,
 } from './domain/commentTimeLabel';
+export type {
+  DependencyCompletionDecision,
+  DependencyInspection,
+  DependencyProjectionPort,
+} from './domain/dependency';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';
 export {
   expandRecurrenceReferences,

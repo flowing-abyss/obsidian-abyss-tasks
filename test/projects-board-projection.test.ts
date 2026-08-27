@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createProjectBoardMutation,
   createTaskBoardMutation,
+  projectActionBoardColumns,
   projectBoardColumns,
-  projectBoardTasks,
   taskBoardColumns,
 } from '../src/panels/projects/boardProjection';
 import type { Project } from '../src/projects/types';
@@ -105,26 +105,29 @@ describe('board projections', () => {
     ]);
   });
 
-  it('excludes inherited Work Note tasks from a writable project task board', () => {
+  it('includes inherited Work Note actions in the Project task board', () => {
     const direct = task({ title: 'Direct' });
     const inherited = task({ title: 'Inherited' });
 
     expect(
-      projectBoardTasks([
-        {
-          task: direct,
-          projectPath: 'Projects/A.md',
-          dependency: { type: 'allowed' },
-          owner: { type: 'project', path: 'Projects/A.md' },
-        },
-        {
-          task: inherited,
-          projectPath: 'Projects/A.md',
-          dependency: { type: 'allowed' },
-          owner: { type: 'work-note', path: 'Notes/Work.md' },
-        },
-      ]),
-    ).toEqual([direct]);
+      projectActionBoardColumns(
+        [{ id: 'todo', symbol: ' ', name: 'Todo', type: 'todo', icon: '', core: true }],
+        [
+          {
+            task: direct,
+            projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' },
+            owner: { type: 'project', path: 'Projects/A.md' },
+          },
+          {
+            task: inherited,
+            projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' },
+            owner: { type: 'work-note', path: 'Notes/Work.md' },
+          },
+        ],
+      ).flatMap(({ items }) => items.map(({ task }) => task)),
+    ).toEqual([direct, inherited]);
   });
 
   it.each(['project', 'task'] as const)(

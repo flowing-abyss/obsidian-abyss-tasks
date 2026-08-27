@@ -169,15 +169,16 @@ describe('PanelView', () => {
     let workspaceListener:
       | ((snapshots: readonly ProjectWorkspaceSnapshot[], event: unknown) => void)
       | undefined;
-    const projectWorkspace = {
-      list: () => [initial],
-      get: () => initial,
-      onUpdate: (
-        listener: (snapshots: readonly ProjectWorkspaceSnapshot[], event: unknown) => void,
-      ) => {
+    const onWorkspaceUpdate = vi.fn(
+      (listener: (snapshots: readonly ProjectWorkspaceSnapshot[], event: unknown) => void) => {
         workspaceListener = listener;
         return () => {};
       },
+    );
+    const projectWorkspace = {
+      list: () => [initial],
+      get: () => initial,
+      onUpdate: onWorkspaceUpdate,
       absorbOwnCommit: () => {},
     } as never;
     const view = new PanelView(
@@ -204,6 +205,31 @@ describe('PanelView', () => {
     const state = (view as unknown as { state: AppState }).state;
     state.set('mode', 'projects');
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const dependencyOnly: ProjectWorkspaceSnapshot = {
+      ...initial,
+      tasks: initial.tasks.map((action, index) =>
+        index === 0
+          ? {
+              ...action,
+              dependency: {
+                type: 'blocked' as const,
+                prerequisites: [{ filePath: 'Prep.md', line: 0, revision: 'prep' }],
+              },
+            }
+          : action,
+      ),
+      dependencies: { blocked: 1, invalid: 0, diagnostics: [] },
+    };
+    workspaceListener?.([dependencyOnly], {
+      snapshots: [dependencyOnly],
+      projectPaths: ['Projects/A.md'],
+    });
+
+    expect(onWorkspaceUpdate).toHaveBeenCalledOnce();
+    expect(
+      view.contentEl.querySelector('.abyss-task-dependency-badge')?.getAttribute('aria-label'),
+    ).toBe('Blocked by 1 prerequisite');
+
     const settled = joinedProjectSnapshot(['open', 'done']);
     workspaceListener?.([settled], { snapshots: [settled], projectPaths: ['Projects/A.md'] });
     const applyRootTagChanges = vi

@@ -122,6 +122,7 @@ describe('CenterPanel multi-selection', () => {
   });
 
   it('blocks every dependent in the real bulk Done route before repository mutation', async () => {
+    activeDocument.querySelector('.abyss-task-command-live-region')?.remove();
     const prerequisite = task({
       title: 'Prepare',
       tags: ['#task/inbox'],
@@ -211,6 +212,11 @@ describe('CenterPanel multi-selection', () => {
 
       expect(execute).toHaveBeenCalledTimes(2);
       expect(edit).not.toHaveBeenCalled();
+      const announcements = activeDocument.querySelectorAll('.abyss-task-command-live-region');
+      expect(announcements).toHaveLength(1);
+      expect(announcements[0]?.textContent).toBe(
+        '2 tasks were not completed because their prerequisites are unfinished or invalid.',
+      );
     } finally {
       addItem.mockRestore();
       panel.destroy();

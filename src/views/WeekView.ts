@@ -3,7 +3,7 @@ import { resolveWeekStartPosition } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskSnapshot } from '../tasks';
+import type { DependencyCompletionDecision, TaskSnapshot } from '../tasks';
 import { createTaskCard } from '../ui/TaskCard';
 import { BaseView } from './BaseView';
 import type { CalendarTaskSource } from './calendarOccurrences';
@@ -26,6 +26,7 @@ export interface WeekViewCallbacks {
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
   onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
+  dependencyDecision?: (task: TaskSnapshot) => DependencyCompletionDecision | undefined;
   onForecastClick?: (
     source: CalendarTaskSource,
     referenceDate: import('../tasks').LocalDate,
@@ -99,6 +100,7 @@ export class WeekView extends BaseView {
           statusRegistry: this.callbacks.statusRegistry,
           onContextMenu: this.callbacks.onContextMenu,
           onTaskBodyContextMenu: this.callbacks.onTaskBodyContextMenu,
+          dependencyDecision: this.callbacks.dependencyDecision?.(task),
         });
         applyOccurrenceDomState(card, occurrence, 'single', `${cls}-body`);
         bindMaterializedInteractions(occurrence, (target) => {

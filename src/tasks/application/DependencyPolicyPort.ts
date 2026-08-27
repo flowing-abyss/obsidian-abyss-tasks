@@ -1,16 +1,18 @@
-import type { TaskCommandResult } from '../domain/commands';
-import type { TaskRef, TaskSnapshot } from '../domain/types';
-
-export type DependencyCompletionDecision =
-  | { readonly type: 'allowed' }
-  | Extract<TaskCommandResult, { readonly type: 'blocked' }>['dependency'];
-
-export interface DependencyProjectionUpdate {
-  /** Every Task whose dependency projection may have changed. */
-  readonly affected: readonly TaskRef[];
-  /** Task files whose eventual index settlement makes this projection update observable. */
-  readonly causalTaskPaths: readonly string[];
-}
+import type {
+  DependencyLinkValidation,
+  DependencyLinkValidationInput,
+  DependencyProjectionPort,
+} from '../domain/dependency';
+import type { TaskSnapshot } from '../domain/types';
+export type {
+  DependencyCompletionDecision,
+  DependencyInspection,
+  DependencyInspectionRelation,
+  DependencyLinkValidation,
+  DependencyLinkValidationInput,
+  DependencyProjectionPort,
+  DependencyProjectionUpdate,
+} from '../domain/dependency';
 
 export interface DependencyCommittedDelta {
   /** Canonical repository snapshots consumed by the committed operation. */
@@ -19,14 +21,9 @@ export interface DependencyCommittedDelta {
   readonly roots: readonly TaskSnapshot[];
 }
 
-/** Read-only dependency projection consumed by joined read models. */
-export interface DependencyProjectionPort {
-  evaluateCompletion(task: TaskSnapshot): DependencyCompletionDecision;
-  subscribe(listener: (event: DependencyProjectionUpdate) => void): () => void;
-}
-
 /** Neutral application policy; the Tasks core has no dependency on Projects. */
 export interface DependencyPolicyPort extends DependencyProjectionPort {
+  validateLink(input: DependencyLinkValidationInput): DependencyLinkValidation;
   acceptCommittedDelta(delta: DependencyCommittedDelta): void;
 }
 
@@ -36,6 +33,20 @@ export const unavailableDependencyPolicy: DependencyPolicyPort = {
     task.dependency?.id !== undefined || (task.dependency?.dependsOn.length ?? 0) > 0
       ? { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] }
       : { type: 'allowed' },
+  inspect: (task) => ({
+    decision:
+      task.dependency?.id !== undefined || (task.dependency?.dependsOn.length ?? 0) > 0
+        ? { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] }
+        : { type: 'allowed' },
+    relations: (task.dependency?.dependsOn ?? []).map((id) => ({
+      id,
+      resolution: { type: 'missing' },
+    })),
+  }),
+  validateLink: () => ({
+    type: 'invalid',
+    diagnostics: [{ type: 'unresolved-projection' }],
+  }),
   subscribe: () => () => {},
   acceptCommittedDelta: () => {},
 };

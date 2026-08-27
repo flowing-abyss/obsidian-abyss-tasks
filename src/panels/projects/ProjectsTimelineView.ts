@@ -68,7 +68,7 @@ export interface TasksTimelineOptions {
   readonly actions: readonly ProjectAction[];
   readonly session?: LogicalViewportSession;
   readonly isNarrow?: boolean;
-  readonly renderTask?: (host: HTMLElement, task: TaskSnapshot) => void;
+  readonly renderTask?: (host: HTMLElement, action: ProjectAction) => void;
   readonly onSetDate: (
     task: TaskSnapshot,
     role: Exclude<TimelinePointRole, 'milestone'>,
@@ -537,18 +537,21 @@ export function renderTasksTimeline(
   options: TasksTimelineOptions,
 ): TimelineViewHandle {
   return renderTimeline(container, {
-    entries: options.actions.map(({ task }) => taskTimelineEntry(task)),
+    entries: options.actions.map((action) => ({
+      ...taskTimelineEntry(action.task),
+      value: action,
+    })),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
     ...(options.renderTask
       ? {
-          renderIdentity: (host: HTMLElement, entry: TimelineEntry<TaskSnapshot>) =>
+          renderIdentity: (host: HTMLElement, entry: TimelineEntry<ProjectAction>) =>
             options.renderTask?.(host, entry.value),
         }
       : {}),
     onSetDate: (entry, role, date) => {
       if (role === 'milestone') throw new Error('Task Timeline milestone mutation unavailable');
-      return options.onSetDate(entry.value, role, date);
+      return options.onSetDate(entry.value.task, role, date);
     },
   });
 }

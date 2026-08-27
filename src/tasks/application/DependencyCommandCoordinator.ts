@@ -6,7 +6,12 @@ import type {
 import type { RootReconciliationBasis, TaskResolution } from '../domain/taskReconciliation';
 import type { TaskMutationTarget, TaskRef, TaskSnapshot } from '../domain/types';
 import { isTaskDependencyId } from '../domain/validation';
-import type { DependencyCommandIntent, TaskQueryApi } from './TaskApplicationApi';
+import { unavailableDependencyPolicy, type DependencyPolicyPort } from './DependencyPolicyPort';
+import type {
+  DependencyClearIntent,
+  DependencyCommandIntent,
+  TaskQueryApi,
+} from './TaskApplicationApi';
 import type {
   TaskDependencyEditCommand,
   TaskDependencyEditRequest,
@@ -73,14 +78,33 @@ function failureCause(
 
 /** Coordinates one dependency relation without creating another identity or write subsystem. */
 export class DependencyCommandCoordinator {
+  private dependencyMutationQueue: Promise<void> = Promise.resolve();
+  private dependencyContentEpoch = 0;
+
   constructor(
     private readonly rootResolver: Pick<TaskQueryApi, 'resolve'>,
     private readonly repository: TaskRepository,
     private readonly projection?: DependencyCommittedProjection,
     private readonly onCommitted?: (task: TaskSnapshot) => void,
+    private readonly validation: Pick<
+      DependencyPolicyPort,
+      'validateLink'
+    > = unavailableDependencyPolicy,
   ) {}
 
-  async setDependency(intent: DependencyCommandIntent): Promise<TaskCommandResult> {
+  setDependency(intent: DependencyCommandIntent): Promise<TaskCommandResult> {
+    const enqueuedAtEpoch = this.dependencyContentEpoch;
+    return this.enqueue(async () => {
+      if (intent.enabled && enqueuedAtEpoch !== this.dependencyContentEpoch) {
+        return this.unresolvedValidation();
+      }
+      return this.rememberUnknown(await this.coordinateSetDependency(intent));
+    });
+  }
+
+  private async coordinateSetDependency(
+    intent: DependencyCommandIntent,
+  ): Promise<TaskCommandResult> {
     if (
       !isTaskDependencyId(intent.dependencyId) ||
       typeof intent.enabled !== 'boolean' ||
@@ -108,6 +132,28 @@ export class DependencyCommandCoordinator {
     }
 
     const dependencyId = prerequisite.value.current.dependency?.id ?? intent.dependencyId;
+    if (intent.enabled) {
+      let validation;
+      try {
+        validation = this.validation.validateLink({
+          prerequisite: prerequisite.value.current,
+          dependent: dependent.value.current,
+          dependencyId,
+        });
+      } catch {
+        validation = {
+          type: 'invalid' as const,
+          diagnostics: [{ type: 'unresolved-projection' as const }],
+        };
+      }
+      if (validation.type === 'invalid') {
+        return {
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'dependency' }],
+          dependency: { diagnostics: validation.diagnostics },
+        };
+      }
+    }
     const needsId = prerequisite.value.current.dependency?.id === undefined && intent.enabled;
     if (
       needsId &&
@@ -122,6 +168,69 @@ export class DependencyCommandCoordinator {
       intent.enabled,
       needsId,
     );
+  }
+
+  clearDependency(intent: DependencyClearIntent): Promise<TaskCommandResult> {
+    return this.enqueue(async () =>
+      this.rememberUnknown(await this.coordinateClearDependency(intent)),
+    );
+  }
+
+  private async coordinateClearDependency(
+    intent: DependencyClearIntent,
+  ): Promise<TaskCommandResult> {
+    if (!isTaskDependencyId(intent.dependencyId)) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'dependency' }] };
+    }
+    let dependent: ResolveRootResult;
+    try {
+      dependent = this.resolve(intent.dependent);
+    } catch {
+      return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
+    }
+    if (dependent.type === 'terminal') return dependent.result;
+    const result = await this.edit(
+      this.change(dependent.value, {
+        type: 'set-task-dependency',
+        ref: dependent.value.current.ref,
+        dependencyId: intent.dependencyId,
+        enabled: false,
+      }),
+    );
+    if (result.type === 'committed') {
+      const roots = [result.outcome].flatMap(outcomeTask);
+      this.publish(roots);
+    }
+    return terminalRepositoryResult(result);
+  }
+
+  private enqueue(operation: () => Promise<TaskCommandResult>): Promise<TaskCommandResult> {
+    const scheduled = this.dependencyMutationQueue.then(operation, operation);
+    this.dependencyMutationQueue = scheduled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return scheduled;
+  }
+
+  private unresolvedValidation(): TaskCommandResult {
+    return {
+      type: 'invalid',
+      issues: [{ code: 'invalid-target', field: 'dependency' }],
+      dependency: { diagnostics: [{ type: 'unresolved-projection' }] },
+    };
+  }
+
+  private rememberUnknown(result: TaskCommandResult): TaskCommandResult {
+    if (
+      (result.type === 'io-error' && result.contentState === 'unknown') ||
+      (result.type === 'partial' &&
+        result.operation === 'dependency' &&
+        result.recovery.state === 'prerequisite-id-committed-dependent-edge-unknown')
+    ) {
+      this.dependencyContentEpoch += 1;
+    }
+    return result;
   }
 
   private resolve(ref: TaskRef): ResolveRootResult {

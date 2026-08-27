@@ -1,6 +1,9 @@
 import type {
   DependencyCommittedDelta,
   DependencyCompletionDecision,
+  DependencyInspection,
+  DependencyLinkValidation,
+  DependencyLinkValidationInput,
   DependencyPolicyPort,
   DependencyProjectionUpdate,
 } from '../../tasks/application/DependencyPolicyPort';
@@ -23,6 +26,22 @@ export class DependencyPolicy implements DependencyPolicyPort {
       return { type: 'blocked', prerequisites: projection.prerequisites };
     }
     return { type: 'invalid', diagnostics: projection.diagnostics };
+  }
+
+  inspect(task: TaskSnapshot): DependencyInspection {
+    return {
+      decision: this.evaluateCompletion(task),
+      relations:
+        this.index.inspect(task) ??
+        (task.dependency?.dependsOn ?? []).map((id) => ({
+          id,
+          resolution: { type: 'missing' },
+        })),
+    };
+  }
+
+  validateLink(input: DependencyLinkValidationInput): DependencyLinkValidation {
+    return this.index.validateLink(input.prerequisite, input.dependent, input.dependencyId);
   }
 
   subscribe(listener: (event: DependencyProjectionUpdate) => void): () => void {

@@ -18,6 +18,7 @@ import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TagManager } from '../tags/TagManager';
 import type {
   CommentTimeContextProvider,
+  DependencyProjectionPort,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCommandResult,
@@ -174,6 +175,7 @@ export class PanelView extends ItemView {
     private readonly injectedProjectStore?: ProjectStore,
     private readonly projectWorkspace?: ProjectWorkspaceCoordinator,
     private readonly workNoteCommands?: WorkNoteCommandService,
+    private readonly dependencyProjection?: DependencyProjectionPort,
   ) {
     super(leaf);
   }
@@ -225,6 +227,12 @@ export class PanelView extends ItemView {
         }),
       setDependency: (intent) =>
         this.tasks.setDependency?.(intent) ??
+        Promise.resolve({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'dependency' }],
+        }),
+      clearDependency: (intent) =>
+        this.tasks.clearDependency?.(intent) ??
         Promise.resolve({
           type: 'invalid',
           issues: [{ code: 'invalid-target', field: 'dependency' }],
@@ -331,6 +339,7 @@ export class PanelView extends ItemView {
       this.projectWorkspace?.list() ?? [],
       this.workNoteCommands,
       projectCommands,
+      this.dependencyProjection,
     );
     this.right = new RightPanel(
       this.state,
@@ -343,6 +352,31 @@ export class PanelView extends ItemView {
       (event) => this.trackOwnWrite(event),
       this.commentTimeContext,
       this.interactionRegistry,
+      this.dependencyProjection,
+      (dependent) => {
+        const snapshots = this.projectWorkspace?.list() ?? [];
+        const memberships = snapshots.filter(({ tasks }) =>
+          tasks.some(
+            ({ task }) =>
+              task.ref.filePath === dependent.ref.filePath && task.ref.line === dependent.ref.line,
+          ),
+        );
+        const project =
+          memberships.length === 1 ? memberships[0]!.tasks.map(({ task }) => task) : [];
+        const projectKeys = new Set(
+          project.map(({ ref }) => `${ref.filePath}\u0000${String(ref.line)}`),
+        );
+        return {
+          project,
+          other: this.queries
+            .list()
+            .filter(
+              ({ ref }) =>
+                !projectKeys.has(`${ref.filePath}\u0000${String(ref.line)}`) &&
+                !(ref.filePath === dependent.ref.filePath && ref.line === dependent.ref.line),
+            ),
+        };
+      },
     );
 
     // Keep panels fresh when the project set / stats change. Only the left

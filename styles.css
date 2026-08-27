@@ -3364,6 +3364,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-status-marker--inert {
   cursor: default;
 }
+.abyss-status-marker--completion-blocked {
+  border-color: var(--text-warning, var(--text-muted));
+  color: var(--text-warning, var(--text-muted));
+  opacity: 0.72;
+}
+.abyss-status-marker--completion-blocked:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+  opacity: 1;
+}
 /* Shape by status-group (type): in-progress is the only circular group. */
 .abyss-status-marker[data-status-type='in-progress'] {
   border-radius: 50%;
@@ -3566,6 +3576,16 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 11px;
   height: 11px;
   flex-shrink: 0;
+}
+.abyss-task-dependency-badge {
+  color: var(--text-warning, var(--text-muted));
+  flex: 0 0 auto;
+}
+.abyss-task-dependency-badge.is-invalid {
+  color: var(--text-error, var(--text-warning));
+}
+.abyss-task-dependency-badge-icon {
+  display: inline-flex;
 }
 
 /* Task time badge (in title row, kept for list view compatibility) */
@@ -4361,6 +4381,18 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   color: var(--text-muted);
   border-style: dashed;
 }
+.abyss-dependency-chip {
+  min-width: 24px;
+  padding-inline: 5px;
+  justify-content: center;
+}
+.abyss-dependency-chip > svg {
+  width: 14px;
+  height: 14px;
+}
+.abyss-dependency-chip .abyss-task-dependency-badge {
+  font-size: 10px;
+}
 .abyss-chip-tag {
   cursor: default;
   color: var(--abyss-chip-tag-color, var(--text-normal));
@@ -4455,6 +4487,95 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-popover-clear-icon-btn svg {
   width: 0.75rem;
   height: 0.75rem;
+}
+.abyss-dependency-editor {
+  inline-size: min(22rem, calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2)));
+  min-inline-size: min(16rem, calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2)));
+  max-inline-size: calc(100% - (var(--abyss-popover-edge-gap, 0.5rem) * 2));
+  display: grid;
+  gap: var(--size-2-2, 0.5rem);
+  max-block-size: var(--abyss-popover-max-block-size, 28rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.abyss-dependency-diagnostic {
+  padding: var(--size-2-2, 0.5rem);
+  border-radius: var(--radius-s);
+  background: var(--background-modifier-error-hover);
+  color: var(--text-error, var(--text-warning));
+  font-size: var(--font-ui-smaller);
+}
+.abyss-dependency-relations,
+.abyss-dependency-candidates {
+  display: grid;
+  gap: var(--size-2-1, 0.25rem);
+  max-block-size: 14rem;
+  overflow-y: auto;
+}
+.abyss-dependency-relation,
+.abyss-dependency-candidate {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2, 0.5rem);
+  padding: var(--size-2-2, 0.5rem);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-normal);
+  text-align: start;
+}
+.abyss-dependency-relation > span,
+.abyss-dependency-candidate-title,
+.abyss-dependency-candidate-source {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-dependency-candidate-title {
+  flex: 1 1 auto;
+}
+.abyss-dependency-candidate-source {
+  flex: 0 1 42%;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-dependency-relation > span {
+  flex: 1 1 auto;
+}
+.abyss-dependency-candidate:hover,
+.abyss-dependency-candidate:focus-visible {
+  background: var(--background-modifier-hover);
+}
+.abyss-dependency-remove {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+.abyss-dependency-remove:hover,
+.abyss-dependency-remove:focus-visible {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+.abyss-dependency-remove svg {
+  width: 14px;
+  height: 14px;
+}
+.abyss-dependency-search {
+  width: 100%;
+  min-width: 0;
+}
+.abyss-dependency-candidate-group,
+.abyss-dependency-empty {
+  padding-inline: var(--size-2-2, 0.5rem);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 .abyss-date-popover,
 .abyss-time-popover {

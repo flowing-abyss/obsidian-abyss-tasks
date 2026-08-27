@@ -3,6 +3,7 @@ import { firstVisibleWeekDate, resolveWeekStartPosition } from '../domain/weekGr
 import { visibleCalendarDates } from '../panels/visibleCalendarDates';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
+import type { DependencyProjectionPort } from '../tasks';
 import {
   localDate,
   type CommentTimeContextProvider,
@@ -84,6 +85,7 @@ export class CalendarRenderer {
     private recurrencePolicy: RecurrencePolicy = { removeScheduledDate: false },
     private commentTimeContext?: CommentTimeContextProvider,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    private readonly dependencyProjection?: DependencyProjectionPort,
   ) {
     this.projectionDiagnosticOwner = createCalendarProjectionDiagnosticOwner(rootEl.ownerDocument);
     this.forecastMenuOwner = createForecastContextMenuOwner(
@@ -98,6 +100,7 @@ export class CalendarRenderer {
       tasks,
       commentTimeContext,
       interactionOwnership,
+      dependencyProjection,
     );
     this.activeViewType = config.defaultView;
     if (this.activeViewType === 'week') {
@@ -391,6 +394,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
         });
       } else if (this.activeViewType === 'week') {
         this.activeView = new WeekView({
@@ -407,6 +411,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
         });
       } else {
         this.activeView = new ListView({
@@ -416,6 +421,7 @@ export class CalendarRenderer {
           statusRegistry: this.statusRegistry,
           onTaskBodyContextMenu: cb.onTaskBodyContextMenu,
           onContextMenu: cb.onContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
         });
       }
     }

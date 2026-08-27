@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
+  DependencyProjectionPort,
   TaskApplicationApi,
   TaskIndexEvent,
   TaskQueryApi,
@@ -8,6 +9,7 @@ import type {
   TaskResolution,
   TaskSnapshot,
 } from '../src/tasks';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import { TaskModal } from '../src/ui/TaskModal';
 import {
   createAppWithFiles,
@@ -35,6 +37,67 @@ describe('TaskModal with real RightPanel', () => {
   afterEach(() => {
     modal?.close();
     activeDocument.querySelectorAll('.abyss-status-popover').forEach((element) => element.remove());
+  });
+
+  it('keeps the dependency gate and inspector on the concrete TaskModal path', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Ship ⛔ prep\n' });
+    const current = task({
+      title: 'Ship',
+      dependency: { dependsOn: ['prep'] },
+      ref: { filePath: 'f.md', line: 0, revision: 'ship' },
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Ship ⛔ prep',
+        originalBlock: '- [ ] Ship ⛔ prep',
+      },
+    });
+    const queries = taskQueryApi({ list: () => [current] });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'invalid', diagnostics: [{ type: 'missing-prerequisite', id: 'prep' }] },
+    });
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({
+        type: 'invalid',
+        diagnostics: [{ type: 'missing-prerequisite', id: 'prep' }],
+      }),
+      inspect: () => ({
+        decision: {
+          type: 'invalid',
+          diagnostics: [{ type: 'missing-prerequisite', id: 'prep' }],
+        },
+        relations: [{ id: 'prep', resolution: { type: 'missing' } }],
+      }),
+      subscribe: () => () => undefined,
+    };
+    modal = new TaskModal(
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      queries,
+      { queries, execute },
+      undefined,
+      noInteractionOwnership,
+      projection,
+    );
+    modal.open(current);
+
+    const marker = activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-status-marker')!;
+    expect(marker.getAttribute('aria-disabled')).toBe('true');
+    expect(
+      activeDocument.querySelector('.abyss-modal [aria-label="Edit blocked by"]'),
+    ).not.toBeNull();
+    marker.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    expect(execute).toHaveBeenCalledWith({
+      type: 'toggle-completion',
+      target: { type: 'task', ref: current.ref },
+    });
   });
 
   it('preserves a dirty focused title through a proven silent refresh', async () => {

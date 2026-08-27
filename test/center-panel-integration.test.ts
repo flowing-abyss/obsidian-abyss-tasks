@@ -6,12 +6,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
-import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
+import type { Project, ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type {
+  DependencyProjectionPort,
   LocalDate,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
@@ -151,6 +152,8 @@ function makeStaticPanel(
   settings: CalendarSettings = DEFAULT_SETTINGS,
   app: App = {} as App,
   interactionOwnership?: InteractionOwnershipPort,
+  tasks?: TaskApplicationApi,
+  dependencyProjection?: DependencyProjectionPort,
 ): CenterPanel {
   return new CenterPanel(
     state,
@@ -161,12 +164,17 @@ function makeStaticPanel(
     undefined,
     null,
     null,
-    undefined,
+    tasks,
     undefined,
     undefined,
     undefined,
     undefined,
     interactionOwnership,
+    undefined,
+    [],
+    undefined,
+    undefined,
+    dependencyProjection,
   );
 }
 
@@ -2343,10 +2351,18 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
-  it('renders a Board task status marker inert so its context menu reaches the canonical card path', () => {
+  it('routes the Project Board Done status-menu item through the shared blocked command path', async () => {
     const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'blocked', prerequisites: [] },
+    });
     const state = new AppState();
-    const panel = makeStaticPanel(state, [current]);
+    const panel = makeStaticPanel(state, [current], DEFAULT_SETTINGS, {} as App, undefined, {
+      queries: queryApiForSnapshots(() => [current]),
+      execute,
+    });
     const container = freshContainer();
     activeDocument.body.append(container);
     try {
@@ -2361,20 +2377,216 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         },
       ]);
       const marker = host.querySelector<HTMLElement>('.abyss-status-marker')!;
-      const card = marker.closest<HTMLElement>('[data-board-item]')!;
-      const cardContextMenu = vi.fn();
-      card.addEventListener('contextmenu', cardContextMenu);
-
       marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
 
-      expect(marker.getAttribute('tabindex')).toBeNull();
-      expect(marker.getAttribute('role')).toBeNull();
-      expect(cardContextMenu).toHaveBeenCalledOnce();
+      expect(marker.getAttribute('tabindex')).toBe('0');
+      expect(marker.getAttribute('role')).toBe('checkbox');
+      expect(activeDocument.querySelector('.abyss-status-popover')).not.toBeNull();
+      expect(
+        activeDocument.querySelector('.abyss-status-popover [role="menuitemradio"]'),
+      ).not.toBeNull();
+      const done = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'done')!;
+      const doneItem = Array.from(
+        activeDocument.querySelectorAll<HTMLElement>(
+          '.abyss-status-popover [role="menuitemradio"]',
+        ),
+      ).find((item) => item.textContent?.includes(done.name));
+      expect(doneItem).toBeDefined();
+      doneItem!.click();
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-status',
+        target: { type: 'task', ref: current.ref },
+        symbol: done.symbol,
+      });
     } finally {
       panel.destroy();
       container.remove();
     }
   });
+
+  it('keeps a blocked Project Board task in place when dragged to Done through the shared command', async () => {
+    const current = task({
+      title: 'Blocked project task',
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'blocked', prerequisites: [] },
+    });
+    const settings: CalendarSettings = {
+      ...structuredClone(DEFAULT_SETTINGS),
+      projects: {
+        ...DEFAULT_SETTINGS.projects,
+        view: {
+          ...DEFAULT_SETTINGS.projects.view,
+          tasks: {
+            ...DEFAULT_SETTINGS.projects.view.tasks,
+            statusGroups: ['todo', 'in-progress', 'done'],
+          },
+        },
+      },
+    };
+    const state = new AppState();
+    const panel = makeStaticPanel(state, [current], settings, {} as App, undefined, {
+      queries: queryApiForSnapshots(() => [current]),
+      execute,
+    });
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [
+        {
+          task: current,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'blocked', prerequisites: [] },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ]);
+      const done = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'done')!;
+      const card = host.querySelector<HTMLElement>('[data-board-item]')!;
+      const target = host.querySelector<HTMLElement>(`[data-board-column="${done.id}"]`)!;
+      card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-status',
+        target: { type: 'task', ref: current.ref },
+        symbol: done.symbol,
+      });
+      expect(host.querySelector('[data-board-item]')).not.toBeNull();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it.each(['click', 'Enter', ' '] as const)(
+    'routes a blocked ordinary Tasks-card %s through the common application service',
+    async (activation) => {
+      const current = task({
+        title: 'Blocked task',
+        tags: ['#task/inbox'],
+        dependency: { dependsOn: ['prep'] },
+        source: { filePath: 'Tasks.md', line: 1 },
+      });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'blocked',
+        operation: 'completion',
+        dependency: { type: 'blocked', prerequisites: [] },
+      });
+      const queries = queryApiForSnapshots(() => [current]);
+      const tasks: TaskApplicationApi = { queries, execute };
+      const projection: DependencyProjectionPort = {
+        evaluateCompletion: () => ({ type: 'blocked', prerequisites: [] }),
+        inspect: () => ({
+          decision: { type: 'blocked', prerequisites: [] },
+          relations: [{ id: 'prep', resolution: { type: 'missing' } }],
+        }),
+        subscribe: () => () => undefined,
+      };
+      const state = new AppState();
+      state.set('mode', 'tasks');
+      state.set('selectedList', 'inbox');
+      const panel = makeStaticPanel(
+        state,
+        [current],
+        DEFAULT_SETTINGS,
+        {} as App,
+        undefined,
+        tasks,
+        projection,
+      );
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      try {
+        panel.mount(container);
+        const marker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
+        expect(marker.getAttribute('aria-disabled')).toBe('true');
+        expect(marker.hasAttribute('disabled')).toBe(false);
+        marker.dispatchEvent(
+          activation === 'click'
+            ? new MouseEvent('click', { bubbles: true, cancelable: true })
+            : new KeyboardEvent('keydown', {
+                key: activation,
+                bubbles: true,
+                cancelable: true,
+              }),
+        );
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledWith({
+          type: 'toggle-completion',
+          target: { type: 'task', ref: current.ref },
+        });
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
+  it.each(['list', 'board', 'timeline'] as const)(
+    'keeps an inherited Work Note action dependency decision on the concrete %s task card',
+    (layout) => {
+      const current = task({
+        title: 'Blocked project task',
+        planning: layout === 'timeline' ? { due: localDate('2026-08-28') } : {},
+        source: { filePath: 'Work Notes/Research.md', line: 1 },
+      });
+      const action: ProjectAction = {
+        task: current,
+        projectPath: 'Projects/A.md',
+        dependency: {
+          type: 'blocked',
+          prerequisites: [{ filePath: 'Projects/A.md', line: 0, revision: 'prep' }],
+        },
+        owner: { type: 'work-note', path: 'Work Notes/Research.md' },
+      };
+      const state = new AppState();
+      const panel = makeStaticPanel(state, [current]);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      try {
+        panel.mount(container);
+        const host = container.createDiv();
+        const render = (nextAction: typeof action): void => {
+          host.empty();
+          if (layout === 'list') {
+            call(panel, 'renderProjectTasks', host, 'Projects/A.md', [nextAction]);
+          } else if (layout === 'board') {
+            call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [nextAction]);
+          } else {
+            call(panel, 'renderProjectTaskTimeline', host, 'Projects/A.md', [nextAction]);
+          }
+        };
+        render({ ...action, dependency: { type: 'allowed' } });
+        expect(host.querySelector('.abyss-task-dependency-badge')).toBeNull();
+
+        render(action);
+
+        const card = host.querySelector<HTMLElement>('.abyss-task-card')!;
+        const badge = card.querySelector<HTMLElement>('.abyss-task-dependency-badge')!;
+        expect(card).toBeDefined();
+        expect(badge.classList.contains('abyss-task-count-badge')).toBe(true);
+        expect(badge.getAttribute('aria-label')).toBe('Blocked by 1 prerequisite');
+        if (layout === 'list') {
+          expect(card.querySelector('.abyss-status-marker')?.getAttribute('aria-disabled')).toBe(
+            'true',
+          );
+        }
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
 
   it('retains Board Undo across the production Project-store refresh subscriber replacing ProjectsPanel', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);

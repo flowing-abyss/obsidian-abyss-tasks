@@ -25,6 +25,7 @@ import type {
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { ACTIVE_STATUS_GROUPS, ALL_STATUS_GROUPS, TYPE_LABELS } from '../status/statusConstants';
 import { searchTaskList, selectTaskList } from '../task-lists/TaskListSelector';
+import type { DependencyCompletionDecision, DependencyProjectionPort } from '../tasks';
 import {
   daysBetweenLocalDates,
   durationMinutes,
@@ -47,6 +48,7 @@ import { LinkEditModal } from '../ui/LinkEditModal';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
+import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
@@ -67,6 +69,7 @@ import {
 import { TaskCaptureController } from '../ui/taskCapture/TaskCaptureController';
 import {
   describeTaskCreationResult,
+  presentBulkTaskCommandResults,
   presentTaskCommandResult,
   requestTaskCompletion,
   type CreationResultDescription,
@@ -123,9 +126,9 @@ import { renderBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
 import { renderTasksTimeline } from './projects/ProjectsTimelineView';
 import {
+  createProjectActionBoardMutation,
   createTaskBoardMutation,
-  projectBoardTasks,
-  taskBoardColumns,
+  projectActionBoardColumns,
   type BoardMutation,
 } from './projects/boardProjection';
 import type { TimelinePointRole } from './projects/timelineProjection';
@@ -289,6 +292,7 @@ export class CenterPanel {
     private projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
     private readonly workNoteCommands?: WorkNoteCommandService,
     private readonly projectCommands?: ProjectCommandService,
+    private readonly dependencyProjection?: DependencyProjectionPort,
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -369,6 +373,7 @@ export class CenterPanel {
       this.tasks,
       this.commentTimeContext,
       this.interactionOwnership,
+      this.dependencyProjection,
     );
 
     // Initialize per-list state before first render
@@ -591,12 +596,11 @@ export class CenterPanel {
     path: string,
     actions: readonly ProjectAction[],
   ): void {
-    const tasks = actions.map(({ task }) => task);
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
-    if (tasks.length === 0) {
+    if (actions.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      this.renderProjectTaskCollection(scroll, path, tasks);
+      this.renderProjectTaskCollection(scroll, path, actions);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -609,8 +613,7 @@ export class CenterPanel {
     path: string,
     actions: readonly ProjectAction[],
   ): void {
-    const tasks = projectBoardTasks(actions);
-    if (tasks.length === 0) {
+    if (actions.length === 0) {
       host.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
       const statuses = this.statusRegistry.all();
@@ -623,15 +626,15 @@ export class CenterPanel {
           .map(({ id }) => id),
       );
       renderBoard(host, {
-        columns: taskBoardColumns(statuses, tasks),
+        columns: projectActionBoardColumns(statuses, actions),
         visibleColumnKeys: visibleStatusIds,
-        mutation: this.taskBoardMutation(),
-        itemKey: (task) => this.taskKey(task),
-        renderItem: (container, task) =>
-          this.renderTaskCard(container, task, {
+        mutation: this.projectActionBoardMutation(),
+        itemKey: ({ task }) => this.taskKey(task),
+        manageStatusMenu: false,
+        renderItem: (container, action) =>
+          this.renderTaskCard(container, action.task, {
             projectPath: path,
-            manageStatusMenu: false,
-            manageStatusMarker: false,
+            dependencyDecision: action.dependency,
           }),
       });
     }
@@ -676,14 +679,24 @@ export class CenterPanel {
     renderTasksTimeline(host, {
       actions,
       session: this.projectWorkspaceSession.timelines.tasks,
-      renderTask: (identity, task) => {
-        this.renderTaskCard(identity, task, { projectPath: path });
+      renderTask: (identity, action) => {
+        this.renderTaskCard(identity, action.task, {
+          projectPath: path,
+          dependencyDecision: action.dependency,
+        });
       },
       onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
     });
     this.completeTaskCardRender();
   }
 
+  private projectActionBoardMutation(): BoardMutation<ProjectAction> {
+    return createProjectActionBoardMutation(this.statusRegistry.all(), (task, symbol) =>
+      this.setTaskStatus(task, symbol),
+    );
+  }
+
+  /** Compatibility seam for the shared Task board adapter tests and non-Project callers. */
   private taskBoardMutation(): BoardMutation<TaskSnapshot> {
     return createTaskBoardMutation(this.statusRegistry.all(), (task, symbol) =>
       this.setTaskStatus(task, symbol),
@@ -693,11 +706,19 @@ export class CenterPanel {
   private renderProjectTaskCollection(
     container: HTMLElement,
     projectPath: string,
-    tasks: readonly TaskSnapshot[],
+    actions: readonly ProjectAction[],
   ): void {
+    const tasks = actions.map(({ task }) => task);
+    const actionByKey = new Map(actions.map((action) => [this.taskKey(action.task), action]));
+    const render = (task: TaskSnapshot): void => {
+      this.renderTaskCard(container, task, {
+        projectPath,
+        dependencyDecision: actionByKey.get(this.taskKey(task))?.dependency,
+      });
+    };
     const groupBy = this.settings.projects.view.tasks.groupBy;
     if (groupBy === 'none') {
-      for (const task of tasks) this.renderTaskCard(container, task, { projectPath });
+      for (const task of tasks) render(task);
       return;
     }
     const today = localDate(window.moment().format('YYYY-MM-DD'));
@@ -725,7 +746,7 @@ export class CenterPanel {
         text: `${group.label}  ${group.tasks.length}`,
       });
       first = false;
-      for (const task of group.tasks) this.renderTaskCard(container, task, { projectPath });
+      for (const task of group.tasks) render(task);
     }
   }
 
@@ -1198,6 +1219,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -1233,6 +1255,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
           onDrop: handleDrop,
           onDropTime: handleDropTime,
           onCreateAtTime: handleCreateAtTime,
@@ -1281,6 +1304,7 @@ export class CenterPanel {
           onTaskClick: handleTaskClick,
           onForecastClick: handleForecastClick,
           onForecastContextMenu: handleForecastContextMenu,
+          dependencyDecision: (task) => this.dependencyProjection?.evaluateCompletion(task),
           onDrop: handleDrop,
           onSpanMove: handleSpanMove,
           onSpanBoundary: handleSpanBoundary,
@@ -1852,8 +1876,11 @@ export class CenterPanel {
       readonly projectPath?: string;
       readonly manageStatusMenu?: boolean;
       readonly manageStatusMarker?: boolean;
+      readonly dependencyDecision?: DependencyCompletionDecision;
     } = {},
   ): HTMLElement {
+    const dependencyDecision =
+      context.dependencyDecision ?? this.dependencyProjection?.evaluateCompletion(task);
     const stack = this.state.get('taskStack');
     const root = stack[0];
     const current = stack[stack.length - 1];
@@ -1878,6 +1905,7 @@ export class CenterPanel {
       task,
       registry: this.statusRegistry,
       interactive: context.manageStatusMarker !== false,
+      ...(dependencyDecision && { completionDecision: dependencyDecision }),
       onLeftClick: () => void this.toggleTask(task),
       onContextMenu: (ev) => {
         ev.stopPropagation();
@@ -1897,6 +1925,10 @@ export class CenterPanel {
 
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
+
+    if (dependencyDecision) {
+      renderDependencyBadge(titleRow, dependencyDecision);
+    }
 
     if (task.recurrence) {
       renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
@@ -2518,7 +2550,7 @@ export class CenterPanel {
       item.setTitle('Status').setIcon('check-square').setSection('priority');
       const sub = getSubmenu(item);
       buildStatusSubmenu(sub, selectedTasks[0]!, this.statusRegistry, (c) => {
-        void Promise.all(selectedTasks.map((t) => this.setTaskStatus(t, c)));
+        void this.applyBulkStatus(selectedTasks, c);
       });
     });
 
@@ -3924,6 +3956,7 @@ export class CenterPanel {
   private setTaskStatus(
     task: TaskSnapshot,
     symbol: string,
+    present = true,
   ): Promise<TaskCommandResult | undefined> {
     if (isForecastCalendarTask(task)) return Promise.resolve(undefined);
     if (this.statusRegistry.bySymbol(symbol)?.type === 'done') {
@@ -3931,23 +3964,31 @@ export class CenterPanel {
       return requestTaskCompletion(
         task,
         async () => {
-          result = await this.commitTaskStatus(task, symbol);
+          result = await this.commitTaskStatus(task, symbol, present);
         },
         this.interactionOwnership,
         this.completionConfirmationAbortController.signal,
       ).then(() => result);
     }
-    return this.commitTaskStatus(task, symbol);
+    return this.commitTaskStatus(task, symbol, present);
+  }
+
+  private async applyBulkStatus(tasks: readonly TaskSnapshot[], symbol: string): Promise<void> {
+    const results = await Promise.all(tasks.map((task) => this.setTaskStatus(task, symbol, false)));
+    presentBulkTaskCommandResults(
+      results.filter((result): result is TaskCommandResult => result !== undefined),
+    );
   }
 
   private async commitTaskStatus(
     task: TaskSnapshot,
     symbol: string,
+    present = true,
   ): Promise<TaskCommandResult | undefined> {
     const target = calendarMutationTarget(task);
     if (!target || !this.tasks) return;
     const result = await this.tasks.execute({ type: 'set-status', target, symbol });
-    presentTaskCommandResult(result);
+    if (present) presentTaskCommandResult(result);
     return result;
   }
 

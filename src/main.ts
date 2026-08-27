@@ -151,6 +151,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.projectStore,
           this.projectWorkspace,
           this.workNoteCommands,
+          this.dependencyPolicy,
         ),
     );
 
@@ -210,6 +211,8 @@ export default class TaskCalendarPlugin extends Plugin {
         this.settings.taskPrefix,
         this.settings.recurrence,
         commentTimeContext,
+        undefined,
+        this.dependencyPolicy,
       );
       renderer.mount();
     };

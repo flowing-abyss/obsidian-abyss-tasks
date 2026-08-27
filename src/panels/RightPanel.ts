@@ -7,6 +7,7 @@ import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/Tas
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
+import type { DependencyInspection, DependencyProjectionPort } from '../tasks';
 import {
   durationMinutes,
   formatCommentTimeLabel,
@@ -37,6 +38,7 @@ import {
   insertAtCaret,
   whenPasteSettled,
 } from '../ui/attachmentDrop';
+import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import {
@@ -65,6 +67,13 @@ import { openInFile } from '../ui/taskNavigation';
 import { rebuildTaskSelection, rootTaskRef, taskNodeLine, taskNodeRef } from '../ui/taskSelection';
 
 type TaskLike = TaskSnapshot | SubtaskSnapshot;
+
+interface DependencyCandidateGroups {
+  readonly project: readonly TaskSnapshot[];
+  readonly other: readonly TaskSnapshot[];
+}
+
+export type DependencyCandidateProvider = (dependent: TaskSnapshot) => DependencyCandidateGroups;
 
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
@@ -165,6 +174,8 @@ export class RightPanel {
   private nextDetachedDraftId = 0;
   private detachedAnnouncement = '';
   private detachedFocusTimer: number | undefined;
+  private dependencyOff?: () => void;
+  private dependencyEditorSequence = 0;
 
   constructor(
     private state: AppState,
@@ -177,6 +188,8 @@ export class RightPanel {
     private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
     private commentTimeContext?: CommentTimeContextProvider,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
+    private readonly dependencyProjection?: DependencyProjectionPort,
+    private readonly dependencyCandidates?: DependencyCandidateProvider,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -184,12 +197,26 @@ export class RightPanel {
   mount(container: HTMLElement): void {
     this.el = container;
     this.off = this.state.on('taskStack', () => this.render());
+    this.dependencyOff = this.dependencyProjection?.subscribe((event) => {
+      const root = this.state.get('taskStack')[0];
+      if (
+        !root ||
+        !('source' in root) ||
+        !event.affected.some((ref) => sameTaskRef(ref, root.ref))
+      ) {
+        return;
+      }
+      const draft = this.captureDraftState();
+      this.render();
+      this.restoreDraftState(draft, root);
+    });
     this.render();
   }
 
   destroy(): void {
     this.completionConfirmationAbortController.abort();
     this.off?.();
+    this.dependencyOff?.();
     if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
     this.clearAnchoredSurfaces();
     this.el?.empty();
@@ -794,6 +821,9 @@ export class RightPanel {
     renderStatusMarker(header, {
       task,
       registry: this.statusRegistry,
+      ...('source' in task && this.dependencyProjection
+        ? { completionDecision: this.dependencyProjection.evaluateCompletion(task) }
+        : {}),
       onLeftClick: () => void this.toggleTaskLike(task),
       onContextMenu: (event) => {
         event.stopPropagation();
@@ -859,6 +889,10 @@ export class RightPanel {
 
       // Priority chip
       this.renderPriorityChip(chips, task);
+
+      if ('source' in task && this.dependencyProjection) {
+        this.renderDependencyChip(chips, task);
+      }
 
       // Repeat chip and its one shared editor. TaskModal inherits this through RightPanel reuse.
       this.renderRecurrenceChip(chips, task, stack);
@@ -1528,6 +1562,290 @@ export class RightPanel {
     return colorForTag(tag, this.settings.tagGroups);
   }
 
+  private dependencyInspection(task: TaskSnapshot): DependencyInspection {
+    return (
+      this.dependencyProjection?.inspect?.(task) ?? {
+        decision: this.dependencyProjection?.evaluateCompletion(task) ?? { type: 'allowed' },
+        relations: [],
+      }
+    );
+  }
+
+  private renderDependencyChip(container: HTMLElement, task: TaskSnapshot): void {
+    const inspection = this.dependencyInspection(task);
+    const trigger = container.createEl('button', {
+      cls: `abyss-chip abyss-dependency-chip${inspection.relations.length === 0 ? ' abyss-chip-empty' : ''}`,
+      attr: {
+        type: 'button',
+        title: 'Edit blocked by',
+        'aria-label': 'Edit blocked by',
+        'aria-haspopup': 'dialog',
+        'aria-expanded': 'false',
+        'data-dependency-trigger': '',
+      },
+    });
+    setIcon(trigger, inspection.relations.length > 0 ? 'lock-keyhole' : 'link-2');
+    if (inspection.decision.type !== 'allowed') {
+      renderDependencyBadge(trigger, inspection.decision);
+    }
+    trigger.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.showDependencyEditor(trigger, task);
+    });
+  }
+
+  private dependencyIdFor(task: TaskSnapshot): string {
+    if (task.dependency?.id) return task.dependency.id;
+    const seed = `${task.ref.filePath}\u0000${String(task.ref.line)}\u0000${task.ref.revision}`;
+    let hash = 2166136261;
+    for (let index = 0; index < seed.length; index += 1) {
+      hash ^= seed.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `abyss-${(hash >>> 0).toString(36)}`;
+  }
+
+  private showDependencyEditor(anchor: HTMLButtonElement, task: TaskSnapshot): void {
+    this.clearPopovers();
+    const inspection = this.dependencyInspection(task);
+    const editorId = `abyss-dependency-editor-${String(++this.dependencyEditorSequence)}`;
+    anchor.setAttr('aria-controls', editorId);
+    const editor = this.el.createDiv({
+      cls: 'abyss-popover abyss-popover-anchored abyss-dependency-editor',
+      attr: {
+        id: editorId,
+        role: 'dialog',
+        'aria-label': 'Blocked by',
+        'data-dependency-editor': '',
+      },
+    });
+    if (inspection.decision.type === 'invalid') {
+      for (const diagnostic of inspection.decision.diagnostics) {
+        if (diagnostic.type === 'missing-prerequisite' || diagnostic.type === 'duplicate-id') {
+          continue;
+        }
+        let text: string;
+        if (diagnostic.type === 'self-edge') {
+          text = `Task depends on itself · ${diagnostic.id}`;
+        } else if (diagnostic.type === 'cycle') {
+          text = `Dependency cycle · ${diagnostic.ids.join(' → ')}`;
+        } else {
+          text = 'Dependency data unavailable · Reopen and inspect before changing it';
+        }
+        editor.createDiv({
+          cls: 'abyss-dependency-diagnostic',
+          text,
+          attr: { 'data-dependency-diagnostic': diagnostic.type },
+        });
+      }
+    }
+    const relationHost = editor.createDiv({ cls: 'abyss-dependency-relations' });
+    const snapshotByRef = (ref: TaskRef): TaskSnapshot | undefined =>
+      this.tasks?.queries
+        .list()
+        .find(
+          (candidate) => candidate.ref.filePath === ref.filePath && candidate.ref.line === ref.line,
+        );
+    for (const relation of inspection.relations) {
+      const row = relationHost.createDiv({
+        cls: 'abyss-dependency-relation',
+        attr: {
+          'data-dependency-relation': relation.id,
+          'data-dependency-resolution': relation.resolution.type,
+        },
+      });
+      if (relation.resolution.type === 'resolved') {
+        const prerequisite = snapshotByRef(relation.resolution.prerequisite);
+        row.createSpan({ text: prerequisite?.title ?? relation.id });
+      } else if (relation.resolution.type === 'missing') {
+        row.createSpan({ text: `${relation.id} · Missing` });
+      } else {
+        row.createSpan({
+          text: `${relation.id} · ${String(relation.resolution.candidates.length)} matches`,
+        });
+      }
+      const clear = row.createEl('button', {
+        cls: 'abyss-dependency-remove',
+        attr: {
+          type: 'button',
+          title: `Remove ${relation.id}`,
+          'aria-label': `Remove dependency ${relation.id}`,
+          'data-dependency-clear': relation.id,
+        },
+      });
+      setIcon(clear, 'x');
+      clear.addEventListener('click', () => {
+        if (!this.tasks?.clearDependency) return;
+        void this.tasks
+          .clearDependency({ dependent: task.ref, dependencyId: relation.id })
+          .then((result) => {
+            presentTaskCommandResult(result);
+            if (result.type === 'ok') {
+              this.removeAnchoredSurface(editor);
+              this.focusDependencyTrigger();
+            }
+          });
+      });
+    }
+
+    const listId = `${editorId}-list`;
+    const search = editor.createEl('input', {
+      type: 'search',
+      cls: 'abyss-dependency-search',
+      attr: {
+        placeholder: 'Search tasks',
+        'aria-label': 'Search prerequisite tasks',
+        role: 'combobox',
+        'aria-controls': listId,
+        'aria-autocomplete': 'list',
+        'data-dependency-search': '',
+      },
+    });
+    const results = editor.createDiv({
+      cls: 'abyss-dependency-candidates',
+      attr: { id: listId, role: 'listbox' },
+    });
+    const supplied = this.dependencyCandidates?.(task);
+    const all = supplied ?? {
+      project: [],
+      other: (this.tasks?.queries.list() ?? []).filter(
+        (candidate) => !sameTaskRef(candidate.ref, task.ref),
+      ),
+    };
+    const seen = new Set<string>();
+    const normalized = (candidates: readonly TaskSnapshot[]): readonly TaskSnapshot[] =>
+      candidates.filter((candidate) => {
+        if (sameTaskRef(candidate.ref, task.ref)) return false;
+        const key = `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    const project = normalized(all.project);
+    const other = normalized(all.other);
+    const selectionUnavailable =
+      inspection.decision.type === 'invalid' &&
+      inspection.decision.diagnostics.some(
+        (diagnostic) => diagnostic.type !== 'missing-prerequisite',
+      );
+    const candidateButtons = (): HTMLButtonElement[] =>
+      Array.from(results.querySelectorAll<HTMLButtonElement>('[data-dependency-candidate]')).filter(
+        (button) => !button.disabled,
+      );
+    const renderCandidates = (query: string): void => {
+      results.empty();
+      const needle = query.trim().toLocaleLowerCase();
+      const matching = (items: readonly TaskSnapshot[]): readonly TaskSnapshot[] =>
+        items.filter((candidate) =>
+          `${candidate.title} ${candidate.ref.filePath}`.toLocaleLowerCase().includes(needle),
+        );
+      const groups = [
+        ['Project', matching(project)],
+        ['Other tasks', matching(other)],
+      ] as const;
+      let count = 0;
+      for (const [label, candidates] of groups) {
+        if (candidates.length === 0 || count >= 20) continue;
+        results.createDiv({ cls: 'abyss-dependency-candidate-group', text: label });
+        for (const candidate of candidates.slice(0, 20 - count)) {
+          count += 1;
+          const candidateDecision = this.dependencyProjection?.evaluateCompletion(candidate);
+          const duplicateId =
+            candidate.dependency?.id !== undefined &&
+            candidateDecision?.type === 'invalid' &&
+            candidateDecision.diagnostics.some(
+              (diagnostic) =>
+                diagnostic.type === 'duplicate-id' && diagnostic.id === candidate.dependency?.id,
+            );
+          let candidateTitle = `${candidate.title} — ${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`;
+          if (duplicateId) {
+            candidateTitle = `${candidate.title} — duplicate task ID`;
+          } else if (selectionUnavailable) {
+            candidateTitle = `${candidate.title} — resolve the dependency issue before changing prerequisites`;
+          }
+          const button = results.createEl('button', {
+            cls: 'abyss-dependency-candidate',
+            attr: {
+              type: 'button',
+              role: 'option',
+              title: candidateTitle,
+              'aria-label': `${candidate.title}, ${candidate.ref.filePath}, line ${String(candidate.ref.line + 1)}`,
+              'data-dependency-candidate': '',
+            },
+          });
+          button.createSpan({
+            cls: 'abyss-dependency-candidate-title',
+            text: candidate.title,
+          });
+          button.createSpan({
+            cls: 'abyss-dependency-candidate-source',
+            text: `${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`,
+            attr: { 'aria-hidden': 'true' },
+          });
+          button.disabled = duplicateId || selectionUnavailable;
+          button.addEventListener('keydown', (event) => {
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+            event.preventDefault();
+            const buttons = candidateButtons();
+            const index = buttons.indexOf(button);
+            const next = event.key === 'ArrowDown' ? buttons[index + 1] : buttons[index - 1];
+            (next ?? search).focus({ preventScroll: true });
+          });
+          button.addEventListener('click', () => {
+            if (!this.tasks?.setDependency) return;
+            void this.tasks
+              .setDependency({
+                prerequisite: candidate.ref,
+                dependent: task.ref,
+                dependencyId: this.dependencyIdFor(candidate),
+                enabled: true,
+              })
+              .then((result) => {
+                presentTaskCommandResult(result);
+                if (result.type === 'ok') {
+                  this.removeAnchoredSurface(editor);
+                  this.focusDependencyTrigger();
+                }
+              });
+          });
+        }
+      }
+      if (count === 0) results.createDiv({ cls: 'abyss-dependency-empty', text: 'No tasks found' });
+    };
+    renderCandidates('');
+    search.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      const buttons = candidateButtons();
+      const next = event.key === 'ArrowDown' ? buttons[0] : buttons[buttons.length - 1];
+      if (!next) return;
+      event.preventDefault();
+      next.focus({ preventScroll: true });
+    });
+    let debounce: number | undefined;
+    search.addEventListener('input', () => {
+      if (debounce !== undefined) this.el.ownerDocument.defaultView?.clearTimeout(debounce);
+      debounce = this.el.ownerDocument.defaultView?.setTimeout(() => {
+        debounce = undefined;
+        renderCandidates(search.value);
+      }, 120);
+    });
+    this.positionAnchoredSurface(editor, anchor, 'below-start');
+    this.dismissMenuOnOutsideClick(editor, anchor, () => this.removeAnchoredSurface(editor), {
+      onCleanup: () => {
+        if (debounce !== undefined) this.el.ownerDocument.defaultView?.clearTimeout(debounce);
+        anchor.removeAttribute('aria-controls');
+      },
+    });
+    search.focus({ preventScroll: true });
+  }
+
+  private focusDependencyTrigger(): void {
+    this.el
+      .querySelector<HTMLButtonElement>('[data-dependency-trigger]')
+      ?.focus({ preventScroll: true });
+  }
+
   private clearPopovers(): void {
     this.el
       .querySelectorAll<HTMLElement>('.abyss-popover')
@@ -1690,17 +2008,21 @@ export class RightPanel {
     const ownerWindow = ownerDocument.defaultView;
     const position = (): void => {
       const boundary = this.el.getBoundingClientRect();
-      const floatingRect = popover.getBoundingClientRect();
       const computed = ownerWindow?.getComputedStyle(popover);
-      const minWidth = parseFloat(computed?.minWidth ?? '');
-      const floatingWidth =
-        floatingRect.width || popover.offsetWidth || (Number.isFinite(minWidth) ? minWidth : 160);
-      const floatingHeight = floatingRect.height || popover.offsetHeight;
       const edgeGap = this.cssLengthToPx(
         computed?.getPropertyValue('--abyss-popover-edge-gap') ?? '',
         popover,
         8,
       );
+      popover.style.setProperty(
+        '--abyss-popover-max-block-size',
+        `${String(Math.max(0, boundary.height - edgeGap * 2))}px`,
+      );
+      const floatingRect = popover.getBoundingClientRect();
+      const minWidth = parseFloat(computed?.minWidth ?? '');
+      const floatingWidth =
+        floatingRect.width || popover.offsetWidth || (Number.isFinite(minWidth) ? minWidth : 160);
+      const floatingHeight = floatingRect.height || popover.offsetHeight;
       const anchorGap = this.cssLengthToPx(
         computed?.getPropertyValue('--abyss-popover-anchor-gap') ?? '',
         popover,

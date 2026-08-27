@@ -3,7 +3,9 @@ import { AppState } from '../src/app/AppState';
 import { RightPanel } from '../src/panels/RightPanel';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { TaskApplicationApi, TaskCommandResult, TaskSnapshot } from '../src/tasks';
+import type { DependencyProjectionPort } from '../src/tasks/application/DependencyPolicyPort';
 import type { CommentRef, TaskRef } from '../src/tasks/domain/types';
+import { noInteractionOwnership } from '../src/ui/interactionOwnership';
 import {
   createAppWithFiles,
   flushMicrotasks,
@@ -153,6 +155,564 @@ async function panelWith(
 }
 
 describe('RightPanel block editing', () => {
+  it.each(['click', 'Enter', ' '] as const)(
+    'keeps a projected blocked completion marker focusable and dispatches %s through the common service',
+    async (activation) => {
+      const dependent = {
+        ...snapshot('dependent'),
+        dependency: { dependsOn: ['prep'] },
+      } satisfies TaskSnapshot;
+      const blocked: DependencyProjectionPort = {
+        evaluateCompletion: () => ({
+          type: 'blocked',
+          prerequisites: [{ filePath: 'tasks.md', line: 0, revision: 'prep' }],
+        }),
+        inspect: () => ({
+          decision: {
+            type: 'blocked',
+            prerequisites: [{ filePath: 'tasks.md', line: 0, revision: 'prep' }],
+          },
+          relations: [
+            {
+              id: 'prep',
+              resolution: {
+                type: 'resolved',
+                prerequisite: { filePath: 'tasks.md', line: 0, revision: 'prep' },
+                complete: false,
+              },
+            },
+          ],
+        }),
+        subscribe: () => () => undefined,
+      };
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'blocked',
+        operation: 'completion',
+        dependency: blocked.evaluateCompletion(dependent) as never,
+      });
+      const { app, state } = await panelWith(dependent, execute);
+      const panel = new RightPanel(
+        state,
+        app,
+        testStatusRegistry(),
+        DEFAULT_SETTINGS,
+        undefined,
+        api(execute),
+        undefined,
+        undefined,
+        undefined,
+        noInteractionOwnership,
+        blocked,
+      );
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      panel.mount(container);
+      try {
+        const marker = container.querySelector<HTMLElement>(
+          '.abyss-right-header > .abyss-status-marker',
+        )!;
+        expect(marker.getAttribute('aria-disabled')).toBe('true');
+        expect(marker.getAttribute('tabindex')).toBe('0');
+        expect(marker.hasAttribute('disabled')).toBe(false);
+
+        if (activation === 'click') marker.click();
+        else {
+          marker.dispatchEvent(
+            new KeyboardEvent('keydown', { key: activation, bubbles: true, cancelable: true }),
+          );
+        }
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(execute).toHaveBeenCalledWith({
+          type: 'toggle-completion',
+          target: { type: 'task', ref: dependent.ref },
+        });
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
+  it('orders dependency search Project-first, dispatches set/clear, and restores focus on Escape', async () => {
+    const dependent = {
+      ...snapshot('dependent'),
+      title: 'Ship',
+      markdownTitle: 'Ship',
+      dependency: { dependsOn: ['prep'] },
+    } satisfies TaskSnapshot;
+    const projectCandidate = {
+      ...snapshot('prep'),
+      title: 'Prepare',
+      markdownTitle: 'Prepare',
+      dependency: { id: 'prep', dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const outsideCandidate = {
+      ...snapshot('outside'),
+      ref: { filePath: 'outside.md', line: 3, revision: 'outside' },
+      title: 'Outside task',
+      markdownTitle: 'Outside task',
+      dependency: { id: 'outside', dependsOn: [] },
+      source: {
+        filePath: 'outside.md',
+        line: 3,
+        originalMarkdown: '- [ ] Outside task 🆔 outside',
+        originalBlock: '- [ ] Outside task 🆔 outside',
+      },
+    } satisfies TaskSnapshot;
+    const fillerCandidates = Array.from({ length: 25 }, (_, index) => ({
+      ...snapshot(`filler-${String(index)}`),
+      ref: {
+        filePath: `Filler-${String(index)}.md`,
+        line: index,
+        revision: `filler-${String(index)}`,
+      },
+      title: index === 0 ? 'Outside task' : `Filler ${String(index)}`,
+      markdownTitle: index === 0 ? 'Outside task' : `Filler ${String(index)}`,
+      source: {
+        filePath: `Filler-${String(index)}.md`,
+        line: index,
+        originalMarkdown: `- [ ] Filler ${String(index)}`,
+        originalBlock: `- [ ] Filler ${String(index)}`,
+      },
+    }));
+    let notify:
+      | ((event: { affected: readonly TaskRef[]; causalTaskPaths: readonly string[] }) => void)
+      | undefined;
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({ type: 'blocked', prerequisites: [projectCandidate.ref] }),
+      inspect: () => ({
+        decision: { type: 'blocked', prerequisites: [projectCandidate.ref] },
+        relations: [
+          {
+            id: 'prep',
+            resolution: { type: 'resolved', prerequisite: projectCandidate.ref, complete: false },
+          },
+        ],
+      }),
+      subscribe: (listener) => {
+        notify = listener;
+        return () => undefined;
+      },
+    };
+    const setDependency = vi.fn().mockImplementation(async () => {
+      notify?.({ affected: [dependent.ref], causalTaskPaths: ['tasks.md'] });
+      return {
+        type: 'ok' as const,
+        changed: false,
+        outcome: { type: 'task' as const, task: dependent },
+      };
+    });
+    const clearDependency = vi.fn().mockImplementation(async () => {
+      notify?.({ affected: [dependent.ref], causalTaskPaths: ['tasks.md'] });
+      return {
+        type: 'ok' as const,
+        changed: false,
+        outcome: { type: 'task' as const, task: dependent },
+      };
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>();
+    const tasks: TaskApplicationApi = {
+      queries: taskQueryApi({
+        list: () => [outsideCandidate, projectCandidate, dependent, ...fillerCandidates],
+      }),
+      execute,
+      setDependency,
+      clearDependency,
+    };
+    const app = await createAppWithFiles({
+      'tasks.md': '- [ ] Prepare 🆔 prep\n- [ ] Ship ⛔ prep\n',
+      'outside.md': '- [ ] Outside task 🆔 outside\n',
+    });
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+      () => ({ project: [projectCandidate], other: [outsideCandidate, ...fillerCandidates] }),
+    );
+    const container = freshContainer();
+    Object.defineProperty(container, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => new DOMRect(0, 0, 240, 180),
+    });
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const currentTrigger = (): HTMLButtonElement =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Edit blocked by"]')!;
+      const trigger = currentTrigger();
+      expect(trigger.textContent?.trim()).not.toContain('Blocked by');
+      trigger.focus();
+      trigger.click();
+
+      const input = container.querySelector<HTMLInputElement>('[data-dependency-search]')!;
+      expect(
+        container
+          .querySelector<HTMLElement>('[data-dependency-editor]')
+          ?.style.getPropertyValue('--abyss-popover-max-block-size'),
+      ).toBe('164px');
+      const candidates = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[data-dependency-candidate]'),
+      );
+      expect(activeDocument.activeElement).toBe(input);
+      expect(
+        candidates
+          .slice(0, 3)
+          .map(
+            (candidate) =>
+              candidate.querySelector('.abyss-dependency-candidate-title')?.textContent,
+          ),
+      ).toEqual(['Prepare', 'Outside task', 'Outside task']);
+      expect(candidates).toHaveLength(20);
+      expect(candidates[1]?.getAttribute('aria-label')).toContain('outside.md, line 4');
+      expect(
+        candidates
+          .slice(1, 3)
+          .map(
+            (candidate) =>
+              candidate.querySelector('.abyss-dependency-candidate-source')?.textContent,
+          ),
+      ).toEqual(['outside.md:4', 'Filler-0.md:1']);
+      expect(trigger.getAttribute('aria-expanded')).toBe('true');
+      expect(trigger.getAttribute('aria-controls')).toBe(
+        container.querySelector('[data-dependency-editor]')?.id,
+      );
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+      expect(activeDocument.activeElement).toBe(candidates[0]);
+      candidates[0]!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+      expect(activeDocument.activeElement).toBe(candidates[1]);
+      candidates[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      expect(activeDocument.activeElement).toBe(candidates[0]);
+
+      candidates[1]!.click();
+      await flushMicrotasks();
+      expect(setDependency).toHaveBeenCalledWith({
+        prerequisite: outsideCandidate.ref,
+        dependent: dependent.ref,
+        dependencyId: 'outside',
+        enabled: true,
+      });
+      expect(activeDocument.activeElement).toBe(currentTrigger());
+
+      currentTrigger().click();
+      container.querySelector<HTMLButtonElement>('[data-dependency-clear="prep"]')!.click();
+      await flushMicrotasks();
+      expect(clearDependency).toHaveBeenCalledWith({
+        dependent: dependent.ref,
+        dependencyId: 'prep',
+      });
+      expect(activeDocument.activeElement).toBe(currentTrigger());
+
+      const finalTrigger = currentTrigger();
+      finalTrigger.click();
+      activeDocument.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+      );
+      expect(container.querySelector('[data-dependency-editor]')).toBeNull();
+      expect(activeDocument.activeElement).toBe(finalTrigger);
+      expect(finalTrigger.getAttribute('aria-expanded')).toBe('false');
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('rerenders the selected root on a dependency-only projection update', async () => {
+    const selected = snapshot('selected');
+    let decision: ReturnType<DependencyProjectionPort['evaluateCompletion']> = { type: 'allowed' };
+    let notify:
+      | ((event: { affected: readonly TaskRef[]; causalTaskPaths: readonly string[] }) => void)
+      | undefined;
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => decision,
+      inspect: () => ({
+        decision,
+        relations:
+          decision.type === 'invalid'
+            ? [{ id: 'missing', resolution: { type: 'missing' as const } }]
+            : [],
+      }),
+      subscribe: (listener) => {
+        notify = listener;
+        return () => undefined;
+      },
+    };
+    const { app, state } = await panelWith(selected, vi.fn());
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      api(vi.fn()),
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    expect(container.querySelector('[aria-label="Edit blocked by"]')).not.toBeNull();
+    expect(container.querySelector('.abyss-task-dependency-badge')).toBeNull();
+    container.querySelector<HTMLElement>('.abyss-right-title-view')!.click();
+    const draft = container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+    draft.value = 'unsaved local title';
+    draft.focus();
+    draft.setSelectionRange(2, 7);
+
+    decision = { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] };
+    notify?.({ affected: [selected.ref], causalTaskPaths: [] });
+
+    expect(container.querySelector('[aria-label="Edit blocked by"]')).not.toBeNull();
+    expect(
+      container.querySelector('.abyss-task-dependency-badge')?.getAttribute('aria-label'),
+    ).toBe('Dependency issue');
+    const restored = container.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+    expect(restored.value).toBe('unsaved local title');
+    expect(restored.selectionStart).toBe(2);
+    expect(restored.selectionEnd).toBe(7);
+    expect(activeDocument.activeElement).toBe(restored);
+    panel.destroy();
+    container.remove();
+  });
+
+  it('routes the RightPanel Done status-menu item through the shared blocked command path', async () => {
+    const selected = snapshot('selected');
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'blocked', prerequisites: [] },
+    });
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({ type: 'blocked', prerequisites: [] }),
+      inspect: () => ({ decision: { type: 'blocked', prerequisites: [] }, relations: [] }),
+      subscribe: () => () => undefined,
+    };
+    const { app, state } = await panelWith(selected, execute);
+    const registry = testStatusRegistry();
+    const panel = new RightPanel(
+      state,
+      app,
+      registry,
+      DEFAULT_SETTINGS,
+      undefined,
+      api(execute),
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+    try {
+      const marker = container.querySelector<HTMLElement>('.abyss-status-marker')!;
+      expect(marker.getAttribute('aria-disabled')).toBe('true');
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const done = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'done')!;
+      const doneItem = Array.from(
+        activeDocument.querySelectorAll<HTMLElement>(
+          '.abyss-status-popover [role="menuitemradio"]',
+        ),
+      ).find((item) => item.textContent?.includes(done.name));
+      expect(doneItem).toBeDefined();
+      doneItem!.click();
+      await flushMicrotasks();
+
+      expect(execute).toHaveBeenCalledWith({
+        type: 'set-status',
+        target: { type: 'task', ref: selected.ref },
+        symbol: done.symbol,
+      });
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('renders resolved, missing, and duplicate direct relations from inspection without guessing', async () => {
+    const selected = {
+      ...snapshot('selected'),
+      dependency: { dependsOn: ['ready', 'missing', 'duplicate'] },
+    } satisfies TaskSnapshot;
+    const firstDuplicate: TaskRef = { filePath: 'A.md', line: 1, revision: 'a' };
+    const secondDuplicate: TaskRef = { filePath: 'B.md', line: 2, revision: 'b' };
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({
+        type: 'invalid',
+        diagnostics: [
+          { type: 'missing-prerequisite', id: 'missing' },
+          {
+            type: 'duplicate-id',
+            id: 'duplicate',
+            candidates: [firstDuplicate, secondDuplicate],
+          },
+          { type: 'self-edge', id: 'self' },
+          { type: 'cycle', ids: ['a', 'b'] },
+        ],
+      }),
+      inspect: () => ({
+        decision: {
+          type: 'invalid',
+          diagnostics: [
+            { type: 'missing-prerequisite', id: 'missing' },
+            {
+              type: 'duplicate-id',
+              id: 'duplicate',
+              candidates: [firstDuplicate, secondDuplicate],
+            },
+            { type: 'self-edge', id: 'self' },
+            { type: 'cycle', ids: ['a', 'b'] },
+          ],
+        },
+        relations: [
+          {
+            id: 'ready',
+            resolution: {
+              type: 'resolved',
+              prerequisite: { filePath: 'Ready.md', line: 0, revision: 'ready' },
+              complete: true,
+            },
+          },
+          { id: 'missing', resolution: { type: 'missing' } },
+          {
+            id: 'duplicate',
+            resolution: { type: 'duplicate', candidates: [firstDuplicate, secondDuplicate] },
+          },
+        ],
+      }),
+      subscribe: () => () => undefined,
+    };
+    const clearDependency = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: false,
+      outcome: { type: 'task', task: selected },
+    });
+    const tasks: TaskApplicationApi = {
+      queries: taskQueryApi({ list: () => [selected] }),
+      execute: vi.fn(),
+      setDependency: vi.fn(),
+      clearDependency,
+    };
+    const app = await createAppWithFiles({ 'tasks.md': '- [ ] root\n' });
+    const state = new AppState();
+    state.set('taskStack', [selected]);
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+      () => ({ project: [], other: [] }),
+    );
+    const container = freshContainer();
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[aria-label="Edit blocked by"]')!.click();
+
+    const relations = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-dependency-relation]'),
+    );
+    expect(relations.map((row) => row.dataset['dependencyResolution'])).toEqual([
+      'resolved',
+      'missing',
+      'duplicate',
+    ]);
+    expect(relations[1]?.textContent).toContain('Missing');
+    expect(relations[2]?.textContent).toContain('2 matches');
+    expect(
+      container.querySelector('[data-dependency-diagnostic="self-edge"]')?.textContent,
+    ).toContain('depends on itself');
+    expect(container.querySelector('[data-dependency-diagnostic="cycle"]')?.textContent).toContain(
+      'cycle',
+    );
+    expect(container.querySelectorAll('[data-dependency-candidate]')).toHaveLength(0);
+    expect(tasks.setDependency).not.toHaveBeenCalled();
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-clear="missing"]')!.click();
+    await flushMicrotasks();
+    expect(clearDependency).toHaveBeenCalledWith({
+      dependent: selected.ref,
+      dependencyId: 'missing',
+    });
+    panel.destroy();
+  });
+
+  it('keeps unresolved dependency inspection read-only and explains how to recover', async () => {
+    const selected = snapshot('selected');
+    const candidate = snapshot('candidate');
+    const setDependency = vi.fn();
+    const tasks: TaskApplicationApi = {
+      queries: taskQueryApi({ list: () => [selected, candidate] }),
+      execute: vi.fn(),
+      setDependency,
+      clearDependency: vi.fn(),
+    };
+    const projection: DependencyProjectionPort = {
+      evaluateCompletion: () => ({
+        type: 'invalid',
+        diagnostics: [{ type: 'unresolved-projection' }],
+      }),
+      inspect: () => ({
+        decision: { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] },
+        relations: [],
+      }),
+      subscribe: () => () => undefined,
+    };
+    const app = await createAppWithFiles({ 'tasks.md': '- [ ] selected\n- [ ] candidate\n' });
+    const state = new AppState();
+    state.set('taskStack', [selected]);
+    const panel = new RightPanel(
+      state,
+      app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      projection,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    panel.mount(container);
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+
+    expect(
+      container.querySelector('[data-dependency-diagnostic="unresolved-projection"]')?.textContent,
+    ).toContain('Reopen and inspect');
+    const candidateButton = container.querySelector<HTMLButtonElement>(
+      '[data-dependency-candidate]',
+    )!;
+    expect(candidateButton.disabled).toBe(true);
+    candidateButton.click();
+    await flushMicrotasks();
+    expect(setDependency).not.toHaveBeenCalled();
+    panel.destroy();
+  });
   it('preserves the full DOM draft bundle when an add-comment command is a no-op', async () => {
     const initial = snapshot('old');
     const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({

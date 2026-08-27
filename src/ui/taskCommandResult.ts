@@ -135,9 +135,54 @@ export function requestTaskCompletion(
   });
 }
 
-export function presentTaskCommandResult(result: TaskCommandResult): void {
+interface TaskCommandAnnouncement {
+  readonly message: string;
+  readonly ariaLive: 'polite' | 'assertive';
+}
+
+export interface TaskCommandAnnouncementSink {
+  announce(announcement: TaskCommandAnnouncement): void;
+}
+
+const sharedTaskCommandAnnouncementSink: TaskCommandAnnouncementSink = {
+  announce: ({ message, ariaLive }) => {
+    const ownerDocument = activeDocument;
+    let region = ownerDocument.querySelector<HTMLElement>('.abyss-task-command-live-region');
+    if (!region) {
+      region = ownerDocument.body.createDiv({
+        cls: 'abyss-task-command-live-region abyss-sr-only',
+      });
+      region.setAttrs({ role: 'status', 'aria-atomic': 'true' });
+    }
+    region.setAttr('aria-live', ariaLive);
+    region.empty();
+    region.setText(message);
+  },
+};
+
+export function presentTaskCommandResult(
+  result: TaskCommandResult,
+  sink: TaskCommandAnnouncementSink = sharedTaskCommandAnnouncementSink,
+): void {
   if (result.type === 'ok') return;
-  new Notice(describeCommandError(result).message);
+  const description = describeCommandError(result);
+  new Notice(description.message);
+  sink.announce({ message: description.message, ariaLive: 'assertive' });
+}
+
+export function presentBulkTaskCommandResults(
+  results: readonly TaskCommandResult[],
+  sink: TaskCommandAnnouncementSink = sharedTaskCommandAnnouncementSink,
+): void {
+  const failures = results.filter((result) => result.type !== 'ok');
+  if (failures.length === 0) return;
+  const blocked = failures.filter((result) => result.type === 'blocked').length;
+  const message =
+    blocked === failures.length
+      ? `${String(blocked)} tasks were not completed because their prerequisites are unfinished or invalid.`
+      : `${String(failures.length)} task updates were not applied.`;
+  new Notice(message);
+  sink.announce({ message, ariaLive: 'assertive' });
 }
 
 interface CommandErrorDescription {
@@ -174,6 +219,19 @@ function describeCommandError(
     case 'io-error':
       return { message: 'Failed to update task. Please try again.', requiresRecovery: true };
     case 'partial':
+      if (result.operation === 'dependency') {
+        return result.recovery.state === 'prerequisite-id-committed-dependent-edge-unknown'
+          ? {
+              message:
+                'Could not confirm whether the dependency was changed. Inspect the task before taking another action. Do not retry blindly.',
+              requiresRecovery: true,
+            }
+          : {
+              message:
+                'The prerequisite was saved, but the dependency was not changed. Reopen and inspect the task, then retry.',
+              requiresRecovery: true,
+            };
+      }
       return {
         message:
           result.operation === 'move'

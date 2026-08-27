@@ -77,8 +77,7 @@ export interface ProjectWorkspaceSnapshot {
   };
   readonly diagnostics: readonly ProjectWorkspaceDiagnostic[];
 }
-import type { TaskSnapshot } from '../tasks';
-import type { DependencyCompletionDecision } from '../tasks/application/DependencyPolicyPort';
+import type { DependencyCompletionDecision, TaskSnapshot } from '../tasks';
 import type { WorkNoteRelationProjection } from './work-notes/WorkNoteRelationProjection';
 import type { MilestoneRollup, WorkNoteRollup } from './work-notes/rollups';
 import type { WorkNoteDiagnostic, WorkNoteSnapshot } from './work-notes/types';

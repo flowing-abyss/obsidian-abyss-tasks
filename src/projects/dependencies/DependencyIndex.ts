@@ -1,11 +1,15 @@
+import type {
+  DependencyInspectionRelation,
+  DependencyLinkValidation,
+} from '../../tasks/application/DependencyPolicyPort';
 import type { TaskIndexEvent, TaskQueryApi } from '../../tasks/application/TaskApplicationApi';
+import type { DependencyCompletionDiagnostic } from '../../tasks/domain/commands';
 import type { TaskRef, TaskSnapshot } from '../../tasks/domain/types';
 
-type DependencyDiagnostic =
-  | { readonly type: 'missing-prerequisite'; readonly id: string }
-  | { readonly type: 'duplicate-id'; readonly id: string; readonly candidates: readonly TaskRef[] }
-  | { readonly type: 'self-edge'; readonly id: string }
-  | { readonly type: 'cycle'; readonly ids: readonly string[] };
+type DependencyDiagnostic = Exclude<
+  DependencyCompletionDiagnostic,
+  { type: 'unresolved-projection' }
+>;
 export type DependencyProjection =
   | { readonly type: 'ready'; readonly ref: TaskRef }
   | { readonly type: 'blocked'; readonly ref: TaskRef; readonly prerequisites: readonly TaskRef[] }
@@ -78,6 +82,106 @@ export class DependencyIndex {
     const node = this.nodeForSnapshot(task);
     const projection = node && this.projections.get(node.key);
     return projection && copyProjection(projection);
+  }
+  inspect(task: TaskSnapshot): readonly DependencyInspectionRelation[] | undefined {
+    const node = this.nodeForSnapshot(task);
+    if (!node) return undefined;
+    return node.dependencies.map((id) => {
+      const candidates = this.candidates.get(id);
+      if (!candidates?.size) return { id, resolution: { type: 'missing' } };
+      if (candidates.size > 1) {
+        return { id, resolution: { type: 'duplicate', candidates: this.refsFor(candidates) } };
+      }
+      const prerequisite = this.nodes.get([...candidates][0]!)!;
+      return {
+        id,
+        resolution: {
+          type: 'resolved',
+          prerequisite: copyRef(prerequisite.task.ref),
+          complete: prerequisite.task.status === 'done',
+        },
+      };
+    });
+  }
+  validateLink(
+    prerequisite: TaskSnapshot,
+    dependent: TaskSnapshot,
+    dependencyId: string,
+  ): DependencyLinkValidation {
+    const prerequisiteNode = this.nodeForSnapshot(prerequisite);
+    const dependentNode = this.nodeForSnapshot(dependent);
+    if (!prerequisiteNode || !dependentNode) {
+      return { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] };
+    }
+    const prerequisiteProjection = this.projections.get(prerequisiteNode.key);
+    if (prerequisiteProjection?.type === 'invalid') {
+      return { type: 'invalid', diagnostics: prerequisiteProjection.diagnostics };
+    }
+    const dependentProjection = this.projections.get(dependentNode.key);
+    if (dependentProjection?.type === 'invalid') {
+      const unresolvedAfterOperation = dependentProjection.diagnostics.filter(
+        (diagnostic) =>
+          !(
+            prerequisiteNode.id === undefined &&
+            diagnostic.type === 'missing-prerequisite' &&
+            diagnostic.id === dependencyId
+          ),
+      );
+      if (unresolvedAfterOperation.length > 0) {
+        return { type: 'invalid', diagnostics: unresolvedAfterOperation };
+      }
+    }
+    const idCandidates = this.candidates.get(dependencyId) ?? new Set<string>();
+    const foreignCandidates = [...idCandidates].filter((key) => key !== prerequisiteNode.key);
+    if (foreignCandidates.length > 0) {
+      return {
+        type: 'invalid',
+        diagnostics: [
+          {
+            type: 'duplicate-id',
+            id: dependencyId,
+            candidates: this.refsFor(new Set([...foreignCandidates, prerequisiteNode.key])),
+          },
+        ],
+      };
+    }
+    const graph = new Map(
+      [...this.nodes.keys()].map((key) => [key, new Set(this.forward.get(key) ?? [])] as const),
+    );
+    const reaches = (from: string, target: string): boolean => {
+      const seen = new Set([from]);
+      const queue = [from];
+      for (let index = 0; index < queue.length; index += 1) {
+        const key = queue[index]!;
+        if (key === target) return true;
+        for (const next of graph.get(key) ?? []) {
+          if (seen.has(next)) continue;
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+      return false;
+    };
+    const prospectiveEdges: Array<readonly [string, string]> = [];
+    if (prerequisiteNode.id === undefined) {
+      for (const consumer of this.consumers.get(dependencyId) ?? []) {
+        prospectiveEdges.push([consumer, prerequisiteNode.key]);
+      }
+    }
+    prospectiveEdges.push([dependentNode.key, prerequisiteNode.key]);
+    for (const [from, to] of prospectiveEdges) {
+      if (from === to) {
+        return { type: 'invalid', diagnostics: [{ type: 'self-edge', id: dependencyId }] };
+      }
+      if (reaches(to, from)) {
+        const ids = [this.nodes.get(from)?.id, this.nodes.get(to)?.id ?? dependencyId]
+          .filter((id): id is string => id !== undefined)
+          .sort((left, right) => left.localeCompare(right));
+        return { type: 'invalid', diagnostics: [{ type: 'cycle', ids }] };
+      }
+      graph.get(from)?.add(to);
+    }
+    return { type: 'allowed' };
   }
   list(): readonly DependencyProjection[] {
     return [...this.projections.values()]

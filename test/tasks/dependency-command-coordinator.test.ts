@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DependencyIndex } from '../../src/projects/dependencies/DependencyIndex';
+import { DependencyPolicy } from '../../src/projects/dependencies/DependencyPolicy';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
 import {
@@ -20,6 +21,8 @@ import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskM
 import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { createAppWithFiles } from '../helpers';
 import { InMemoryTaskRepository } from '../support/InMemoryTaskRepository';
+
+const allowingValidation = { validateLink: () => ({ type: 'allowed' as const }) };
 
 function exactQueries(tasks: () => readonly TaskSnapshot[]): TaskQueryApi {
   return {
@@ -60,7 +63,13 @@ async function inMemoryStack(files: Record<string, string>) {
   const queries = exactQueries(() => tasks);
   const dependencies = new DependencyIndex();
   dependencies.replace(tasks);
-  const coordinator = new DependencyCommandCoordinator(queries, repository, dependencies);
+  const coordinator = new DependencyCommandCoordinator(
+    queries,
+    repository,
+    dependencies,
+    undefined,
+    new DependencyPolicy(dependencies),
+  );
   return {
     coordinator,
     dependencies,
@@ -177,6 +186,7 @@ describe('DependencyCommandCoordinator', () => {
       stack.repository,
       projection,
       remembered,
+      allowingValidation,
     );
 
     await expect(
@@ -206,6 +216,7 @@ describe('DependencyCommandCoordinator', () => {
       stack.repository,
       projection,
       remembered,
+      allowingValidation,
     );
 
     await expect(
@@ -274,6 +285,7 @@ describe('DependencyCommandCoordinator', () => {
       repository,
       projection,
       remembered,
+      allowingValidation,
     );
 
     await expect(
@@ -315,6 +327,9 @@ describe('DependencyCommandCoordinator', () => {
     const coordinator = new DependencyCommandCoordinator(
       exactQueries(() => [prerequisite, dependent]),
       repository,
+      undefined,
+      undefined,
+      allowingValidation,
     );
 
     await expect(
@@ -398,6 +413,9 @@ describe('DependencyCommandCoordinator', () => {
     const coordinator = new DependencyCommandCoordinator(
       exactQueries(() => [prerequisite, dependent]),
       repository,
+      undefined,
+      undefined,
+      allowingValidation,
     );
 
     await expect(
@@ -451,5 +469,448 @@ describe('DependencyCommandCoordinator', () => {
     expect(multi).toHaveBeenCalledOnce();
     expect(edit).not.toHaveBeenCalled();
     expect(stack.repository.content('Tasks.md')).toBe('- [ ] prerequisite\n- [ ] dependent\n');
+  });
+
+  it('rejects a proposed edge that would create a cycle before any repository write', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] A 🆔 a ⛔ b\n- [ ] B 🆔 b\n',
+    });
+    const [prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const repositoryEdit = vi.spyOn(stack.repository, 'edit');
+    const dependencyEdit = vi.spyOn(stack.repository, 'editTaskDependencies');
+    const coordinator = new DependencyCommandCoordinator(
+      exactQueries(() => stack.tasks()),
+      stack.repository,
+      stack.dependencies,
+      undefined,
+      new DependencyPolicy(stack.dependencies),
+    );
+
+    await expect(
+      coordinator.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'a',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [expect.objectContaining({ type: 'cycle' })] },
+    });
+    expect(repositoryEdit).not.toHaveBeenCalled();
+    expect(dependencyEdit).not.toHaveBeenCalled();
+  });
+
+  it('rejects a proposed prerequisite ID collision before assigning the ID or edge', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] Existing 🆔 taken\n- [ ] Prerequisite\n- [ ] Dependent\n',
+    });
+    const [, prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const repositoryEdit = vi.spyOn(stack.repository, 'edit');
+    const dependencyEdit = vi.spyOn(stack.repository, 'editTaskDependencies');
+    const coordinator = new DependencyCommandCoordinator(
+      exactQueries(() => stack.tasks()),
+      stack.repository,
+      stack.dependencies,
+      undefined,
+      new DependencyPolicy(stack.dependencies),
+    );
+
+    await expect(
+      coordinator.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'taken',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: {
+        diagnostics: [expect.objectContaining({ type: 'duplicate-id', id: 'taken' })],
+      },
+    });
+    expect(repositoryEdit).not.toHaveBeenCalled();
+    expect(dependencyEdit).not.toHaveBeenCalled();
+  });
+
+  it('clears an unresolved carrier without resolving a prerequisite snapshot', async () => {
+    const stack = await inMemoryStack({
+      'Ship.md': '- [ ] Ship ⛔ missing\n',
+    });
+    const dependent = stack.tasks()[0]!;
+    const resolve = vi.fn(exactQueries(() => stack.tasks()).resolve);
+    const coordinator = new DependencyCommandCoordinator(
+      { ...exactQueries(() => stack.tasks()), resolve },
+      stack.repository,
+      stack.dependencies,
+    );
+
+    await expect(
+      coordinator.clearDependency({ dependent: dependent.ref, dependencyId: 'missing' }),
+    ).resolves.toMatchObject({ type: 'ok', changed: true });
+
+    expect(resolve).toHaveBeenCalledOnce();
+    expect(resolve).toHaveBeenCalledWith(dependent.ref);
+    expect(stack.repository.content('Ship.md')).toBe('- [ ] Ship\n');
+  });
+
+  it.each([
+    ['duplicate', '- [ ] A 🆔 same\n- [ ] B 🆔 same\n- [ ] Ship ⛔ same\n', 'same'],
+    ['cycle edge', '- [ ] A 🆔 a ⛔ b\n- [ ] B 🆔 b ⛔ a\n', 'b'],
+  ] as const)(
+    'clears one %s carrier edge while the graph is invalid',
+    async (_label, source, id) => {
+      const stack = await inMemoryStack({ 'Tasks.md': source });
+      const dependent = stack.tasks().find(({ dependency }) => dependency?.dependsOn.includes(id));
+      if (!dependent) throw new Error('missing dependent');
+
+      await expect(
+        stack.coordinator.clearDependency({ dependent: dependent.ref, dependencyId: id }),
+      ).resolves.toMatchObject({ type: 'ok', changed: true });
+
+      expect(stack.repository.content('Tasks.md')).not.toContain(`⛔ ${id}`);
+    },
+  );
+
+  it('removes only the requested ID and preserves unrelated task bytes', async () => {
+    const stack = await inMemoryStack({
+      'Ship.md': '- [ ] Ship 🧭 keep ⛔ first, second, third ^ship\r\n',
+    });
+    const dependent = stack.tasks()[0]!;
+
+    await expect(
+      stack.coordinator.clearDependency({ dependent: dependent.ref, dependencyId: 'second' }),
+    ).resolves.toMatchObject({ type: 'ok', changed: true });
+
+    expect(stack.repository.content('Ship.md')).toBe(
+      '- [ ] Ship 🧭 keep ⛔ first, third ^ship\r\n',
+    );
+  });
+
+  it('performs zero writes when the dependent resolution is ambiguous', async () => {
+    const candidate = (await inMemoryStack({ 'Ship.md': '- [ ] Ship ⛔ prep\n' })).tasks()[0]!;
+    const repository: TaskRepository = {
+      edit: vi.fn(),
+      editTaskDependencies: vi.fn(),
+      completeRecurrence: vi.fn(),
+      create: vi.fn(),
+      move: vi.fn(),
+    };
+    const coordinator = new DependencyCommandCoordinator(
+      {
+        resolve: () => ({
+          type: 'ambiguous',
+          ref: candidate.ref,
+          candidates: [
+            { root: candidate, target: { type: 'task', ref: candidate.ref }, node: candidate },
+          ],
+        }),
+      },
+      repository,
+    );
+
+    await expect(
+      coordinator.clearDependency({ dependent: candidate.ref, dependencyId: 'prep' }),
+    ).resolves.toMatchObject({ type: 'ambiguous' });
+    expect(repository.edit).not.toHaveBeenCalled();
+    expect(repository.editTaskDependencies).not.toHaveBeenCalled();
+  });
+
+  it('returns a typed unknown I/O result when clear-by-ID repository write throws', async () => {
+    const dependent = (await inMemoryStack({ 'Ship.md': '- [ ] Ship ⛔ prep\n' })).tasks()[0]!;
+    const repository: TaskRepository = {
+      edit: vi.fn().mockRejectedValue(new Error('write failed')),
+      completeRecurrence: vi.fn(),
+      create: vi.fn(),
+      move: vi.fn(),
+    };
+    const coordinator = new DependencyCommandCoordinator(
+      exactQueries(() => [dependent]),
+      repository,
+    );
+
+    await expect(
+      coordinator.clearDependency({ dependent: dependent.ref, dependencyId: 'prep' }),
+    ).resolves.toMatchObject({ type: 'io-error', contentState: 'unknown' });
+  });
+
+  it('serializes reciprocal concurrent links so only the first validated edge writes', async () => {
+    const stack = await inMemoryStack({
+      'A.md': '- [ ] A 🆔 a\n',
+      'B.md': '- [ ] B 🆔 b\n',
+    });
+    const [a, b] = stack.tasks();
+    if (!a || !b) throw new Error('missing roots');
+    const original = stack.repository.edit.bind(stack.repository);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const writes = vi.spyOn(stack.repository, 'edit').mockImplementationOnce(async (request) => {
+      await gate;
+      return original(request);
+    });
+
+    const first = stack.coordinator.setDependency({
+      prerequisite: a.ref,
+      dependent: b.ref,
+      dependencyId: 'a',
+      enabled: true,
+    });
+    const second = stack.coordinator.setDependency({
+      prerequisite: b.ref,
+      dependent: a.ref,
+      dependencyId: 'b',
+      enabled: true,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(writes).toHaveBeenCalledOnce();
+    release();
+
+    await expect(first).resolves.toMatchObject({ type: 'ok' });
+    await expect(second).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [expect.objectContaining({ type: 'cycle' })] },
+    });
+    expect(writes).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed a queued enable after an earlier dependency outcome becomes unknown', async () => {
+    const stack = await inMemoryStack({
+      'A.md': '- [ ] A 🆔 a\n',
+      'B.md': '- [ ] B 🆔 b\n',
+    });
+    const [a, b] = stack.tasks();
+    if (!a || !b) throw new Error('missing roots');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const edit = vi.spyOn(stack.repository, 'edit').mockImplementationOnce(async () => {
+      await gate;
+      return {
+        type: 'io-error',
+        cause: 'write-interrupted',
+        path: 'B.md',
+        contentState: 'unknown',
+      };
+    });
+    const first = stack.coordinator.setDependency({
+      prerequisite: a.ref,
+      dependent: b.ref,
+      dependencyId: 'a',
+      enabled: true,
+    });
+    const reciprocal = stack.coordinator.setDependency({
+      prerequisite: b.ref,
+      dependent: a.ref,
+      dependencyId: 'b',
+      enabled: true,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(edit).toHaveBeenCalledOnce();
+    release();
+
+    await expect(first).resolves.toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    await expect(reciprocal).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [{ type: 'unresolved-projection' }] },
+    });
+    expect(edit).toHaveBeenCalledOnce();
+  });
+
+  it('allows a later explicit enable after the unknown predecessor queue has drained', async () => {
+    const stack = await inMemoryStack({
+      'A.md': '- [ ] A 🆔 a\n',
+      'B.md': '- [ ] B 🆔 b\n',
+    });
+    const [a, b] = stack.tasks();
+    if (!a || !b) throw new Error('missing roots');
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const edit = vi.spyOn(stack.repository, 'edit').mockImplementationOnce(async () => {
+      await gate;
+      return {
+        type: 'io-error',
+        cause: 'write-interrupted',
+        path: 'B.md',
+        contentState: 'unknown',
+      };
+    });
+    const unknown = stack.coordinator.setDependency({
+      prerequisite: a.ref,
+      dependent: b.ref,
+      dependencyId: 'a',
+      enabled: true,
+    });
+    const alreadyQueued = stack.coordinator.setDependency({
+      prerequisite: b.ref,
+      dependent: a.ref,
+      dependencyId: 'b',
+      enabled: true,
+    });
+    release();
+
+    await expect(unknown).resolves.toMatchObject({ type: 'io-error', contentState: 'unknown' });
+    await expect(alreadyQueued).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [{ type: 'unresolved-projection' }] },
+    });
+    await expect(
+      stack.coordinator.setDependency({
+        prerequisite: b.ref,
+        dependent: a.ref,
+        dependencyId: 'b',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(edit).toHaveBeenCalledTimes(2);
+  });
+
+  it('serializes concurrent proposed IDs so one owner wins and the loser performs zero write', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] First\n- [ ] First dependent\n- [ ] Second\n- [ ] Second dependent\n',
+    });
+    const [firstPrerequisite, firstDependent, secondPrerequisite, secondDependent] = stack.tasks();
+    if (!firstPrerequisite || !firstDependent || !secondPrerequisite || !secondDependent) {
+      throw new Error('missing roots');
+    }
+    const original = stack.repository.editTaskDependencies!.bind(stack.repository);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const writes = vi
+      .spyOn(stack.repository, 'editTaskDependencies')
+      .mockImplementationOnce(async (request) => {
+        await gate;
+        return original(request);
+      });
+    const first = stack.coordinator.setDependency({
+      prerequisite: firstPrerequisite.ref,
+      dependent: firstDependent.ref,
+      dependencyId: 'shared',
+      enabled: true,
+    });
+    const second = stack.coordinator.setDependency({
+      prerequisite: secondPrerequisite.ref,
+      dependent: secondDependent.ref,
+      dependencyId: 'shared',
+      enabled: true,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(writes).toHaveBeenCalledOnce();
+    release();
+
+    await expect(first).resolves.toMatchObject({ type: 'ok' });
+    await expect(second).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [expect.objectContaining({ type: 'duplicate-id' })] },
+    });
+    expect(writes).toHaveBeenCalledOnce();
+  });
+
+  it.each(['missing', 'throws'] as const)(
+    'fails closed with zero writes when prospective validation %s',
+    async (mode) => {
+      const stack = await inMemoryStack({ 'Tasks.md': '- [ ] P\n- [ ] D\n' });
+      const [prerequisite, dependent] = stack.tasks();
+      if (!prerequisite || !dependent) throw new Error('missing roots');
+      const edit = vi.spyOn(stack.repository, 'edit');
+      const multi = vi.spyOn(stack.repository, 'editTaskDependencies');
+      const coordinator = new DependencyCommandCoordinator(
+        exactQueries(() => stack.tasks()),
+        stack.repository,
+        stack.dependencies,
+        undefined,
+        mode === 'throws'
+          ? {
+              validateLink: () => {
+                throw new Error('projection unavailable');
+              },
+            }
+          : undefined,
+      );
+
+      await expect(
+        coordinator.setDependency(intent(prerequisite.ref, dependent.ref)),
+      ).resolves.toMatchObject({
+        type: 'invalid',
+        dependency: {
+          diagnostics: [{ type: 'unresolved-projection' }],
+        },
+      });
+      expect(edit).not.toHaveBeenCalled();
+      expect(multi).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects assigning an ID when it activates a latent cycle in existing missing-ID consumers', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] P ⛔ q\n- [ ] Q 🆔 q ⛔ p\n- [ ] D\n',
+    });
+    const [prerequisite, , dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const edit = vi.spyOn(stack.repository, 'edit');
+    const multi = vi.spyOn(stack.repository, 'editTaskDependencies');
+
+    await expect(
+      stack.coordinator.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'p',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: { diagnostics: [expect.objectContaining({ type: 'cycle' })] },
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(multi).not.toHaveBeenCalled();
+  });
+
+  it('allows assigning the exact missing ID when that operation safely repairs the dependent', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] Prerequisite\n- [ ] Dependent ⛔ wanted\n',
+    });
+    const [prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+
+    await expect(
+      stack.coordinator.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'wanted',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({ type: 'ok' });
+    expect(stack.repository.content('Tasks.md')).toBe(
+      '- [ ] Prerequisite 🆔 wanted\n- [ ] Dependent ⛔ wanted\n',
+    );
+  });
+
+  it('does not treat an unrelated missing relation as repaired by a new link', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] Prerequisite\n- [ ] Dependent ⛔ other\n',
+    });
+    const [prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const edit = vi.spyOn(stack.repository, 'edit');
+    const multi = vi.spyOn(stack.repository, 'editTaskDependencies');
+
+    await expect(
+      stack.coordinator.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'wanted',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'invalid',
+      dependency: {
+        diagnostics: [expect.objectContaining({ type: 'missing-prerequisite', id: 'other' })],
+      },
+    });
+    expect(edit).not.toHaveBeenCalled();
+    expect(multi).not.toHaveBeenCalled();
   });
 });

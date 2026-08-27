@@ -91,6 +91,9 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
   CommentTimeContextProvider: ['src/views/PanelView.ts'],
   CreateTaskCommandInitial: ['src/ui/taskCapture/CaptureTargetResolver.ts'],
   DateRange: ['src/views/calendarOccurrences.ts'],
+  DependencyCompletionDecision: ['src/ui/StatusMarker.ts'],
+  DependencyInspection: ['src/panels/RightPanel.ts'],
+  DependencyProjectionPort: ['src/views/PanelView.ts'],
   LocalDate: ['src/panels/CenterPanel.ts'],
   MoveRecovery: ['src/ui/TaskMoveRecoveryModal.ts'],
   PlanningTarget: ['src/panels/RightPanel.ts'],
@@ -132,6 +135,7 @@ const PUBLIC_TASK_EXPORT_CONSUMERS: Record<string, readonly string[]> = {
 
 const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskApplicationApi.applyRootTagChanges': 'src/projects/NextActionService.ts',
+  'TaskApplicationApi.clearDependency': 'src/views/PanelView.ts',
   'TaskApplicationApi.execute': 'src/panels/CenterPanel.ts',
   'TaskApplicationApi.queries': 'src/ui/TaskMoveRecoveryModal.ts',
   'TaskApplicationApi.setDependency': 'src/views/PanelView.ts',
@@ -878,6 +882,19 @@ describe('task architecture boundaries', () => {
         .flatMap(projectStoreReadSites)
         .sort(),
     ).toEqual([]);
+  });
+
+  it('owns Project dependency refresh at one panel subscription instead of per card', () => {
+    expect(source('src/views/PanelView.ts').match(/projectWorkspace\.onUpdate/gu)).toHaveLength(1);
+    for (const path of [
+      'src/ui/TaskCard.ts',
+      'src/panels/projects/ProjectsTimelineView.ts',
+      'src/projects/dependencies/DependencyPolicy.ts',
+    ]) {
+      expect(source(path), `${path} must not subscribe per rendered card`).not.toMatch(
+        /dependencyProjection\.subscribe|projectWorkspace\.onUpdate/u,
+      );
+    }
   });
 
   it('rejects the retired tc UI namespace', () => {

@@ -34,11 +34,6 @@ export interface BoardMutation<T> {
   menuItems(item: T): readonly BoardStatusAction[];
 }
 
-/** Work Notes gain board mutation support only after their guarded writer exists. */
-export function projectBoardTasks(actions: readonly ProjectAction[]): readonly TaskSnapshot[] {
-  return actions.filter(({ owner }) => owner.type === 'project').map(({ task }) => task);
-}
-
 function projectRole(status: ProjectStatus): Exclude<BoardColumn<Project>['role'], 'unmapped'> {
   if (status.behavior === 'dropped') return 'terminal-left';
   if (status.behavior === 'published') return 'terminal-right';
@@ -85,6 +80,25 @@ export function taskBoardColumns(
     items: tasks.filter((task) => task.statusSymbol === status.symbol),
   }));
   const unmapped = tasks.filter((task) => !configuredSymbols.has(task.statusSymbol));
+  if (unmapped.length > 0) {
+    columns.push({ key: 'unmapped', label: 'Unmapped', role: 'unmapped', items: unmapped });
+  }
+  return columns;
+}
+
+/** Project Actions retain dependency/ownership presentation through the bounded board shell. */
+export function projectActionBoardColumns(
+  statuses: readonly TaskStatusDef[],
+  actions: readonly ProjectAction[] = [],
+): readonly BoardColumn<ProjectAction>[] {
+  const configuredSymbols = new Set(statuses.map(({ symbol }) => symbol));
+  const columns: BoardColumn<ProjectAction>[] = statuses.map((status) => ({
+    key: status.id,
+    label: status.name,
+    role: 'regular',
+    items: actions.filter(({ task }) => task.statusSymbol === status.symbol),
+  }));
+  const unmapped = actions.filter(({ task }) => !configuredSymbols.has(task.statusSymbol));
   if (unmapped.length > 0) {
     columns.push({ key: 'unmapped', label: 'Unmapped', role: 'unmapped', items: unmapped });
   }
@@ -151,6 +165,17 @@ export function createTaskBoardMutation(
         checked: status.symbol === task.statusSymbol,
         disabled: status.symbol === task.statusSymbol,
       })),
+  };
+}
+
+export function createProjectActionBoardMutation(
+  statuses: readonly TaskStatusDef[],
+  command: (task: TaskSnapshot, symbol: string) => Promise<BoardMutationResult>,
+): BoardMutation<ProjectAction> {
+  const mutation = createTaskBoardMutation(statuses, command);
+  return {
+    move: (action, columnKey) => mutation.move(action.task, columnKey),
+    menuItems: (action) => mutation.menuItems(action.task),
   };
 }
 

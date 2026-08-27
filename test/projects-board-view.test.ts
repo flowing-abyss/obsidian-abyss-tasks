@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
-import type { BoardColumn, BoardMutation } from '../src/panels/projects/boardProjection';
-import { flushMicrotasks, freshContainer } from './helpers';
+import {
+  projectActionBoardColumns,
+  type BoardColumn,
+  type BoardMutation,
+} from '../src/panels/projects/boardProjection';
+import type { ProjectAction } from '../src/projects/types';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { flushMicrotasks, freshContainer, task } from './helpers';
 
 interface Item {
   readonly id: string;
@@ -17,6 +23,47 @@ function column(
 }
 
 describe('shared board view', () => {
+  it('keeps the dependency projection attached to Project actions through board columns', () => {
+    const current = task({ title: 'Blocked project task' });
+    const action: ProjectAction = {
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: {
+        type: 'blocked',
+        prerequisites: [{ filePath: 'Projects/A.md', line: 0, revision: 'prep' }],
+      },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
+
+    const columns = projectActionBoardColumns(DEFAULT_SETTINGS.taskStatuses, [action]);
+
+    expect(columns.flatMap(({ items }) => items)).toEqual([action]);
+    expect(columns.flatMap(({ items }) => items)[0]?.dependency).toEqual(action.dependency);
+  });
+
+  it('includes inherited Work Note inline Actions in Project task columns', () => {
+    const direct: ProjectAction = {
+      task: task({ title: 'Direct action', statusSymbol: ' ' }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
+    const inherited: ProjectAction = {
+      task: task({
+        title: 'Work Note action',
+        statusSymbol: '/',
+        source: { filePath: 'Work Notes/Research.md', line: 4 },
+      }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'work-note', path: 'Work Notes/Research.md' },
+    };
+
+    const columns = projectActionBoardColumns(DEFAULT_SETTINGS.taskStatuses, [direct, inherited]);
+
+    expect(columns.flatMap(({ items }) => items)).toEqual([direct, inherited]);
+  });
+
   it('expands a filtered terminal target only while dragging', () => {
     const item = { id: 'a', name: 'A' };
     const el = freshContainer();

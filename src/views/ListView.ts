@@ -3,7 +3,7 @@ import type { LinkToken } from '../parser/links';
 import { DEFAULT_VIEW_CONFIG } from '../settings/defaults';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskSnapshot } from '../tasks';
+import type { DependencyCompletionDecision, TaskSnapshot } from '../tasks';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import {
   recurrenceBadgeInput,
@@ -28,6 +28,7 @@ export interface ListViewCallbacks {
   statusRegistry: StatusRegistry;
   onContextMenu: (ev: MouseEvent, task: TaskSnapshot) => void;
   onTaskBodyContextMenu?: (ev: MouseEvent, task: TaskSnapshot, anchor: HTMLElement) => void;
+  dependencyDecision?: (task: TaskSnapshot) => DependencyCompletionDecision | undefined;
 }
 
 export class ListView extends BaseView {
@@ -133,6 +134,7 @@ export class ListView extends BaseView {
       task,
       registry: this.callbacks.statusRegistry,
       interactive: !isForecastCalendarTask(task),
+      completionDecision: this.callbacks.dependencyDecision?.(task),
       onLeftClick: () => this.callbacks.onToggle(task),
       onContextMenu: (e) => this.callbacks.onContextMenu(e, task),
     });

@@ -186,6 +186,7 @@ function renderAllDayBody(
             task,
             registry: callbacks.statusRegistry,
             interactive: true,
+            completionDecision: callbacks.dependencyDecision?.(task),
             onLeftClick: () => callbacks.onToggle(task),
             onContextMenu: (ev) => {
               ev.stopPropagation();
@@ -620,6 +621,7 @@ export function renderAllDayCell(
               task: t,
               registry: callbacks.statusRegistry,
               interactive: true,
+              completionDecision: callbacks.dependencyDecision?.(t),
               onLeftClick: () => callbacks.onToggle(t),
               onContextMenu: (ev) => {
                 ev.stopPropagation();

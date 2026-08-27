@@ -1,7 +1,12 @@
 import { setIcon } from 'obsidian';
 import type { TagGroup } from '../../settings/types';
 import { colorForTag } from '../../tags/tagColor';
-import type { LocalDate, TaskNodeRef, TaskSnapshot } from '../../tasks';
+import type {
+  DependencyCompletionDecision,
+  LocalDate,
+  TaskNodeRef,
+  TaskSnapshot,
+} from '../../tasks';
 import { anchoredPlacement } from '../../ui/anchoredPlacement';
 import {
   noInteractionOwnership,
@@ -29,6 +34,7 @@ export interface ForecastInteractionCallbacks {
   readonly onForecastClick?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly onForecastContextMenu?: (source: CalendarTaskSource, referenceDate: LocalDate) => void;
   readonly interactionOwnership?: InteractionOwnershipPort;
+  readonly dependencyDecision?: (task: TaskSnapshot) => DependencyCompletionDecision | undefined;
 }
 
 export interface ForecastContextMenuOwner {

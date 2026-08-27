@@ -47,6 +47,11 @@ const statuses = new StatusCatalog([
   { id: 'cancelled', symbol: '-', type: 'cancelled', defaultForType: true },
 ]);
 
+const allowedPolicyMethods = {
+  inspect: () => ({ decision: { type: 'allowed' as const }, relations: [] }),
+  validateLink: () => ({ type: 'allowed' as const }),
+};
+
 function exactQueries(tasks: readonly TaskSnapshot[]): TaskQueryApi {
   return taskQueryApi({
     list: () => tasks,
@@ -638,6 +643,7 @@ describe('TaskApplicationService dependency completion gate', () => {
       ref: { ...firstCommitted.ref, revision: 'second-commit' },
     };
     const throwingPolicy: DependencyPolicyPort = {
+      ...allowedPolicyMethods,
       evaluateCompletion: () => ({ type: 'allowed' }),
       subscribe: () => () => {},
       acceptCommittedDelta: () => {
@@ -702,6 +708,7 @@ describe('TaskApplicationService dependency completion gate', () => {
         },
       };
       const throwingPolicy: DependencyPolicyPort = {
+        ...allowedPolicyMethods,
         evaluateCompletion: () => ({ type: 'allowed' }),
         subscribe: () => () => {},
         acceptCommittedDelta: () => {
@@ -779,6 +786,7 @@ describe('TaskApplicationService dependency completion gate', () => {
         source: { ...current.source, filePath: 'Moved.md', line: 0 },
       } satisfies TaskSnapshot;
       const throwingPolicy: DependencyPolicyPort = {
+        ...allowedPolicyMethods,
         evaluateCompletion: () => ({ type: 'allowed' }),
         subscribe: () => () => {},
         acceptCommittedDelta: () => {
@@ -842,6 +850,7 @@ describe('TaskApplicationService dependency completion gate', () => {
     } satisfies TaskSnapshot;
     const deletedRefs: TaskSnapshot['ref'][][] = [];
     const policy: DependencyPolicyPort = {
+      ...allowedPolicyMethods,
       evaluateCompletion: () => ({ type: 'allowed' }),
       subscribe: () => () => {},
       acceptCommittedDelta: ({ replaced }) =>
@@ -890,6 +899,7 @@ describe('TaskApplicationService dependency completion gate', () => {
     } satisfies TaskSnapshot;
     const deletedRefs: TaskSnapshot['ref'][][] = [];
     const policy: DependencyPolicyPort = {
+      ...allowedPolicyMethods,
       evaluateCompletion: () => ({ type: 'allowed' }),
       subscribe: () => () => {},
       acceptCommittedDelta: ({ replaced }) =>
@@ -930,6 +940,7 @@ describe('TaskApplicationService dependency completion gate', () => {
     const dependent = task(1, { dependsOn: ['prep'] });
     const edit = vi.fn<TaskRepository['edit']>();
     const policy: DependencyPolicyPort = {
+      ...allowedPolicyMethods,
       evaluateCompletion: () => {
         throw new Error('projection unavailable');
       },

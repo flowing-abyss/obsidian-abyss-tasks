@@ -21,7 +21,6 @@ import { sameTaskNodeRef } from '../domain/types';
 import { isSingleLineText, isTaskDependencyId } from '../domain/validation';
 import {
   DependencyCommandCoordinator,
-  type DependencyCommandIntent,
   type DependencyCommittedProjection,
 } from './DependencyCommandCoordinator';
 import { unavailableDependencyPolicy, type DependencyPolicyPort } from './DependencyPolicyPort';
@@ -29,6 +28,8 @@ import type {
   CreateTaskCommand,
   CreateTaskCommandDestination,
   CreateTaskCommandInitial,
+  DependencyClearIntent,
+  DependencyCommandIntent,
   TaskApplicationApi,
   TaskCaptureApplicationApi,
   TaskCreateSession,
@@ -454,11 +455,16 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
       repository,
       dependencyProjection,
       (task) => this.remember(task),
+      dependencyPolicy,
     );
   }
 
   setDependency(intent: DependencyCommandIntent): Promise<TaskCommandResult> {
     return this.dependencyCommands.setDependency(intent);
+  }
+
+  clearDependency(intent: DependencyClearIntent): Promise<TaskCommandResult> {
+    return this.dependencyCommands.clearDependency(intent);
   }
 
   async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {

@@ -1,14 +1,15 @@
 import { setIcon } from 'obsidian';
 import type { StatusRegistry } from '../status/StatusRegistry';
-import type { TaskPriority } from '../tasks';
+import type { DependencyCompletionDecision, TaskPriority } from '../tasks';
 
 interface Opts {
   // Structural type: only statusSymbol/priority are read, so Task/SubTask
   // satisfy this without a cast, and callers needing a fake stand-in task
   // (menus/previews) can pass a plain object literal instead of a cast.
-  task: { statusSymbol: string; priority?: TaskPriority };
+  task: { statusSymbol: string; priority?: TaskPriority; status?: string };
   registry: StatusRegistry;
   interactive?: boolean;
+  completionDecision?: DependencyCompletionDecision;
   onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
 }
@@ -35,6 +36,15 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
   const def = registry.bySymbol(task.statusSymbol);
   const el = parent.createSpan({ cls: 'abyss-status-marker' });
   if (!interactive) el.addClass('abyss-status-marker--inert');
+  const completionBlocked =
+    interactive &&
+    task.status !== 'done' &&
+    opts.completionDecision !== undefined &&
+    opts.completionDecision.type !== 'allowed';
+  if (completionBlocked) {
+    el.addClass('abyss-status-marker--completion-blocked');
+    el.setAttribute('aria-disabled', 'true');
+  }
   el.setAttribute('data-status', def?.id ?? 'other');
   el.setAttribute('data-status-type', def?.type ?? 'todo');
   if (task.priority && task.priority !== 'D') {
