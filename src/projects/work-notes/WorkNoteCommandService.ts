@@ -1,5 +1,5 @@
 import { normalizePath, parseYaml, TFile, type App } from 'obsidian';
-import { auditWorkNotes, isAuditAccepted } from './compatibility';
+import { auditWorkNotes, computeWorkNotePresetFingerprint, isAuditAccepted } from './compatibility';
 import type {
   WorkNoteAuditSource,
   WorkNoteCommandResult,
@@ -8,6 +8,7 @@ import type {
   WorkNoteKindMarker,
   WorkNoteObservedFields,
   WorkNoteSnapshot,
+  WorkNoteStatusDefinition,
 } from './types';
 import type { WorkNoteIndex } from './WorkNoteIndex';
 
@@ -15,6 +16,7 @@ type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibility
 
 interface PreparedCreation {
   readonly preset: WorkNoteCompatibilityPreset;
+  readonly presetFingerprint: string;
   readonly title: string;
   readonly kind: 'ordinary' | 'milestone';
   readonly marker: WorkNoteKindMarker;
@@ -24,6 +26,11 @@ interface PreparedCreation {
   readonly path: string;
   readonly templatePath?: string;
   readonly template: TFile | null;
+}
+
+interface CompatibilityExpectation {
+  readonly presetRevision: number;
+  readonly presetFingerprint: string;
 }
 
 class AbortWorkNoteCommand extends Error {
@@ -62,6 +69,26 @@ function frontmatterFromMarkdown(markdown: string): Record<string, unknown> {
   const parsed: unknown = parseYaml(match[1]);
   if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
   return parsed as Record<string, unknown>;
+}
+
+function inlineMarkdownTags(markdown: string): string[] {
+  const body = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/u, '');
+  const tags = new Set<string>();
+  let fence: '`' | '~' | null = null;
+  for (const line of body.split(/\r?\n/u)) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/u.exec(line)?.[1]?.[0];
+    if (marker === '`' || marker === '~') {
+      if (fence === null) fence = marker;
+      else if (fence === marker) fence = null;
+      continue;
+    }
+    if (fence !== null) continue;
+    const prose = line.replace(/`[^`]*`/gu, '');
+    for (const match of prose.matchAll(/(^|[\s([{>"'])#([\p{L}\p{N}_/-]+)/gu)) {
+      if (match[2]) tags.add(`#${match[2]}`);
+    }
+  }
+  return [...tags];
 }
 
 function markerProperty(marker: WorkNoteKindMarker): string | undefined {
@@ -128,6 +155,10 @@ export class WorkNoteCommandService {
     };
   }
 
+  statuses(): readonly WorkNoteStatusDefinition[] {
+    return Object.entries(this.preset().rawStatusByStatusId).map(([id, label]) => ({ id, label }));
+  }
+
   observe(snapshot: WorkNoteSnapshot): WorkNoteObservedFields | null {
     const file = this.app.vault.getAbstractFileByPath(snapshot.path);
     if (!(file instanceof TFile)) return null;
@@ -149,6 +180,7 @@ export class WorkNoteCommandService {
     return {
       path: snapshot.path,
       presetRevision: snapshot.presetRevision,
+      presetFingerprint: snapshot.presetFingerprint,
       projectPath: snapshot.projectPath,
       kind: snapshot.kind,
       fields,
@@ -157,15 +189,18 @@ export class WorkNoteCommandService {
 
   private compatibility(
     capability: 'update' | 'create',
-    observedRevision?: number,
+    expected?: CompatibilityExpectation,
   ): WorkNoteCommandResult | undefined {
     const preset = this.preset();
     if (!preset.enabled) return { type: 'compatibility-conflict', reason: 'preset-disabled' };
     if (!isAuditAccepted(preset)) {
       return { type: 'compatibility-conflict', reason: 'audit-not-accepted' };
     }
-    if (observedRevision !== undefined && observedRevision !== preset.revision) {
+    if (expected && expected.presetRevision !== preset.revision) {
       return { type: 'compatibility-conflict', reason: 'preset-revision-changed' };
+    }
+    if (expected && expected.presetFingerprint !== computeWorkNotePresetFingerprint(preset)) {
+      return { type: 'compatibility-conflict', reason: 'preset-fingerprint-changed' };
     }
     if (preset.acceptedAudit?.capabilities[capability] !== true) {
       return { type: 'compatibility-conflict', reason: `${capability}-not-accepted` };
@@ -176,12 +211,10 @@ export class WorkNoteCommandService {
   private sourceFor(
     path: string,
     frontmatter: Readonly<Record<string, unknown>>,
+    inlineTags: readonly string[] = [],
   ): WorkNoteAuditSource {
-    const file = this.app.vault.getAbstractFileByPath(path);
-    const cache = file instanceof TFile ? this.app.metadataCache.getFileCache(file) : null;
-    const cachedTags = cache?.tags?.map(({ tag }) => tag) ?? [];
     const latestFrontmatterTags = frontmatterTags(frontmatter);
-    const tags = [...new Set([...cachedTags, ...latestFrontmatterTags])];
+    const tags = [...new Set([...inlineTags, ...latestFrontmatterTags])];
     return {
       files: () => [{ path, tags, frontmatter }],
       allPaths: () => this.app.vault.getMarkdownFiles().map(({ path: candidate }) => candidate),
@@ -195,8 +228,24 @@ export class WorkNoteCommandService {
     observed: WorkNoteObservedFields,
     preset: WorkNoteCompatibilityPreset,
     frontmatter: Readonly<Record<string, unknown>>,
+    inlineTags: readonly string[] = [],
   ): WorkNoteSnapshot | undefined {
-    return auditWorkNotes(this.sourceFor(observed.path, frontmatter), preset).snapshots[0];
+    return auditWorkNotes(this.sourceFor(observed.path, frontmatter, inlineTags), preset)
+      .snapshots[0];
+  }
+
+  private async latestSnapshotFromFile(
+    file: TFile,
+    observed: WorkNoteObservedFields,
+    preset: WorkNoteCompatibilityPreset,
+  ): Promise<WorkNoteSnapshot | undefined> {
+    const markdown = await this.app.vault.cachedRead(file);
+    return this.latestSnapshot(
+      observed,
+      preset,
+      frontmatterFromMarkdown(markdown),
+      inlineMarkdownTags(markdown),
+    );
   }
 
   private observedShapeChanged(
@@ -223,7 +272,11 @@ export class WorkNoteCommandService {
     observed: WorkNoteObservedFields,
     statusId: string,
   ): Promise<WorkNoteCommandResult> {
-    const blocked = this.compatibility('update', observed.presetRevision);
+    const expectation = {
+      presetRevision: observed.presetRevision,
+      presetFingerprint: observed.presetFingerprint,
+    };
+    const blocked = this.compatibility('update', expectation);
     if (blocked) return blocked;
     const preset = this.preset();
     const rawStatus = preset.rawStatusByStatusId[statusId];
@@ -234,7 +287,7 @@ export class WorkNoteCommandService {
     if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
 
     const audit = await this.index.audit();
-    const latest = audit.snapshots.find(({ path }) => path === observed.path);
+    const latest = await this.latestSnapshotFromFile(file, observed, preset);
     if (!audit.capabilities.update || !latest) {
       return { type: 'compatibility-conflict', reason: 'latest-audit-rejected' };
     }
@@ -242,11 +295,29 @@ export class WorkNoteCommandService {
       return { type: 'compatibility-conflict', reason: 'eligibility-changed' };
     }
 
+    const transactionMarkdown = await this.app.vault.cachedRead(file);
+    const transactionTags = inlineMarkdownTags(transactionMarkdown);
+    const transactionFrontmatter = frontmatterFromMarkdown(transactionMarkdown);
+    const transactionLatest = this.latestSnapshot(
+      observed,
+      preset,
+      transactionFrontmatter,
+      transactionTags,
+    );
+    if (
+      !transactionLatest ||
+      transactionLatest.kind !== observed.kind ||
+      transactionLatest.projectPath !== observed.projectPath ||
+      !transactionLatest.writableStatusShape
+    ) {
+      return { type: 'compatibility-conflict', reason: 'eligibility-changed' };
+    }
+
     try {
       await this.app.fileManager.processFrontMatter(
         file,
         (frontmatter: Record<string, unknown>) => {
-          const transactionBlocked = this.compatibility('update', observed.presetRevision);
+          const transactionBlocked = this.compatibility('update', expectation);
           if (transactionBlocked) throw new AbortWorkNoteCommand(transactionBlocked);
           const transactionPreset = this.preset();
           const targetRaw = transactionPreset.rawStatusByStatusId[statusId];
@@ -257,7 +328,12 @@ export class WorkNoteCommandService {
           if (shapeConflict) {
             throw new AbortWorkNoteCommand({ type: 'conflict', field: shapeConflict });
           }
-          const snapshot = this.latestSnapshot(observed, transactionPreset, frontmatter);
+          const snapshot = this.latestSnapshot(
+            observed,
+            transactionPreset,
+            frontmatter,
+            transactionTags,
+          );
           if (
             !snapshot ||
             snapshot.kind !== observed.kind ||
@@ -294,7 +370,7 @@ export class WorkNoteCommandService {
     }
     const prepared = this.prepareCreation(request, this.preset());
     if ('type' in prepared) return prepared;
-    const folderResult = await this.ensureCreationFolder(prepared.path);
+    const folderResult = await this.ensureCreationFolder(prepared);
     if (folderResult) return folderResult;
     return this.performCreation(prepared);
   }
@@ -324,6 +400,7 @@ export class WorkNoteCommandService {
     }
     return {
       preset,
+      presetFingerprint: computeWorkNotePresetFingerprint(preset),
       title,
       kind,
       marker,
@@ -336,10 +413,27 @@ export class WorkNoteCommandService {
     };
   }
 
-  private async ensureCreationFolder(path: string): Promise<WorkNoteCommandResult | undefined> {
-    const folderPath = path.slice(0, path.lastIndexOf('/'));
+  private creationExpectation(plan: PreparedCreation): CompatibilityExpectation {
+    return {
+      presetRevision: plan.preset.revision,
+      presetFingerprint: plan.presetFingerprint,
+    };
+  }
+
+  private creationBlocked(plan: PreparedCreation): WorkNoteCommandResult | undefined {
+    return this.compatibility('create', this.creationExpectation(plan));
+  }
+
+  private changedAfterCreate(plan: PreparedCreation): WorkNoteCommandResult {
+    return { type: 'partial', path: plan.path, reason: 'preset-changed-after-create' };
+  }
+
+  private async ensureCreationFolder(
+    plan: PreparedCreation,
+  ): Promise<WorkNoteCommandResult | undefined> {
+    const folderPath = plan.path.slice(0, plan.path.lastIndexOf('/'));
     if (!folderPath || this.app.vault.getAbstractFileByPath(folderPath)) return undefined;
-    const blocked = this.compatibility('create');
+    const blocked = this.creationBlocked(plan);
     if (blocked) return blocked;
     try {
       await this.app.vault.createFolder(folderPath);
@@ -350,19 +444,25 @@ export class WorkNoteCommandService {
   }
 
   private async performCreation(plan: PreparedCreation): Promise<WorkNoteCommandResult> {
-    const blocked = this.compatibility('create');
+    const blocked = this.creationBlocked(plan);
     if (blocked) return blocked;
     let created = false;
     try {
       const templater = plan.templatePath ? this.templater() : null;
       const initial =
         plan.template && !templater ? await this.renderRawTemplate(plan.template, plan.title) : '';
+      const createBlocked = this.creationBlocked(plan);
+      if (createBlocked) return createBlocked;
+      if (this.app.vault.getAbstractFileByPath(plan.path)) {
+        return { type: 'conflict', field: 'path' };
+      }
       const file = await this.app.vault.create(plan.path, initial);
       created = true;
       const materialized = await this.materializeCreation(file, plan);
       if (materialized) return materialized;
       const templateResult = await this.applyCreationTemplate(file, plan, templater);
       if (templateResult) return templateResult;
+      if (this.creationBlocked(plan)) return this.changedAfterCreate(plan);
       const content = await this.app.vault.cachedRead(file);
       const frontmatter = frontmatterFromMarkdown(content);
       const verification = this.verifyCreated(
@@ -372,6 +472,7 @@ export class WorkNoteCommandService {
         plan.rawStatus,
         plan.marker,
         frontmatter,
+        plan.preset,
       );
       if (verification) return { type: 'partial', path: plan.path, reason: verification };
       this.index.refresh();
@@ -391,9 +492,7 @@ export class WorkNoteCommandService {
     file: TFile,
     plan: PreparedCreation,
   ): Promise<WorkNoteCommandResult | undefined> {
-    if (this.compatibility('create')) {
-      return { type: 'partial', path: plan.path, reason: 'preset-changed-after-create' };
-    }
+    if (this.creationBlocked(plan)) return this.changedAfterCreate(plan);
     await this.app.fileManager.processFrontMatter(file, (frontmatter: Record<string, unknown>) =>
       this.writeCreationFields(frontmatter, plan),
     );
@@ -401,13 +500,7 @@ export class WorkNoteCommandService {
   }
 
   private writeCreationFields(frontmatter: Record<string, unknown>, plan: PreparedCreation): void {
-    if (this.compatibility('create')) {
-      throw new AbortWorkNoteCommand({
-        type: 'partial',
-        path: plan.path,
-        reason: 'preset-changed-after-create',
-      });
-    }
+    if (this.creationBlocked(plan)) throw new AbortWorkNoteCommand(this.changedAfterCreate(plan));
     const projectLink = this.app.fileManager.generateMarkdownLink(plan.project, plan.path);
     const projectField = plan.preset.fields.project;
     const statusField = plan.preset.fields.status;
@@ -454,9 +547,7 @@ export class WorkNoteCommandService {
     templater: ReturnType<WorkNoteCommandService['templater']>,
   ): Promise<WorkNoteCommandResult | undefined> {
     if (!plan.template || !templater) return undefined;
-    if (this.compatibility('create')) {
-      return { type: 'partial', path: plan.path, reason: 'preset-changed-after-create' };
-    }
+    if (this.creationBlocked(plan)) return this.changedAfterCreate(plan);
     try {
       await templater.templater.write_template_to_file(plan.template, file);
       return undefined;
@@ -480,8 +571,8 @@ export class WorkNoteCommandService {
     rawStatus: string,
     marker: WorkNoteKindMarker,
     frontmatter: Readonly<Record<string, unknown>>,
+    preset: WorkNoteCompatibilityPreset,
   ): string | undefined {
-    const preset = this.preset();
     const snapshot = auditWorkNotes(this.sourceFor(path, frontmatter), preset).snapshots[0];
     if (!markerMatches(frontmatter, marker)) return 'membership-marker-replaced';
     if (!snapshot) return 'unrecognized-output';

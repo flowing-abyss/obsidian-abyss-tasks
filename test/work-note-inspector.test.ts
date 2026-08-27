@@ -7,6 +7,7 @@ import { freshContainer } from './helpers';
 const snapshot: WorkNoteSnapshot = {
   path: 'Work Notes/Research.md',
   presetRevision: 4,
+  presetFingerprint: 'fixture-fingerprint',
   kind: 'ordinary',
   projectPath: 'Projects/Product.md',
   statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,

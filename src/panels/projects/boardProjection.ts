@@ -1,6 +1,10 @@
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { Project, ProjectAction } from '../../projects/types';
-import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
+import type {
+  WorkNoteCommandResult,
+  WorkNoteSnapshot,
+  WorkNoteStatusDefinition,
+} from '../../projects/work-notes/types';
 import type { ProjectStatus, TaskStatusDef } from '../../settings/types';
 import type { TaskCommandResult, TaskSnapshot } from '../../tasks';
 
@@ -89,7 +93,7 @@ export function taskBoardColumns(
 
 /** Work Notes use the Project lifecycle catalog without becoming Project records. */
 export function workNoteBoardColumns(
-  statuses: readonly ProjectStatus[],
+  statuses: readonly WorkNoteStatusDefinition[],
   notes: readonly WorkNoteSnapshot[] = [],
 ): readonly BoardColumn<WorkNoteSnapshot>[] {
   const columns: BoardColumn<WorkNoteSnapshot>[] = statuses.map((status) => ({
@@ -152,7 +156,7 @@ export function createTaskBoardMutation(
 
 /** Canonical configured Work Note status model shared by drag and native menus. */
 export function createWorkNoteBoardMutation(
-  statuses: readonly ProjectStatus[],
+  statuses: readonly WorkNoteStatusDefinition[],
   command: (note: WorkNoteSnapshot, statusId: string) => Promise<WorkNoteCommandResult>,
 ): BoardMutation<WorkNoteSnapshot> {
   return {
@@ -167,7 +171,7 @@ export function createWorkNoteBoardMutation(
 }
 
 export function workNoteStatusMenuModel(
-  statuses: readonly ProjectStatus[],
+  statuses: readonly WorkNoteStatusDefinition[],
   note: WorkNoteSnapshot,
 ): readonly BoardStatusAction[] {
   return statuses.map((status) => ({

@@ -3,8 +3,9 @@ import type {
   WorkNoteCommandResult,
   WorkNoteCreateRequest,
   WorkNoteSnapshot,
+  WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
-import type { ProjectStatus, WorkNotesViewState } from '../../settings/types';
+import type { WorkNotesViewState } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { workNoteStatusMenuModel } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
@@ -17,7 +18,7 @@ export const WORK_NOTE_OVERSCAN = 4;
 
 export interface WorkNotesViewOptions {
   readonly notes: readonly WorkNoteSnapshot[];
-  readonly statuses: readonly ProjectStatus[];
+  readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly layout: 'list' | 'board';
   readonly viewState?: WorkNotesViewState;
   readonly commandsEnabled?: boolean;
@@ -37,11 +38,19 @@ export interface WorkNotesViewHandle {
   destroy(): void;
 }
 
+function creationResultText(result: WorkNoteCommandResult): string {
+  if (result.type === 'partial') return `Partial work note kept at ${basename(result.path)}.`;
+  if (result.type === 'conflict') return `Work note not created: ${result.field} changed.`;
+  if (result.type === 'compatibility-conflict') return 'Work note not created: audit changed.';
+  if (result.type === 'invalid') return `Work note not created: invalid ${result.field}.`;
+  return 'Work note could not be created.';
+}
+
 function basename(path: string): string {
   return (path.split('/').pop() ?? path).replace(/\.md$/u, '');
 }
 
-function statusText(note: WorkNoteSnapshot, statuses: readonly ProjectStatus[]): string {
+function statusText(note: WorkNoteSnapshot, statuses: readonly WorkNoteStatusDefinition[]): string {
   return (
     (note.statusId ? statuses.find(({ id }) => id === note.statusId)?.label : undefined) ??
     note.rawStatus ??
@@ -65,6 +74,7 @@ function selectedNotes(options: WorkNotesViewOptions): readonly WorkNoteSnapshot
       if (field === 'priority') return note.priority ?? '';
       if (field === 'start') return note.range.start?.raw ?? '';
       if (field === 'end') return note.range.end?.raw ?? '';
+      if (field === 'updated') return note.updated ?? '';
       return basename(note.path);
     };
     return direction * value(left).localeCompare(value(right));
@@ -262,6 +272,7 @@ export function renderWorkNotesView(
     create.disabled = options.createEnabled === false;
     create.addEventListener('click', () => {
       if (toolbar.querySelector('.abyss-work-note-create-input')) return;
+      toolbar.querySelector('.abyss-work-note-create-result')?.remove();
       const input = toolbar.createEl('input', {
         cls: 'abyss-work-note-create-input',
         attr: { type: 'text', placeholder: 'Work note title', 'aria-label': 'Work note title' },
@@ -276,10 +287,30 @@ export function renderWorkNotesView(
         const title = input.value.trim();
         if (!title) return;
         input.disabled = true;
-        void Promise.resolve(options.onCreate?.({ title, projectPath: options.projectPath! })).then(
-          () => input.remove(),
+        void Promise.resolve(options.onCreate!({ title, projectPath: options.projectPath! })).then(
+          (result) => {
+            if (result.type === 'ok' || result.type === 'unchanged') {
+              input.remove();
+              return;
+            }
+            input.disabled = false;
+            input.focus();
+            const status =
+              toolbar.querySelector<HTMLElement>('.abyss-work-note-create-result') ??
+              toolbar.createDiv({
+                cls: 'abyss-work-note-create-result',
+                attr: { role: 'status' },
+              });
+            status.setText(creationResultText(result));
+          },
           () => {
             input.disabled = false;
+            input.focus();
+            const status = toolbar.createDiv({
+              cls: 'abyss-work-note-create-result',
+              attr: { role: 'status' },
+            });
+            status.setText('Work note could not be created.');
           },
         );
       });

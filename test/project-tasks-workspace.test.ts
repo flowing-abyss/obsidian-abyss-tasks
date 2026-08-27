@@ -47,6 +47,7 @@ function snapshot(
             {
               path: 'Notes/Work.md',
               presetRevision: 1,
+              presetFingerprint: 'fixture-fingerprint',
               kind: 'ordinary',
               projectPath: 'Projects/A.md',
               statusId: null,

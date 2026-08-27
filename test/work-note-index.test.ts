@@ -353,6 +353,41 @@ describe('WorkNoteIndex', () => {
     index.destroy();
   });
 
+  it('accepts a safe inferred creation contract when both kind markers are unambiguous', async () => {
+    const h = harness(
+      [
+        {
+          path: 'Work Notes/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        {
+          path: 'Work Notes/M.md',
+          tags: ['#work-note/milestone'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Done' },
+        },
+      ],
+      {
+        'Work Notes/A.md\0Projects/A': 'Projects/A.md',
+        'Work Notes/M.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
+
+    const accepted = await index.acceptSuggestedCompatibility('2026-08-27T00:00:00Z');
+
+    expect(accepted.preset.creation).toMatchObject({
+      folder: 'Work Notes',
+      defaultKind: 'ordinary',
+      defaultStatusId: 'active',
+      kindMarkers: {
+        ordinary: { kind: 'frontmatter-tag', value: 'work-note/task' },
+        milestone: { kind: 'frontmatter-tag', value: 'work-note/milestone' },
+      },
+    });
+    expect(accepted.preview.capabilities).toEqual({ update: true, create: true });
+  });
+
   it('keeps an eligible unknown status visible and diagnoses non-string dates', () => {
     const h = harness(
       [

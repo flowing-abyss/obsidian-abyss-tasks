@@ -59,6 +59,7 @@ function observed(preset: WorkNoteCompatibilityPreset): WorkNoteObservedFields {
   return {
     path: 'Work Notes/A.md',
     presetRevision: preset.revision,
+    presetFingerprint: computeWorkNotePresetFingerprint(preset),
     projectPath: 'Projects/P.md',
     kind: 'ordinary',
     fields: {
@@ -94,6 +95,15 @@ describe('WorkNoteCommandService', () => {
 
     expect(h.service.observe(snapshot)).toEqual(h.observed);
     expect(h.service.capabilities()).toEqual({ update: true, create: true });
+  });
+
+  it('exposes the accepted Work Note status IDs instead of unrelated Project status IDs', async () => {
+    const h = await fixture();
+
+    expect(h.service.statuses()).toEqual([
+      { id: 'active', label: 'Active raw' },
+      { id: 'done', label: 'Finished raw' },
+    ]);
   });
 
   it.each(['membership', 'project', 'kind', 'preset'] as const)(
@@ -162,6 +172,55 @@ describe('WorkNoteCommandService', () => {
     },
   );
 
+  it('writes nothing when a different preset is reaccepted at the same revision', async () => {
+    const h = await fixture();
+    const staleSnapshot = (await h.index.audit()).snapshots[0]!;
+    const changed = {
+      ...h.provider.current,
+      rawStatusByStatusId: { active: 'Active raw', done: 'New finished raw' },
+      acceptedAudit: undefined,
+    };
+    h.provider.current = acceptWorkNoteAudit(
+      changed,
+      { update: true, create: true },
+      '2026-08-27T01:00:00Z',
+    );
+    const writes = vi.spyOn(h.app.vault, 'modify');
+    writes.mockClear();
+    const staleObservation = h.service.observe(staleSnapshot)!;
+
+    expect(await h.service.setStatus(staleObservation, 'done')).toEqual({
+      type: 'compatibility-conflict',
+      reason: 'preset-fingerprint-changed',
+    });
+    expect(writes).not.toHaveBeenCalled();
+  });
+
+  it('revalidates inline membership from latest markdown instead of stale metadata cache', async () => {
+    const candidate = enabledPreset();
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\n---\n# A\n#work-note/task\n',
+    });
+    const file = await fileAt(app, 'Work Notes/A.md');
+    const staleCache = app.metadataCache.getFileCache(file);
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index);
+    const snapshot = (await index.audit()).snapshots[0]!;
+    const latestObserved = service.observe(snapshot)!;
+    vi.spyOn(app.metadataCache, 'getFileCache').mockReturnValue(staleCache);
+    await app.vault.modify(
+      file,
+      '---\nProject: "[[Projects/P]]"\nStatus: Active raw\n---\n# A\nMembership removed\n',
+    );
+    const writes = vi.spyOn(app.vault, 'modify');
+    writes.mockClear();
+
+    expect((await service.setStatus(latestObserved, 'done')).type).toBe('compatibility-conflict');
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it('writes the configured raw status and preserves unrelated frontmatter', async () => {
     const h = await fixture();
 
@@ -223,6 +282,34 @@ describe('WorkNoteCommandService', () => {
     expect(content).toContain('Project: "[[Projects/P|P]]"');
     expect(content).toContain('Status: Active raw');
     expect(content).toContain('work-note/task');
+  });
+
+  it('does not write stale owned fields after a different preset is reaccepted mid-creation', async () => {
+    const h = await fixture();
+    const originalCreate = h.app.vault.create.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'create').mockImplementation(async (path, content, options) => {
+      const file = await originalCreate(path, content, options);
+      const changed = {
+        ...h.provider.current,
+        fields: { ...h.provider.current.fields, status: 'State' },
+        acceptedAudit: undefined,
+      };
+      h.provider.current = acceptWorkNoteAudit(
+        changed,
+        { update: true, create: true },
+        '2026-08-27T02:00:00Z',
+      );
+      return file;
+    });
+
+    expect(await h.service.create({ title: 'Raced', projectPath: 'Projects/P.md' })).toEqual({
+      type: 'partial',
+      path: 'Work Notes/Raced.md',
+      reason: 'preset-changed-after-create',
+    });
+    const content = await h.app.vault.read(await fileAt(h.app, 'Work Notes/Raced.md'));
+    expect(content).not.toContain('Status:');
+    expect(content).not.toContain('Project:');
   });
 
   it('reports a filename collision without overwriting the existing note', async () => {

@@ -74,12 +74,14 @@ export interface WorkNoteDiagnostic {
 export interface WorkNoteSnapshot {
   readonly path: string;
   readonly presetRevision: number;
+  readonly presetFingerprint: string;
   readonly kind: 'ordinary' | 'milestone';
   readonly projectPath: string;
   readonly statusId: string | null;
   readonly rawStatus: string | null;
   readonly writableStatusShape: boolean;
   readonly priority?: string;
+  readonly updated?: string;
   readonly range: ProjectRange;
   readonly id?: string;
   readonly milestonePath?: string;
@@ -91,9 +93,15 @@ export interface WorkNoteSnapshot {
 export interface WorkNoteObservedFields {
   readonly path: string;
   readonly presetRevision: number;
+  readonly presetFingerprint: string;
   readonly projectPath: string;
   readonly kind: 'ordinary' | 'milestone';
   readonly fields: Readonly<Record<string, unknown>>;
+}
+
+export interface WorkNoteStatusDefinition {
+  readonly id: string;
+  readonly label: string;
 }
 
 export interface WorkNoteCreateRequest {

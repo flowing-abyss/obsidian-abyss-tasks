@@ -62,6 +62,7 @@ function workNote(
   return {
     path,
     presetRevision: 1,
+    presetFingerprint: 'fixture-fingerprint',
     kind: 'ordinary',
     projectPath,
     statusId,

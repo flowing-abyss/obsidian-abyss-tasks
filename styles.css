@@ -6338,6 +6338,14 @@ body.abyss-modal-open .popover.hover-popover {
   flex: 1;
   font-size: var(--font-ui-small);
 }
+.abyss-work-note-create-result {
+  overflow: hidden;
+  flex: 1 1 100%;
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .abyss-work-notes-content {
   display: flex;
   flex: 1;

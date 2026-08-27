@@ -1,11 +1,10 @@
 import { Menu, setIcon } from 'obsidian';
-import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
-import type { ProjectStatus } from '../../settings/types';
+import type { WorkNoteSnapshot, WorkNoteStatusDefinition } from '../../projects/work-notes/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { workNoteStatusMenuModel } from './boardProjection';
 
 export interface WorkNoteInspectorOptions {
-  readonly statuses: readonly ProjectStatus[];
+  readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly commandsEnabled?: boolean;
   readonly onSetStatus: (note: WorkNoteSnapshot, statusId: string) => void;
   readonly openNote: (path: string) => void;
@@ -66,8 +65,6 @@ export function renderWorkNoteInspector(
     },
   });
   status.disabled = options.commandsEnabled === false;
-  if (statusDefinition?.color)
-    status.style.setProperty('--abyss-status-accent', statusDefinition.color);
   status.addEventListener('click', (event) => {
     if (status.disabled) return;
     const menu = new Menu();

@@ -344,6 +344,7 @@ function projectSnapshot(
   scalarString(endRaw, 'end', 'non-scalar-date', diagnostics);
   const range = parseProjectRange(startRaw, endRaw);
   const priorityRaw = frontmatter[preset.fields.priority];
+  const updatedRaw = frontmatter[preset.fields.updated];
   const idRaw = frontmatter[preset.fields.id];
 
   const eligible =
@@ -363,12 +364,14 @@ function projectSnapshot(
   const snapshot: WorkNoteSnapshot = {
     path: file.path,
     presetRevision: preset.revision,
+    presetFingerprint: computeWorkNotePresetFingerprint(preset),
     kind: milestone ? 'milestone' : 'ordinary',
     projectPath: project.paths[0]!,
     statusId,
     rawStatus: rawStatus ?? null,
     writableStatusShape: statusRawValue === undefined || typeof statusRawValue === 'string',
     ...(typeof priorityRaw === 'string' && { priority: priorityRaw }),
+    ...(typeof updatedRaw === 'string' && { updated: updatedRaw }),
     range,
     ...(typeof idRaw === 'string' && { id: idRaw }),
     ...(milestoneLink.paths.length === 1 && { milestonePath: milestoneLink.paths[0] }),
@@ -619,6 +622,12 @@ function rankedCountKeys(counts: Readonly<Record<string, number>>): string[] {
   );
 }
 
+function simpleTagMarker(query: string): WorkNoteKindMarker | undefined {
+  return /^#[\p{L}\p{N}_/-]+$/u.test(query)
+    ? { kind: 'frontmatter-tag', value: query.slice(1) }
+    : undefined;
+}
+
 export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePresetSuggestion {
   const folderCounts: Record<string, number> = {};
   const propertyCounts: Record<string, number> = {};
@@ -671,7 +680,7 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
     }
     rawStatusByStatusId[id] = rawStatus;
   }
-  const preset: WorkNoteCompatibilityPreset = {
+  const candidate: WorkNoteCompatibilityPreset = {
     revision: 1,
     enabled: false,
     membershipQuery: commonTag,
@@ -680,6 +689,26 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
     folder: mostCommon(folderCounts),
     fields,
     rawStatusByStatusId,
+  };
+  const ordinaryMarker = simpleTagMarker(ordinaryTag);
+  const milestoneMarker = simpleTagMarker(milestoneTag);
+  const defaultStatusId = Object.keys(rawStatusByStatusId)[0];
+  const creation =
+    safeFolder(candidate.folder) &&
+    ordinaryMarker &&
+    milestoneMarker &&
+    ordinaryMarker.value !== milestoneMarker.value &&
+    defaultStatusId
+      ? {
+          folder: candidate.folder,
+          defaultKind: 'ordinary' as const,
+          defaultStatusId,
+          kindMarkers: { ordinary: ordinaryMarker, milestone: milestoneMarker },
+        }
+      : undefined;
+  const preset: WorkNoteCompatibilityPreset = {
+    ...candidate,
+    ...(creation ? { creation } : {}),
   };
   const preview = auditWorkNotes(source, preset);
   const eligiblePaths = new Set(preview.eligiblePaths);

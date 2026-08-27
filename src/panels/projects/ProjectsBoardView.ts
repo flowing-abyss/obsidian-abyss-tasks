@@ -1,8 +1,11 @@
 import { Menu } from 'obsidian';
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
-import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
-import type { ProjectStatus } from '../../settings/types';
+import type {
+  WorkNoteCommandResult,
+  WorkNoteSnapshot,
+  WorkNoteStatusDefinition,
+} from '../../projects/work-notes/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { BoardColumn, BoardMutation, BoardMutationResult } from './boardProjection';
 import {
@@ -46,7 +49,7 @@ export interface BoardViewHandle {
 
 export interface WorkNotesBoardOptions {
   readonly notes: readonly WorkNoteSnapshot[];
-  readonly statuses: readonly ProjectStatus[];
+  readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly onMoveStatus: (
     note: WorkNoteSnapshot,
     statusId: string,

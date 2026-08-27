@@ -130,7 +130,7 @@ export class ProjectsPanel {
     const capabilities = this.workNoteCommands.capabilities();
     renderWorkNotesView(host, {
       notes,
-      statuses: this.settings.projects.statuses,
+      statuses: this.workNoteCommands.statuses(),
       layout,
       viewState: this.settings.projects.view.workNotes,
       commandsEnabled: capabilities.update,

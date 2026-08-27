@@ -21,6 +21,7 @@ function note(index: number, over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnap
   return {
     path: `Work Notes/Work note ${ordinal}.md`,
     presetRevision: 7,
+    presetFingerprint: 'fixture-fingerprint',
     kind: 'ordinary',
     projectPath: 'Projects/P.md',
     statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
@@ -151,6 +152,53 @@ describe('renderWorkNotesView', () => {
       projectPath: 'Projects/P.md',
     });
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('keeps the creation input and surfaces a typed partial result', async () => {
+    const root = freshContainer();
+    renderWorkNotesView(root, {
+      notes: [note(1)],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      projectPath: 'Projects/P.md',
+      createEnabled: true,
+      onCreate: vi.fn().mockResolvedValue({
+        type: 'partial',
+        path: 'Work Notes/Partial.md',
+        reason: 'templater-failure',
+      }),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    root.querySelector<HTMLButtonElement>('[aria-label="New work note"]')!.click();
+    const input = root.querySelector<HTMLInputElement>('.abyss-work-note-create-input')!;
+    input.value = 'Partial';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.waitFor(() => expect(input.disabled).toBe(false));
+
+    expect(root.contains(input)).toBe(true);
+    expect(root.querySelector('[role="status"]')?.textContent).toContain('Partial');
+  });
+
+  it('sorts the default updated view by audited updated metadata', () => {
+    const root = freshContainer();
+    renderWorkNotesView(root, {
+      notes: [note(1, { updated: '2026-08-01' }), note(2, { updated: '2026-08-20' })],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      viewState: {
+        groupBy: 'none',
+        sortBy: { field: 'updated', dir: 'desc' },
+        statusIds: [],
+      },
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(
+      [...root.querySelectorAll('.abyss-work-note-title')].map(({ textContent }) => textContent),
+    ).toEqual(['Work note 002', 'Work note 001']);
   });
 
   it('makes Work Notes selectable while every dashboard still opens in Tasks/List', () => {
