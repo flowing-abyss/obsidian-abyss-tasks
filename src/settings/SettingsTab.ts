@@ -32,6 +32,8 @@ interface TaskCalendarPlugin extends Plugin {
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
   previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
+  acceptWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
+  disableWorkNoteCompatibility(): Promise<void>;
 }
 
 function counted(count: number, singular: string, plural = `${singular}s`): string {
@@ -1027,9 +1029,60 @@ export class CalendarSettingsTab extends PluginSettingTab {
     for (const row of rows) {
       containerEl.createDiv({ cls: 'abyss-work-note-preview-row', text: row.join(' · ') });
     }
+    const capability = containerEl.createDiv({ cls: 'abyss-work-note-preview-capabilities' });
+    capability.createSpan({
+      attr: { 'data-work-note-capability': 'update' },
+      text: `Updates ${preview.capabilities.update ? 'enabled' : 'unavailable'}`,
+    });
+    capability.createSpan({
+      attr: { 'data-work-note-capability': 'create' },
+      text: `Creation ${preview.capabilities.create ? 'enabled' : 'unavailable'}`,
+    });
+    if (preview.preset.enabled && preview.preset.accepted) {
+      containerEl.createDiv({
+        cls: 'abyss-work-note-preview-guard',
+        text:
+          preview.capabilities.update && preview.capabilities.create
+            ? 'Updates and creation enabled by the accepted compatibility audit.'
+            : 'Work Notes enabled with only the audited capabilities shown above.',
+      });
+      const disable = containerEl.createEl('button', {
+        text: 'Disable work notes',
+        attr: { type: 'button', 'data-work-note-disable': '' },
+      });
+      disable.addEventListener('click', () => {
+        disable.disabled = true;
+        void this.plugin.disableWorkNoteCompatibility().then(
+          () => {
+            containerEl.replaceChildren();
+            containerEl.createDiv({ text: 'Work Notes disabled.' });
+          },
+          () => {
+            disable.disabled = false;
+            containerEl.createDiv({ text: 'Could not disable Work Notes.' });
+          },
+        );
+      });
+      return;
+    }
     containerEl.createDiv({
       cls: 'abyss-work-note-preview-guard',
-      text: 'Read-only preview. Preset disabled; acceptance absent; update and create unavailable.',
+      text: 'Read-only preview. Commands remain unavailable until this exact audit is accepted.',
+    });
+    if (preview.notes.eligible === 0) return;
+    const accept = containerEl.createEl('button', {
+      text: 'Enable audited work notes',
+      attr: { type: 'button', 'data-work-note-accept': '' },
+    });
+    accept.addEventListener('click', () => {
+      accept.disabled = true;
+      void this.plugin.acceptWorkNoteCompatibility().then(
+        (accepted) => this.renderWorkNotePreview(containerEl, accepted),
+        () => {
+          accept.disabled = false;
+          containerEl.createDiv({ text: 'Audit acceptance unavailable.' });
+        },
+      );
     });
   }
 

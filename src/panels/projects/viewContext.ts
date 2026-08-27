@@ -1,5 +1,6 @@
 import type { AppState } from '../../app/AppState';
 import type { ProjectAction } from '../../projects/types';
+import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
 
 export function joinedNextAction(actions: readonly ProjectAction[]): ProjectAction | undefined {
@@ -26,4 +27,12 @@ export interface ProjectsDashboardContext {
   renderTasks: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
   /** Renders the same task cards through the shared status-board shell. */
   renderTaskBoard?: (host: HTMLElement, path: string, tasks: readonly ProjectAction[]) => void;
+  /** Renders rich supporting notes without projecting them into checkbox Tasks. */
+  renderWorkNotes?: (host: HTMLElement, path: string, notes: readonly WorkNoteSnapshot[]) => void;
+  /** Renders the same Work Notes through the shared guarded board shell. */
+  renderWorkNoteBoard?: (
+    host: HTMLElement,
+    path: string,
+    notes: readonly WorkNoteSnapshot[],
+  ) => void;
 }

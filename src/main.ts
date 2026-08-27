@@ -6,6 +6,7 @@ import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
 import type { WorkNoteCompatibilityPreview } from './projects/work-notes/types';
+import { WorkNoteCommandService } from './projects/work-notes/WorkNoteCommandService';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
@@ -49,6 +50,7 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectStore!: ProjectStore;
   private projectWorkspace!: ProjectWorkspaceCoordinator;
   private workNoteIndex!: WorkNoteIndex;
+  private workNoteCommands!: WorkNoteCommandService;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -103,6 +105,11 @@ export default class TaskCalendarPlugin extends Plugin {
       () => this.settings.projects.workNoteCompatibility,
       this.queries,
     );
+    this.workNoteCommands = new WorkNoteCommandService(
+      this.app,
+      () => this.settings.projects.workNoteCompatibility,
+      this.workNoteIndex,
+    );
     this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
     this.projectWorkspace = new ProjectWorkspaceCoordinator(
       this.projectStore,
@@ -129,6 +136,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.workNoteIndex,
           this.projectStore,
           this.projectWorkspace,
+          this.workNoteCommands,
         ),
     );
 
@@ -151,7 +159,7 @@ export default class TaskCalendarPlugin extends Plugin {
           new Notice(
             `Work Notes: ${String(preview.notes.eligible)} eligible, ${String(
               preview.notes.excluded,
-            )} excluded. Read-only preview; preset remains disabled.`,
+            )} excluded. Preview complete; no settings or notes were changed.`,
           );
         } catch {
           new Notice('Work note compatibility preview unavailable.');
@@ -217,6 +225,23 @@ export default class TaskCalendarPlugin extends Plugin {
 
   async previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
     return this.workNoteIndex.previewCompatibility();
+  }
+
+  async acceptWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
+    const accepted = await this.workNoteIndex.acceptSuggestedCompatibility(
+      new Date().toISOString(),
+    );
+    this.settings.projects.workNoteCompatibility = accepted.preset;
+    await this.saveSettings();
+    return accepted.preview;
+  }
+
+  async disableWorkNoteCompatibility(): Promise<void> {
+    this.settings.projects.workNoteCompatibility = {
+      ...this.settings.projects.workNoteCompatibility,
+      enabled: false,
+    };
+    await this.saveSettings();
   }
 
   readOnlyCompatibilityDiagnostic(): {

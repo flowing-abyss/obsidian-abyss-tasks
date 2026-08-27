@@ -88,6 +88,28 @@ export interface WorkNoteSnapshot {
   readonly diagnostics: readonly WorkNoteDiagnostic[];
 }
 
+export interface WorkNoteObservedFields {
+  readonly path: string;
+  readonly presetRevision: number;
+  readonly projectPath: string;
+  readonly kind: 'ordinary' | 'milestone';
+  readonly fields: Readonly<Record<string, unknown>>;
+}
+
+export interface WorkNoteCreateRequest {
+  readonly title: string;
+  readonly projectPath: string;
+  readonly kind?: 'ordinary' | 'milestone';
+}
+
+export type WorkNoteCommandResult =
+  | { type: 'ok' | 'unchanged'; path: string }
+  | { type: 'conflict'; field: string }
+  | { type: 'compatibility-conflict'; reason: string }
+  | { type: 'partial'; path: string; reason: string }
+  | { type: 'invalid'; field: string }
+  | { type: 'io-error' };
+
 export interface WorkNoteSourceFile {
   readonly path: string;
   readonly tags: readonly string[];
@@ -112,7 +134,7 @@ export interface WorkNoteAuditResult {
 
 /** Aggregate-only compatibility preview safe to render or export without vault identities. */
 export interface WorkNoteCompatibilityPreview {
-  readonly preset: { readonly enabled: false; readonly accepted: false };
+  readonly preset: { readonly enabled: boolean; readonly accepted: boolean };
   readonly notes: {
     readonly scanned: number;
     readonly eligible: number;
@@ -145,7 +167,7 @@ export interface WorkNoteCompatibilityPreview {
   };
   readonly duplicateBasenames: { readonly project: number; readonly relation: number };
   readonly diagnostics: Readonly<Partial<Record<WorkNoteDiagnostic['type'], number>>>;
-  readonly capabilities: { readonly update: false; readonly create: false };
+  readonly capabilities: { readonly update: boolean; readonly create: boolean };
 }
 
 export interface WorkNoteIndexEvent {

@@ -38,6 +38,12 @@ interface AllowedWriter {
 }
 
 const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
+  'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.performCreation#vault.create#1':
+    {
+      mutation: 'destination provisioning',
+      reason:
+        'Creates one collision-checked Work Note destination after the accepted creation capability is revalidated.',
+    },
   'src/resolvers/DailyNoteResolver.ts#DailyNoteResolver.createNoteWithTemplate#vault.create#1': {
     mutation: 'destination provisioning',
     reason: 'Creates an empty Templater destination before template expansion.',

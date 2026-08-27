@@ -13,6 +13,7 @@ import { NextActionService, type NextActionConflict } from '../projects/NextActi
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
+import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
 import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
@@ -281,6 +282,7 @@ export class CenterPanel {
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
     navigation?: PanelNavigationActions,
     private projectSnapshots: readonly ProjectWorkspaceSnapshot[] = [],
+    private readonly workNoteCommands?: WorkNoteCommandService,
   ) {
     this.onSaveSettings = onSaveSettings;
     this.captureApplication = captureApplication ?? null;
@@ -803,6 +805,7 @@ export class CenterPanel {
               this.pendingProjectBoardUndo = undefined;
               this.projectStore?.refresh();
             },
+            workNoteCommands: this.workNoteCommands,
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never

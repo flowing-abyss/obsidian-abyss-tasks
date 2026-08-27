@@ -4,10 +4,13 @@ import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommand
 import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
+import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList } from './ProjectsListView';
+import { renderWorkNotesView } from './WorkNotesView';
 
 export interface ProjectsPanelOptions {
   /** Render a project's tasks into `host` (PanelView wires this to reuse task rendering). */
@@ -22,6 +25,7 @@ export interface ProjectsPanelOptions {
   pendingBoardUndo?: PendingProjectBoardUndo;
   onBoardUndoPending?: (pending: PendingProjectBoardUndo) => void;
   onBoardUndoResolved?: () => void;
+  workNoteCommands?: WorkNoteCommandService;
 }
 
 export interface PendingProjectBoardUndo {
@@ -45,6 +49,7 @@ export class ProjectsPanel {
   private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
   private readonly onBoardUndoPending: ((pending: PendingProjectBoardUndo) => void) | undefined;
   private readonly onBoardUndoResolved: (() => void) | undefined;
+  private readonly workNoteCommands: WorkNoteCommandService | undefined;
   private viewCleanup: (() => void) | null = null;
 
   constructor(
@@ -62,6 +67,7 @@ export class ProjectsPanel {
     this.pendingBoardUndo = opts.pendingBoardUndo;
     this.onBoardUndoPending = opts.onBoardUndoPending;
     this.onBoardUndoResolved = opts.onBoardUndoResolved;
+    this.workNoteCommands = opts.workNoteCommands;
   }
 
   private async createProject(name: string): Promise<void> {
@@ -105,6 +111,37 @@ export class ProjectsPanel {
     if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
   }
 
+  private async setWorkNoteStatus(
+    note: ProjectWorkspaceSnapshot['workNotes'][number],
+    statusId: string,
+  ): Promise<WorkNoteCommandResult> {
+    const observed = this.workNoteCommands?.observe(note);
+    if (!this.workNoteCommands || !observed) return { type: 'invalid', field: 'path' };
+    return this.workNoteCommands.setStatus(observed, statusId);
+  }
+
+  private renderWorkNotes(
+    host: HTMLElement,
+    projectPath: string,
+    notes: ProjectWorkspaceSnapshot['workNotes'],
+    layout: 'list' | 'board',
+  ): void {
+    if (!this.workNoteCommands) return;
+    const capabilities = this.workNoteCommands.capabilities();
+    renderWorkNotesView(host, {
+      notes,
+      statuses: this.settings.projects.statuses,
+      layout,
+      viewState: this.settings.projects.view.workNotes,
+      commandsEnabled: capabilities.update,
+      createEnabled: capabilities.create,
+      projectPath,
+      onCreate: (request) => this.workNoteCommands!.create(request),
+      onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
+      openNote: (path) => this.openNote(path),
+    });
+  }
+
   private render(): void {
     this.viewCleanup?.();
     this.viewCleanup = null;
@@ -124,6 +161,14 @@ export class ProjectsPanel {
           openNote: (p) => this.openNote(p),
           renderTasks: this.renderTasks,
           ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
+          ...(this.workNoteCommands
+            ? {
+                renderWorkNotes: (host, path, notes) =>
+                  this.renderWorkNotes(host, path, notes, 'list'),
+                renderWorkNoteBoard: (host, path, notes) =>
+                  this.renderWorkNotes(host, path, notes, 'board'),
+              }
+            : {}),
         },
       );
       return;

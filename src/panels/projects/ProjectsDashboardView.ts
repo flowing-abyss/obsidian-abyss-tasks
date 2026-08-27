@@ -102,6 +102,8 @@ export function renderProjectDashboard(
   const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
   const scopeButtons: HTMLButtonElement[] = [];
   const layoutButtons: HTMLButtonElement[] = [];
+  const boardAvailable = (): boolean =>
+    scope === 'tasks' ? ctx.renderTaskBoard !== undefined : ctx.renderWorkNoteBoard !== undefined;
 
   const renderWorkspace = (): void => {
     workspace.dataset['scope'] = scope;
@@ -111,9 +113,19 @@ export function renderProjectDashboard(
     }
     for (const button of layoutButtons) {
       button.classList.toggle('is-active', button.dataset['projectLayout'] === layout);
+      if (button.dataset['projectLayout'] === 'board') {
+        button.disabled = !boardAvailable();
+        button.setAttribute('aria-disabled', String(button.disabled));
+      }
     }
     content.empty();
-    if (layout === 'board' && ctx.renderTaskBoard) {
+    if (scope === 'work-notes') {
+      if (layout === 'board' && ctx.renderWorkNoteBoard) {
+        ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
+      } else {
+        ctx.renderWorkNotes?.(content, project.path, snapshot.workNotes);
+      }
+    } else if (layout === 'board' && ctx.renderTaskBoard) {
       ctx.renderTaskBoard(content, project.path, selectedTasks);
     } else {
       ctx.renderTasks(content, project.path, selectedTasks);
@@ -153,9 +165,27 @@ export function renderProjectDashboard(
   };
 
   scopeButton('tasks', 'Tasks');
-  if (snapshot.workNotes.length > 0) scopeButton('work-notes', 'Work Notes', false);
+  if (snapshot.workNotes.length > 0 || ctx.renderWorkNotes !== undefined) {
+    scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
+  }
   layoutButton('list', 'List');
-  if (snapshot.tasks.length > 0) layoutButton('board', 'Board', ctx.renderTaskBoard !== undefined);
+  if (
+    snapshot.tasks.length > 0 ||
+    (snapshot.workNotes.length > 0 && ctx.renderWorkNoteBoard !== undefined)
+  ) {
+    const button = toolbar.createEl('button', {
+      text: 'Board',
+      attr: { type: 'button', 'data-project-layout': 'board' },
+    });
+    button.disabled = !boardAvailable();
+    button.setAttribute('aria-disabled', String(button.disabled));
+    button.addEventListener('click', () => {
+      if (!boardAvailable()) return;
+      layout = 'board';
+      renderWorkspace();
+    });
+    layoutButtons.push(button);
+  }
   if (hasDatedTask(snapshot)) layoutButton('timeline', 'Timeline', false);
   renderWorkspace();
 }

@@ -8,8 +8,10 @@ import {
 } from 'obsidian';
 import type { TaskIndexSettledEvent, TaskQueryApi } from '../../tasks';
 import {
+  acceptWorkNoteAudit,
   auditWorkNotes,
   computeWorkNotePresetFingerprint,
+  isAuditAccepted,
   suggestWorkNotePreset,
 } from './compatibility';
 import type {
@@ -30,6 +32,11 @@ function aggregateCompatibilityPreview(
   audit: WorkNoteAuditResult,
   scanned: number,
   excluded: number,
+  preset: WorkNoteCompatibilityPreview['preset'] = { enabled: false, accepted: false },
+  capabilities: WorkNoteCompatibilityPreview['capabilities'] = {
+    update: false,
+    create: false,
+  },
 ): WorkNoteCompatibilityPreview {
   const diagnostics: Partial<Record<WorkNoteDiagnostic['type'], number>> = {};
   const increment = (type: WorkNoteDiagnostic['type']): void => {
@@ -52,7 +59,7 @@ function aggregateCompatibilityPreview(
       .map(({ path }) => path),
   );
   return {
-    preset: { enabled: false, accepted: false },
+    preset,
     notes: { scanned, eligible: audit.snapshots.length, excluded },
     kinds: {
       ordinary: audit.snapshots.filter(({ kind }) => kind === 'ordinary').length,
@@ -86,7 +93,7 @@ function aggregateCompatibilityPreview(
       relation: count('ambiguous-relation'),
     },
     diagnostics,
-    capabilities: { update: false, create: false },
+    capabilities,
   };
 }
 
@@ -256,6 +263,20 @@ export class WorkNoteIndex {
 
   async previewCompatibility(): Promise<WorkNoteCompatibilityPreview> {
     const source = this.source();
+    const configured = this.preset();
+    if (configured.enabled) {
+      const audit = auditWorkNotes(source, configured);
+      const accepted = isAuditAccepted(configured);
+      return Promise.resolve(
+        aggregateCompatibilityPreview(
+          audit,
+          source.files().length,
+          Math.max(0, source.files().length - audit.snapshots.length),
+          { enabled: true, accepted },
+          accepted ? audit.capabilities : { update: false, create: false },
+        ),
+      );
+    }
     const suggestion = suggestWorkNotePreset(source);
     const audit = auditWorkNotes(source, suggestion.preset);
     return Promise.resolve(
@@ -265,6 +286,30 @@ export class WorkNoteIndex {
         suggestion.preview.rejectedCandidateCount,
       ),
     );
+  }
+
+  acceptSuggestedCompatibility(acceptedAt: string): Promise<{
+    readonly preset: WorkNoteCompatibilityPreset;
+    readonly preview: WorkNoteCompatibilityPreview;
+  }> {
+    const source = this.source();
+    const suggestion = suggestWorkNotePreset(source);
+    const candidate: WorkNoteCompatibilityPreset = {
+      ...suggestion.preset,
+      enabled: true,
+    };
+    const audit = auditWorkNotes(source, candidate);
+    const preset = acceptWorkNoteAudit(candidate, audit.capabilities, acceptedAt);
+    return Promise.resolve({
+      preset,
+      preview: aggregateCompatibilityPreview(
+        audit,
+        suggestion.observations.fileCount,
+        suggestion.preview.rejectedCandidateCount,
+        { enabled: true, accepted: true },
+        audit.capabilities,
+      ),
+    });
   }
 
   private auditPreset(preset: WorkNoteCompatibilityPreset): WorkNoteAuditResult {

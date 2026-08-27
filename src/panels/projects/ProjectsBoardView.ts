@@ -1,9 +1,16 @@
 import { Menu } from 'obsidian';
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
+import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { BoardColumn, BoardMutation, BoardMutationResult } from './boardProjection';
-import { createProjectBoardMutation, projectBoardColumns } from './boardProjection';
+import {
+  createProjectBoardMutation,
+  createWorkNoteBoardMutation,
+  projectBoardColumns,
+  workNoteBoardColumns,
+} from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
 import { renderProjectRow, showNewProjectInput } from './ProjectsListView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
@@ -35,6 +42,16 @@ export interface BoardViewOptions<T> {
 
 export interface BoardViewHandle {
   destroy(): void;
+}
+
+export interface WorkNotesBoardOptions {
+  readonly notes: readonly WorkNoteSnapshot[];
+  readonly statuses: readonly ProjectStatus[];
+  readonly onMoveStatus: (
+    note: WorkNoteSnapshot,
+    statusId: string,
+  ) => Promise<WorkNoteCommandResult>;
+  readonly renderItem: (host: HTMLElement, note: WorkNoteSnapshot) => HTMLElement;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -271,6 +288,19 @@ export function renderBoard<T>(
   };
 }
 /* eslint-enable sonarjs/no-nested-functions */
+
+/** Adapts guarded Work Note status commands to the shared bounded board and menu model. */
+export function renderWorkNotesBoard(
+  container: HTMLElement,
+  options: WorkNotesBoardOptions,
+): BoardViewHandle {
+  return renderBoard(container, {
+    columns: workNoteBoardColumns(options.statuses, options.notes),
+    mutation: createWorkNoteBoardMutation(options.statuses, options.onMoveStatus),
+    itemKey: ({ path }) => path,
+    renderItem: options.renderItem,
+  });
+}
 
 export interface ProjectsBoardOptions extends ProjectsListContext {
   readonly snapshots: readonly ProjectWorkspaceSnapshot[];

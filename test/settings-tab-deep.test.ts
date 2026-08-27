@@ -23,6 +23,8 @@ interface StubPlugin {
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
   previewWorkNoteCompatibility: ReturnType<typeof vi.fn>;
+  acceptWorkNoteCompatibility: ReturnType<typeof vi.fn>;
+  disableWorkNoteCompatibility: ReturnType<typeof vi.fn>;
 }
 
 interface CapturedComp {
@@ -77,6 +79,8 @@ function makeTab(
     expand?: boolean;
     saveSettings?: StubPlugin['saveSettings'];
     previewWorkNoteCompatibility?: StubPlugin['previewWorkNoteCompatibility'];
+    acceptWorkNoteCompatibility?: StubPlugin['acceptWorkNoteCompatibility'];
+    disableWorkNoteCompatibility?: StubPlugin['disableWorkNoteCompatibility'];
   } = {},
 ): {
   tab: CalendarSettingsTab;
@@ -93,7 +97,18 @@ function makeTab(
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
   const previewWorkNoteCompatibility =
     opts.previewWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
-  const plugin: StubPlugin = { app, settings, saveSettings, previewWorkNoteCompatibility };
+  const acceptWorkNoteCompatibility =
+    opts.acceptWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
+  const disableWorkNoteCompatibility =
+    opts.disableWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
+  const plugin: StubPlugin = {
+    app,
+    settings,
+    saveSettings,
+    previewWorkNoteCompatibility,
+    acceptWorkNoteCompatibility,
+    disableWorkNoteCompatibility,
+  };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
@@ -863,6 +878,55 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
         ),
       ).toBe(false);
     }
+  });
+
+  it('offers one explicit audited enable action and reports accepted capabilities', async () => {
+    const preview = {
+      preset: { enabled: false, accepted: false },
+      notes: { scanned: 12, eligible: 10, excluded: 2 },
+      kinds: { ordinary: 9, milestone: 1, ambiguous: 0, missing: 0 },
+      statuses: { mapped: 10, unknown: 0, missing: 0, nonScalar: 0 },
+      links: {
+        brokenProject: 0,
+        ambiguousProject: 0,
+        brokenRelation: 0,
+        ambiguousRelation: 0,
+        invalidProjectEntry: 0,
+        invalidRelationEntry: 0,
+      },
+      cardinality: { missingProject: 0, multipleProjects: 0, multipleMilestones: 0 },
+      duplicateBasenames: { project: 0, relation: 0 },
+      diagnostics: {},
+      capabilities: { update: false, create: false },
+    } as const;
+    const accepted = {
+      ...preview,
+      preset: { enabled: true, accepted: true },
+      capabilities: { update: true, create: true },
+    } as const;
+    const previewWorkNoteCompatibility = vi.fn().mockResolvedValue(preview);
+    const acceptWorkNoteCompatibility = vi.fn().mockResolvedValue(accepted);
+    const { tab, captured } = makeTab(
+      {},
+      { previewWorkNoteCompatibility, acceptWorkNoteCompatibility },
+    );
+    const body = openSection(tab, 5);
+    const previewComponent = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === 'Preview work notes';
+    });
+    previewComponent!.comp.clickHandler!();
+    await vi.waitFor(() => expect(previewWorkNoteCompatibility).toHaveBeenCalledOnce());
+
+    const enable = body.querySelector<HTMLButtonElement>('[data-work-note-accept]')!;
+    expect(enable.textContent).toBe('Enable audited work notes');
+    enable.click();
+    await vi.waitFor(() => expect(acceptWorkNoteCompatibility).toHaveBeenCalledOnce());
+    expect(body.querySelector('.abyss-work-note-preview')?.textContent).toContain(
+      'Updates and creation enabled',
+    );
+    expect(body.querySelectorAll('[data-work-note-capability]')).toHaveLength(2);
   });
 
   it('statuses render as collapsed cards (title only) by default', () => {

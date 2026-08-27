@@ -9,6 +9,7 @@ import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
 import type { ProjectWorkspaceSnapshot } from '../projects/types';
+import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
@@ -172,6 +173,7 @@ export class PanelView extends ItemView {
     private readonly workNoteIndex?: WorkNoteIndex,
     private readonly injectedProjectStore?: ProjectStore,
     private readonly projectWorkspace?: ProjectWorkspaceCoordinator,
+    private readonly workNoteCommands?: WorkNoteCommandService,
   ) {
     super(leaf);
   }
@@ -321,6 +323,7 @@ export class PanelView extends ItemView {
       this.interactionRegistry,
       this.panelNavigation,
       this.projectWorkspace?.list() ?? [],
+      this.workNoteCommands,
     );
     this.right = new RightPanel(
       this.state,

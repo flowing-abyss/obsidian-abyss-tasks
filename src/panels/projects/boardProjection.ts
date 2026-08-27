@@ -1,5 +1,6 @@
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
 import type { Project, ProjectAction } from '../../projects/types';
+import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type { ProjectStatus, TaskStatusDef } from '../../settings/types';
 import type { TaskCommandResult, TaskSnapshot } from '../../tasks';
 
@@ -10,7 +11,11 @@ export interface BoardColumn<T> {
   readonly items: readonly T[];
 }
 
-export type BoardMutationResult = ProjectPropertyCommandResult | TaskCommandResult | void;
+export type BoardMutationResult =
+  | ProjectPropertyCommandResult
+  | WorkNoteCommandResult
+  | TaskCommandResult
+  | void;
 
 export interface BoardStatusAction {
   readonly columnKey: string;
@@ -82,6 +87,26 @@ export function taskBoardColumns(
   return columns;
 }
 
+/** Work Notes use the Project lifecycle catalog without becoming Project records. */
+export function workNoteBoardColumns(
+  statuses: readonly ProjectStatus[],
+  notes: readonly WorkNoteSnapshot[] = [],
+): readonly BoardColumn<WorkNoteSnapshot>[] {
+  const columns: BoardColumn<WorkNoteSnapshot>[] = statuses.map((status) => ({
+    key: status.id,
+    label: status.label,
+    role: 'regular',
+    items: notes.filter((note) => note.statusId === status.id),
+  }));
+  columns.push({
+    key: 'unmapped',
+    label: 'Unmapped',
+    role: 'unmapped',
+    items: notes.filter((note) => note.statusId === null),
+  });
+  return columns;
+}
+
 export function createProjectBoardMutation(
   statuses: readonly ProjectStatus[],
   command: (project: Project, statusId: string) => Promise<ProjectPropertyCommandResult>,
@@ -123,4 +148,33 @@ export function createTaskBoardMutation(
         disabled: status.symbol === task.statusSymbol,
       })),
   };
+}
+
+/** Canonical configured Work Note status model shared by drag and native menus. */
+export function createWorkNoteBoardMutation(
+  statuses: readonly ProjectStatus[],
+  command: (note: WorkNoteSnapshot, statusId: string) => Promise<WorkNoteCommandResult>,
+): BoardMutation<WorkNoteSnapshot> {
+  return {
+    move: (note, columnKey) => {
+      if (!statuses.some(({ id }) => id === columnKey) || note.statusId === columnKey) {
+        return Promise.resolve();
+      }
+      return command(note, columnKey);
+    },
+    menuItems: (note) => workNoteStatusMenuModel(statuses, note),
+  };
+}
+
+export function workNoteStatusMenuModel(
+  statuses: readonly ProjectStatus[],
+  note: WorkNoteSnapshot,
+): readonly BoardStatusAction[] {
+  return statuses.map((status) => ({
+    columnKey: status.id,
+    label: status.label,
+    icon: 'circle-dot',
+    checked: status.id === note.statusId,
+    disabled: status.id === note.statusId,
+  }));
 }
