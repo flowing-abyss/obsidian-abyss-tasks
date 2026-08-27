@@ -2,7 +2,11 @@ import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../../src/settings/defaults';
 import { toStatusRules } from '../../src/settings/statusCatalogAdapter';
-import type { TaskEditCommand, TaskEditRequest } from '../../src/tasks/application/TaskRepository';
+import type {
+  TaskDependencyEditRequest,
+  TaskEditCommand,
+  TaskEditRequest,
+} from '../../src/tasks/application/TaskRepository';
 import { StatusCatalog } from '../../src/tasks/domain/StatusCatalog';
 import type { TaskRef } from '../../src/tasks/domain/types';
 import { localDate, localTime } from '../../src/tasks/domain/validation';
@@ -266,6 +270,232 @@ describe.each(['in-memory', 'obsidian'] as const)(
           : (repository as InMemoryTaskRepository).content(path);
       expect(content).toBe(source);
       index.destroy();
+    });
+  },
+);
+
+describe.each(['in-memory', 'obsidian'] as const)(
+  '%s dependency multi-root repository contract',
+  (adapter) => {
+    it('rejects a malformed two-root dependency transaction before changing bytes', async () => {
+      const path = 'dependencies.md';
+      const source = '- [ ] prerequisite\n- [ ] dependent\n';
+      const h = await harness({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const codec = new TaskMarkdownCodec(statusCatalog);
+      const editor = new TaskBlockEditor();
+      const locator = new TaskLocator();
+      const [prerequisite, dependent] = h.snapshotsFromContent(path, source);
+      if (!prerequisite || !dependent) throw new Error('missing roots');
+      const repository =
+        adapter === 'obsidian'
+          ? new ObsidianTaskRepository(h.app, {
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: h.snapshotsFromContent,
+            })
+          : new InMemoryTaskRepository({
+              files: { [path]: source },
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: h.snapshotsFromContent,
+            });
+
+      await expect(
+        repository.editTaskDependencies?.({
+          filePath: path,
+          primary: dependent.ref,
+          changes: [
+            {
+              baseRoot: prerequisite,
+              baseTarget: { type: 'task', ref: prerequisite.ref },
+              reconciliation: { observed: prerequisite },
+              command: { type: 'set-task-id', ref: prerequisite.ref, id: 'first' },
+            },
+            {
+              baseRoot: dependent,
+              baseTarget: { type: 'task', ref: dependent.ref },
+              reconciliation: { observed: dependent },
+              command: { type: 'set-task-id', ref: dependent.ref, id: 'second' },
+            },
+          ],
+        }),
+      ).resolves.toEqual({
+        type: 'invalid',
+        issues: [{ code: 'invalid-target', field: 'dependency' }],
+      });
+      expect(
+        adapter === 'obsidian'
+          ? await read(h.app, path)
+          : (repository as InMemoryTaskRepository).content(path),
+      ).toBe(source);
+    });
+
+    it('revision-checks and commits prerequisite ID plus dependent edge once', async () => {
+      const path = 'dependencies.md';
+      const source = '- [ ] prerequisite\r\n- [ ] dependent 🧭 keep ^dependent\r\n';
+      const h = await harness({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const authority = new TaskRefAuthority(`dependency-${adapter}`);
+      const editor = new TaskBlockEditor();
+      const locator = new TaskLocator(authority);
+      const codec = new TaskMarkdownCodec(statusCatalog);
+      const index = new TaskIndex(h.app, {
+        statusCatalog,
+        dailyNoteFormat: DEFAULT_SETTINGS.desktop.dailyNoteFormat,
+        refAuthority: authority,
+      });
+      await index.initialize();
+      const [prerequisite, dependent] = index.installCommittedContent(path, source);
+      if (!prerequisite || !dependent) throw new Error('missing roots');
+      const snapshotState = {
+        currentRoot: (filePath: string, line: number, blockSource: string) =>
+          index.currentRoot(filePath, line, blockSource),
+        authoritySuccessor: (consumed: TaskRef) => index.authoritySuccessor(consumed),
+        previewContent: (filePath: string, content: string) =>
+          index.previewContent(filePath, content),
+        installCommittedContent: (filePath: string, content: string) =>
+          index.installCommittedContent(filePath, content),
+      };
+      const repository =
+        adapter === 'obsidian'
+          ? new ObsidianTaskRepository(h.app, {
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            })
+          : new InMemoryTaskRepository({
+              files: { [path]: source },
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: (filePath, content) =>
+                index.snapshotsFromContent(filePath, content),
+              refAuthority: authority,
+              snapshotState,
+            });
+      const process = vi.spyOn(h.app.vault, 'process');
+      const request: TaskDependencyEditRequest = {
+        filePath: path,
+        primary: dependent.ref,
+        changes: [
+          {
+            baseRoot: prerequisite,
+            baseTarget: { type: 'task', ref: prerequisite.ref },
+            reconciliation: { observed: prerequisite },
+            command: { type: 'set-task-id', ref: prerequisite.ref, id: 'prep-1' },
+          },
+          {
+            baseRoot: dependent,
+            baseTarget: { type: 'task', ref: dependent.ref },
+            reconciliation: { observed: dependent },
+            command: {
+              type: 'set-task-dependency',
+              ref: dependent.ref,
+              dependencyId: 'prep-1',
+              enabled: true,
+            },
+          },
+        ],
+      };
+
+      await expect(repository.editTaskDependencies?.(request)).resolves.toMatchObject({
+        type: 'committed',
+        changed: true,
+        outcome: {
+          type: 'task',
+          task: {
+            markdownTitle: 'dependent 🧭 keep',
+            dependency: { dependsOn: ['prep-1'] },
+          },
+        },
+        roots: [
+          { markdownTitle: 'prerequisite', dependency: { id: 'prep-1' } },
+          { markdownTitle: 'dependent 🧭 keep', dependency: { dependsOn: ['prep-1'] } },
+        ],
+      });
+      const content =
+        adapter === 'obsidian'
+          ? await read(h.app, path)
+          : (repository as InMemoryTaskRepository).content(path);
+      expect(content).toBe(
+        '- [ ] prerequisite 🆔 prep-1\r\n- [ ] dependent 🧭 keep ⛔ prep-1 ^dependent\r\n',
+      );
+      if (adapter === 'obsidian') expect(process).toHaveBeenCalledOnce();
+      else
+        expect((repository as InMemoryTaskRepository).dependencyMultiRootCommits).toHaveLength(1);
+      index.destroy();
+    });
+
+    it('rejects one stale root without changing either root', async () => {
+      const path = 'dependencies.md';
+      const source = '- [ ] prerequisite\n- [ ] dependent\n';
+      const h = await harness({ [path]: source });
+      const statusCatalog = new StatusCatalog(toStatusRules(DEFAULT_SETTINGS.taskStatuses));
+      const codec = new TaskMarkdownCodec(statusCatalog);
+      const editor = new TaskBlockEditor();
+      const locator = new TaskLocator();
+      const roots = h.snapshotsFromContent(path, source);
+      const prerequisite = roots[0]!;
+      const dependent = roots[1]!;
+      const repository =
+        adapter === 'obsidian'
+          ? new ObsidianTaskRepository(h.app, {
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: h.snapshotsFromContent,
+            })
+          : new InMemoryTaskRepository({
+              files: { [path]: source },
+              codec,
+              editor,
+              locator,
+              snapshotsFromContent: h.snapshotsFromContent,
+            });
+      const stale = {
+        ...dependent,
+        ref: { ...dependent.ref, revision: 'stale-revision' },
+      };
+      const request: TaskDependencyEditRequest = {
+        filePath: path,
+        primary: stale.ref,
+        changes: [
+          {
+            baseRoot: prerequisite,
+            baseTarget: { type: 'task', ref: prerequisite.ref },
+            reconciliation: { observed: prerequisite },
+            command: { type: 'set-task-id', ref: prerequisite.ref, id: 'prep-1' },
+          },
+          {
+            baseRoot: stale,
+            baseTarget: { type: 'task', ref: stale.ref },
+            reconciliation: { observed: stale },
+            command: {
+              type: 'set-task-dependency',
+              ref: stale.ref,
+              dependencyId: 'prep-1',
+              enabled: true,
+            },
+          },
+        ],
+      };
+
+      await expect(repository.editTaskDependencies?.(request)).resolves.toEqual({
+        type: 'uncertain',
+        target: { type: 'task', ref: stale.ref },
+      });
+      const content =
+        adapter === 'obsidian'
+          ? await read(h.app, path)
+          : (repository as InMemoryTaskRepository).content(path);
+      expect(content).toBe(source);
     });
   },
 );

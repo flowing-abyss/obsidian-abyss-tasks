@@ -19,6 +19,11 @@ import type {
 } from '../domain/types';
 import { sameTaskNodeRef } from '../domain/types';
 import { isSingleLineText, isTaskDependencyId } from '../domain/validation';
+import {
+  DependencyCommandCoordinator,
+  type DependencyCommandIntent,
+  type DependencyCommittedProjection,
+} from './DependencyCommandCoordinator';
 import type {
   CreateTaskCommand,
   CreateTaskCommandDestination,
@@ -426,6 +431,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
   // Bridges the index-event lag only for exact refs returned by this service. The cache shares the
   // service lifetime and is bounded so revision churn cannot retain an unbounded snapshot history.
   private readonly recentOutcomes = new Map<string, RecentOutcome>();
+  private readonly dependencyCommands: DependencyCommandCoordinator;
 
   constructor(
     readonly queries: TaskQueryApi,
@@ -435,7 +441,19 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     private readonly destinationProvider?: TaskDestinationProvider,
     private readonly behaviorSettings: TaskBehaviorSettingsProvider = () =>
       DEFAULT_BEHAVIOR_SETTINGS,
-  ) {}
+    dependencyProjection?: DependencyCommittedProjection,
+  ) {
+    this.dependencyCommands = new DependencyCommandCoordinator(
+      queries,
+      repository,
+      dependencyProjection,
+      (task) => this.remember(task),
+    );
+  }
+
+  setDependency(intent: DependencyCommandIntent): Promise<TaskCommandResult> {
+    return this.dependencyCommands.setDependency(intent);
+  }
 
   async planCreate(destination: CreateTaskCommandDestination): Promise<TaskCreateSession> {
     const settings = snapshotBehaviorSettings(this.behaviorSettings);

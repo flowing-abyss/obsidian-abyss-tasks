@@ -223,6 +223,12 @@ export class PanelView extends ItemView {
           type: 'invalid',
           issues: [{ code: 'invalid-target', field: 'root-tags' }],
         }),
+      setDependency: (intent) =>
+        this.tasks.setDependency?.(intent) ??
+        Promise.resolve({
+          type: 'invalid',
+          issues: [{ code: 'invalid-target', field: 'dependency' }],
+        }),
       execute: async (command) => {
         const initiatingRef = commandRootRef(command);
         const result = await this.tasks.execute(command);

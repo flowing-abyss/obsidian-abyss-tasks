@@ -166,6 +166,17 @@ export interface RootTagRecovery {
   readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'invalid' | 'io-error';
 }
 
+interface DependencyRecovery {
+  readonly state:
+    | 'prerequisite-id-committed-dependent-edge-remains'
+    | 'prerequisite-id-committed-dependent-edge-unknown';
+  readonly prerequisite: TaskSnapshot;
+  readonly dependent: TaskSnapshot;
+  readonly dependencyId: string;
+  readonly enabled: boolean;
+  readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'invalid' | 'io-error';
+}
+
 export type TaskCommandResult =
   | { readonly type: 'ok'; readonly outcome: TaskCommandOutcome; readonly changed: boolean }
   | { readonly type: 'conflict'; readonly current: TaskSnapshot }
@@ -177,6 +188,11 @@ export type TaskCommandResult =
       readonly type: 'partial';
       readonly operation: 'root-tags';
       readonly recovery: RootTagRecovery;
+    }
+  | {
+      readonly type: 'partial';
+      readonly operation: 'dependency';
+      readonly recovery: DependencyRecovery;
     }
   | {
       readonly type: 'io-error';

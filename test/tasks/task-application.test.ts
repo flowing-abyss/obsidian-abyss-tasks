@@ -101,6 +101,68 @@ function service(
 }
 
 describe('TaskApplicationService planning commands', () => {
+  it('exposes the dependency coordinator through the application API', async () => {
+    const prerequisite = {
+      ...snapshot(),
+      dependency: { dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const dependent = {
+      ...snapshot(),
+      ref: { ...ref, line: 1, revision: 'block:dependent' },
+      dependency: { dependsOn: [] },
+      source: {
+        filePath: 'tasks.md',
+        line: 1,
+        originalMarkdown: '- [ ] dependent',
+        originalBlock: '- [ ] dependent',
+      },
+    } satisfies TaskSnapshot;
+    const queryApi: TaskQueryApi = {
+      ...queries(),
+      resolve: (candidate) => exactResolution(candidate.line === 0 ? prerequisite : dependent),
+    };
+    const committedDependent = {
+      ...dependent,
+      dependency: { dependsOn: ['prep-1'] },
+    } satisfies TaskSnapshot;
+    const editTaskDependencies = vi
+      .fn<NonNullable<TaskRepository['editTaskDependencies']>>()
+      .mockResolvedValue({
+        type: 'committed',
+        outcome: { type: 'task', task: committedDependent },
+        roots: [
+          { ...prerequisite, dependency: { id: 'prep-1', dependsOn: [] } },
+          committedDependent,
+        ],
+        changed: true,
+      });
+    const application = new TaskApplicationService(
+      queryApi,
+      {
+        edit: vi.fn(),
+        editTaskDependencies,
+        completeRecurrence: vi.fn(),
+        create: vi.fn(),
+        move: vi.fn(),
+      },
+      statuses,
+      clock,
+    );
+
+    await expect(
+      application.setDependency({
+        prerequisite: prerequisite.ref,
+        dependent: dependent.ref,
+        dependencyId: 'prep-1',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task', task: { dependency: { dependsOn: ['prep-1'] } } },
+    });
+    expect(editTaskDependencies).toHaveBeenCalledOnce();
+  });
+
   it('always forwards the captured day for an unstamped subtask request', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

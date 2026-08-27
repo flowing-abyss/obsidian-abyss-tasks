@@ -107,6 +107,24 @@ export class DependencyIndex {
   updateFile(path: string, tasks: readonly TaskSnapshot[]): void {
     this.updateFiles([[path, tasks]]);
   }
+  /** Applies repository-authoritative roots before eventual TaskIndex file events arrive. */
+  acceptCommittedRoots(roots: readonly TaskSnapshot[]): void {
+    const byFile = new Map<string, TaskSnapshot[]>();
+    for (const root of roots) {
+      const path = root.ref.filePath;
+      const tasks =
+        byFile.get(path) ??
+        [...(this.fileNodes.get(path) ?? [])].flatMap((key) => {
+          const node = this.nodes.get(key);
+          return node ? [node.task] : [];
+        });
+      const index = tasks.findIndex((task) => task.ref.line === root.ref.line);
+      if (index < 0) tasks.push(root);
+      else tasks[index] = root;
+      byFile.set(path, tasks);
+    }
+    this.updateFiles([...byFile]);
+  }
   private onEvent(source: Pick<TaskQueryApi, 'list'>, e: TaskIndexEvent): void {
     if (e.type === 'initialized') return this.replace(source.list());
     if (e.type === 'changed')

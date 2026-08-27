@@ -99,6 +99,7 @@ export default class TaskCalendarPlugin extends Plugin {
         taskLifecycle: this.settings.taskLifecycle,
         recurrence: this.settings.recurrence,
       }),
+      this.dependencyIndex,
     );
     this.queries = this.tasks.queries;
     this.tagManager = new TagManager(this.app, this.settings, () => this.saveSettings());

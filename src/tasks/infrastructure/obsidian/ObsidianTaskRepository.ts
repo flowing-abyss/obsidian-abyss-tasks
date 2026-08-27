@@ -5,6 +5,8 @@ import type {
   RecurrenceCompletionRevisionRequest,
   RevisionPrecondition,
   RootTagRevisionChange,
+  TaskDependencyEditRequest,
+  TaskDependencyRevisionChange,
   TaskDraft,
   TaskEditCommand,
   TaskEditRequest,
@@ -13,6 +15,7 @@ import type {
   TaskRepositoryResult,
   TaskRootTagEditRequest,
 } from '../../application/TaskRepository';
+import { isTaskDependencyEditRequestValid } from '../../application/TaskRepository';
 import type {
   MoveRecovery,
   PlanningTarget,
@@ -67,6 +70,10 @@ function primaryRootTagChange(request: TaskRootTagEditRequest): RootTagRevisionC
       baseRoot.ref.line === request.primary.line &&
       baseRoot.ref.revision === request.primary.revision,
   );
+}
+
+function primaryDependencyChange(request: TaskDependencyEditRequest) {
+  return isTaskDependencyEditRequestValid(request) ? request.changes[1] : undefined;
 }
 
 function preparedRevisionResult(
@@ -1288,6 +1295,190 @@ export class ObsidianTaskRepository implements TaskRepository {
         contentState: 'unknown',
       }
     );
+  }
+
+  async editTaskDependencies(request: TaskDependencyEditRequest): Promise<TaskRepositoryResult> {
+    const file = this.app.vault.getAbstractFileByPath(request.filePath);
+    const primaryChange = primaryDependencyChange(request);
+    if (!(file instanceof TFile) || !primaryChange) {
+      return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'dependency' }] };
+    }
+
+    let result: TaskRepositoryResult | undefined;
+    let transitionToken: object | undefined;
+    let committedContent: string | undefined;
+    try {
+      await this.processFile(file, (content) => {
+        let candidate = content;
+        let changed = false;
+        for (const change of request.changes) {
+          const edit = this.editDependencyCandidate(request.filePath, candidate, change);
+          if ('result' in edit) {
+            result = edit.result;
+            return content;
+          }
+          candidate = edit.candidate;
+          changed ||= edit.changed;
+        }
+
+        const candidateTasks = this.snapshotsForCandidate(request.filePath, candidate);
+        const primary = candidateTasks.find((task) => task.source.line === request.primary.line);
+        if (!primary) {
+          result = { type: 'not-found', target: { type: 'task', ref: request.primary } };
+          return content;
+        }
+        const roots = request.changes.flatMap((change) => {
+          const root = candidateTasks.find(
+            (task) => task.source.line === change.baseRoot.source.line,
+          );
+          return root ? [root] : [];
+        });
+        result = { type: 'committed', outcome: { type: 'task', task: primary }, roots, changed };
+        if (!changed) return content;
+
+        if (this.options.refAuthority && this.options.snapshotState) {
+          const finalBlocks = new Map(
+            this.options.editor.rootBlocks(candidate).map((block) => [block.line, block] as const),
+          );
+          const roots: RootRevisionOverride[] = [];
+          for (const change of request.changes) {
+            const block = finalBlocks.get(change.baseRoot.source.line);
+            const revision =
+              block &&
+              this.options.refAuthority.successor(change.baseRoot.ref.revision, block.source);
+            if (!block || !revision) {
+              result = { type: 'invalid', issues: [{ code: 'invalid-task-syntax' }] };
+              return content;
+            }
+            roots.push({ line: block.line, source: block.source, revision });
+          }
+          const primaryEvidence = this.options.refAuthority.evidence(
+            primaryChange.baseRoot.ref.revision,
+          );
+          const indexedPrimary =
+            primaryEvidence &&
+            this.options.snapshotState.currentRoot(
+              request.filePath,
+              primaryChange.baseRoot.ref.line,
+              primaryEvidence.source,
+            );
+          const staged = this.options.refAuthority.stage(
+            {
+              filePath: request.filePath,
+              candidateFingerprint: taskRefContentFingerprint(candidate),
+              candidateLength: candidate.length,
+              expectedRevision: primaryChange.baseRoot.ref.revision,
+              roots,
+            },
+            indexedPrimary?.revision ?? '',
+          );
+          if (staged.type === 'conflict') {
+            result = { type: 'conflict', current: primaryChange.baseRoot };
+            return content;
+          }
+          transitionToken = staged.token;
+        }
+        committedContent = candidate;
+        return candidate;
+      });
+    } catch {
+      if (transitionToken) {
+        await this.abortAndReconcileTransition(
+          file,
+          request.filePath,
+          transitionToken,
+          request.primary,
+        );
+      } else if (committedContent !== undefined) {
+        await this.reconcileAfterRejection(file, request.filePath);
+      }
+      return {
+        type: 'io-error',
+        cause: 'process-error',
+        path: request.filePath,
+        contentState: 'unknown',
+      };
+    }
+    if (result?.type === 'committed' && result.changed && committedContent !== undefined) {
+      if (transitionToken) this.options.refAuthority?.commit(transitionToken);
+      const installed = this.options.snapshotState?.installCommittedContent(
+        request.filePath,
+        committedContent,
+      );
+      if (transitionToken)
+        this.options.refAuthority?.acknowledge(request.filePath, committedContent);
+      if (result.outcome.type === 'task' && installed) {
+        const primary = installed.find((task) => task.source.line === request.primary.line);
+        const roots = request.changes.flatMap((change) => {
+          const root = installed.find((task) => task.source.line === change.baseRoot.source.line);
+          return root ? [root] : [];
+        });
+        if (primary) result = { ...result, outcome: { type: 'task', task: primary }, roots };
+      }
+    }
+    return (
+      result ?? {
+        type: 'io-error',
+        cause: 'process-error',
+        path: request.filePath,
+        contentState: 'unknown',
+      }
+    );
+  }
+
+  private editDependencyCandidate(
+    filePath: string,
+    candidate: string,
+    change: TaskDependencyRevisionChange,
+  ):
+    | { readonly candidate: string; readonly changed: boolean }
+    | { readonly result: TaskRepositoryResult } {
+    const blocks = this.options.editor.rootBlocks(candidate);
+    const located = this.options.locator.locate(blocks, change.baseRoot.ref);
+    const revisionResult = preparedRevisionResult(
+      change,
+      located,
+      this.options.snapshotState?.authoritySuccessor?.(change.baseRoot.ref),
+      (currentRef) => this.options.locator.locate(blocks, currentRef),
+      (block) => this.snapshotFor(filePath, candidate, block),
+    );
+    if (revisionResult) return { result: revisionResult };
+    const evidence = this.options.refAuthority?.evidence(change.baseRoot.ref.revision);
+    const indexedRef =
+      evidence &&
+      this.options.snapshotState?.currentRoot(filePath, change.baseRoot.ref.line, evidence.source);
+    if (
+      this.options.refAuthority &&
+      this.options.snapshotState &&
+      indexedRef?.revision !== change.baseRoot.ref.revision
+    ) {
+      if (located.type !== 'exact') {
+        return { result: this.resolutionResultForRef(located, change.baseRoot.ref, candidate) };
+      }
+      const current = this.snapshotFor(filePath, candidate, located.block);
+      return {
+        result: current
+          ? { type: 'conflict', current }
+          : { type: 'not-found', target: { type: 'task', ref: change.baseRoot.ref } },
+      };
+    }
+    if (located.type !== 'exact') {
+      return { result: this.resolutionResultForRef(located, change.baseRoot.ref, candidate) };
+    }
+    const sourceLine = candidate.split(/\r?\n/u)[located.block.line];
+    if (sourceLine === undefined) {
+      return {
+        result: { type: 'not-found', target: { type: 'task', ref: change.baseRoot.ref } },
+      };
+    }
+    const edited = applyTaskCommand(this.options.codec, sourceLine, change.command);
+    if (edited.type === 'invalid') return { result: edited };
+    if (edited.type === 'unchanged') return { candidate, changed: false };
+    return {
+      candidate: this.options.editor.replaceLine(candidate, located.block, 0, edited.content)
+        .content,
+      changed: true,
+    };
   }
 
   async edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult> {

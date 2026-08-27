@@ -16,6 +16,7 @@ import type {
   TaskSnapshot,
 } from '../domain/types';
 import type { TaskIssue } from '../domain/validation';
+import { isTaskDependencyId } from '../domain/validation';
 
 type AddSubtaskLifecycle =
   | { readonly today: LocalDate; readonly addCreatedDate: true }
@@ -99,6 +100,46 @@ export interface TaskRootTagEditRequest {
   readonly changes: readonly RootTagRevisionChange[];
 }
 
+export type TaskDependencyEditCommand = Extract<
+  TaskEditCommand,
+  { readonly type: 'set-task-id' | 'set-task-dependency' }
+>;
+
+export interface TaskDependencyRevisionChange extends RevisionPrecondition {
+  readonly command: TaskDependencyEditCommand;
+}
+
+export interface TaskDependencyEditRequest {
+  readonly filePath: string;
+  readonly primary: TaskRef;
+  readonly changes: readonly TaskDependencyRevisionChange[];
+}
+
+function sameRootRef(left: TaskRef, right: TaskRef): boolean {
+  return (
+    left.filePath === right.filePath && left.line === right.line && left.revision === right.revision
+  );
+}
+
+export function isTaskDependencyEditRequestValid(request: TaskDependencyEditRequest): boolean {
+  const [idChange, edgeChange] = request.changes;
+  return (
+    request.changes.length === 2 &&
+    idChange?.command.type === 'set-task-id' &&
+    idChange.command.id !== null &&
+    isTaskDependencyId(idChange.command.id) &&
+    edgeChange?.command.type === 'set-task-dependency' &&
+    edgeChange.command.enabled &&
+    edgeChange.command.dependencyId === idChange.command.id &&
+    idChange.baseRoot.ref.filePath === request.filePath &&
+    edgeChange.baseRoot.ref.filePath === request.filePath &&
+    sameRootRef(idChange.command.ref, idChange.baseRoot.ref) &&
+    sameRootRef(edgeChange.command.ref, edgeChange.baseRoot.ref) &&
+    sameRootRef(request.primary, edgeChange.baseRoot.ref) &&
+    !sameRootRef(idChange.baseRoot.ref, edgeChange.baseRoot.ref)
+  );
+}
+
 export interface RecurrenceCompletionRevisionRequest extends RevisionPrecondition {
   readonly command: RecurrenceCompletionRequest;
   readonly baseOwnedDescendants: string;
@@ -147,4 +188,5 @@ export interface TaskRepository {
     legacyDestination?: TaskDestination,
   ): Promise<TaskRepositoryResult>;
   editRootTags?(request: TaskRootTagEditRequest): Promise<TaskRepositoryResult>;
+  editTaskDependencies?(request: TaskDependencyEditRequest): Promise<TaskRepositoryResult>;
 }
