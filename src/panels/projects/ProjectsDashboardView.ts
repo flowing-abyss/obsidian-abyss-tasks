@@ -35,6 +35,7 @@ export function renderProjectDashboard(
     viewState: ctx.settings.projects.view.tasks,
     settings: ctx.settings,
   });
+  const selectedWorkNotes = ctx.selectWorkNotes?.(snapshot.workNotes) ?? snapshot.workNotes;
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
@@ -107,7 +108,7 @@ export function renderProjectDashboard(
       ? ctx.renderTaskTimeline !== undefined &&
         selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
       : ctx.renderWorkNoteTimeline !== undefined &&
-        snapshot.workNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
+        selectedWorkNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
 
   const renderWorkspace = (): void => {
     workspace.dataset['scope'] = scope;
@@ -128,7 +129,7 @@ export function renderProjectDashboard(
     content.empty();
     if (scope === 'work-notes') {
       if (layout === 'timeline' && ctx.renderWorkNoteTimeline) {
-        ctx.renderWorkNoteTimeline(content, project.path, snapshot.workNotes);
+        ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes);
       } else if (layout === 'board' && ctx.renderWorkNoteBoard) {
         ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
       } else {

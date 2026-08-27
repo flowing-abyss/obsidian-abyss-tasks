@@ -344,6 +344,32 @@ describe('WorkNoteCommandService', () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
+  it('conflicts when a milestone fallback source changed after observation', async () => {
+    const candidate = enabledPreset();
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/M.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\nUpdated: 2026-08-26T14:30:00+07:00\ntags: [work-note/milestone]\n---\n',
+    });
+    const file = await fileAt(app, 'Work Notes/M.md');
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index);
+    const snapshot = (await index.audit()).snapshots[0]!;
+    const latestObserved = service.observe(snapshot)!;
+    expect(latestObserved.fields['Updated']).toBe('2026-08-26T14:30:00+07:00');
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['Updated'] = '2026-08-27T14:30:00+07:00';
+    });
+    await flushMicrotasks();
+    const writes = vi.spyOn(app.vault, 'modify');
+    writes.mockClear();
+
+    expect(
+      await service.setRange(latestObserved, { end: parseProjectDate('2026-09-01')! }),
+    ).toEqual({ type: 'conflict', field: 'updated' });
+    expect(writes).not.toHaveBeenCalled();
+  });
+
   it('repairs an unknown scalar status but conflicts on the latest non-scalar shape', async () => {
     const h = await fixture();
     const file = await fileAt(h.app, h.observed.path);

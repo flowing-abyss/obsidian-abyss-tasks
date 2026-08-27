@@ -95,6 +95,24 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
 }
 
 describe('Project Tasks workspace', () => {
+  it('retains the portfolio Timeline viewport while project workspaces open and close', () => {
+    const session = new ProjectWorkspaceSession();
+    Object.assign(session.portfolioTimeline, {
+      firstKey: 'project:Projects/Deep.md',
+      firstIndex: 80,
+      focusedKey: 'project:Projects/Focused.md',
+      restoreFocus: true,
+    });
+
+    session.openProject('Projects/A.md');
+    session.closeProject();
+
+    expect(session.portfolioTimeline).toMatchObject({
+      firstIndex: 80,
+      focusedKey: 'project:Projects/Focused.md',
+    });
+  });
+
   it('retains same-Project Timeline layout and viewport but resets a different Project to Tasks/List', () => {
     const session = new ProjectWorkspaceSession();
     session.openProject('Projects/A.md');

@@ -3,13 +3,15 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
+import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
-import { renderProgressBar } from '../src/panels/projects/progressBar';
+import { selectWorkNotes } from '../src/panels/projects/WorkNotesView';
 import { parseProjectRange } from '../src/projects/projectDates';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
+import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { freshContainer, task } from './helpers';
 
@@ -76,6 +78,24 @@ function workspace(
     overdue: { tasks: 0, workNotes: 0 },
     diagnostics: [],
     ...over,
+  };
+}
+
+function workNote(path: string, statusId: string, updated: string): WorkNoteSnapshot {
+  return {
+    path,
+    presetRevision: 1,
+    presetFingerprint: 'accepted',
+    kind: 'ordinary',
+    projectPath: 'Projects/A.md',
+    statusId,
+    rawStatus: statusId,
+    writableStatusShape: true,
+    updated,
+    range: parseProjectRange(updated, undefined),
+    blockedByPaths: [],
+    relatedPaths: [],
+    diagnostics: [],
   };
 }
 
@@ -789,6 +809,56 @@ describe('renderProjectDashboard', () => {
     });
 
     expect(el.querySelector('.abyss-project-time')).toBeNull();
+  });
+
+  it('applies the configured Work Note filter and sort before Timeline availability/rendering', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.workNotes = {
+      ...settings.projects.view.workNotes,
+      statusIds: ['done'],
+      sortBy: { field: 'title', dir: 'asc' },
+    };
+    const renderWorkNoteTimeline = vi.fn();
+    const el = freshContainer();
+    renderProjectDashboard(
+      el,
+      workspace(proj({}), {
+        workNotes: [
+          workNote('Work Notes/Z.md', 'done', '2026-08-29'),
+          workNote('Work Notes/A.md', 'active', '2026-08-28'),
+          workNote('Work Notes/B.md', 'done', '2026-08-27'),
+        ],
+      }),
+      {
+        state: new AppState(),
+        settings,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(),
+        renderWorkNotes: vi.fn(),
+        renderWorkNoteTimeline,
+        selectWorkNotes: (notes) =>
+          selectWorkNotes({
+            notes,
+            statuses: [
+              { id: 'active', label: 'Active' },
+              { id: 'done', label: 'Done' },
+            ],
+            viewState: settings.projects.view.workNotes,
+          }),
+      },
+    );
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+
+    expect(renderWorkNoteTimeline).toHaveBeenLastCalledWith(
+      expect.any(HTMLElement),
+      'Projects/A.md',
+      expect.arrayContaining([]),
+    );
+    expect(
+      renderWorkNoteTimeline.mock.lastCall?.[2].map((note: WorkNoteSnapshot) => note.path),
+    ).toEqual(['Work Notes/B.md', 'Work Notes/Z.md']);
   });
 
   it('renders the compact-summary Next Action as an icon only and nothing when unset', () => {

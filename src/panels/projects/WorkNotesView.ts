@@ -65,7 +65,9 @@ function statusText(note: WorkNoteSnapshot, statuses: readonly WorkNoteStatusDef
   );
 }
 
-function selectedNotes(options: WorkNotesViewOptions): readonly WorkNoteSnapshot[] {
+export function selectWorkNotes(
+  options: Pick<WorkNotesViewOptions, 'notes' | 'statuses' | 'viewState'>,
+): readonly WorkNoteSnapshot[] {
   if (!options.viewState) return [...options.notes];
   const allowed = options.viewState?.statusIds;
   const filtered =
@@ -371,7 +373,7 @@ export function renderWorkNotesView(
       input.focus();
     });
   }
-  const notes = selectedNotes(options);
+  const notes = selectWorkNotes(options);
   const view =
     options.layout === 'board'
       ? renderWorkNoteBoard(content, notes, options, presenter)

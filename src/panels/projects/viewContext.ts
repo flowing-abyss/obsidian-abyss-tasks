@@ -46,4 +46,6 @@ export interface ProjectsDashboardContext {
     path: string,
     notes: readonly WorkNoteSnapshot[],
   ) => void;
+  /** Applies the configured Work Note filter/sort before alternate layouts render. */
+  selectWorkNotes?: (notes: readonly WorkNoteSnapshot[]) => readonly WorkNoteSnapshot[];
 }

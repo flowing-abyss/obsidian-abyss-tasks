@@ -16,7 +16,7 @@ import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList, showNewProjectInput } from './ProjectsListView';
 import { renderProjectsTimeline, renderWorkNotesTimeline } from './ProjectsTimelineView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
-import { renderWorkNotesView } from './WorkNotesView';
+import { renderWorkNotesView, selectWorkNotes } from './WorkNotesView';
 import { projectTimelineItem } from './timelineProjection';
 
 export interface ProjectsPanelOptions {
@@ -199,6 +199,12 @@ export class ProjectsPanel {
           ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
           ...(this.workNoteCommands
             ? {
+                selectWorkNotes: (notes) =>
+                  selectWorkNotes({
+                    notes,
+                    statuses: this.workNoteCommands!.statuses(),
+                    viewState: this.settings.projects.view.workNotes,
+                  }),
                 renderWorkNotes: (host, path, notes) =>
                   this.renderWorkNotes(host, path, notes, 'list'),
                 renderWorkNoteBoard: (host, path, notes) =>
@@ -244,6 +250,7 @@ export class ProjectsPanel {
       const handle = renderProjectsTimeline(timelineHost, {
         projects: timelineSnapshots.map(({ project }) => project),
         commands: this.projectCommands,
+        session: this.workspaceSession.portfolioTimeline,
         onMutation: (_project, result) => {
           if (result.type === 'ok') this.projectStore.refresh();
         },

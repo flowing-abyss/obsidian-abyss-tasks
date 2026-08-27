@@ -62,6 +62,8 @@ export class ProjectWorkspaceSession {
     tasks: viewport(),
     workNotes: viewport(),
   };
+  /** Portfolio continuity is independent of whichever Project workspace is open. */
+  readonly portfolioTimeline = viewport();
 
   openProject(path: string): void {
     if (this.projectPath === path) return;
