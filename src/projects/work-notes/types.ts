@@ -1,4 +1,4 @@
-import type { ProjectRange } from '../types';
+import type { ProjectDateValue, ProjectRange } from '../types';
 
 export type WorkNoteKindMarker =
   | { readonly kind: 'frontmatter-tag'; readonly value: string }
@@ -97,6 +97,14 @@ export interface WorkNoteObservedFields {
   readonly projectPath: string;
   readonly kind: 'ordinary' | 'milestone';
   readonly fields: Readonly<Record<string, unknown>>;
+}
+
+/** One exact render-time observation used for both date movement and write guards. */
+export interface WorkNoteRangeObservation {
+  readonly observed: WorkNoteObservedFields;
+  readonly start?: ProjectDateValue;
+  readonly end?: ProjectDateValue;
+  readonly updated?: ProjectDateValue;
 }
 
 export interface WorkNoteStatusDefinition {

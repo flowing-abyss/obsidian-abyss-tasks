@@ -6555,7 +6555,7 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-row {
   box-sizing: border-box;
-  block-size: 56px;
+  block-size: 72px;
   align-items: center;
   gap: 8px;
   padding-inline: 12px;
@@ -6666,7 +6666,11 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-undated,
 .abyss-timeline-invalid {
-  flex: 0 0 auto;
+  display: flex;
+  max-block-size: min(14rem, 40vh);
+  min-block-size: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
   padding: 8px 12px;
   border-top: 1px solid var(--background-modifier-border);
 }
@@ -6678,11 +6682,23 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-diagnostic-row {
   display: flex;
+  box-sizing: border-box;
+  block-size: 32px;
   min-width: 0;
+  align-items: center;
   gap: 8px;
   padding: 3px 0;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-diagnostic-scroll {
+  min-block-size: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.abyss-timeline-diagnostic-scroll:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
 }
 .abyss-timeline-diagnostic-row > :first-child {
   min-width: 0;
@@ -6699,10 +6715,21 @@ body.abyss-modal-open .popover.hover-popover {
   display: none;
 }
 .abyss-timeline.is-agenda .abyss-timeline-row {
-  block-size: auto;
-  min-block-size: 56px;
+  block-size: 72px;
+  min-block-size: 0;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding-block: 6px;
+  padding-block: 4px;
+  overflow: hidden;
+}
+.abyss-timeline.is-agenda .abyss-timeline-date-controls {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-auto-flow: row;
+  gap: 2px 4px;
+}
+.abyss-timeline.is-agenda .abyss-timeline-date-picker {
+  width: 100%;
+  min-width: 0;
 }
 
 /* Shared lifecycle/status board: quiet shell, existing cards carry the detail. */
@@ -6814,15 +6841,21 @@ body.abyss-modal-open .popover.hover-popover {
     display: none;
   }
   .abyss-timeline-row {
-    block-size: auto;
-    min-block-size: 56px;
+    block-size: 72px;
+    min-block-size: 0;
     grid-template-columns: minmax(0, 1fr) auto;
-    padding-block: 6px;
+    padding-block: 4px;
+    overflow: hidden;
   }
   .abyss-timeline-date-controls {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-auto-flow: row;
+    gap: 2px 4px;
   }
   .abyss-timeline-date-picker {
+    width: 100%;
+    min-width: 0;
     max-width: 8rem;
   }
 

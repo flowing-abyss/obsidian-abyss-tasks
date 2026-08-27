@@ -17,9 +17,11 @@ import {
   workNoteTimelineEntry,
 } from './timelineProjection';
 
-const TIMELINE_ROW_EXTENT = 56;
+const TIMELINE_ROW_EXTENT = 72;
 const TIMELINE_FALLBACK_VISIBLE_ROWS = 12;
 const TIMELINE_OVERSCAN = 5;
+const TIMELINE_DIAGNOSTIC_ROW_EXTENT = 32;
+const TIMELINE_DIAGNOSTIC_VISIBLE_ROWS = 7;
 
 export type TimelineEntry<T> = TimelineProjection<T>;
 
@@ -243,19 +245,18 @@ export function renderTimeline<T>(
       session,
       dated.map(({ item }) => item.key),
     );
-    scroll.scrollTop = initialFirst * TIMELINE_ROW_EXTENT;
-    const viewport = (): { first: number; visible: number } => ({
-      first: Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_ROW_EXTENT),
+    const viewport = (seedFirst?: number): { first: number; visible: number } => ({
+      first: seedFirst ?? Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_ROW_EXTENT),
       visible:
         scroll.clientHeight > 0
           ? Math.ceil(scroll.clientHeight / TIMELINE_ROW_EXTENT)
           : TIMELINE_FALLBACK_VISIBLE_ROWS,
     });
 
-    const renderWindow = (restoreFocus = false): void => {
+    const renderWindow = (restoreFocus = false, seedFirst?: number): void => {
       if (destroyed) return;
       const result = bounded.render(rows, {
-        ...viewport(),
+        ...viewport(seedFirst),
         itemExtent: TIMELINE_ROW_EXTENT,
         restoreFocus,
         render: (host, _key, logicalIndex) => {
@@ -387,7 +388,7 @@ export function renderTimeline<T>(
               picker.removeEventListener('change', onChange);
             });
           }
-          row.addEventListener('focus', () => {
+          row.addEventListener('focusin', () => {
             bounded.focus(entry.item.key);
             if (session) {
               session.focusedKey = entry.item.key;
@@ -397,7 +398,9 @@ export function renderTimeline<T>(
           return row;
         },
       });
-      if (restoreFocus) scroll.scrollTop = result.first * TIMELINE_ROW_EXTENT;
+      if (restoreFocus || seedFirst !== undefined) {
+        scroll.scrollTop = result.first * TIMELINE_ROW_EXTENT;
+      }
     };
     const rememberViewport = (): void => {
       if (!session) return;
@@ -410,8 +413,7 @@ export function renderTimeline<T>(
     };
     scroll.addEventListener('scroll', onScroll);
     cleanups.push(() => scroll.removeEventListener('scroll', onScroll));
-    renderWindow(session?.restoreFocus === true);
-    if (session?.restoreFocus === true) scroll.scrollTop = initialFirst * TIMELINE_ROW_EXTENT;
+    renderWindow(session?.restoreFocus === true, initialFirst);
     rememberViewport();
   }
 
@@ -423,13 +425,37 @@ export function renderTimeline<T>(
     if (entries.length === 0) return;
     const section = root.createDiv({ cls: className });
     section.createEl('h4', { text: heading });
-    for (const entry of entries) {
-      const row = section.createDiv({ cls: 'abyss-timeline-diagnostic-row' });
-      row.createSpan({ text: entry.label });
-      if (entry.item.kind === 'invalid') {
-        row.createSpan({ cls: 'abyss-timeline-diagnostic-reason', text: entry.item.reason });
-      }
-    }
+    const scroll = section.createDiv({
+      cls: 'abyss-timeline-diagnostic-scroll',
+      attr: { tabindex: '0', 'aria-label': heading },
+    });
+    const rows = scroll.createDiv({ cls: 'abyss-timeline-diagnostic-rows' });
+    const bounded = new BoundedWindow(
+      entries.map(({ item }) => item.key),
+      TIMELINE_OVERSCAN,
+    );
+    const renderWindow = (): void => {
+      bounded.render(rows, {
+        first: Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_DIAGNOSTIC_ROW_EXTENT),
+        visible:
+          scroll.clientHeight > 0
+            ? Math.ceil(scroll.clientHeight / TIMELINE_DIAGNOSTIC_ROW_EXTENT)
+            : TIMELINE_DIAGNOSTIC_VISIBLE_ROWS,
+        itemExtent: TIMELINE_DIAGNOSTIC_ROW_EXTENT,
+        render: (host, _key, logicalIndex) => {
+          const entry = entries[logicalIndex]!;
+          const row = host.createDiv({ cls: 'abyss-timeline-diagnostic-row' });
+          row.createSpan({ text: entry.label });
+          if (entry.item.kind === 'invalid') {
+            row.createSpan({ cls: 'abyss-timeline-diagnostic-reason', text: entry.item.reason });
+          }
+          return row;
+        },
+      });
+    };
+    scroll.addEventListener('scroll', renderWindow);
+    cleanups.push(() => scroll.removeEventListener('scroll', renderWindow));
+    renderWindow();
   };
   renderDiagnosticSection(undated, 'abyss-timeline-undated', 'Undated');
   renderDiagnosticSection(invalid, 'abyss-timeline-invalid', 'Invalid dates');
@@ -474,6 +500,13 @@ export function renderWorkNotesTimeline(
   container: HTMLElement,
   options: WorkNotesTimelineOptions,
 ): TimelineViewHandle {
+  const prepared = options.notes.map((note) => ({
+    entry: workNoteTimelineEntry(note),
+    observation: options.commandsEnabled === false ? null : options.commands.observeRange(note),
+  }));
+  const observations = new Map(
+    prepared.map(({ entry, observation }) => [entry.item.key, observation] as const),
+  );
   const onSetDate = async (
     entry: TimelineEntry<WorkNoteSnapshot>,
     role: TimelinePointRole,
@@ -481,16 +514,17 @@ export function renderWorkNotesTimeline(
   ): Promise<WorkNoteCommandResult> => {
     const field = role === 'milestone' ? 'end' : role;
     if (field !== 'start' && field !== 'end') return { type: 'invalid', field };
-    const observed = options.commands.observe(entry.value);
-    if (!observed) return { type: 'invalid', field: 'path' };
-    const value = movedProjectDate(entry.value.range[field], date);
+    const observation = observations.get(entry.item.key);
+    if (!observation) return { type: 'invalid', field: 'path' };
+    const current = role === 'milestone' ? observation.updated : observation[field];
+    const value = movedProjectDate(current, date);
     if (!value) return { type: 'invalid', field };
-    const result = await options.commands.setRange(observed, { [field]: value });
+    const result = await options.commands.setRange(observation.observed, { [field]: value });
     options.onMutation?.(entry.value, result);
     return result;
   };
   return renderTimeline(container, {
-    entries: options.notes.map(workNoteTimelineEntry),
+    entries: prepared.map(({ entry }) => entry),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
     ...(options.commandsEnabled === false ? {} : { onSetDate }),

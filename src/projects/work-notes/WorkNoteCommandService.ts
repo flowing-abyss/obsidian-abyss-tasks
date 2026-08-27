@@ -10,6 +10,7 @@ import type {
   WorkNoteCreateRequest,
   WorkNoteKindMarker,
   WorkNoteObservedFields,
+  WorkNoteRangeObservation,
   WorkNoteSnapshot,
   WorkNoteStatusDefinition,
 } from './types';
@@ -199,6 +200,25 @@ export class WorkNoteCommandService {
       projectPath: snapshot.projectPath,
       kind: snapshot.kind,
       fields,
+    };
+  }
+
+  observeRange(snapshot: WorkNoteSnapshot): WorkNoteRangeObservation | null {
+    const observed = this.observe(snapshot);
+    if (!observed) return null;
+    const preset = this.preset();
+    const parsed = (semantic: 'start' | 'end' | 'updated') => {
+      const raw = observedRaw(observed, preset, semantic);
+      return typeof raw === 'string' ? parseProjectDate(raw) : undefined;
+    };
+    const start = parsed('start');
+    const end = parsed('end');
+    const updated = parsed('updated');
+    return {
+      observed,
+      ...(start && { start }),
+      ...(end && { end }),
+      ...(updated && { updated }),
     };
   }
 
