@@ -205,20 +205,6 @@ export class DependencyIndex {
       ),
     );
   }
-  /** Removes repository-authoritative roots before eventual TaskIndex deletion/move events. */
-  acceptDeletedRefs(refs: readonly TaskRef[]): void {
-    const removed = new Set(refs.map(refKey));
-    const byFile = new Map<string, TaskSnapshot[]>();
-    for (const ref of refs) {
-      if (byFile.has(ref.filePath)) continue;
-      const tasks = [...(this.fileNodes.get(ref.filePath) ?? [])].flatMap((key) => {
-        const node = this.nodes.get(key);
-        return node && !removed.has(refKey(node.task.ref)) ? [node.task] : [];
-      });
-      byFile.set(ref.filePath, tasks);
-    }
-    if (byFile.size > 0) this.updateFiles([...byFile]);
-  }
   private onEvent(source: Pick<TaskQueryApi, 'list'>, e: TaskIndexEvent): void {
     if (e.type === 'initialized') return this.replace(source.list());
     if (e.type === 'changed')
