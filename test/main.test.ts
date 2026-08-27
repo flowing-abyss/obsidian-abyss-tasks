@@ -42,6 +42,7 @@ interface PluginLike {
   loadSettings: () => Promise<void>;
   saveSettings: () => Promise<void>;
   openPanel: () => Promise<void>;
+  previewWorkNoteCompatibility: () => Promise<unknown>;
 }
 
 function makePlugin(data: Record<string, unknown> | null = null): PluginLike {
@@ -148,6 +149,47 @@ describe('TaskCalendarPlugin onload', () => {
     expect(cmd).toBeDefined();
     expect(cmd?.id).toBe('open-panel');
     expect(cmd?.name).toBe('Open view');
+  });
+
+  it('keeps the production Work Note preview reachable through a read-only command', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    const preview = {
+      preset: { enabled: false, accepted: false },
+      notes: { scanned: 0, eligible: 0, excluded: 0 },
+      kinds: { ordinary: 0, milestone: 0, ambiguous: 0, missing: 0 },
+      statuses: { mapped: 0, unknown: 0, missing: 0, nonScalar: 0 },
+      links: {
+        brokenProject: 0,
+        ambiguousProject: 0,
+        brokenRelation: 0,
+        ambiguousRelation: 0,
+        invalidProjectEntry: 0,
+        invalidRelationEntry: 0,
+      },
+      cardinality: { missingProject: 0, multipleProjects: 0, multipleMilestones: 0 },
+      duplicateBasenames: { project: 0, relation: 0 },
+      diagnostics: {},
+      capabilities: { update: false, create: false },
+    };
+    const spy = vi.spyOn(plugin, 'previewWorkNoteCompatibility').mockResolvedValue(preview);
+    const command = plugin.commands.get('preview-work-note-compatibility');
+
+    expect(command?.name).toBe('Preview work note compatibility');
+    await (command as unknown as { callback: () => Promise<void> }).callback();
+    expect(spy).toHaveBeenCalledOnce();
+  });
+
+  it('settles the read-only preview command when metadata inspection fails', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    vi.spyOn(plugin, 'previewWorkNoteCompatibility').mockRejectedValue(new Error('metadata'));
+    const command = plugin.commands.get('preview-work-note-compatibility');
+
+    const result = (command as unknown as { callback: () => unknown }).callback();
+
+    expect(result).toBeInstanceOf(Promise);
+    await expect(result).resolves.toBeUndefined();
   });
 
   it('adds exactly one settings tab', async () => {

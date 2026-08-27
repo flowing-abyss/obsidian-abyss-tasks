@@ -295,6 +295,64 @@ describe('WorkNoteIndex', () => {
     index.destroy();
   });
 
+  it('previews a disabled unaccepted preset through aggregate-only production metadata', async () => {
+    const h = harness(
+      [
+        {
+          path: 'Private Notes/Secret ordinary.md',
+          tags: ['#work-note/task'],
+          frontmatter: {
+            Project: '[[Projects/Secret project]]',
+            Status: 'Private active value',
+          },
+        },
+        {
+          path: 'Private Notes/Secret milestone.md',
+          tags: ['#work-note/milestone'],
+          frontmatter: {
+            Project: '[[Projects/Secret project]]',
+            Status: 'Private done value',
+            Related: '[[Missing private relation]]',
+          },
+        },
+        {
+          path: 'Unrelated private note.md',
+          tags: [],
+          frontmatter: { Status: 'Unrelated private value' },
+        },
+      ],
+      {
+        'Private Notes/Secret ordinary.md\0Projects/Secret project': 'Projects/Secret project.md',
+        'Private Notes/Secret milestone.md\0Projects/Secret project': 'Projects/Secret project.md',
+      },
+    );
+    const disabled = { ...preset, enabled: false, acceptedAudit: undefined };
+    const before = structuredClone(disabled);
+    const index = new WorkNoteIndex(h.app, disabled);
+
+    const preview = await index.previewCompatibility();
+
+    expect(preview).toMatchObject({
+      preset: { enabled: false, accepted: false },
+      notes: { scanned: 3, eligible: 2, excluded: 0 },
+      kinds: { ordinary: 1, milestone: 1, ambiguous: 0, missing: 0 },
+      links: { brokenRelation: 1 },
+      cardinality: { missingProject: 0, multipleProjects: 0, multipleMilestones: 0 },
+      capabilities: { update: false, create: false },
+    });
+    expect(preview.diagnostics['broken-relation']).toBe(1);
+    expect(disabled).toEqual(before);
+    expect(h.writes).toEqual([]);
+    const serialized = JSON.stringify(preview);
+    expect(serialized).not.toContain('Private Notes');
+    expect(serialized).not.toContain('Secret');
+    expect(serialized).not.toContain('Private active value');
+    expect(serialized).not.toContain('Private done value');
+    expect(serialized).not.toContain('Missing private relation');
+    expect(serialized).not.toContain('Unrelated private');
+    index.destroy();
+  });
+
   it('keeps an eligible unknown status visible and diagnoses non-string dates', () => {
     const h = harness(
       [

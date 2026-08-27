@@ -1,8 +1,9 @@
-import { Plugin } from 'obsidian';
+import { Notice, Plugin } from 'obsidian';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
+import type { WorkNoteCompatibilityPreview } from './projects/work-notes/types';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
@@ -139,6 +140,23 @@ export default class TaskCalendarPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: 'preview-work-note-compatibility',
+      name: 'Preview work note compatibility',
+      callback: async () => {
+        try {
+          const preview = await this.previewWorkNoteCompatibility();
+          new Notice(
+            `Work Notes: ${String(preview.notes.eligible)} eligible, ${String(
+              preview.notes.excluded,
+            )} excluded. Read-only preview; preset remains disabled.`,
+          );
+        } catch {
+          new Notice('Work note compatibility preview unavailable.');
+        }
+      },
+    });
+
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
     this.app.workspace.onLayoutReady(() => {
@@ -193,6 +211,10 @@ export default class TaskCalendarPlugin extends Plugin {
     beginSettingsSave(this.settings);
     await this.saveData(this.settings);
     if (Object.prototype.hasOwnProperty.call(this, 'workNoteIndex')) this.workNoteIndex.refresh();
+  }
+
+  async previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
+    return this.workNoteIndex.previewCompatibility();
   }
 
   rebuildTaskStatusSemantics(): void {

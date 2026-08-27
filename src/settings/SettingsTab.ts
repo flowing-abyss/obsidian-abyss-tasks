@@ -8,6 +8,7 @@ import {
   setIcon,
   Setting,
 } from 'obsidian';
+import type { WorkNoteCompatibilityPreview } from '../projects/work-notes/types';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
 import { TYPE_LABELS, TYPE_ORDER } from '../status/statusConstants';
@@ -30,6 +31,11 @@ interface TaskCalendarPlugin extends Plugin {
   tagManager: TagManager;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
+  previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
+}
+
+function counted(count: number, singular: string, plural = `${singular}s`): string {
+  return `${String(count)} ${count === 1 ? singular : plural}`;
 }
 
 let nextSettingsTabScope = 0;
@@ -898,6 +904,30 @@ export class CalendarSettingsTab extends PluginSettingTab {
         );
     }
 
+    const previewResult = containerEl.createDiv({
+      cls: 'abyss-work-note-preview',
+      attr: { 'aria-live': 'polite' },
+    });
+    new Setting(containerEl)
+      .setName('Work note compatibility')
+      .setDesc('Inspect aggregate compatibility without enabling or saving a preset.')
+      .addButton((button) =>
+        button.setButtonText('Preview work notes').onClick(async () => {
+          button.setDisabled(true);
+          previewResult.replaceChildren();
+          previewResult.createDiv({ text: 'Reading metadata…' });
+          try {
+            const preview = await this.plugin.previewWorkNoteCompatibility();
+            this.renderWorkNotePreview(previewResult, preview);
+          } catch {
+            previewResult.replaceChildren();
+            previewResult.createDiv({ text: 'Preview unavailable.' });
+          } finally {
+            button.setDisabled(false);
+          }
+        }),
+      );
+
     new Setting(containerEl).setName('Statuses').setHeading();
     this.renderCardList(containerEl, projects.statuses, {
       id: (s) => s.id,
@@ -951,6 +981,56 @@ export class CalendarSettingsTab extends PluginSettingTab {
           });
         });
     }
+  }
+
+  private renderWorkNotePreview(
+    containerEl: HTMLElement,
+    preview: WorkNoteCompatibilityPreview,
+  ): void {
+    containerEl.replaceChildren();
+    containerEl.dataset['presetEnabled'] = String(preview.preset.enabled);
+    containerEl.dataset['accepted'] = String(preview.preset.accepted);
+    containerEl.dataset['capabilityUpdate'] = String(preview.capabilities.update);
+    containerEl.dataset['capabilityCreate'] = String(preview.capabilities.create);
+    const rows = [
+      [
+        counted(preview.notes.scanned, 'note'),
+        counted(preview.notes.eligible, 'eligible', 'eligible'),
+        counted(preview.notes.excluded, 'excluded', 'excluded'),
+      ],
+      [
+        counted(preview.kinds.ordinary, 'ordinary', 'ordinary'),
+        counted(preview.kinds.milestone, 'milestone'),
+        counted(preview.kinds.ambiguous, 'ambiguous kind'),
+        counted(preview.kinds.missing, 'missing kind'),
+      ],
+      [
+        counted(preview.statuses.mapped, 'mapped status', 'mapped statuses'),
+        counted(preview.statuses.unknown, 'unknown status', 'unknown statuses'),
+        counted(preview.statuses.missing, 'missing status', 'missing statuses'),
+        counted(preview.statuses.nonScalar, 'non-scalar status', 'non-scalar statuses'),
+      ],
+      [
+        counted(preview.links.brokenProject, 'broken project link'),
+        counted(preview.links.brokenRelation, 'broken relation'),
+        counted(preview.links.invalidProjectEntry, 'invalid project entry'),
+        counted(preview.links.invalidRelationEntry, 'invalid relation entry'),
+      ],
+      [
+        counted(preview.cardinality.missingProject, 'missing project'),
+        counted(preview.cardinality.multipleProjects, 'multiple-project diagnostic'),
+        counted(preview.cardinality.multipleMilestones, 'multiple-milestone diagnostic'),
+        counted(preview.duplicateBasenames.project, 'duplicate project basename'),
+        counted(preview.duplicateBasenames.relation, 'duplicate relation basename'),
+      ],
+    ];
+    for (const row of rows) {
+      containerEl.createDiv({ cls: 'abyss-work-note-preview-row', text: row.join(' · ') });
+    }
+    containerEl.createDiv({
+      cls: 'abyss-work-note-preview-guard',
+      text: 'Read-only preview. Preset disabled; acceptance absent; update and create unavailable.',
+    });
   }
 
   private renderStatusCard(card: HTMLElement, idx: number): void {

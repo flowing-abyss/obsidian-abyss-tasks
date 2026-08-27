@@ -22,6 +22,7 @@ interface StubPlugin {
   app: App;
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
+  previewWorkNoteCompatibility: ReturnType<typeof vi.fn>;
 }
 
 interface CapturedComp {
@@ -72,7 +73,11 @@ function patchSetting(captured: CapturedComp[]): () => void {
 
 function makeTab(
   settingsOverrides: Partial<CalendarSettings> = {},
-  opts: { expand?: boolean; saveSettings?: StubPlugin['saveSettings'] } = {},
+  opts: {
+    expand?: boolean;
+    saveSettings?: StubPlugin['saveSettings'];
+    previewWorkNoteCompatibility?: StubPlugin['previewWorkNoteCompatibility'];
+  } = {},
 ): {
   tab: CalendarSettingsTab;
   plugin: StubPlugin;
@@ -86,7 +91,9 @@ function makeTab(
   (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
-  const plugin: StubPlugin = { app, settings, saveSettings };
+  const previewWorkNoteCompatibility =
+    opts.previewWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
+  const plugin: StubPlugin = { app, settings, saveSettings, previewWorkNoteCompatibility };
   const captured: CapturedComp[] = [];
   const restore = patchSetting(captured);
   const tab = new CalendarSettingsTab(
@@ -794,6 +801,70 @@ describe('sourceNoteDisplay setting', () => {
 });
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
+  it('renders an aggregate-only disabled Work Note preview without saving or mutation controls', async () => {
+    const previewWorkNoteCompatibility = vi.fn().mockResolvedValue({
+      preset: { enabled: false, accepted: false },
+      notes: { scanned: 37, eligible: 12, excluded: 3 },
+      kinds: { ordinary: 10, milestone: 2, ambiguous: 1, missing: 2 },
+      statuses: { mapped: 9, unknown: 2, missing: 1, nonScalar: 0 },
+      links: {
+        brokenProject: 1,
+        ambiguousProject: 1,
+        brokenRelation: 2,
+        ambiguousRelation: 0,
+        invalidProjectEntry: 0,
+        invalidRelationEntry: 1,
+      },
+      cardinality: { missingProject: 1, multipleProjects: 1, multipleMilestones: 0 },
+      duplicateBasenames: { project: 1, relation: 0 },
+      diagnostics: { 'broken-project': 1, 'unknown-status': 2 },
+      capabilities: { update: false, create: false },
+    });
+    const { tab, plugin, captured } = makeTab({}, { previewWorkNoteCompatibility });
+    const before = structuredClone(plugin.settings.projects.workNoteCompatibility);
+    const body = openSection(tab, 5);
+    const previewButton = Array.from(body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (button) => button.textContent === 'Preview work notes',
+    );
+
+    expect(previewButton).toBeDefined();
+    const previewComponent = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === 'Preview work notes';
+    });
+    previewComponent!.comp.clickHandler!();
+    await vi.waitFor(() => expect(previewWorkNoteCompatibility).toHaveBeenCalledOnce());
+
+    const result = body.querySelector<HTMLElement>('.abyss-work-note-preview');
+    expect(result?.textContent).toContain('12 eligible');
+    expect(result?.textContent).toContain('3 excluded');
+    expect(result?.textContent).toContain('10 ordinary');
+    expect(result?.textContent).toContain('2 milestones');
+    expect(result?.textContent).toContain('2 unknown statuses');
+    expect(result?.textContent).toContain('1 duplicate project basename');
+    expect(result?.dataset['presetEnabled']).toBe('false');
+    expect(result?.dataset['accepted']).toBe('false');
+    expect(result?.dataset['capabilityUpdate']).toBe('false');
+    expect(result?.dataset['capabilityCreate']).toBe('false');
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    expect(plugin.settings.projects.workNoteCompatibility).toEqual(before);
+    for (const mutationLabel of [
+      'Accept',
+      'Enable',
+      'Create Work Note',
+      'Set status',
+      'Set date',
+      'Set relation',
+    ]) {
+      expect(
+        Array.from(body.querySelectorAll('button')).some(
+          (button) => button.textContent === mutationLabel,
+        ),
+      ).toBe(false);
+    }
+  });
+
   it('statuses render as collapsed cards (title only) by default', () => {
     const { tab } = makeTab({}, { expand: false });
     const body = openSection(tab, 5); // Projects

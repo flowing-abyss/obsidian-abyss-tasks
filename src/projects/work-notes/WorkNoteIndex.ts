@@ -7,11 +7,16 @@ import {
   type TAbstractFile,
 } from 'obsidian';
 import type { TaskIndexSettledEvent, TaskQueryApi } from '../../tasks';
-import { auditWorkNotes, computeWorkNotePresetFingerprint } from './compatibility';
+import {
+  auditWorkNotes,
+  computeWorkNotePresetFingerprint,
+  suggestWorkNotePreset,
+} from './compatibility';
 import type {
   WorkNoteAuditResult,
   WorkNoteAuditSource,
   WorkNoteCompatibilityPreset,
+  WorkNoteCompatibilityPreview,
   WorkNoteDiagnostic,
   WorkNoteIndexEvent,
   WorkNoteIndexSettledEvent,
@@ -20,6 +25,70 @@ import type {
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
 type TaskTopologySettlement = Extract<TaskIndexSettledEvent, { readonly reason: 'topology' }>;
+
+function aggregateCompatibilityPreview(
+  audit: WorkNoteAuditResult,
+  scanned: number,
+  excluded: number,
+): WorkNoteCompatibilityPreview {
+  const diagnostics: Partial<Record<WorkNoteDiagnostic['type'], number>> = {};
+  const increment = (type: WorkNoteDiagnostic['type']): void => {
+    diagnostics[type] = (diagnostics[type] ?? 0) + 1;
+  };
+  for (const entries of Object.values(audit.diagnosticsByPath)) {
+    const candidate = entries.every(
+      ({ type }) => type !== 'outside-folder' && type !== 'membership-mismatch',
+    );
+    if (!candidate) continue;
+    for (const diagnostic of entries) increment(diagnostic.type);
+  }
+  for (const issue of audit.issues) increment(issue.type);
+  const count = (type: WorkNoteDiagnostic['type']): number => diagnostics[type] ?? 0;
+  const nonScalarStatusPaths = new Set(
+    audit.snapshots
+      .filter((snapshot) =>
+        snapshot.diagnostics.some((diagnostic) => diagnostic.type === 'non-scalar-status'),
+      )
+      .map(({ path }) => path),
+  );
+  return {
+    preset: { enabled: false, accepted: false },
+    notes: { scanned, eligible: audit.snapshots.length, excluded },
+    kinds: {
+      ordinary: audit.snapshots.filter(({ kind }) => kind === 'ordinary').length,
+      milestone: audit.snapshots.filter(({ kind }) => kind === 'milestone').length,
+      ambiguous: count('ambiguous-kind'),
+      missing: count('missing-kind'),
+    },
+    statuses: {
+      mapped: audit.snapshots.filter(({ statusId }) => statusId !== null).length,
+      unknown: count('unknown-status'),
+      missing: audit.snapshots.filter(
+        ({ path, rawStatus }) => rawStatus === null && !nonScalarStatusPaths.has(path),
+      ).length,
+      nonScalar: count('non-scalar-status'),
+    },
+    links: {
+      brokenProject: count('broken-project'),
+      ambiguousProject: count('ambiguous-project'),
+      brokenRelation: count('broken-relation'),
+      ambiguousRelation: count('ambiguous-relation'),
+      invalidProjectEntry: count('invalid-project-entry'),
+      invalidRelationEntry: count('invalid-relation-entry'),
+    },
+    cardinality: {
+      missingProject: count('missing-project'),
+      multipleProjects: count('multiple-projects'),
+      multipleMilestones: count('multiple-milestones'),
+    },
+    duplicateBasenames: {
+      project: count('ambiguous-project'),
+      relation: count('ambiguous-relation'),
+    },
+    diagnostics,
+    capabilities: { update: false, create: false },
+  };
+}
 
 function isMarkdown(file: TAbstractFile): file is TFile {
   return file instanceof TFile && file.extension === 'md';
@@ -183,6 +252,19 @@ export class WorkNoteIndex {
 
   async audit(): Promise<WorkNoteAuditResult> {
     return Promise.resolve(this.auditPreset(this.preset()));
+  }
+
+  async previewCompatibility(): Promise<WorkNoteCompatibilityPreview> {
+    const source = this.source();
+    const suggestion = suggestWorkNotePreset(source);
+    const audit = auditWorkNotes(source, suggestion.preset);
+    return Promise.resolve(
+      aggregateCompatibilityPreview(
+        audit,
+        suggestion.observations.fileCount,
+        suggestion.preview.rejectedCandidateCount,
+      ),
+    );
   }
 
   private auditPreset(preset: WorkNoteCompatibilityPreset): WorkNoteAuditResult {

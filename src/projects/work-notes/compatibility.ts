@@ -625,10 +625,10 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
   const issueCounts: Record<string, number> = {};
   let rejectedCandidateCount = 0;
   for (const [path, diagnostics] of Object.entries(preview.diagnosticsByPath)) {
-    if (
-      !eligiblePaths.has(path) &&
-      diagnostics.some(({ type }) => type !== 'membership-mismatch' && type !== 'outside-folder')
-    ) {
+    const candidate = diagnostics.every(
+      ({ type }) => type !== 'membership-mismatch' && type !== 'outside-folder',
+    );
+    if (!eligiblePaths.has(path) && candidate) {
       rejectedCandidateCount += 1;
     }
     for (const { type } of diagnostics) increment(issueCounts, type);

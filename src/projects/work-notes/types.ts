@@ -110,6 +110,44 @@ export interface WorkNoteAuditResult {
   readonly capabilities: { readonly update: boolean; readonly create: boolean };
 }
 
+/** Aggregate-only compatibility preview safe to render or export without vault identities. */
+export interface WorkNoteCompatibilityPreview {
+  readonly preset: { readonly enabled: false; readonly accepted: false };
+  readonly notes: {
+    readonly scanned: number;
+    readonly eligible: number;
+    readonly excluded: number;
+  };
+  readonly kinds: {
+    readonly ordinary: number;
+    readonly milestone: number;
+    readonly ambiguous: number;
+    readonly missing: number;
+  };
+  readonly statuses: {
+    readonly mapped: number;
+    readonly unknown: number;
+    readonly missing: number;
+    readonly nonScalar: number;
+  };
+  readonly links: {
+    readonly brokenProject: number;
+    readonly ambiguousProject: number;
+    readonly brokenRelation: number;
+    readonly ambiguousRelation: number;
+    readonly invalidProjectEntry: number;
+    readonly invalidRelationEntry: number;
+  };
+  readonly cardinality: {
+    readonly missingProject: number;
+    readonly multipleProjects: number;
+    readonly multipleMilestones: number;
+  };
+  readonly duplicateBasenames: { readonly project: number; readonly relation: number };
+  readonly diagnostics: Readonly<Partial<Record<WorkNoteDiagnostic['type'], number>>>;
+  readonly capabilities: { readonly update: false; readonly create: false };
+}
+
 export interface WorkNoteIndexEvent {
   readonly cause: 'index' | 'refresh';
   readonly changedPaths: readonly string[];
