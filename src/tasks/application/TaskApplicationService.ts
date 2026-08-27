@@ -444,7 +444,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     dependencyProjection?: DependencyCommittedProjection,
   ) {
     this.dependencyCommands = new DependencyCommandCoordinator(
-      queries,
+      { resolve: (ref) => this.resolveRecentRoot(ref) },
       repository,
       dependencyProjection,
       (task) => this.remember(task),
@@ -479,10 +479,7 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
           return { type: 'invalid', issues: [{ code: 'invalid-target', field: 'tags' }] };
         }
         const target = { type: 'task' as const, ref: change.task.ref };
-        const recent = this.recentFor(target);
-        const resolution: TaskResolution = recent
-          ? { type: 'exact', task: recent, basis: { observed: recent } }
-          : this.queries.resolve(change.task.ref);
+        const resolution = this.resolveRecentRoot(change.task.ref);
         if (resolution.type === 'ambiguous') {
           return {
             type: 'ambiguous',
@@ -1119,6 +1116,13 @@ export class TaskApplicationService implements TaskApplicationApi, TaskCaptureAp
     return !outcome.permittedTarget || sameTaskNodeRef(outcome.permittedTarget, target)
       ? outcome.task
       : undefined;
+  }
+
+  private resolveRecentRoot(ref: TaskRef): TaskResolution {
+    const recent = this.recentFor({ type: 'task', ref });
+    return recent
+      ? { type: 'exact', task: recent, basis: { observed: recent } }
+      : this.queries.resolve(ref);
   }
 
   private recentForCommand(

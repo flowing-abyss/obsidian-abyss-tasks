@@ -72,7 +72,7 @@ function failureCause(
 /** Coordinates one dependency relation without creating another identity or write subsystem. */
 export class DependencyCommandCoordinator {
   constructor(
-    private readonly queries: Pick<TaskQueryApi, 'resolve'>,
+    private readonly rootResolver: Pick<TaskQueryApi, 'resolve'>,
     private readonly repository: TaskRepository,
     private readonly projection?: DependencyCommittedProjection,
     private readonly onCommitted?: (task: TaskSnapshot) => void,
@@ -123,7 +123,7 @@ export class DependencyCommandCoordinator {
   }
 
   private resolve(ref: TaskRef): ResolveRootResult {
-    const resolution = this.queries.resolve(ref);
+    const resolution = this.rootResolver.resolve(ref);
     if (resolution.type === 'ambiguous') {
       return {
         type: 'terminal',
@@ -219,7 +219,6 @@ export class DependencyCommandCoordinator {
       }
       committedPrerequisite = first.outcome.task;
       changed ||= first.changed;
-      this.publish([committedPrerequisite]);
     }
 
     const second = await this.edit(
@@ -231,6 +230,7 @@ export class DependencyCommandCoordinator {
       }),
     );
     if (second.type !== 'committed') {
+      if (committedPrerequisite) this.publish([committedPrerequisite]);
       const terminal = terminalRepositoryResult(second);
       if (
         !committedPrerequisite ||
@@ -257,10 +257,13 @@ export class DependencyCommandCoordinator {
       };
     }
     if (second.outcome.type !== 'task') {
+      if (committedPrerequisite) this.publish([committedPrerequisite]);
       return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
     changed ||= second.changed;
-    this.publish([second.outcome.task]);
+    this.publish(
+      committedPrerequisite ? [committedPrerequisite, second.outcome.task] : [second.outcome.task],
+    );
     return { type: 'ok', outcome: second.outcome, changed };
   }
 
@@ -281,8 +284,18 @@ export class DependencyCommandCoordinator {
   }
 
   private publish(roots: readonly TaskSnapshot[]): void {
-    for (const root of roots) this.onCommitted?.(root);
-    this.projection?.acceptCommittedRoots(roots);
+    for (const root of roots) {
+      try {
+        this.onCommitted?.(root);
+      } catch {
+        // Repository outcomes remain authoritative when a read-model observer fails.
+      }
+    }
+    try {
+      this.projection?.acceptCommittedRoots(roots);
+    } catch {
+      // Projection delivery is best-effort; eventual index events provide convergence.
+    }
   }
 }
 

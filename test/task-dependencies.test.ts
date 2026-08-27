@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DependencyIndex } from '../src/projects/dependencies/DependencyIndex';
 import type { TaskSnapshot } from '../src/tasks/domain/types';
 
@@ -90,6 +90,19 @@ describe('DependencyIndex', () => {
     index.replace([task(1, { id: 'prep' }, 'done'), dependent]);
 
     expect(published).toEqual([[prerequisite.ref, dependent.ref]]);
+  });
+
+  it('isolates listener failures so every subscriber observes a committed projection', () => {
+    const index = new DependencyIndex();
+    const observed = vi.fn();
+    index.subscribe(() => {
+      throw new Error('listener failed');
+    });
+    index.subscribe(observed);
+
+    expect(() => index.replace([task(1, { id: 'prep' })])).not.toThrow();
+    expect(observed).toHaveBeenCalledOnce();
+    expect(observed).toHaveBeenCalledWith([task(1, { id: 'prep' }).ref]);
   });
 
   it.each([

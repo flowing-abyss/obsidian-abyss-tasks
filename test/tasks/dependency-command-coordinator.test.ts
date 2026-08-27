@@ -160,6 +160,66 @@ describe('DependencyCommandCoordinator', () => {
     );
   });
 
+  it('returns a committed same-file result and remembers every root when projection throws', async () => {
+    const stack = await inMemoryStack({
+      'Tasks.md': '- [ ] prerequisite\n- [ ] dependent\n',
+    });
+    const [prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const projection = {
+      acceptCommittedRoots: vi.fn((_roots: readonly TaskSnapshot[]) => {
+        throw new Error('subscriber failed');
+      }),
+    };
+    const remembered = vi.fn();
+    const coordinator = new DependencyCommandCoordinator(
+      exactQueries(() => stack.tasks()),
+      stack.repository,
+      projection,
+      remembered,
+    );
+
+    await expect(
+      coordinator.setDependency(intent(prerequisite.ref, dependent.ref)),
+    ).resolves.toMatchObject({ type: 'ok', changed: true });
+    expect(projection.acceptCommittedRoots).toHaveBeenCalledOnce();
+    expect(projection.acceptCommittedRoots.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(remembered).toHaveBeenCalledTimes(2);
+  });
+
+  it('finishes both cross-file writes before one coherent best-effort publication', async () => {
+    const stack = await inMemoryStack({
+      'Prep.md': '- [ ] prerequisite\n',
+      'Ship.md': '- [ ] dependent\n',
+    });
+    const [prerequisite, dependent] = stack.tasks();
+    if (!prerequisite || !dependent) throw new Error('missing roots');
+    const projection = {
+      acceptCommittedRoots: vi.fn((_roots: readonly TaskSnapshot[]) => {
+        throw new Error('subscriber failed');
+      }),
+    };
+    const remembered = vi.fn();
+    const edit = vi.spyOn(stack.repository, 'edit');
+    const coordinator = new DependencyCommandCoordinator(
+      exactQueries(() => stack.tasks()),
+      stack.repository,
+      projection,
+      remembered,
+    );
+
+    await expect(
+      coordinator.setDependency(intent(prerequisite.ref, dependent.ref)),
+    ).resolves.toMatchObject({ type: 'ok', changed: true });
+    expect(edit).toHaveBeenCalledTimes(2);
+    expect(projection.acceptCommittedRoots).toHaveBeenCalledOnce();
+    expect(projection.acceptCommittedRoots.mock.calls[0]?.[0]).toHaveLength(2);
+    expect(projection.acceptCommittedRoots.mock.invocationCallOrder[0]).toBeGreaterThan(
+      edit.mock.invocationCallOrder[1] ?? Number.MAX_SAFE_INTEGER,
+    );
+    expect(remembered).toHaveBeenCalledTimes(2);
+  });
+
   it('returns a dependency partial after an orphan ID commit and never rolls it back', async () => {
     const prerequisite = (await inMemoryStack({ 'Prep.md': '- [ ] prerequisite\n' })).tasks()[0]!;
     const dependent = (await inMemoryStack({ 'Ship.md': '- [ ] dependent\n' })).tasks()[0]!;
@@ -202,9 +262,18 @@ describe('DependencyCommandCoordinator', () => {
       move: vi.fn(),
       editTaskDependencies: vi.fn(),
     };
+    const projection = {
+      acceptCommittedRoots: vi.fn((_roots: readonly TaskSnapshot[]) => {
+        calls.push('publish');
+        throw new Error('subscriber failed');
+      }),
+    };
+    const remembered = vi.fn();
     const coordinator = new DependencyCommandCoordinator(
       exactQueries(() => [prerequisite, dependent]),
       repository,
+      projection,
+      remembered,
     );
 
     await expect(
@@ -221,7 +290,11 @@ describe('DependencyCommandCoordinator', () => {
         cause: 'conflict',
       },
     });
-    expect(calls).toEqual(['set-task-id', 'set-task-dependency']);
+    expect(calls).toEqual(['set-task-id', 'set-task-dependency', 'publish']);
+    expect(projection.acceptCommittedRoots).toHaveBeenCalledOnce();
+    expect(projection.acceptCommittedRoots).toHaveBeenCalledWith([committedPrerequisite]);
+    expect(remembered).toHaveBeenCalledOnce();
+    expect(remembered).toHaveBeenCalledWith(committedPrerequisite);
   });
 
   it('returns the second write failure directly when no prerequisite ID was created', async () => {

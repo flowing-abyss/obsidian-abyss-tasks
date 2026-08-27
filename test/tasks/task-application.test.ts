@@ -163,6 +163,125 @@ describe('TaskApplicationService planning commands', () => {
     expect(editTaskDependencies).toHaveBeenCalledOnce();
   });
 
+  it('chains dependency commands through repository outcomes before the query index catches up', async () => {
+    const prerequisite = {
+      ...snapshot(),
+      dependency: { dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const dependent = {
+      ...snapshot(),
+      ref: { ...ref, line: 1, revision: 'block:dependent' },
+      dependency: { dependsOn: [] },
+      source: {
+        filePath: 'tasks.md',
+        line: 1,
+        originalMarkdown: '- [ ] dependent',
+        originalBlock: '- [ ] dependent',
+      },
+    } satisfies TaskSnapshot;
+    const final = {
+      ...snapshot(),
+      ref: { ...ref, line: 2, revision: 'block:final' },
+      dependency: { dependsOn: [] },
+      source: {
+        filePath: 'tasks.md',
+        line: 2,
+        originalMarkdown: '- [ ] final',
+        originalBlock: '- [ ] final',
+      },
+    } satisfies TaskSnapshot;
+    const committedPrerequisite = {
+      ...prerequisite,
+      ref: { ...prerequisite.ref, revision: 'commit:prerequisite' },
+      dependency: { id: 'prep-1', dependsOn: [] },
+    } satisfies TaskSnapshot;
+    const committedDependent = {
+      ...dependent,
+      ref: { ...dependent.ref, revision: 'commit:dependent' },
+      dependency: { dependsOn: ['prep-1'] },
+    } satisfies TaskSnapshot;
+    const identifiedDependent = {
+      ...committedDependent,
+      ref: { ...committedDependent.ref, revision: 'commit:identified-dependent' },
+      dependency: { id: 'next-1', dependsOn: ['prep-1'] },
+    } satisfies TaskSnapshot;
+    const committedFinal = {
+      ...final,
+      ref: { ...final.ref, revision: 'commit:final' },
+      dependency: { dependsOn: ['next-1'] },
+    } satisfies TaskSnapshot;
+    const staleQueryTasks = [prerequisite, dependent, final];
+    const queryApi: TaskQueryApi = {
+      ...queries(),
+      resolve: (candidate) => {
+        const task = staleQueryTasks.find(
+          (entry) =>
+            entry.ref.filePath === candidate.filePath &&
+            entry.ref.line === candidate.line &&
+            entry.ref.revision === candidate.revision,
+        );
+        return task ? exactResolution(task) : { type: 'not-found' as const, ref: candidate };
+      },
+    };
+    const editTaskDependencies = vi
+      .fn<NonNullable<TaskRepository['editTaskDependencies']>>()
+      .mockResolvedValueOnce({
+        type: 'committed',
+        outcome: { type: 'task', task: committedDependent },
+        roots: [committedPrerequisite, committedDependent],
+        changed: true,
+      })
+      .mockResolvedValueOnce({
+        type: 'committed',
+        outcome: { type: 'task', task: committedFinal },
+        roots: [identifiedDependent, committedFinal],
+        changed: true,
+      });
+    const projection = {
+      acceptCommittedRoots: vi.fn((_roots: readonly TaskSnapshot[]) => {
+        throw new Error('projection failed');
+      }),
+    };
+    const application = new TaskApplicationService(
+      queryApi,
+      {
+        edit: vi.fn(),
+        editTaskDependencies,
+        completeRecurrence: vi.fn(),
+        create: vi.fn(),
+        move: vi.fn(),
+      },
+      statuses,
+      clock,
+      undefined,
+      undefined,
+      projection,
+    );
+
+    const first = await application.setDependency({
+      prerequisite: prerequisite.ref,
+      dependent: dependent.ref,
+      dependencyId: 'prep-1',
+      enabled: true,
+    });
+    expect(first).toMatchObject({ type: 'ok', outcome: { type: 'task' } });
+    if (first.type !== 'ok' || first.outcome.type !== 'task') throw new Error('not committed');
+
+    await expect(
+      application.setDependency({
+        prerequisite: first.outcome.task.ref,
+        dependent: final.ref,
+        dependencyId: 'next-1',
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({
+      type: 'ok',
+      outcome: { type: 'task', task: committedFinal },
+    });
+    expect(editTaskDependencies).toHaveBeenCalledTimes(2);
+    expect(projection.acceptCommittedRoots).toHaveBeenCalledTimes(2);
+  });
+
   it('always forwards the captured day for an unstamped subtask request', async () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue({
       type: 'committed',

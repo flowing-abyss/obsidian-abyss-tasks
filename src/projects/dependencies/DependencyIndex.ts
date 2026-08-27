@@ -311,7 +311,14 @@ export class DependencyIndex {
     }
     for (const ref of deleted) affected.set(refKey(ref), copyRef(ref));
     const refs = [...affected.values()].sort(compareRefs);
-    if (refs.length) for (const listener of this.listeners) listener(refs);
+    if (refs.length)
+      for (const listener of [...this.listeners]) {
+        try {
+          listener(refs);
+        } catch {
+          // A failed subscriber cannot hide the committed projection from later subscribers.
+        }
+      }
   }
   private tarjan(region: ReadonlySet<string>): void {
     let n = 0;
