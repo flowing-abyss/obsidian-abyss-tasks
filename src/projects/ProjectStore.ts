@@ -1,5 +1,10 @@
 import { getAllTags, TFile, type App, type CachedMetadata, type TAbstractFile } from 'obsidian';
-import { evaluateQuery } from '../query/evaluateQuery';
+import {
+  compileQuery,
+  evaluateCompiledQuery,
+  type CompiledQuery,
+  type QueryDiagnostic,
+} from '../query/compileQuery';
 import type { CalendarSettings } from '../settings/types';
 import type { TaskIndexEvent, TaskIndexSettledEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
 import { parseProjectRange } from './projectDates';
@@ -9,7 +14,14 @@ import type { Project, TaskRollup } from './types';
 export interface ProjectStoreEvent {
   readonly changedPaths: readonly string[];
   readonly invalidatedProjectPaths: readonly string[];
+  readonly queryDiagnostics?: readonly ProjectQueryDiagnostic[];
 }
+
+export interface ProjectQueryDiagnostic extends QueryDiagnostic {
+  readonly source: 'projects.membershipQuery';
+}
+
+type ValidQuery = Extract<CompiledQuery, { readonly state: 'valid' }>;
 
 export interface ProjectStoreSettledEvent {
   readonly reason: 'initialization' | 'task-barrier' | 'refresh';
@@ -81,6 +93,10 @@ export class ProjectStore {
   private generations = new Map<string, number>();
   private initializationPending = false;
   private ready = false;
+  private membershipQuerySource?: string;
+  private membershipQuery?: ValidQuery;
+  private membershipQueryValid = false;
+  private diagnostics: readonly ProjectQueryDiagnostic[] = [];
 
   constructor(
     private app: App,
@@ -206,6 +222,7 @@ export class ProjectStore {
 
   private flush(): void {
     const before = this.cacheSignature();
+    const previousDiagnostics = this.diagnostics;
     const previousProjectPaths = new Set(this.byPath.keys());
     const candidates = this.readyFull
       ? new Set([
@@ -225,7 +242,11 @@ export class ProjectStore {
     );
     this.readyFull = false;
     this.readyPaths.clear();
-    this.notifyIfChanged(before, settledPaths);
+    this.notifyIfChanged(
+      before,
+      settledPaths,
+      JSON.stringify(previousDiagnostics) !== JSON.stringify(this.diagnostics),
+    );
     const settled = [...settledPaths]
       .map((path) => ({
         path,
@@ -259,8 +280,12 @@ export class ProjectStore {
     );
   }
 
-  private notifyIfChanged(before: string, invalidatedPaths: ReadonlySet<string>): void {
-    if (this.cacheSignature() === before) return;
+  private notifyIfChanged(
+    before: string,
+    invalidatedPaths: ReadonlySet<string>,
+    diagnosticsChanged = false,
+  ): void {
+    if (this.cacheSignature() === before && !diagnosticsChanged) return;
     const event: ProjectStoreEvent = {
       changedPaths: [...invalidatedPaths]
         .filter((path) => this.byPath.has(path))
@@ -268,24 +293,28 @@ export class ProjectStore {
       invalidatedProjectPaths: [...invalidatedPaths].sort((left, right) =>
         left.localeCompare(right),
       ),
+      ...(this.diagnostics.length > 0 && { queryDiagnostics: this.diagnostics }),
     };
     for (const cb of this.listeners) cb(event);
   }
 
   /** Full O(N + T) rescan of every markdown file. Used on init, create/delete/rename, refresh(). */
   private recomputeAll(): void {
+    if (!this.compileMembershipQuery()) return;
     const tasksByPath = this.groupTasksByPath();
-    this.byPath = new Map();
+    const byPath = new Map<string, Project>();
     for (const file of this.app.vault.getMarkdownFiles()) {
       const cache = this.app.metadataCache.getFileCache(file);
       const entry = this.makeEntry(file.path, cache, tasksByPath.get(file.path) ?? []);
-      if (entry) this.byPath.set(file.path, entry);
+      if (entry) byPath.set(file.path, entry);
     }
+    this.byPath = byPath;
     this.rebuildCache();
   }
 
   /** Re-evaluate a single note in place — O(1 note + T for its task filter). */
   private updateOne(path: string): void {
+    if (!this.compileMembershipQuery()) return;
     // Only markdown files are projects; folders/non-md drop out.
     const file = this.app.vault.getAbstractFileByPath(path);
     if (!(file instanceof TFile) || file.extension !== 'md') {
@@ -306,7 +335,12 @@ export class ProjectStore {
   ): Project | null {
     const fm = (cache?.frontmatter ?? {}) as Record<string, unknown>;
     const tags = (cache ? (getAllTags(cache) ?? []) : []).map((tag) => tag.toLowerCase());
-    if (!evaluateQuery(this.settings.projects.membershipQuery, path, tags, fm)) return null;
+    if (
+      !this.membershipQuery ||
+      !evaluateCompiledQuery(this.membershipQuery, { path, tags, frontmatter: fm })
+    ) {
+      return null;
+    }
     const { statusId, rawStatus } = resolveStatus(this.settings.projects.statuses, tags, fm);
     return {
       path,
@@ -334,6 +368,25 @@ export class ProjectStore {
     this.cache = Array.from(this.byPath.values()).sort((a, b) =>
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     );
+  }
+
+  private compileMembershipQuery(): boolean {
+    const source = this.settings.projects.membershipQuery;
+    if (this.membershipQuerySource === source) return this.membershipQueryValid;
+    this.membershipQuerySource = source;
+    const compiled = compileQuery(source, { enabled: true, required: true });
+    if (compiled.state === 'valid') {
+      this.membershipQuery = compiled;
+      this.membershipQueryValid = true;
+      this.diagnostics = [];
+      return true;
+    }
+    this.diagnostics =
+      compiled.state === 'invalid'
+        ? [{ source: 'projects.membershipQuery', ...compiled.diagnostic }]
+        : [];
+    this.membershipQueryValid = false;
+    return false;
   }
 
   list(): Project[] {
@@ -366,6 +419,7 @@ export class ProjectStore {
       invalidatedProjectPaths: [...invalidatedPaths].sort((left, right) =>
         left.localeCompare(right),
       ),
+      ...(this.diagnostics.length > 0 && { queryDiagnostics: this.diagnostics }),
     };
     for (const cb of this.listeners) cb(event);
     const settled = [...invalidatedPaths]
@@ -382,6 +436,10 @@ export class ProjectStore {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== cb);
     };
+  }
+
+  queryDiagnostics(): readonly ProjectQueryDiagnostic[] {
+    return this.diagnostics;
   }
 
   onSettled(listener: (event: ProjectStoreSettledEvent) => void): () => void {

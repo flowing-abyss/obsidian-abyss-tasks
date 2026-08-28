@@ -1,4 +1,4 @@
-import { evaluateQuery } from '../../query/evaluateQuery';
+import { compileQuery, evaluateCompiledQuery, type CompiledQuery } from '../../query/compileQuery';
 import type { ProjectStatus } from '../../settings/types';
 import { resolveSemanticProjectStatus } from '../lifecycle';
 import { parseProjectRange } from '../projectDates';
@@ -9,11 +9,55 @@ import type {
   WorkNoteCompatibilityPreset,
   WorkNoteDiagnostic,
   WorkNoteKindMarker,
+  WorkNoteQueryDiagnostic,
+  WorkNoteQuerySource,
   WorkNoteSnapshot,
   WorkNoteSourceFile,
 } from './types';
 
 export type { WorkNoteAuditSource } from './types';
+
+type RunnableQuery = Exclude<CompiledQuery, { readonly state: 'invalid' }>;
+
+export interface CompiledWorkNoteQueries {
+  readonly membership: RunnableQuery;
+  readonly ordinaryKind: RunnableQuery;
+  readonly milestoneKind: RunnableQuery;
+}
+
+export type WorkNoteQueryCompilation =
+  | { readonly state: 'valid'; readonly queries: CompiledWorkNoteQueries }
+  | { readonly state: 'invalid'; readonly diagnostics: readonly WorkNoteQueryDiagnostic[] };
+
+export function compileWorkNoteQueries(
+  preset: WorkNoteCompatibilityPreset,
+): WorkNoteQueryCompilation {
+  const candidates: readonly [WorkNoteQuerySource, string, keyof CompiledWorkNoteQueries][] = [
+    ['membershipQuery', preset.membershipQuery, 'membership'],
+    ['ordinaryKindQuery', preset.ordinaryKindQuery, 'ordinaryKind'],
+    ['milestoneKindQuery', preset.milestoneKindQuery, 'milestoneKind'],
+  ];
+  const diagnostics: WorkNoteQueryDiagnostic[] = [];
+  const queries: { -readonly [K in keyof CompiledWorkNoteQueries]?: RunnableQuery } = {};
+  for (const [source, value, key] of candidates) {
+    // Saved disabled presets still need their non-blank slots audited; an empty
+    // kind slot is intentional until the preset is enabled, when it is required.
+    const compiled = compileQuery(value, {
+      enabled: preset.enabled || value.trim().length > 0,
+      required: preset.enabled,
+    });
+    if (compiled.state === 'invalid') {
+      diagnostics.push({ source, ...compiled.diagnostic });
+    } else {
+      queries[key] = compiled;
+    }
+  }
+  if (diagnostics.length > 0) return { state: 'invalid', diagnostics };
+  if (!queries.membership || !queries.ordinaryKind || !queries.milestoneKind) {
+    return { state: 'invalid', diagnostics: [] };
+  }
+  return { state: 'valid', queries: queries as CompiledWorkNoteQueries };
+}
 
 const FIELD_KEYS: readonly (keyof WorkNoteCompatibilityPreset['fields'])[] = [
   'project',
@@ -268,6 +312,7 @@ function projectSnapshot(
   preset: WorkNoteCompatibilityPreset,
   source: WorkNoteAuditSource,
   reverseStatuses: ReadonlyMap<string, string>,
+  queries: CompiledWorkNoteQueries,
 ): {
   readonly snapshot?: WorkNoteSnapshot;
   readonly diagnostics: readonly WorkNoteDiagnostic[];
@@ -280,12 +325,13 @@ function projectSnapshot(
   if (!folderMatch) {
     diagnostics.push({ type: 'outside-folder' });
   }
-  const membershipMatch = evaluateQuery(preset.membershipQuery, file.path, tags, frontmatter);
+  const candidate = { path: file.path, tags, frontmatter };
+  const membershipMatch = evaluateCompiledQuery(queries.membership, candidate);
   if (!membershipMatch) {
     diagnostics.push({ type: 'membership-mismatch' });
   }
-  const ordinary = evaluateQuery(preset.ordinaryKindQuery, file.path, tags, frontmatter);
-  const milestone = evaluateQuery(preset.milestoneKindQuery, file.path, tags, frontmatter);
+  const ordinary = evaluateCompiledQuery(queries.ordinaryKind, candidate);
+  const milestone = evaluateCompiledQuery(queries.milestoneKind, candidate);
   if (ordinary === milestone) {
     diagnostics.push({ type: ordinary ? 'ambiguous-kind' : 'missing-kind' });
   }
@@ -405,23 +451,20 @@ function markerContext(marker: WorkNoteKindMarker): {
 function markerSatisfies(
   marker: WorkNoteKindMarker,
   kind: 'ordinary' | 'milestone',
-  preset: WorkNoteCompatibilityPreset,
   folder: string,
+  queries: CompiledWorkNoteQueries,
 ): boolean {
   const context = markerContext(marker);
   const path = `${folder}/New work note.md`;
-  const membership = evaluateQuery(preset.membershipQuery, path, context.tags, context.frontmatter);
-  const expected = evaluateQuery(
-    kind === 'ordinary' ? preset.ordinaryKindQuery : preset.milestoneKindQuery,
-    path,
-    context.tags,
-    context.frontmatter,
+  const candidate = { path, tags: context.tags, frontmatter: context.frontmatter };
+  const membership = evaluateCompiledQuery(queries.membership, candidate);
+  const expected = evaluateCompiledQuery(
+    kind === 'ordinary' ? queries.ordinaryKind : queries.milestoneKind,
+    candidate,
   );
-  const other = evaluateQuery(
-    kind === 'ordinary' ? preset.milestoneKindQuery : preset.ordinaryKindQuery,
-    path,
-    context.tags,
-    context.frontmatter,
+  const other = evaluateCompiledQuery(
+    kind === 'ordinary' ? queries.milestoneKind : queries.ordinaryKind,
+    candidate,
   );
   return membership && expected && !other;
 }
@@ -430,14 +473,15 @@ function creationCapability(
   source: WorkNoteAuditSource,
   preset: WorkNoteCompatibilityPreset,
   statusMappingValid: boolean,
+  queries: CompiledWorkNoteQueries,
 ): boolean {
   const creation = preset.creation;
   if (!creation || !statusMappingValid || !safeFolder(creation.folder)) return false;
   if (!inFolder(`${creation.folder}/New work note.md`, preset.folder)) return false;
   if (!preset.rawStatusByStatusId[creation.defaultStatusId]?.trim()) return false;
   if (
-    !markerSatisfies(creation.kindMarkers.ordinary, 'ordinary', preset, creation.folder) ||
-    !markerSatisfies(creation.kindMarkers.milestone, 'milestone', preset, creation.folder)
+    !markerSatisfies(creation.kindMarkers.ordinary, 'ordinary', creation.folder, queries) ||
+    !markerSatisfies(creation.kindMarkers.milestone, 'milestone', creation.folder, queries)
   ) {
     return false;
   }
@@ -453,7 +497,14 @@ function creationCapability(
 export function auditWorkNotes(
   source: WorkNoteAuditSource,
   preset: WorkNoteCompatibilityPreset,
+  compiled?: CompiledWorkNoteQueries,
 ): WorkNoteAuditResult {
+  const compilation = compiled
+    ? { state: 'valid' as const, queries: compiled }
+    : compileWorkNoteQueries(preset);
+  if (compilation.state === 'invalid') {
+    return invalidWorkNoteQueryAudit(preset, compilation.diagnostics);
+  }
   const { reverse, issues } = reverseStatusMap(preset);
   const snapshots: WorkNoteSnapshot[] = [];
   const diagnosticsByPath: Record<string, readonly WorkNoteDiagnostic[]> = {};
@@ -468,7 +519,7 @@ export function auditWorkNotes(
     'non-scalar-status',
   ]);
   for (const file of source.files()) {
-    const result = projectSnapshot(file, preset, source, reverse);
+    const result = projectSnapshot(file, preset, source, reverse, compilation.queries);
     if (
       result.candidate &&
       result.diagnostics.some(({ type }) => updateBlockingDiagnostics.has(type))
@@ -493,8 +544,28 @@ export function auditWorkNotes(
     issues,
     capabilities: {
       update,
-      create: preset.enabled && creationCapability(source, preset, mappingValid),
+      create:
+        preset.enabled && creationCapability(source, preset, mappingValid, compilation.queries),
     },
+  };
+}
+
+export function invalidWorkNoteQueryAudit(
+  preset: WorkNoteCompatibilityPreset,
+  diagnostics: readonly WorkNoteQueryDiagnostic[],
+): WorkNoteAuditResult {
+  return {
+    presetFingerprint: computeWorkNotePresetFingerprint(preset),
+    eligiblePaths: [],
+    snapshots: [],
+    diagnosticsByPath: {},
+    issues: diagnostics.map(({ source: field, code: detail, offset }) => ({
+      type: 'invalid-query' as const,
+      field,
+      detail,
+      offset,
+    })),
+    capabilities: { update: false, create: false },
   };
 }
 

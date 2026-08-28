@@ -11,7 +11,9 @@ import type { TaskIndexSettledEvent, TaskQueryApi } from '../../tasks';
 import {
   acceptWorkNoteAudit,
   auditWorkNotes,
+  compileWorkNoteQueries,
   computeWorkNotePresetFingerprint,
+  invalidWorkNoteQueryAudit,
   isAuditAccepted,
   suggestWorkNotePreset,
 } from './compatibility';
@@ -24,6 +26,7 @@ import type {
   WorkNoteDiagnostic,
   WorkNoteIndexEvent,
   WorkNoteIndexSettledEvent,
+  WorkNoteQueryDiagnostic,
   WorkNoteSnapshot,
 } from './types';
 
@@ -37,6 +40,11 @@ interface PendingCompatibilityPreview {
   readonly signature: string;
   readonly scanned: number;
   readonly excluded: number;
+}
+
+interface AuditAttempt {
+  readonly audit: WorkNoteAuditResult;
+  readonly queryDiagnostics: readonly WorkNoteQueryDiagnostic[];
 }
 
 function compatibilityAcceptanceSignature(
@@ -173,6 +181,7 @@ export class WorkNoteIndex {
   private ready = false;
   private previewNonce = 0;
   private pendingCompatibilityPreview: PendingCompatibilityPreview | null = null;
+  private queryDiagnosticEntries: readonly WorkNoteQueryDiagnostic[] = [];
 
   constructor(
     private readonly app: App,
@@ -209,9 +218,12 @@ export class WorkNoteIndex {
   initialize(): void {
     if (this.ready) return;
     const preset = this.preset();
-    const audit = this.auditPreset(preset);
-    this.replaceFromAudit(audit);
-    this.indexedFingerprint = audit.presetFingerprint;
+    const attempt = this.auditPreset(preset);
+    if (attempt.queryDiagnostics.length === 0) {
+      this.replaceFromAudit(attempt.audit);
+      this.indexedFingerprint = attempt.audit.presetFingerprint;
+    }
+    this.queryDiagnosticEntries = attempt.queryDiagnostics;
     if (preset.enabled) {
       for (const file of this.app.vault.getMarkdownFiles()) this.generations.set(file.path, 1);
     }
@@ -297,7 +309,7 @@ export class WorkNoteIndex {
   }
 
   async audit(): Promise<WorkNoteAuditResult> {
-    return Promise.resolve(this.auditPreset(this.preset()));
+    return Promise.resolve(this.auditPreset(this.preset()).audit);
   }
 
   async previewCompatibility(): Promise<WorkNoteCompatibilityPreview> {
@@ -407,15 +419,30 @@ export class WorkNoteIndex {
     });
   }
 
-  private auditPreset(preset: WorkNoteCompatibilityPreset): WorkNoteAuditResult {
-    if (preset.enabled) return auditWorkNotes(this.source(), preset);
+  private auditPreset(preset: WorkNoteCompatibilityPreset): AuditAttempt {
+    if (preset.enabled) {
+      const compilation = compileWorkNoteQueries(preset);
+      if (compilation.state === 'valid') {
+        return {
+          audit: auditWorkNotes(this.source(), preset, compilation.queries),
+          queryDiagnostics: [],
+        };
+      }
+      return {
+        audit: invalidWorkNoteQueryAudit(preset, compilation.diagnostics),
+        queryDiagnostics: compilation.diagnostics,
+      };
+    }
     return {
-      presetFingerprint: computeWorkNotePresetFingerprint(preset),
-      eligiblePaths: [],
-      snapshots: [],
-      diagnosticsByPath: {},
-      issues: [],
-      capabilities: { update: false, create: false },
+      queryDiagnostics: [],
+      audit: {
+        presetFingerprint: computeWorkNotePresetFingerprint(preset),
+        eligiblePaths: [],
+        snapshots: [],
+        diagnosticsByPath: {},
+        issues: [],
+        capabilities: { update: false, create: false },
+      },
     };
   }
 
@@ -506,6 +533,47 @@ export class WorkNoteIndex {
     this.debounce = window.setTimeout(() => this.flush(), 0);
   }
 
+  private auditForFlush(
+    preset: WorkNoteCompatibilityPreset,
+    paths: ReadonlySet<string> | undefined,
+  ): AuditAttempt {
+    if (!preset.enabled) return this.auditPreset(preset);
+    const compilation = compileWorkNoteQueries(preset);
+    if (compilation.state === 'valid') {
+      return {
+        audit: auditWorkNotes(this.source(paths), preset, compilation.queries),
+        queryDiagnostics: [],
+      };
+    }
+    return {
+      audit: invalidWorkNoteQueryAudit(preset, compilation.diagnostics),
+      queryDiagnostics: compilation.diagnostics,
+    };
+  }
+
+  private preserveIndexForInvalidAttempt(attempt: AuditAttempt): boolean {
+    if (attempt.queryDiagnostics.length === 0) return false;
+    const diagnosticsChanged =
+      JSON.stringify(this.queryDiagnosticEntries) !== JSON.stringify(attempt.queryDiagnostics);
+    this.queryDiagnosticEntries = attempt.queryDiagnostics;
+    this.pendingPaths.clear();
+    this.invalidatedProjectPaths.clear();
+    this.fullRefreshPending = false;
+    this.topologyRefreshPending = false;
+    this.explicitRefreshPending = false;
+    if (diagnosticsChanged) {
+      const event: WorkNoteIndexEvent = {
+        cause: 'index',
+        changedPaths: [],
+        invalidatedProjectPaths: [],
+        taskBarriers: [],
+        queryDiagnostics: this.queryDiagnosticEntries,
+      };
+      for (const listener of this.listeners) listener(event);
+    }
+    return true;
+  }
+
   private flush(): void {
     this.debounce = 0;
     const oldSnapshots = new Map(this.byPath);
@@ -517,9 +585,10 @@ export class WorkNoteIndex {
     const presetChanged = computeWorkNotePresetFingerprint(preset) !== this.indexedFingerprint;
     const fullRefresh = this.fullRefreshPending || presetChanged;
     const auditPaths = fullRefresh ? undefined : this.pendingPaths;
-    const audit = preset.enabled
-      ? auditWorkNotes(this.source(auditPaths), preset)
-      : this.auditPreset(preset);
+    const attempt = this.auditForFlush(preset, auditPaths);
+    const audit = attempt.audit;
+    if (this.preserveIndexForInvalidAttempt(attempt)) return;
+    this.queryDiagnosticEntries = [];
     const auditByPath = new Map(audit.snapshots.map((snapshot) => [snapshot.path, snapshot]));
     if (fullRefresh) {
       this.replaceFromAudit(audit);
@@ -675,6 +744,10 @@ export class WorkNoteIndex {
     return this.diagnosticsByPath.get(path) ?? [];
   }
 
+  queryDiagnostics(): readonly WorkNoteQueryDiagnostic[] {
+    return this.queryDiagnosticEntries;
+  }
+
   onUpdate(listener: (event: WorkNoteIndexEvent) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -701,6 +774,7 @@ export class WorkNoteIndex {
     this.settledTaskTopologies.clear();
     this.topologyBarrierPaths.clear();
     this.topologyRefreshPending = false;
+    this.queryDiagnosticEntries = [];
     this.listeners.clear();
     this.settledListeners.clear();
     this.generations.clear();

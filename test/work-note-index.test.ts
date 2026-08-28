@@ -217,6 +217,33 @@ function taskSettlementSource() {
 afterEach(() => vi.useRealTimers());
 
 describe('WorkNoteIndex', () => {
+  it('keeps the last working Work Note index and exposes source-specific query diagnostics', () => {
+    vi.useFakeTimers();
+    const h = harness(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { 'Tasks/A.md\0Projects/A': 'Projects/A.md' },
+    );
+    let current = preset;
+    const index = new WorkNoteIndex(h.app, () => current);
+    index.initialize();
+
+    current = { ...preset, membershipQuery: '#work-note AND (' };
+    h.metadata('Tasks/A.md');
+    vi.runAllTimers();
+
+    expect(index.list().map(({ path }) => path)).toEqual(['Tasks/A.md']);
+    expect(index.queryDiagnostics()).toEqual([
+      { source: 'membershipQuery', code: 'unclosed-parenthesis', offset: 15 },
+    ]);
+    index.destroy();
+  });
+
   it.each(['tasks-changed', 'tasks-unchanged'] as const)(
     'publishes the exact Task barrier for a metadata edit when %s',
     (taskResult) => {

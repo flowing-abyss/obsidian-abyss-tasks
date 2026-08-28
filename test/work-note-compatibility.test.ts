@@ -62,6 +62,36 @@ function source(
 }
 
 describe('Work Note compatibility audit', () => {
+  it.each([
+    ['#work-note', ['Tasks/A.md', 'Tasks/Archived.md']],
+    ['Tasks/ AND #work-note', ['Tasks/A.md', 'Tasks/Archived.md']],
+    ['kind=ordinary OR #work-note/milestone', ['Tasks/A.md', 'Tasks/Archived.md']],
+    ['"Tasks/" AND (kind=ordinary AND -#archived)', ['Tasks/A.md']],
+  ])('keeps legacy saved membership query %s membership', (membershipQuery, expectedPaths) => {
+    const fixture = source(
+      [
+        {
+          path: 'Tasks/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active', kind: 'ordinary' },
+        },
+        {
+          path: 'Tasks/Archived.md',
+          tags: ['#work-note/task', '#archived'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active', kind: 'ordinary' },
+        },
+      ],
+      {
+        'Tasks/A.md\0Projects/A': 'Projects/A.md',
+        'Tasks/Archived.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+
+    expect(auditWorkNotes(fixture, preset({ membershipQuery })).eligiblePaths).toEqual(
+      expectedPaths,
+    );
+  });
+
   it('excludes a service note with project and status that fails membership query', () => {
     const fixture = source(
       [

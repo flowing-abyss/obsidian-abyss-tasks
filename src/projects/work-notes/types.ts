@@ -1,3 +1,4 @@
+import type { QueryDiagnostic } from '../../query/compileQuery';
 import type { ProjectDateValue, ProjectRange } from '../types';
 
 export type WorkNoteKindMarker =
@@ -65,10 +66,18 @@ export interface WorkNoteDiagnostic {
     | 'broken-relation'
     | 'ambiguous-relation'
     | 'invalid-status-mapping'
-    | 'ambiguous-status-mapping';
+    | 'ambiguous-status-mapping'
+    | 'invalid-query';
   readonly field?: string;
   readonly rawValue?: unknown;
   readonly detail?: string;
+  readonly offset?: number;
+}
+
+export type WorkNoteQuerySource = 'membershipQuery' | 'ordinaryKindQuery' | 'milestoneKindQuery';
+
+export interface WorkNoteQueryDiagnostic extends QueryDiagnostic {
+  readonly source: WorkNoteQuerySource;
 }
 
 export interface WorkNoteSnapshot {
@@ -202,6 +211,7 @@ export interface WorkNoteIndexEvent {
   readonly changedPaths: readonly string[];
   readonly invalidatedProjectPaths: readonly string[];
   readonly taskBarriers: readonly { readonly path: string; readonly generation: number }[];
+  readonly queryDiagnostics?: readonly WorkNoteQueryDiagnostic[];
 }
 
 export interface WorkNoteIndexSettledEvent {

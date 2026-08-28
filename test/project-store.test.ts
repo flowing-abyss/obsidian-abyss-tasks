@@ -101,6 +101,80 @@ function storeWith(tasks: TaskSnapshot[]): never {
 }
 
 describe('ProjectStore enumeration', () => {
+  it.each([
+    ['Projects/', ['Projects/A.md', 'Projects/B.md']],
+    ['#project', ['Projects/A.md']],
+    ['status=active', ['Projects/A.md']],
+    ['(Projects/ OR Archive/) AND -#archived', ['Projects/A.md', 'Projects/B.md']],
+    ['"Project Plans/" AND status="in progress"', ['Project Plans/C.md']],
+  ])('keeps legacy saved membership query %s membership', (membershipQuery, expectedPaths) => {
+    const { app } = makeApp([
+      { path: 'Projects/A.md', tags: ['#project/client'], fm: { status: 'active' } },
+      { path: 'Projects/B.md', tags: [], fm: { status: 'paused' } },
+      { path: 'Archive/C.md', tags: ['#archived'], fm: { status: 'done' } },
+      { path: 'Project Plans/C.md', tags: [], fm: { status: 'in progress' } },
+    ]);
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      projects: { ...DEFAULT_SETTINGS.projects, membershipQuery },
+    };
+    const store = new ProjectStore(app, storeWith([]), settings);
+
+    store.initialize();
+
+    expect(store.list().map(({ path }) => path)).toEqual(expectedPaths);
+    store.destroy();
+  });
+
+  it('keeps the last working project index and exposes a diagnostic for an incompatible query', () => {
+    const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      projects: { ...DEFAULT_SETTINGS.projects, membershipQuery: 'Projects/' },
+    };
+    const store = new ProjectStore(app, storeWith([]), settings);
+    store.initialize();
+
+    settings.projects.membershipQuery = 'Projects/ AND (';
+    store.refresh();
+
+    expect(store.list().map(({ path }) => path)).toEqual(['Projects/A.md']);
+    expect(store.queryDiagnostics()).toEqual([
+      { source: 'projects.membershipQuery', code: 'unclosed-parenthesis', offset: 14 },
+    ]);
+    store.destroy();
+  });
+
+  it('does not admit later metadata changes while the configured membership query is invalid', () => {
+    vi.useFakeTimers();
+    const mock = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
+    let indexListener: ((event: TaskIndexEvent) => void) | undefined;
+    const store = queryApiForTasks(
+      () => [] as TaskSnapshot[],
+      (listener) => {
+        indexListener = listener;
+        return () => {};
+      },
+    ) as never;
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      projects: { ...DEFAULT_SETTINGS.projects, membershipQuery: 'Projects/' },
+    };
+    const projects = new ProjectStore(mock.app, store, settings);
+    projects.initialize();
+    settings.projects.membershipQuery = 'Projects/ AND (';
+    projects.refresh();
+
+    mock.setCache('Projects/B.md', { path: 'Projects/B.md', tags: [], fm: { status: 'active' } });
+    mock.fireChanged('Projects/B.md');
+    indexListener?.({ type: 'changed', files: ['Projects/B.md'] });
+    vi.advanceTimersByTime(150);
+
+    expect(projects.list().map(({ path }) => path)).toEqual(['Projects/A.md']);
+    projects.destroy();
+    vi.useRealTimers();
+  });
+
   it('lists only notes matching the membership query and resolves status', () => {
     const { app } = makeApp([
       { path: 'Projects/A.md', tags: [], fm: { status: 'active' } },
