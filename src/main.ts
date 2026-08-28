@@ -9,7 +9,11 @@ import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordina
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
 import type {
   WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityPreset,
   WorkNoteCompatibilityPreview,
+  WorkNoteCompatibilityToken,
+  WorkNoteCompatibilityValidationResult,
+  WorkNoteValidatedApplyResult,
 } from './projects/work-notes/types';
 import { WorkNoteCommandService } from './projects/work-notes/WorkNoteCommandService';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
@@ -118,6 +122,9 @@ export default class TaskCalendarPlugin extends Plugin {
       () => this.settings.projects.workNoteCompatibility,
       this.queries,
       () => this.settings.projects.statuses,
+      {
+        persist: (preset) => this.persistWorkNoteCompatibility(preset),
+      },
     );
     this.workNoteCommands = new WorkNoteCommandService(
       this.app,
@@ -247,31 +254,56 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   async previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview> {
-    return this.workNoteIndex.previewCompatibility();
+    const preview = await this.workNoteIndex.previewCompatibility();
+    const readOnlyPreview = { ...preview };
+    delete readOnlyPreview.acceptanceToken;
+    return readOnlyPreview;
   }
 
-  async acceptWorkNoteCompatibility(token: string): Promise<WorkNoteCompatibilityAcceptanceResult> {
-    const accepted = await this.workNoteIndex.acceptSuggestedCompatibility(
-      token,
-      new Date().toISOString(),
-    );
-    if (accepted.type === 'ok') {
-      this.settings.projects.workNoteCompatibility = accepted.preset;
-      this.settings.projects.view.workNotes = {
-        ...this.settings.projects.view.workNotes,
-        statusIds: Object.keys(accepted.preset.rawStatusByStatusId),
-      };
-      await this.saveSettings();
-    }
-    return accepted;
+  async validateWorkNoteCompatibility(
+    candidate: WorkNoteCompatibilityPreset,
+  ): Promise<WorkNoteCompatibilityValidationResult> {
+    return this.workNoteIndex.validateCompatibility(candidate);
+  }
+
+  async applyValidatedWorkNoteCompatibility(
+    token: WorkNoteCompatibilityToken,
+  ): Promise<WorkNoteValidatedApplyResult> {
+    return this.workNoteIndex.acceptValidatedCompatibility(token);
+  }
+
+  acceptWorkNoteCompatibility(
+    _legacyToken: string,
+  ): Promise<WorkNoteCompatibilityAcceptanceResult> {
+    return Promise.resolve({
+      type: 'compatibility-conflict',
+      reason: 'exact-validation-required',
+    });
   }
 
   async disableWorkNoteCompatibility(): Promise<void> {
-    this.settings.projects.workNoteCompatibility = {
-      ...this.settings.projects.workNoteCompatibility,
-      enabled: false,
+    const result = await this.workNoteIndex.disableCompatibility();
+    if (result.type === 'save-failed' || result.type === 'persistence-unavailable') {
+      throw new Error('Could not persist Work Note compatibility state');
+    }
+  }
+
+  private async persistWorkNoteCompatibility(preset: WorkNoteCompatibilityPreset): Promise<void> {
+    const persistedPreset = structuredClone(preset);
+    const statusIds = Object.keys(persistedPreset.rawStatusByStatusId);
+    const nextSettings = structuredClone(this.settings);
+    nextSettings.projects.workNoteCompatibility = persistedPreset;
+    nextSettings.projects.view.workNotes = {
+      ...nextSettings.projects.view.workNotes,
+      statusIds,
     };
-    await this.saveSettings();
+    await this.saveData(nextSettings);
+    beginSettingsSave(this.settings);
+    this.settings.projects.workNoteCompatibility = structuredClone(persistedPreset);
+    this.settings.projects.view.workNotes = {
+      ...this.settings.projects.view.workNotes,
+      statusIds,
+    };
   }
 
   readOnlyCompatibilityDiagnostic(): {

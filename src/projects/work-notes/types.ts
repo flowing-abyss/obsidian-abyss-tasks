@@ -142,6 +142,7 @@ export interface WorkNoteSourceFile {
   readonly path: string;
   readonly tags: readonly string[];
   readonly frontmatter: Readonly<Record<string, unknown>>;
+  readonly revision?: { readonly mtime: number; readonly size: number };
 }
 
 export interface WorkNoteAuditSource {
@@ -162,7 +163,7 @@ export interface WorkNoteAuditResult {
 
 /** Aggregate-only compatibility preview safe to render or export without vault identities. */
 export interface WorkNoteCompatibilityPreview {
-  /** Opaque, in-memory handle for accepting this exact disabled-preset preview. */
+  /** Legacy Task 12C UI bridge; production never returns it. */
   readonly acceptanceToken?: string;
   readonly preset: { readonly enabled: boolean; readonly accepted: boolean };
   readonly notes: {
@@ -199,6 +200,47 @@ export interface WorkNoteCompatibilityPreview {
   readonly diagnostics: Readonly<Partial<Record<WorkNoteDiagnostic['type'], number>>>;
   readonly capabilities: { readonly update: boolean; readonly create: boolean };
 }
+
+declare const workNoteCompatibilityTokenBrand: unique symbol;
+
+/** Opaque, owner-bound, single-use handle for one exact in-memory validation. */
+export interface WorkNoteCompatibilityToken {
+  readonly [workNoteCompatibilityTokenBrand]: never;
+}
+
+export type WorkNoteCompatibilityValidationResult =
+  | {
+      readonly type: 'audited';
+      readonly token: WorkNoteCompatibilityToken;
+      readonly presetFingerprint: string;
+      readonly preview: WorkNoteCompatibilityPreview;
+    }
+  | {
+      readonly type: 'invalid-draft';
+      readonly reason: 'syntax-invalid' | 'candidate-disabled';
+      readonly diagnostics: readonly WorkNoteQueryDiagnostic[];
+    };
+
+export type WorkNoteValidatedApplyResult =
+  | {
+      readonly type: 'applied' | 'unchanged';
+      readonly preset: WorkNoteCompatibilityPreset;
+      readonly preview: WorkNoteCompatibilityPreview;
+    }
+  | {
+      readonly type: 'revalidation-required';
+      readonly reason:
+        | 'invalid-token'
+        | 'candidate-changed'
+        | 'audit-inputs-changed'
+        | 'settings-changed'
+        | 'save-failed'
+        | 'persistence-unavailable';
+    };
+
+export type WorkNoteCompatibilityDisableResult =
+  | { readonly type: 'disabled' | 'unchanged'; readonly preset: WorkNoteCompatibilityPreset }
+  | { readonly type: 'save-failed' | 'persistence-unavailable' };
 
 export type WorkNoteCompatibilityAcceptanceResult =
   | {

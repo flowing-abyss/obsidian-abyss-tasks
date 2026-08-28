@@ -45,8 +45,13 @@ interface PluginLike {
   openPanel: () => Promise<void>;
   previewWorkNoteCompatibility: () => Promise<unknown>;
   acceptWorkNoteCompatibility: (token: string) => Promise<unknown>;
+  disableWorkNoteCompatibility: () => Promise<void>;
+  validateWorkNoteCompatibility: (candidate: unknown) => Promise<unknown>;
+  applyValidatedWorkNoteCompatibility: (token: unknown) => Promise<unknown>;
   workNoteIndex: {
+    previewCompatibility: () => Promise<unknown>;
     acceptSuggestedCompatibility: (token: string, acceptedAt: string) => Promise<unknown>;
+    disableCompatibility: () => Promise<unknown>;
     refresh: () => void;
   };
   workNoteCommands: { statuses: () => readonly { id: string; label: string }[] };
@@ -132,44 +137,67 @@ describe('TaskCalendarPlugin saveSettings', () => {
     expect(spy).toHaveBeenCalledWith(plugin.settings);
   });
 
-  it('initializes the Work Notes status filter from the accepted mapping ids', async () => {
+  it('does not expose the legacy inferred acceptance token through the production preview', async () => {
     const plugin = makePlugin();
     await plugin.loadSettings();
-    plugin.settings.projects.view.workNotes = {
-      ...plugin.settings.projects.view.workNotes,
-      statusIds: ['legacy-active', 'legacy-done'],
-    };
-    const acceptedPreset = {
-      ...plugin.settings.projects.workNoteCompatibility,
-      enabled: true,
-      rawStatusByStatusId: {
-        'project-active-id': 'Active',
-        'project-done-id': 'Done',
-        'unmatched-review': 'Review',
-      },
-    };
     plugin.workNoteIndex = {
-      acceptSuggestedCompatibility: vi.fn().mockResolvedValue({
-        type: 'ok',
-        preset: acceptedPreset,
-        preview: {},
-      }),
+      previewCompatibility: vi.fn().mockResolvedValue({ acceptanceToken: 'legacy-token' }),
+      acceptSuggestedCompatibility: vi.fn(),
+      disableCompatibility: vi.fn(),
       refresh: vi.fn(),
     };
 
-    await plugin.acceptWorkNoteCompatibility('preview-token');
+    const preview = (await plugin.previewWorkNoteCompatibility()) as Record<string, unknown>;
 
-    expect(plugin.settings.projects.view.workNotes.statusIds).toEqual([
-      'project-active-id',
-      'project-done-id',
-      'unmatched-review',
-    ]);
-    expect(plugin.settings.projects.workNoteCompatibility).toBe(acceptedPreset);
+    expect(preview).not.toHaveProperty('acceptanceToken');
+    expect(plugin.workNoteIndex.acceptSuggestedCompatibility).not.toHaveBeenCalled();
+  });
+
+  it('rejects the retired inferred acceptance path without saving or publishing', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const before = structuredClone(plugin.settings);
+    plugin.workNoteIndex = {
+      previewCompatibility: vi.fn(),
+      acceptSuggestedCompatibility: vi.fn().mockResolvedValue({
+        type: 'compatibility-conflict',
+        reason: 'exact-validation-required',
+      }),
+      disableCompatibility: vi.fn(),
+      refresh: vi.fn(),
+    };
+    vi.spyOn(plugin, 'saveData').mockRejectedValue(new Error('disk full'));
+
+    expect(await plugin.acceptWorkNoteCompatibility('preview-token')).toEqual({
+      type: 'compatibility-conflict',
+      reason: 'exact-validation-required',
+    });
+
+    expect(plugin.settings).toEqual(before);
+    expect(plugin.workNoteIndex.refresh).not.toHaveBeenCalled();
+    expect(plugin.saveData).not.toHaveBeenCalled();
+  });
+
+  it('does not report disable success when atomic persistence fails', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    const before = structuredClone(plugin.settings);
+    plugin.workNoteIndex = {
+      previewCompatibility: vi.fn(),
+      acceptSuggestedCompatibility: vi.fn(),
+      disableCompatibility: vi.fn().mockResolvedValue({ type: 'save-failed' }),
+      refresh: vi.fn(),
+    };
+
+    await expect(plugin.disableWorkNoteCompatibility()).rejects.toThrow(
+      'Could not persist Work Note compatibility state',
+    );
+    expect(plugin.settings).toEqual(before);
   });
 });
 
 describe('TaskCalendarPlugin Work Note compatibility wiring', () => {
-  it('passes the configured Project statuses through the real preview and acceptance path', async () => {
+  it('passes configured Project statuses through the exact candidate transaction', async () => {
     const projects = buildDefaultProjectsSettings();
     projects.statuses = [
       {
@@ -210,21 +238,58 @@ describe('TaskCalendarPlugin Work Note compatibility wiring', () => {
 
     await plugin.onload();
     try {
-      const preview = (await plugin.previewWorkNoteCompatibility()) as {
-        acceptanceToken?: string;
+      const validation = (await plugin.validateWorkNoteCompatibility({
+        ...plugin.settings.projects.workNoteCompatibility,
+        enabled: true,
+        membershipQuery: '#work-note',
+        ordinaryKindQuery: '#work-note/task',
+        milestoneKindQuery: '#work-note/milestone',
+        folder: 'Work Notes',
+        rawStatusByStatusId: { 'canonical-completed-id': 'dOnE' },
+      })) as {
+        type: string;
+        token?: unknown;
       };
-      const accepted = (await plugin.acceptWorkNoteCompatibility(preview.acceptanceToken!)) as {
+      expect(validation.type).toBe('audited');
+      const accepted = (await plugin.applyValidatedWorkNoteCompatibility(validation.token)) as {
         type: string;
         preset?: { rawStatusByStatusId: Readonly<Record<string, string>> };
       };
 
-      expect(accepted.type).toBe('ok');
+      expect(accepted.type).toBe('applied');
       expect(accepted.preset?.rawStatusByStatusId).toEqual({
         'canonical-completed-id': 'dOnE',
       });
       expect(plugin.workNoteCommands.statuses()).toEqual([
         { id: 'canonical-completed-id', label: 'Complete' },
       ]);
+    } finally {
+      plugin.onunload();
+    }
+  });
+
+  it('returns revalidation-required and preserves settings when exact apply cannot save', async () => {
+    const plugin = makePlugin();
+    await plugin.onload();
+    try {
+      const before = structuredClone(plugin.settings);
+      const validation = (await plugin.validateWorkNoteCompatibility({
+        ...plugin.settings.projects.workNoteCompatibility,
+        enabled: true,
+        membershipQuery: '#work-note',
+        ordinaryKindQuery: '#work-note/task',
+        milestoneKindQuery: '#work-note/milestone',
+        folder: 'Work Notes',
+        rawStatusByStatusId: { active: 'Active' },
+      })) as { type: string; token?: unknown };
+      expect(validation.type).toBe('audited');
+      vi.spyOn(plugin, 'saveData').mockRejectedValue(new Error('disk full'));
+
+      expect(await plugin.applyValidatedWorkNoteCompatibility(validation.token)).toEqual({
+        type: 'revalidation-required',
+        reason: 'save-failed',
+      });
+      expect(plugin.settings).toEqual(before);
     } finally {
       plugin.onunload();
     }

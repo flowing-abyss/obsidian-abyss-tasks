@@ -195,6 +195,37 @@ describe('Work Note compatibility audit', () => {
     ).toEqual({ update: true, create: false });
   });
 
+  it.each([
+    ['project ownership', { Project: '[[Projects/Template owner]]' }, []],
+    ['status ownership', { Status: 'Done' }, []],
+    ['opposite kind marker', {}, ['#work-note/milestone']],
+  ] as const)(
+    'rejects creation when template frontmatter has a conflicting %s',
+    (_name, frontmatter, tags) => {
+      const fixture = source([
+        {
+          path: 'Templates/Work note.md',
+          tags,
+          frontmatter,
+        },
+      ]);
+
+      expect(auditWorkNotes(fixture, preset()).capabilities.create).toBe(false);
+    },
+  );
+
+  it('keeps creation available when template frontmatter is unrelated or matches owned defaults', () => {
+    const fixture = source([
+      {
+        path: 'Templates/Work note.md',
+        tags: ['#template'],
+        frontmatter: { Status: 'Active', Category: 'Research' },
+      },
+    ]);
+
+    expect(auditWorkNotes(fixture, preset()).capabilities.create).toBe(true);
+  });
+
   it('does not claim update safety when a queried Work Note is structurally incompatible', () => {
     const fixture = source([
       {

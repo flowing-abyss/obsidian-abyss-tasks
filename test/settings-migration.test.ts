@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
+import { acceptWorkNoteAudit } from '../src/projects/work-notes/compatibility';
+import type { WorkNoteCompatibilityPreset } from '../src/projects/work-notes/types';
 import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
 
@@ -284,6 +286,56 @@ describe('projects migration', () => {
     const projects = raw['projects'] as { workNoteCompatibility: typeof accepted };
     expect(projects.workNoteCompatibility).toBe(accepted);
     expect(projects.workNoteCompatibility.acceptedAudit).toBeUndefined();
+  });
+
+  it('round-trips a structurally valid accepted preset without semantic mutation', () => {
+    const candidate: WorkNoteCompatibilityPreset = {
+      revision: 14,
+      enabled: true,
+      membershipQuery: 'Work Notes/ AND #work-note',
+      ordinaryKindQuery: '#work-note/task',
+      milestoneKindQuery: '#work-note/milestone',
+      folder: 'Work Notes',
+      fields: {
+        project: 'Project',
+        status: 'Status',
+        priority: 'Priority',
+        description: 'Description',
+        start: 'Start',
+        end: 'End',
+        created: 'Created',
+        updated: 'Updated',
+        id: 'ID',
+        milestone: 'Milestone',
+        blockedBy: 'Blocked by',
+        related: 'Related',
+      },
+      rawStatusByStatusId: { active: 'Active', done: 'Done' },
+      creation: {
+        folder: 'Work Notes',
+        templatePath: 'Templates/Work note.md',
+        defaultKind: 'ordinary',
+        defaultStatusId: 'active',
+        kindMarkers: {
+          ordinary: { kind: 'frontmatter-tag', value: 'work-note/task' },
+          milestone: { kind: 'frontmatter-tag', value: 'work-note/milestone' },
+        },
+      },
+    };
+    const accepted = Object.assign(
+      acceptWorkNoteAudit(candidate, { update: true, create: true }, '2026-08-28T00:00:00.000Z'),
+      { futureCompatibilityOption: { preserve: ['exactly'] } },
+    );
+    const raw: Record<string, unknown> = {
+      projects: { statuses: [], workNoteCompatibility: accepted },
+    };
+    const before = structuredClone(accepted);
+
+    migrateSettings(raw);
+
+    const migrated = (raw['projects'] as { workNoteCompatibility: unknown }).workNoteCompatibility;
+    expect(migrated).toEqual(before);
+    expect(migrated).toBe(accepted);
   });
 
   it('replaces a malformed persisted creation contract with a disabled preset', () => {

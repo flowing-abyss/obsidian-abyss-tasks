@@ -102,14 +102,22 @@ export function buildDisabledWorkNotePreset(): WorkNoteCompatibilityPreset {
   };
 }
 
-function stableObject(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableObject);
+function stableObject(value: unknown, preserveObjectOrder = false): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stableObject(entry, preserveObjectOrder));
   if (value === null || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (!preserveObjectOrder) entries.sort(([left], [right]) => compareCodeUnits(left, right));
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => compareCodeUnits(left, right))
-      .map(([key, entry]) => [key, stableObject(entry)]),
+    entries.map(([key, entry]) => [key, stableObject(entry, preserveObjectOrder)]),
   );
+}
+
+/** Canonical structural representation shared by preset and acceptance fingerprints. */
+export function computeWorkNoteStructuralFingerprint(
+  value: unknown,
+  options: { readonly preserveObjectOrder?: boolean } = {},
+): string {
+  return JSON.stringify(stableObject(value, options.preserveObjectOrder === true));
 }
 
 function compareCodeUnits(left: string, right: string): number {
@@ -130,7 +138,7 @@ export function computeWorkNotePresetFingerprint(preset: WorkNoteCompatibilityPr
     rawStatusByStatusId: preset.rawStatusByStatusId,
     creation: preset.creation ?? null,
   };
-  return `work-note-preset:v2:${JSON.stringify(stableObject(audited))}`;
+  return `work-note-preset:v2:${computeWorkNoteStructuralFingerprint(audited)}`;
 }
 
 export function isAuditAccepted(preset: WorkNoteCompatibilityPreset): boolean {
@@ -465,10 +473,18 @@ function markerSatisfies(
   kind: 'ordinary' | 'milestone',
   folder: string,
   queries: CompiledWorkNoteQueries,
+  template?: WorkNoteSourceFile,
 ): boolean {
   const context = markerContext(marker);
+  const tags = [...(template?.tags ?? []), ...context.tags];
+  const frontmatter = { ...(template?.frontmatter ?? {}) };
+  if (marker.kind === 'property') {
+    const existing = frontmatter[marker.property];
+    if (existing !== undefined && existing !== marker.value) return false;
+  }
+  Object.assign(frontmatter, context.frontmatter);
   const path = `${folder}/New work note.md`;
-  const candidate = { path, tags: context.tags, frontmatter: context.frontmatter };
+  const candidate = { path, tags, frontmatter };
   const membership = evaluateCompiledQuery(queries.membership, candidate);
   const expected = evaluateCompiledQuery(
     kind === 'ordinary' ? queries.ordinaryKind : queries.milestoneKind,
@@ -490,20 +506,47 @@ function creationCapability(
   const creation = preset.creation;
   if (!creation || !statusMappingValid || !safeFolder(creation.folder)) return false;
   if (!inFolder(`${creation.folder}/New work note.md`, preset.folder)) return false;
-  if (!preset.rawStatusByStatusId[creation.defaultStatusId]?.trim()) return false;
+  const defaultRawStatus = preset.rawStatusByStatusId[creation.defaultStatusId];
+  if (!defaultRawStatus?.trim()) return false;
+  const templatePath = creation.templatePath;
   if (
-    !markerSatisfies(creation.kindMarkers.ordinary, 'ordinary', creation.folder, queries) ||
-    !markerSatisfies(creation.kindMarkers.milestone, 'milestone', creation.folder, queries)
+    templatePath !== undefined &&
+    (!safeFolder(templatePath.replace(/\/[^/]+$/u, '')) ||
+      !templatePath.endsWith('.md') ||
+      !source.fileExists(templatePath))
   ) {
     return false;
   }
-  const templatePath = creation.templatePath;
-  return (
-    templatePath === undefined ||
-    (safeFolder(templatePath.replace(/\/[^/]+$/u, '')) &&
-      templatePath.endsWith('.md') &&
-      source.fileExists(templatePath))
-  );
+  const template = templatePath
+    ? source.files().find(({ path }) => path === templatePath)
+    : undefined;
+  if (
+    template &&
+    (template.frontmatter[preset.fields.project] !== undefined ||
+      (template.frontmatter[preset.fields.status] !== undefined &&
+        template.frontmatter[preset.fields.status] !== defaultRawStatus))
+  ) {
+    return false;
+  }
+  if (
+    !markerSatisfies(
+      creation.kindMarkers.ordinary,
+      'ordinary',
+      creation.folder,
+      queries,
+      template,
+    ) ||
+    !markerSatisfies(
+      creation.kindMarkers.milestone,
+      'milestone',
+      creation.folder,
+      queries,
+      template,
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 export function auditWorkNotes(

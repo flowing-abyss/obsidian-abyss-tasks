@@ -13,6 +13,7 @@ import {
   auditWorkNotes,
   compileWorkNoteQueries,
   computeWorkNotePresetFingerprint,
+  computeWorkNoteStructuralFingerprint,
   invalidWorkNoteQueryAudit,
   isAuditAccepted,
   suggestWorkNotePreset,
@@ -20,26 +21,42 @@ import {
 import type {
   WorkNoteAuditResult,
   WorkNoteAuditSource,
-  WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityDisableResult,
   WorkNoteCompatibilityPreset,
   WorkNoteCompatibilityPreview,
+  WorkNoteCompatibilityToken,
+  WorkNoteCompatibilityValidationResult,
   WorkNoteDiagnostic,
   WorkNoteIndexEvent,
   WorkNoteIndexSettledEvent,
   WorkNoteQueryDiagnostic,
   WorkNoteSnapshot,
+  WorkNoteValidatedApplyResult,
 } from './types';
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
 type ProjectStatusProvider = () => readonly ProjectStatus[];
 type TaskTopologySettlement = Extract<TaskIndexSettledEvent, { readonly reason: 'topology' }>;
 
-interface PendingCompatibilityPreview {
-  readonly token: string;
+export interface WorkNoteCompatibilityTransactionOptions {
+  readonly persist: (preset: WorkNoteCompatibilityPreset) => Promise<void>;
+  readonly settingsSignature?: () => unknown;
+  readonly acceptedAt?: () => string;
+}
+
+interface CapturedCompatibilityAudit {
+  readonly audit: WorkNoteAuditResult;
+  readonly preview: WorkNoteCompatibilityPreview;
+  readonly auditInputsSignature: string;
+}
+
+interface PendingCompatibilityValidation {
+  readonly candidateReference: WorkNoteCompatibilityPreset;
   readonly candidate: WorkNoteCompatibilityPreset;
-  readonly signature: string;
-  readonly scanned: number;
-  readonly excluded: number;
+  readonly candidateSignature: string;
+  readonly settingsSignature: string;
+  readonly auditInputsSignature: string;
+  readonly epoch: number;
 }
 
 interface AuditAttempt {
@@ -47,29 +64,43 @@ interface AuditAttempt {
   readonly queryDiagnostics: readonly WorkNoteQueryDiagnostic[];
 }
 
-function compatibilityAcceptanceSignature(
-  candidate: WorkNoteCompatibilityPreset,
-  audit: WorkNoteAuditResult,
-  scanned: number,
-  excluded: number,
-  projectStatuses: readonly ProjectStatus[],
-): string {
-  return JSON.stringify({
-    presetFingerprint: computeWorkNotePresetFingerprint(candidate),
-    eligiblePaths: audit.eligiblePaths,
-    snapshots: audit.snapshots,
-    diagnosticsByPath: audit.diagnosticsByPath,
-    issues: audit.issues,
-    capabilities: audit.capabilities,
-    scanned,
-    excluded,
-    projectStatuses: projectStatuses.map(({ id, label, behavior, match }) => ({
-      id,
-      label,
-      behavior,
-      match,
-    })),
+function clonePreset(preset: WorkNoteCompatibilityPreset): WorkNoteCompatibilityPreset {
+  return structuredClone(preset);
+}
+
+function immutable<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const entry of Object.values(value as Record<string, unknown>)) immutable(entry);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function configurationFingerprint(preset: WorkNoteCompatibilityPreset): string {
+  const candidate = preset as WorkNoteCompatibilityPreset & Record<string, unknown>;
+  const configuration = Object.fromEntries(
+    Object.entries(candidate).filter(
+      ([key]) => key !== 'revision' && key !== 'acceptedAudit' && key !== 'rawStatusByStatusId',
+    ),
+  );
+  return computeWorkNoteStructuralFingerprint({
+    configuration,
+    statusMappingEntries: Object.entries(preset.rawStatusByStatusId),
   });
+}
+
+function mappingRelevantStatuses(projectStatuses: readonly ProjectStatus[]): unknown {
+  return projectStatuses.map(({ id, label, behavior, match }) => ({ id, label, behavior, match }));
+}
+
+function intersectCapabilities(
+  live: WorkNoteAuditResult['capabilities'],
+  accepted: WorkNoteAuditResult['capabilities'] | undefined,
+): WorkNoteAuditResult['capabilities'] {
+  return {
+    update: live.update && accepted?.update === true,
+    create: live.create && accepted?.create === true,
+  };
 }
 
 function aggregateCompatibilityPreview(
@@ -179,8 +210,12 @@ export class WorkNoteIndex {
   private topologyRefreshPending = false;
   private taskSettlementUnsub?: () => void;
   private ready = false;
-  private previewNonce = 0;
-  private pendingCompatibilityPreview: PendingCompatibilityPreview | null = null;
+  private compatibilityEpoch = 0;
+  private compatibilityMutationQueue: Promise<void> = Promise.resolve();
+  private readonly pendingCompatibilityValidations = new WeakMap<
+    WorkNoteCompatibilityToken,
+    PendingCompatibilityValidation
+  >();
   private queryDiagnosticEntries: readonly WorkNoteQueryDiagnostic[] = [];
 
   constructor(
@@ -188,6 +223,7 @@ export class WorkNoteIndex {
     private readonly presetProvider: PresetProvider,
     private readonly taskSettlements?: Pick<TaskQueryApi, 'subscribeSettled'>,
     private readonly projectStatusProvider: ProjectStatusProvider = () => [],
+    private readonly compatibilityTransaction?: WorkNoteCompatibilityTransactionOptions,
   ) {}
 
   private preset(): WorkNoteCompatibilityPreset {
@@ -202,10 +238,12 @@ export class WorkNoteIndex {
           .filter((file) => paths === undefined || paths.has(file.path))
           .map((file) => {
             const cache = this.app.metadataCache.getFileCache(file);
+            const stat = (file as TFile & { readonly stat?: { mtime: number; size: number } }).stat;
             return {
               path: file.path,
               tags: cache ? (getAllTags(cache) ?? []) : [],
               frontmatter: cache?.frontmatter ?? {},
+              ...(stat && { revision: { mtime: stat.mtime, size: stat.size } }),
             };
           }),
       allPaths: () => this.app.vault.getMarkdownFiles().map(({ path }) => path),
@@ -312,11 +350,260 @@ export class WorkNoteIndex {
     return Promise.resolve(this.auditPreset(this.preset()).audit);
   }
 
+  async validateCompatibility(
+    candidate: WorkNoteCompatibilityPreset,
+  ): Promise<WorkNoteCompatibilityValidationResult> {
+    if (!candidate.enabled) {
+      return Promise.resolve({
+        type: 'invalid-draft',
+        reason: 'candidate-disabled',
+        diagnostics: [],
+      });
+    }
+    const compilation = compileWorkNoteQueries(candidate);
+    if (compilation.state === 'invalid') {
+      return Promise.resolve({
+        type: 'invalid-draft',
+        reason: 'syntax-invalid',
+        diagnostics: compilation.diagnostics,
+      });
+    }
+    const snapshot = clonePreset(candidate);
+    const captured = this.captureCompatibilityAudit(snapshot, compilation.queries);
+    const token = immutable({}) as WorkNoteCompatibilityToken;
+    this.pendingCompatibilityValidations.set(token, {
+      candidateReference: candidate,
+      candidate: snapshot,
+      candidateSignature: computeWorkNoteStructuralFingerprint(snapshot, {
+        preserveObjectOrder: true,
+      }),
+      settingsSignature: this.compatibilitySettingsSignature(),
+      auditInputsSignature: captured.auditInputsSignature,
+      epoch: this.compatibilityEpoch,
+    });
+    return Promise.resolve({
+      type: 'audited',
+      token,
+      presetFingerprint: captured.audit.presetFingerprint,
+      preview: captured.preview,
+    });
+  }
+
+  acceptValidatedCompatibility(
+    token: WorkNoteCompatibilityToken,
+  ): Promise<WorkNoteValidatedApplyResult> {
+    return this.enqueueCompatibilityMutation(() => this.applyValidatedCompatibility(token));
+  }
+
+  private async applyValidatedCompatibility(
+    token: WorkNoteCompatibilityToken,
+  ): Promise<WorkNoteValidatedApplyResult> {
+    const pending = this.pendingCompatibilityValidations.get(token);
+    this.pendingCompatibilityValidations.delete(token);
+    if (!pending) {
+      return { type: 'revalidation-required', reason: 'invalid-token' };
+    }
+    if (pending.epoch !== this.compatibilityEpoch) {
+      return { type: 'revalidation-required', reason: 'settings-changed' };
+    }
+    if (
+      computeWorkNoteStructuralFingerprint(pending.candidateReference, {
+        preserveObjectOrder: true,
+      }) !== pending.candidateSignature
+    ) {
+      return { type: 'revalidation-required', reason: 'candidate-changed' };
+    }
+    if (this.compatibilitySettingsSignature() !== pending.settingsSignature) {
+      return { type: 'revalidation-required', reason: 'settings-changed' };
+    }
+    const compilation = compileWorkNoteQueries(pending.candidate);
+    if (compilation.state === 'invalid') {
+      return { type: 'revalidation-required', reason: 'candidate-changed' };
+    }
+    const captured = this.captureCompatibilityAudit(pending.candidate, compilation.queries);
+    if (captured.auditInputsSignature !== pending.auditInputsSignature) {
+      return { type: 'revalidation-required', reason: 'audit-inputs-changed' };
+    }
+    const current = this.preset();
+    if (
+      configurationFingerprint(current) === configurationFingerprint(pending.candidate) &&
+      isAuditAccepted(current)
+    ) {
+      return {
+        type: 'unchanged',
+        preset: clonePreset(current),
+        preview: aggregateCompatibilityPreview(
+          captured.audit,
+          captured.preview.notes.scanned,
+          captured.preview.notes.excluded,
+          { enabled: true, accepted: true },
+          intersectCapabilities(captured.audit.capabilities, current.acceptedAudit?.capabilities),
+        ),
+      };
+    }
+    const persist = this.compatibilityTransaction?.persist;
+    if (!persist) {
+      return { type: 'revalidation-required', reason: 'persistence-unavailable' };
+    }
+    const nextBase: WorkNoteCompatibilityPreset = {
+      ...clonePreset(pending.candidate),
+      revision: current.revision + 1,
+      enabled: true,
+      acceptedAudit: undefined,
+    };
+    const nextAudit = this.captureCompatibilityAudit(nextBase);
+    const next = acceptWorkNoteAudit(
+      nextBase,
+      nextAudit.audit.capabilities,
+      this.compatibilityTransaction?.acceptedAt?.() ?? new Date().toISOString(),
+    );
+    try {
+      await persist(immutable(clonePreset(next)));
+    } catch {
+      return { type: 'revalidation-required', reason: 'save-failed' };
+    }
+    this.compatibilityEpoch += 1;
+    this.publishCompatibilityAudit(nextAudit.audit);
+    return {
+      type: 'applied',
+      preset: clonePreset(next),
+      preview: aggregateCompatibilityPreview(
+        nextAudit.audit,
+        nextAudit.preview.notes.scanned,
+        nextAudit.preview.notes.excluded,
+        { enabled: true, accepted: true },
+        nextAudit.audit.capabilities,
+      ),
+    };
+  }
+
+  disableCompatibility(): Promise<WorkNoteCompatibilityDisableResult> {
+    return this.enqueueCompatibilityMutation(() => this.persistDisabledCompatibility());
+  }
+
+  private async persistDisabledCompatibility(): Promise<WorkNoteCompatibilityDisableResult> {
+    const current = this.preset();
+    if (!current.enabled) return { type: 'unchanged', preset: clonePreset(current) };
+    const persist = this.compatibilityTransaction?.persist;
+    if (!persist) return { type: 'persistence-unavailable' };
+    const next: WorkNoteCompatibilityPreset = {
+      ...clonePreset(current),
+      revision: current.revision + 1,
+      enabled: false,
+    };
+    try {
+      await persist(immutable(clonePreset(next)));
+    } catch {
+      return { type: 'save-failed' };
+    }
+    this.compatibilityEpoch += 1;
+    this.publishCompatibilityAudit(this.auditPreset(next).audit);
+    return { type: 'disabled', preset: clonePreset(next) };
+  }
+
+  private enqueueCompatibilityMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const scheduled = this.compatibilityMutationQueue.then(operation, operation);
+    this.compatibilityMutationQueue = scheduled.then(
+      () => undefined,
+      () => undefined,
+    );
+    return scheduled;
+  }
+
+  private compatibilitySettingsSignature(): string {
+    return computeWorkNoteStructuralFingerprint(
+      {
+        preset: this.preset(),
+        relevant: this.compatibilityTransaction?.settingsSignature?.() ?? null,
+      },
+      { preserveObjectOrder: true },
+    );
+  }
+
+  private captureCompatibilityAudit(
+    candidate: WorkNoteCompatibilityPreset,
+    compiled?: Parameters<typeof auditWorkNotes>[2],
+  ): CapturedCompatibilityAudit {
+    const liveSource = this.source();
+    const files = structuredClone(liveSource.files());
+    const allPaths = structuredClone(liveSource.allPaths?.() ?? files.map(({ path }) => path));
+    const capturedSource: WorkNoteAuditSource = {
+      files: () => files,
+      allPaths: () => allPaths,
+      resolveLink: liveSource.resolveLink,
+      fileExists: liveSource.fileExists,
+    };
+    const projectStatuses = this.projectStatusProvider();
+    const audit = auditWorkNotes(capturedSource, candidate, compiled);
+    const scanned = files.length;
+    const excluded = Math.max(0, scanned - audit.snapshots.length);
+    return {
+      audit,
+      preview: aggregateCompatibilityPreview(
+        audit,
+        scanned,
+        excluded,
+        { enabled: candidate.enabled, accepted: false },
+        audit.capabilities,
+      ),
+      auditInputsSignature: computeWorkNoteStructuralFingerprint({
+        candidate,
+        files,
+        allPaths,
+        audit,
+        projectStatuses: mappingRelevantStatuses(projectStatuses),
+      }),
+    };
+  }
+
+  private publishCompatibilityAudit(audit: WorkNoteAuditResult): void {
+    const oldSnapshots = new Map(this.byPath);
+    const oldDiagnostics = new Map(this.diagnosticsByPath);
+    const oldProjects = new Map(
+      [...this.byPath].map(([path, snapshot]) => [path, snapshot.projectPath]),
+    );
+    this.replaceFromAudit(audit);
+    this.queryDiagnosticEntries = [];
+    this.indexedFingerprint = audit.presetFingerprint;
+    const comparedPaths = new Set([
+      ...oldSnapshots.keys(),
+      ...this.byPath.keys(),
+      ...oldDiagnostics.keys(),
+      ...this.diagnosticsByPath.keys(),
+    ]);
+    const changedPaths = this.changedPaths(comparedPaths, oldSnapshots, oldDiagnostics);
+    const invalidatedProjectPaths = new Set<string>();
+    for (const path of changedPaths) {
+      const beforeProject = oldProjects.get(path);
+      const afterProject = this.byPath.get(path)?.projectPath;
+      if (beforeProject) invalidatedProjectPaths.add(beforeProject);
+      if (afterProject) invalidatedProjectPaths.add(afterProject);
+    }
+    if (changedPaths.length === 0 && invalidatedProjectPaths.size === 0) return;
+    const event: WorkNoteIndexEvent = {
+      cause: 'refresh',
+      changedPaths,
+      invalidatedProjectPaths: [...invalidatedProjectPaths],
+      taskBarriers: [],
+    };
+    for (const listener of this.listeners) listener(event);
+    const alreadyPending = new Set(this.pendingSettledPaths);
+    const files = changedPaths.map((path) => {
+      const generation = (this.generations.get(path) ?? 0) + 1;
+      this.generations.set(path, generation);
+      return { path, generation };
+    });
+    const settled: WorkNoteIndexSettledEvent = { reason: 'refresh', files };
+    for (const listener of this.settledListeners) listener(settled);
+    for (const { path, generation } of files) {
+      if (alreadyPending.has(path)) this.generations.set(path, generation + 1);
+    }
+  }
+
   async previewCompatibility(): Promise<WorkNoteCompatibilityPreview> {
     const source = this.source();
     const configured = this.preset();
     if (configured.enabled) {
-      this.pendingCompatibilityPreview = null;
       const audit = auditWorkNotes(source, configured);
       const accepted = isAuditAccepted(configured);
       const acceptedCapabilities = configured.acceptedAudit?.capabilities;
@@ -327,10 +614,7 @@ export class WorkNoteIndex {
           Math.max(0, source.files().length - audit.snapshots.length),
           { enabled: true, accepted },
           accepted
-            ? {
-                update: audit.capabilities.update && acceptedCapabilities?.update === true,
-                create: audit.capabilities.create && acceptedCapabilities?.create === true,
-              }
+            ? intersectCapabilities(audit.capabilities, acceptedCapabilities)
             : { update: false, create: false },
         ),
       );
@@ -338,83 +622,11 @@ export class WorkNoteIndex {
     const projectStatuses = this.projectStatusProvider();
     const suggestion = suggestWorkNotePreset(source, projectStatuses);
     const audit = auditWorkNotes(source, suggestion.preset);
-    const candidate: WorkNoteCompatibilityPreset = { ...suggestion.preset, enabled: true };
-    const auditedCandidate = auditWorkNotes(source, candidate);
-    const candidateAudit = suggestion.ambiguousStatusMapping
-      ? { ...auditedCandidate, capabilities: { update: false, create: false } }
-      : auditedCandidate;
-    this.previewNonce += 1;
-    const token = `work-note-preview-${this.previewNonce.toString(36)}`;
-    this.pendingCompatibilityPreview = {
-      token,
-      candidate,
-      signature: compatibilityAcceptanceSignature(
-        candidate,
-        candidateAudit,
-        suggestion.observations.fileCount,
-        suggestion.preview.rejectedCandidateCount,
-        projectStatuses,
-      ),
-      scanned: suggestion.observations.fileCount,
-      excluded: suggestion.preview.rejectedCandidateCount,
-    };
     return Promise.resolve({
       ...aggregateCompatibilityPreview(
         audit,
         suggestion.observations.fileCount,
         suggestion.preview.rejectedCandidateCount,
-      ),
-      acceptanceToken: token,
-    });
-  }
-
-  acceptSuggestedCompatibility(
-    token: string,
-    acceptedAt: string,
-  ): Promise<WorkNoteCompatibilityAcceptanceResult> {
-    const pending = this.pendingCompatibilityPreview;
-    this.pendingCompatibilityPreview = null;
-    if (!pending || pending.token !== token) {
-      return Promise.resolve({
-        type: 'compatibility-conflict',
-        reason: 'invalid-preview-token',
-      });
-    }
-    const source = this.source();
-    const projectStatuses = this.projectStatusProvider();
-    const suggestion = suggestWorkNotePreset(source, projectStatuses);
-    const candidate: WorkNoteCompatibilityPreset = {
-      ...suggestion.preset,
-      enabled: true,
-    };
-    const auditedCandidate = auditWorkNotes(source, candidate);
-    const audit = suggestion.ambiguousStatusMapping
-      ? { ...auditedCandidate, capabilities: { update: false, create: false } }
-      : auditedCandidate;
-    const signature = compatibilityAcceptanceSignature(
-      candidate,
-      audit,
-      suggestion.observations.fileCount,
-      suggestion.preview.rejectedCandidateCount,
-      projectStatuses,
-    );
-    if (
-      computeWorkNotePresetFingerprint(candidate) !==
-        computeWorkNotePresetFingerprint(pending.candidate) ||
-      signature !== pending.signature
-    ) {
-      return Promise.resolve({ type: 'stale-preview' });
-    }
-    const preset = acceptWorkNoteAudit(pending.candidate, audit.capabilities, acceptedAt);
-    return Promise.resolve({
-      type: 'ok',
-      preset,
-      preview: aggregateCompatibilityPreview(
-        audit,
-        pending.scanned,
-        pending.excluded,
-        { enabled: true, accepted: true },
-        audit.capabilities,
       ),
     });
   }

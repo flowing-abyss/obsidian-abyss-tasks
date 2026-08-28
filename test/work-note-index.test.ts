@@ -1,13 +1,21 @@
 import { TFile, TFolder, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSemanticProjectStatus } from '../src/projects/lifecycle';
-import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
-import { acceptWorkNoteAudit } from '../src/projects/work-notes/compatibility';
+import { ProjectWorkspaceCoordinator } from '../src/projects/ProjectWorkspaceCoordinator';
+import type { Project } from '../src/projects/types';
+import {
+  acceptWorkNoteAudit,
+  auditWorkNotes,
+  isAuditAccepted,
+  suggestWorkNotePreset,
+} from '../src/projects/work-notes/compatibility';
 import { workNoteLifecycleBehavior } from '../src/projects/work-notes/rollups';
 import type {
+  WorkNoteAuditSource,
   WorkNoteCompatibilityPreset,
   WorkNoteIndexEvent,
 } from '../src/projects/work-notes/types';
+import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
 import type { ProjectStatus } from '../src/settings/types';
 import type { TaskIndexSettledEvent } from '../src/tasks';
 
@@ -37,26 +45,11 @@ const preset: WorkNoteCompatibilityPreset = {
   rawStatusByStatusId: { active: 'Active', done: 'Done' },
 };
 
-type StatusAwareWorkNoteIndexConstructor = new (
-  app: ConstructorParameters<typeof WorkNoteIndex>[0],
-  configuredPreset: ConstructorParameters<typeof WorkNoteIndex>[1],
-  taskSettlements: ConstructorParameters<typeof WorkNoteIndex>[2],
-  projectStatuses: () => readonly ProjectStatus[],
-) => WorkNoteIndex;
-
-function statusAwareIndex(
-  app: ConstructorParameters<typeof WorkNoteIndex>[0],
-  configuredPreset: WorkNoteCompatibilityPreset,
-  projectStatuses: () => readonly ProjectStatus[],
-): WorkNoteIndex {
-  const Constructor = WorkNoteIndex as unknown as StatusAwareWorkNoteIndexConstructor;
-  return new Constructor(app, configuredPreset, undefined, projectStatuses);
-}
-
 function tfile(path: string): TFile {
   return Object.assign(Object.create(TFile.prototype) as object, {
     path,
     extension: path.endsWith('.md') ? 'md' : '',
+    stat: { ctime: 1, mtime: 1, size: 1 },
   }) as TFile;
 }
 
@@ -180,6 +173,46 @@ function harness(initial: readonly FileData[], resolutions: Record<string, strin
       const prior = data.get(path)!;
       data.set(path, { ...prior, frontmatter });
     },
+    touch(path: string) {
+      const file = files.find((candidate) => candidate.path === path)!;
+      file.stat.mtime += 1;
+      file.stat.size += 1;
+    },
+    workNoteSource(): WorkNoteAuditSource {
+      return {
+        files: () =>
+          files.map((file) => {
+            const entry = data.get(file.path);
+            return {
+              path: file.path,
+              tags: entry?.tags ?? [],
+              frontmatter: entry?.frontmatter ?? {},
+              revision: { mtime: file.stat.mtime, size: file.stat.size },
+            };
+          }),
+        allPaths: () => files.map(({ path }) => path),
+        resolveLink: (linkpath, sourcePath) =>
+          linkResolutions[`${sourcePath}\0${linkpath}`] ?? null,
+        fileExists: (path) => files.some((file) => file.path === path),
+      };
+    },
+  };
+}
+
+function acceptedSuggestionForTest(
+  h: ReturnType<typeof harness>,
+  projectStatuses: readonly ProjectStatus[] = [],
+) {
+  const suggestion = suggestWorkNotePreset(h.workNoteSource(), projectStatuses);
+  const candidate: WorkNoteCompatibilityPreset = { ...suggestion.preset, enabled: true };
+  const audit = auditWorkNotes(h.workNoteSource(), candidate);
+  const capabilities = suggestion.ambiguousStatusMapping
+    ? { update: false, create: false }
+    : audit.capabilities;
+  return {
+    type: 'ok' as const,
+    preset: acceptWorkNoteAudit(candidate, capabilities, '2026-08-27T00:00:00Z'),
+    preview: { capabilities },
   };
 }
 
@@ -213,6 +246,769 @@ function taskSettlementSource() {
     },
   };
 }
+
+interface CompatibilityTransactionHarness {
+  readonly index: WorkNoteIndex;
+  readonly current: () => WorkNoteCompatibilityPreset;
+  readonly persisted: readonly WorkNoteCompatibilityPreset[];
+  readonly setSettingsInput: (value: string) => void;
+}
+
+function compatibilityTransactionHarness(
+  h: ReturnType<typeof harness>,
+  initial: WorkNoteCompatibilityPreset,
+  statuses: () => readonly ProjectStatus[] = () => [],
+  persistOverride?: (next: WorkNoteCompatibilityPreset) => Promise<void>,
+): CompatibilityTransactionHarness {
+  let current = structuredClone(initial);
+  let settingsInput = 'settings-v1';
+  const persisted: WorkNoteCompatibilityPreset[] = [];
+  const index = new WorkNoteIndex(h.app, () => current, undefined, statuses, {
+    settingsSignature: () => settingsInput,
+    acceptedAt: () => '2026-08-28T12:34:56.000Z',
+    persist: async (next) => {
+      if (persistOverride) {
+        await persistOverride(next);
+      }
+      const stored = structuredClone(next);
+      persisted.push(stored);
+      current = stored;
+    },
+  });
+  return {
+    index,
+    current: () => current,
+    persisted,
+    setSettingsInput: (value) => {
+      settingsInput = value;
+    },
+  };
+}
+
+describe('exact-candidate Work Note compatibility transaction', () => {
+  const disabled = (): WorkNoteCompatibilityPreset => ({
+    ...structuredClone(preset),
+    enabled: false,
+    acceptedAudit: undefined,
+  });
+
+  it('audits the exact zero-match candidate read-only and returns an opaque owner token', async () => {
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const candidate = { ...disabled(), enabled: true, membershipQuery: '#no-matches' };
+
+    const validation = await tx.index.validateCompatibility(candidate);
+
+    expect(validation).toMatchObject({
+      type: 'audited',
+      preview: {
+        notes: { eligible: 0 },
+        capabilities: { update: true, create: false },
+      },
+    });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    expect(typeof validation.token).toBe('object');
+    expect(JSON.stringify(validation.token)).toBe('{}');
+    expect(tx.persisted).toEqual([]);
+    expect(tx.current()).toEqual(disabled());
+    expect(tx.index.list()).toEqual([]);
+  });
+
+  it('allows explicit zero-match acceptance without broadening unavailable capabilities', async () => {
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const validation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+      rawStatusByStatusId: { first: 'Same', second: 'Same' },
+    });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    expect(validation.preview).toMatchObject({
+      notes: { eligible: 0 },
+      capabilities: { update: false, create: false },
+    });
+
+    const result = await tx.index.acceptValidatedCompatibility(validation.token);
+
+    expect(result).toMatchObject({
+      type: 'applied',
+      preview: { capabilities: { update: false, create: false } },
+    });
+    expect(tx.current().acceptedAudit?.capabilities).toEqual({ update: false, create: false });
+    expect(isAuditAccepted(tx.current())).toBe(true);
+  });
+
+  it('never audits a disabled candidate that acceptance would silently enable', async () => {
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, disabled());
+
+    expect(await tx.index.validateCompatibility(disabled())).toEqual({
+      type: 'invalid-draft',
+      reason: 'candidate-disabled',
+      diagnostics: [],
+    });
+    expect(tx.persisted).toEqual([]);
+  });
+
+  it('rejects mutated candidates, foreign tokens, and token reuse', async () => {
+    const h = harness([], {});
+    const first = compatibilityTransactionHarness(h, disabled());
+    const second = compatibilityTransactionHarness(h, disabled());
+    const candidate = { ...disabled(), enabled: true, membershipQuery: '#first' };
+    const validation = await first.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    expect(await second.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'invalid-token',
+    });
+    candidate.membershipQuery = '#mutated';
+    expect(await first.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'candidate-changed',
+    });
+    expect(await first.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'invalid-token',
+    });
+    expect(first.persisted).toEqual([]);
+  });
+
+  it('treats an ordering-only status mapping mutation as a changed exact candidate', async () => {
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const candidate = { ...disabled(), enabled: true };
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    candidate.rawStatusByStatusId = { done: 'Done', active: 'Active' };
+
+    expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'candidate-changed',
+    });
+  });
+
+  it('stales validation after vault metadata, Project status changes/removal/reorder, or relevant settings changes', async () => {
+    const path = 'Tasks/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active', Extra: 'v1' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    let statuses: readonly ProjectStatus[] = [
+      {
+        id: 'active',
+        label: 'Active',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'active' },
+      },
+      {
+        id: 'done',
+        label: 'Done',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'status', value: 'done' },
+      },
+    ];
+    const tx = compatibilityTransactionHarness(h, disabled(), () => statuses);
+
+    const vaultValidation = await tx.index.validateCompatibility({ ...disabled(), enabled: true });
+    if (vaultValidation.type !== 'audited') throw new Error('Expected audited candidate');
+    h.setFrontmatter(path, {
+      Project: '[[Projects/A]]',
+      Status: 'Active',
+      Extra: 'v2',
+    });
+    expect(await tx.index.acceptValidatedCompatibility(vaultValidation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
+
+    const statusValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+    });
+    if (statusValidation.type !== 'audited') throw new Error('Expected audited candidate');
+    statuses = [...statuses].reverse();
+    expect(await tx.index.acceptValidatedCompatibility(statusValidation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
+
+    const removedStatusValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+    });
+    if (removedStatusValidation.type !== 'audited') throw new Error('Expected audited candidate');
+    statuses = statuses.slice(1);
+    expect(await tx.index.acceptValidatedCompatibility(removedStatusValidation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
+
+    const changedStatusValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+    });
+    if (changedStatusValidation.type !== 'audited') throw new Error('Expected audited candidate');
+    statuses = [{ ...statuses[0]!, label: 'Completed' }];
+    expect(await tx.index.acceptValidatedCompatibility(changedStatusValidation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
+
+    const settingsValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+    });
+    if (settingsValidation.type !== 'audited') throw new Error('Expected audited candidate');
+    tx.setSettingsInput('settings-v2');
+    expect(await tx.index.acceptValidatedCompatibility(settingsValidation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'settings-changed',
+    });
+    expect(tx.persisted).toEqual([]);
+  });
+
+  it('stales validation after markdown content revision even when cached metadata is unchanged', async () => {
+    const path = 'Tasks/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const validation = await tx.index.validateCompatibility({ ...disabled(), enabled: true });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    h.touch(path);
+
+    expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
+    expect(tx.persisted).toEqual([]);
+  });
+
+  it.each([
+    [
+      'membership query',
+      (value: WorkNoteCompatibilityPreset) => ({ ...value, membershipQuery: '#changed' }),
+    ],
+    [
+      'ordinary query',
+      (value: WorkNoteCompatibilityPreset) => ({ ...value, ordinaryKindQuery: '#changed' }),
+    ],
+    [
+      'milestone query',
+      (value: WorkNoteCompatibilityPreset) => ({ ...value, milestoneKindQuery: '#changed' }),
+    ],
+    ['source folder', (value: WorkNoteCompatibilityPreset) => ({ ...value, folder: 'Elsewhere' })],
+    [
+      'field mapping',
+      (value: WorkNoteCompatibilityPreset) => ({
+        ...value,
+        fields: { ...value.fields, project: 'Parent' },
+      }),
+    ],
+    [
+      'status mapping',
+      (value: WorkNoteCompatibilityPreset) => ({
+        ...value,
+        rawStatusByStatusId: { active: 'Open' },
+      }),
+    ],
+    [
+      'creation folder',
+      (value: WorkNoteCompatibilityPreset) => ({
+        ...value,
+        creation: { ...value.creation!, folder: 'Generated' },
+      }),
+    ],
+    [
+      'creation template',
+      (value: WorkNoteCompatibilityPreset) => ({
+        ...value,
+        creation: { ...value.creation!, templatePath: 'Templates/Other.md' },
+      }),
+    ],
+    [
+      'kind marker',
+      (value: WorkNoteCompatibilityPreset) => ({
+        ...value,
+        creation: {
+          ...value.creation!,
+          kindMarkers: {
+            ...value.creation!.kindMarkers,
+            ordinary: { kind: 'frontmatter-tag' as const, value: 'changed' },
+          },
+        },
+      }),
+    ],
+  ] as const)('binds the acceptance token to the exact %s candidate', async (_name, mutate) => {
+    const h = harness([], {});
+    const base = {
+      ...disabled(),
+      enabled: true,
+      creation: {
+        folder: 'Tasks',
+        templatePath: 'Templates/Work note.md',
+        defaultKind: 'ordinary' as const,
+        defaultStatusId: 'active',
+        kindMarkers: {
+          ordinary: { kind: 'frontmatter-tag' as const, value: 'work-note/task' },
+          milestone: { kind: 'frontmatter-tag' as const, value: 'work-note/milestone' },
+        },
+      },
+    };
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const validation = await tx.index.validateCompatibility(base);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    Object.assign(base, mutate(base));
+
+    expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'candidate-changed',
+    });
+  });
+
+  it('applies one material revision and persists the candidate with its matching audit', async () => {
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, disabled());
+    const candidate = {
+      ...disabled(),
+      enabled: true,
+      membershipQuery: '#no-matches',
+      futureCompatibilityOption: { preserve: ['exactly'] },
+    };
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    const result = await tx.index.acceptValidatedCompatibility(validation.token);
+
+    expect(result.type).toBe('applied');
+    expect(tx.persisted).toHaveLength(1);
+    expect(tx.current().revision).toBe(disabled().revision + 1);
+    expect(tx.current().membershipQuery).toBe('#no-matches');
+    expect(tx.current()).toMatchObject({
+      futureCompatibilityOption: { preserve: ['exactly'] },
+    });
+    expect(tx.current().acceptedAudit).toMatchObject({
+      acceptedRevision: disabled().revision + 1,
+      acceptedAt: '2026-08-28T12:34:56.000Z',
+      capabilities: { update: true, create: false },
+    });
+    expect(isAuditAccepted(tx.current())).toBe(true);
+  });
+
+  it('publishes neither applied preset nor index state before the atomic save resolves', async () => {
+    const path = 'Tasks/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    let releaseSave: (() => void) | undefined;
+    const tx = compatibilityTransactionHarness(
+      h,
+      disabled(),
+      undefined,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSave = resolve;
+        }),
+    );
+    tx.index.initialize();
+    const settlements: unknown[] = [];
+    tx.index.onSettled((event) => settlements.push(event));
+    const before = structuredClone(tx.current());
+    const validation = await tx.index.validateCompatibility({ ...disabled(), enabled: true });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    const applying = tx.index.acceptValidatedCompatibility(validation.token);
+    await Promise.resolve();
+    expect(tx.current()).toEqual(before);
+    expect(tx.persisted).toEqual([]);
+    expect(tx.index.get(path)).toBeUndefined();
+
+    releaseSave?.();
+    expect((await applying).type).toBe('applied');
+    expect(tx.current()).toMatchObject({ enabled: true, revision: before.revision + 1 });
+    expect(tx.persisted).toHaveLength(1);
+    expect(tx.index.get(path)).toMatchObject({ path, presetRevision: before.revision + 1 });
+    expect(settlements).toEqual([{ reason: 'refresh', files: [{ path, generation: 1 }] }]);
+    tx.index.destroy();
+  });
+
+  it('settles an accepted index publication so the Project workspace can publish it', async () => {
+    const path = 'Tasks/A.md';
+    const projectPath = 'Projects/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: projectPath },
+    );
+    const tx = compatibilityTransactionHarness(h, disabled());
+    tx.index.initialize();
+    const project: Project = {
+      path: projectPath,
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const coordinator = new ProjectWorkspaceCoordinator(
+      {
+        list: () => [project],
+        get: (candidate) => (candidate === projectPath ? project : undefined),
+        onUpdate: () => () => {},
+      },
+      {
+        isReady: () => true,
+        list: () => [],
+        subscribe: () => () => {},
+        subscribeSettled: () => () => {},
+      },
+      tx.index,
+      () => [],
+    );
+    coordinator.start();
+    const publications: string[][] = [];
+    coordinator.onUpdate((snapshots) =>
+      publications.push(snapshots.flatMap(({ workNotes }) => workNotes.map((note) => note.path))),
+    );
+    const validation = await tx.index.validateCompatibility({ ...disabled(), enabled: true });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    expect((await tx.index.acceptValidatedCompatibility(validation.token)).type).toBe('applied');
+    await Promise.resolve();
+
+    expect(publications).toEqual([[path]]);
+    coordinator.destroy();
+    tx.index.destroy();
+  });
+
+  it('serializes concurrent applies so two tokens cannot persist the same next revision', async () => {
+    const h = harness([], {});
+    let releaseFirst: (() => void) | undefined;
+    let saveCalls = 0;
+    const tx = compatibilityTransactionHarness(h, disabled(), undefined, async () => {
+      saveCalls += 1;
+      if (saveCalls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirst = resolve;
+        });
+      }
+    });
+    const firstValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+      membershipQuery: '#first',
+    });
+    const secondValidation = await tx.index.validateCompatibility({
+      ...disabled(),
+      enabled: true,
+      membershipQuery: '#second',
+    });
+    if (firstValidation.type !== 'audited' || secondValidation.type !== 'audited') {
+      throw new Error('Expected audited candidates');
+    }
+
+    const first = tx.index.acceptValidatedCompatibility(firstValidation.token);
+    await Promise.resolve();
+    const second = tx.index.acceptValidatedCompatibility(secondValidation.token);
+    await Promise.resolve();
+    expect(saveCalls).toBe(1);
+
+    releaseFirst?.();
+    expect((await first).type).toBe('applied');
+    expect(await second).toEqual({
+      type: 'revalidation-required',
+      reason: 'settings-changed',
+    });
+    expect(saveCalls).toBe(1);
+    expect(tx.persisted).toHaveLength(1);
+    expect(tx.current()).toMatchObject({ revision: disabled().revision + 1 });
+  });
+
+  it('serializes Apply and Disable so their revisions and persisted state cannot interleave', async () => {
+    const accepted = acceptWorkNoteAudit(
+      { ...preset, revision: 9 },
+      { update: true, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness([], {});
+    let releaseApply: (() => void) | undefined;
+    let saveCalls = 0;
+    const tx = compatibilityTransactionHarness(h, accepted, undefined, async () => {
+      saveCalls += 1;
+      if (saveCalls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseApply = resolve;
+        });
+      }
+    });
+    const validation = await tx.index.validateCompatibility({
+      ...accepted,
+      membershipQuery: '#changed',
+    });
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    const applying = tx.index.acceptValidatedCompatibility(validation.token);
+    await Promise.resolve();
+    const disabling = tx.index.disableCompatibility();
+    await Promise.resolve();
+    expect(saveCalls).toBe(1);
+
+    releaseApply?.();
+    expect((await applying).type).toBe('applied');
+    expect((await disabling).type).toBe('disabled');
+    expect(saveCalls).toBe(2);
+    expect(tx.persisted.map(({ revision, enabled }) => ({ revision, enabled }))).toEqual([
+      { revision: 10, enabled: true },
+      { revision: 11, enabled: false },
+    ]);
+    expect(tx.current()).toMatchObject({ revision: 11, enabled: false });
+  });
+
+  it('does not save or increment a no-op exact apply and cannot broaden accepted capabilities', async () => {
+    const accepted = acceptWorkNoteAudit(
+      { ...preset, revision: 9 },
+      { update: false, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, accepted);
+    const validation = await tx.index.validateCompatibility(structuredClone(accepted));
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    const result = await tx.index.acceptValidatedCompatibility(validation.token);
+
+    expect(result).toMatchObject({ type: 'unchanged', preset: accepted });
+    expect(tx.persisted).toEqual([]);
+    expect(tx.current()).toEqual(accepted);
+    expect(tx.current().revision).toBe(9);
+    expect(tx.current().acceptedAudit?.capabilities).toEqual({ update: false, create: false });
+  });
+
+  it('narrows a no-op preview when the live audit is stricter than its accepted ceiling', async () => {
+    const candidate: WorkNoteCompatibilityPreset = {
+      ...preset,
+      revision: 9,
+      creation: {
+        folder: 'Tasks',
+        templatePath: 'Templates/Work note.md',
+        defaultKind: 'ordinary',
+        defaultStatusId: 'active',
+        kindMarkers: {
+          ordinary: { kind: 'frontmatter-tag', value: 'work-note/task' },
+          milestone: { kind: 'frontmatter-tag', value: 'work-note/milestone' },
+        },
+      },
+    };
+    const accepted = acceptWorkNoteAudit(
+      candidate,
+      { update: true, create: true },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness(
+      [
+        {
+          path: 'Templates/Work note.md',
+          frontmatter: { Project: '[[Projects/Template owner]]' },
+        },
+      ],
+      {},
+    );
+    const tx = compatibilityTransactionHarness(h, accepted);
+    const validation = await tx.index.validateCompatibility(structuredClone(accepted));
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+    expect(validation.preview.capabilities).toEqual({ update: true, create: false });
+
+    const result = await tx.index.acceptValidatedCompatibility(validation.token);
+
+    expect(result).toMatchObject({
+      type: 'unchanged',
+      preview: { capabilities: { update: true, create: false } },
+    });
+    expect(tx.persisted).toEqual([]);
+    expect(tx.current()).toEqual(accepted);
+  });
+
+  it('applies an ordering-only status mapping change as a material revision', async () => {
+    const accepted = acceptWorkNoteAudit(
+      { ...preset, revision: 9 },
+      { update: true, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, accepted);
+    const candidate = {
+      ...structuredClone(accepted),
+      rawStatusByStatusId: { done: 'Done', active: 'Active' },
+    };
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    expect((await tx.index.acceptValidatedCompatibility(validation.token)).type).toBe('applied');
+    expect(tx.current().revision).toBe(10);
+    expect(Object.keys(tx.current().rawStatusByStatusId)).toEqual(['done', 'active']);
+    expect(tx.persisted).toHaveLength(1);
+  });
+
+  it('treats a fields-key reorder as the same exact no-op configuration', async () => {
+    const accepted = acceptWorkNoteAudit(
+      { ...preset, revision: 9 },
+      { update: true, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, accepted);
+    const candidate = {
+      ...structuredClone(accepted),
+      fields: Object.fromEntries(Object.entries(accepted.fields).reverse()),
+    } as WorkNoteCompatibilityPreset;
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+    expect((await tx.index.acceptValidatedCompatibility(validation.token)).type).toBe('unchanged');
+    expect(tx.persisted).toEqual([]);
+    expect(tx.current().revision).toBe(9);
+  });
+
+  it.each(['reject', 'throw'] as const)(
+    'keeps all applied state and the last working index when atomic save %ss',
+    async (failure) => {
+      const path = 'Tasks/A.md';
+      const h = harness(
+        [
+          {
+            path,
+            tags: ['#work-note/task'],
+            frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+          },
+        ],
+        { [`${path}\0Projects/A`]: 'Projects/A.md' },
+      );
+      const applied = acceptWorkNoteAudit(
+        { ...preset, revision: 7 },
+        { update: true, create: false },
+        '2026-08-27T00:00:00.000Z',
+      );
+      const before = structuredClone(applied);
+      const tx = compatibilityTransactionHarness(h, applied, undefined, async () => {
+        if (failure === 'throw') throw new Error('save failed');
+        return Promise.reject(new Error('save rejected'));
+      });
+      tx.index.initialize();
+      expect(tx.index.get(path)).toBeDefined();
+      const validation = await tx.index.validateCompatibility({
+        ...applied,
+        membershipQuery: '#different',
+      });
+      if (validation.type !== 'audited') throw new Error('Expected audited candidate');
+
+      expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+        type: 'revalidation-required',
+        reason: 'save-failed',
+      });
+      expect(tx.current()).toEqual(before);
+      expect(tx.persisted).toEqual([]);
+      expect(tx.index.get(path)).toBeDefined();
+      tx.index.destroy();
+    },
+  );
+
+  it('persists disable with historical audit intact and requires fresh validation to re-enable', async () => {
+    const applied = acceptWorkNoteAudit(
+      { ...preset, revision: 11 },
+      { update: true, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const h = harness([], {});
+    const tx = compatibilityTransactionHarness(h, applied);
+    const beforeDisable = await tx.index.validateCompatibility(structuredClone(applied));
+    if (beforeDisable.type !== 'audited') throw new Error('Expected audited candidate');
+
+    const disabledResult = await tx.index.disableCompatibility();
+
+    expect(disabledResult.type).toBe('disabled');
+    expect(tx.persisted).toHaveLength(1);
+    expect(tx.current()).toMatchObject({ enabled: false, revision: 12 });
+    expect(tx.current().acceptedAudit).toEqual(applied.acceptedAudit);
+    expect(isAuditAccepted(tx.current())).toBe(false);
+    expect(await tx.index.acceptValidatedCompatibility(beforeDisable.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'settings-changed',
+    });
+    expect(tx.current().enabled).toBe(false);
+
+    const fresh = await tx.index.validateCompatibility({ ...tx.current(), enabled: true });
+    if (fresh.type !== 'audited') throw new Error('Expected fresh audited candidate');
+    expect((await tx.index.acceptValidatedCompatibility(fresh.token)).type).toBe('applied');
+    expect(tx.current()).toMatchObject({ enabled: true, revision: 13 });
+    expect(isAuditAccepted(tx.current())).toBe(true);
+  });
+
+  it('rejects syntax-invalid drafts without auditing or clearing the last working index', async () => {
+    const path = 'Tasks/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    const applied = acceptWorkNoteAudit(
+      { ...preset, revision: 5 },
+      { update: true, create: false },
+      '2026-08-27T00:00:00.000Z',
+    );
+    const tx = compatibilityTransactionHarness(h, applied);
+    tx.index.initialize();
+    const before = tx.index.get(path);
+
+    const validation = await tx.index.validateCompatibility({
+      ...applied,
+      membershipQuery: '(#broken',
+    });
+
+    expect(validation).toMatchObject({
+      type: 'invalid-draft',
+      diagnostics: [expect.objectContaining({ source: 'membershipQuery', offset: 0 })],
+    });
+    expect(tx.persisted).toEqual([]);
+    expect(tx.index.get(path)).toEqual(before);
+    expect(tx.current()).toEqual(applied);
+    tx.index.destroy();
+  });
+});
 
 afterEach(() => vi.useRealTimers());
 
@@ -397,6 +1193,8 @@ describe('WorkNoteIndex', () => {
     expect(serialized).not.toContain('Private done value');
     expect(serialized).not.toContain('Missing private relation');
     expect(serialized).not.toContain('Unrelated private');
+    expect(preview).not.toHaveProperty('acceptanceToken');
+    expect(index).not.toHaveProperty('acceptSuggestedCompatibility');
     index.destroy();
   });
 
@@ -419,13 +1217,7 @@ describe('WorkNoteIndex', () => {
         'Work Notes/M.md\0Projects/A': 'Projects/A.md',
       },
     );
-    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
-
-    const preview = await index.previewCompatibility();
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
+    const accepted = acceptedSuggestionForTest(h);
 
     expect(accepted.type).toBe('ok');
     if (accepted.type !== 'ok') throw new Error('Expected exact preview acceptance');
@@ -532,13 +1324,7 @@ describe('WorkNoteIndex', () => {
         match: { kind: 'property', property: 'status', value: 'someday' },
       },
     ];
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => projectStatuses);
-
-    const preview = await index.previewCompatibility();
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
+    const accepted = acceptedSuggestionForTest(h, projectStatuses);
 
     expect(accepted.type).toBe('ok');
     if (accepted.type !== 'ok') throw new Error('Expected exact preview acceptance');
@@ -573,13 +1359,12 @@ describe('WorkNoteIndex', () => {
         match: { kind: 'property', property: 'status', value: 'active' },
       },
     ];
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-    const preview = await index.previewCompatibility();
+    const before = acceptedSuggestionForTest(h, statuses).preset;
     statuses = [{ ...statuses[0]!, id: 'active-v2' }];
 
-    expect(
-      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
-    ).toEqual({ type: 'stale-preview' });
+    expect(acceptedSuggestionForTest(h, statuses).preset.rawStatusByStatusId).not.toEqual(
+      before.rawStatusByStatusId,
+    );
   });
 
   it('does not stale an exact preview for presentation-only Project status changes', async () => {
@@ -604,13 +1389,12 @@ describe('WorkNoteIndex', () => {
         match: { kind: 'property', property: 'status', value: 'active' },
       },
     ];
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-    const preview = await index.previewCompatibility();
+    const before = acceptedSuggestionForTest(h, statuses).preset;
     statuses = [{ ...statuses[0]!, color: '#abcdef', onLeftPanel: false }];
 
-    expect(
-      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
-    ).toMatchObject({ type: 'ok' });
+    expect(acceptedSuggestionForTest(h, statuses).preset.rawStatusByStatusId).toEqual(
+      before.rawStatusByStatusId,
+    );
   });
 
   it.each(['id', 'label', 'match', 'behavior'] as const)(
@@ -636,8 +1420,14 @@ describe('WorkNoteIndex', () => {
           match: { kind: 'property', property: 'status', value: 'active' },
         },
       ];
-      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-      const preview = await index.previewCompatibility();
+      const tx = compatibilityTransactionHarness(
+        h,
+        { ...preset, enabled: false, acceptedAudit: undefined },
+        () => statuses,
+      );
+      const candidate = { ...preset, folder: 'Work Notes', enabled: true };
+      const validation = await tx.index.validateCompatibility(candidate);
+      if (validation.type !== 'audited') throw new Error('Expected audited candidate');
       statuses = [
         field === 'id'
           ? { ...statuses[0]!, id: 'active-v2' }
@@ -651,9 +1441,10 @@ describe('WorkNoteIndex', () => {
               : { ...statuses[0]!, behavior: 'completed' },
       ];
 
-      expect(
-        await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
-      ).toEqual({ type: 'stale-preview' });
+      expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+        type: 'revalidation-required',
+        reason: 'audit-inputs-changed',
+      });
     },
   );
 
@@ -683,12 +1474,7 @@ describe('WorkNoteIndex', () => {
         match: { kind: 'property', property: 'status', value: 'reviewed' },
       },
     ];
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-    const preview = await index.previewCompatibility();
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
+    const accepted = acceptedSuggestionForTest(h, statuses);
 
     expect(accepted.type).toBe('ok');
     if (accepted.type !== 'ok') throw new Error('Expected safe read-only acceptance');
@@ -701,7 +1487,7 @@ describe('WorkNoteIndex', () => {
     expect(
       workNoteLifecycleBehavior(
         {
-          ...(index.list()[0] ?? (await index.audit()).snapshots[0]!),
+          ...auditWorkNotes(h.workNoteSource(), accepted.preset).snapshots[0]!,
           statusId: alias[0],
           rawStatus: alias[1],
         },
@@ -730,12 +1516,7 @@ describe('WorkNoteIndex', () => {
       behavior: 'regular',
       match: { kind: 'property', property: 'status', value: `reserved-${id}` },
     }));
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-    const preview = await index.previewCompatibility();
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
+    const accepted = acceptedSuggestionForTest(h, statuses);
 
     expect(accepted.type).toBe('ok');
     if (accepted.type !== 'ok') throw new Error('Expected collision-free acceptance');
@@ -771,12 +1552,7 @@ describe('WorkNoteIndex', () => {
           match: { kind: 'property', property: 'status', value: 'unrelated' },
         },
       ];
-      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-      const preview = await index.previewCompatibility();
-      const accepted = await index.acceptSuggestedCompatibility(
-        preview.acceptanceToken!,
-        '2026-08-27T00:00:00Z',
-      );
+      const accepted = acceptedSuggestionForTest(h, statuses);
 
       expect(accepted.type).toBe('ok');
       if (accepted.type !== 'ok') throw new Error('Expected semantic acceptance');
@@ -812,13 +1588,7 @@ describe('WorkNoteIndex', () => {
         },
       ];
       expect(resolveSemanticProjectStatus(statuses, rawStatus)).toEqual({ type: 'unmatched' });
-      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
-
-      const preview = await index.previewCompatibility();
-      const accepted = await index.acceptSuggestedCompatibility(
-        preview.acceptanceToken!,
-        '2026-08-27T00:00:00Z',
-      );
+      const accepted = acceptedSuggestionForTest(h, statuses);
 
       expect(accepted.type).toBe('ok');
       if (accepted.type !== 'ok') throw new Error('Expected read-only fallback acceptance');
@@ -876,13 +1646,7 @@ describe('WorkNoteIndex', () => {
         match: { kind: 'property', property: 'status', value: 'Done' },
       },
     ];
-    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => competingStatuses);
-
-    const preview = await index.previewCompatibility();
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
+    const accepted = acceptedSuggestionForTest(h, competingStatuses);
 
     expect(accepted.type).toBe('ok');
     if (accepted.type !== 'ok') throw new Error('Expected read-only compatibility acceptance');
@@ -891,7 +1655,7 @@ describe('WorkNoteIndex', () => {
     expect(accepted.preview.capabilities).toEqual({ update: false, create: false });
   });
 
-  it('rejects acceptance when vault metadata drifts after the exact preview', async () => {
+  it('rejects exact acceptance when vault metadata drifts after validation', async () => {
     const path = 'Work Notes/A.md';
     const h = harness(
       [
@@ -903,17 +1667,20 @@ describe('WorkNoteIndex', () => {
       ],
       { [`${path}\0Projects/A`]: 'Projects/A.md' },
     );
-    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
-    const preview = await index.previewCompatibility();
+    const tx = compatibilityTransactionHarness(h, { ...preset, enabled: false });
+    const candidate = { ...preset, folder: 'Work Notes', enabled: true };
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
     h.setFrontmatter(path, { Project: '[[Projects/A]]', Status: 'Review' });
 
-    expect(
-      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
-    ).toEqual({ type: 'stale-preview' });
+    expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'audit-inputs-changed',
+    });
     expect(h.writes).toEqual([]);
   });
 
-  it('accepts the exact pending preview once without exposing candidate details in its token', async () => {
+  it('accepts an opaque exact token once without exposing candidate details', async () => {
     const path = 'Private Notes/Secret.md';
     const h = harness(
       [
@@ -925,20 +1692,22 @@ describe('WorkNoteIndex', () => {
       ],
       { [`${path}\0Projects/Secret`]: 'Projects/Secret.md' },
     );
-    const index = new WorkNoteIndex(h.app, { ...preset, enabled: false });
+    const tx = compatibilityTransactionHarness(h, { ...preset, enabled: false });
+    const candidate = {
+      ...preset,
+      folder: 'Private Notes',
+      rawStatusByStatusId: { active: 'Private active' },
+      enabled: true,
+    };
+    const validation = await tx.index.validateCompatibility(candidate);
+    if (validation.type !== 'audited') throw new Error('Expected audited candidate');
 
-    const preview = await index.previewCompatibility();
-
-    expect(preview.acceptanceToken).toMatch(/^work-note-preview-[a-z0-9]+$/u);
-    expect(preview.acceptanceToken).not.toContain('Secret');
-    const accepted = await index.acceptSuggestedCompatibility(
-      preview.acceptanceToken!,
-      '2026-08-27T00:00:00Z',
-    );
-    expect(accepted.type).toBe('ok');
-    expect(
-      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:01Z'),
-    ).toEqual({ type: 'compatibility-conflict', reason: 'invalid-preview-token' });
+    expect(JSON.stringify(validation.token)).not.toContain('Secret');
+    expect((await tx.index.acceptValidatedCompatibility(validation.token)).type).toBe('applied');
+    expect(await tx.index.acceptValidatedCompatibility(validation.token)).toEqual({
+      type: 'revalidation-required',
+      reason: 'invalid-token',
+    });
   });
 
   it('keeps an eligible unknown status visible and diagnoses non-string dates', () => {
