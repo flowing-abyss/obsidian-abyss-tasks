@@ -660,7 +660,6 @@ export class CenterPanel {
 
   setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
     this.projectSnapshots = snapshots;
-    if (this.state.get('mode') === 'projects' && this.el?.isConnected) this.refresh();
   }
 
   projectCaptureContext(projectPath: string): CaptureContext {
