@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
+import type { ProjectPropertyCommandResult } from '../src/projects/ProjectCommandService';
 import type { Project, ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -2665,10 +2666,258 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       target.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
 
+      // The synchronous refresh still carries the optimistic previous snapshot. It must not be
+      // mistaken for an external rollback while the Project index catches up.
+      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+
+      project.statusId = 'published';
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+
       container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
       await flushMicrotasks();
       expect(undoStatus).toHaveBeenCalledWith('Projects/A.md', 'published', activeStatusId);
+
+      project.statusId = activeStatusId;
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      const nextCard = container.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+      const nextTarget = container.querySelector<HTMLElement>('[data-board-column="published"]')!;
+      nextCard.dispatchEvent(new Event('dragstart', { bubbles: true }));
+      nextTarget.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+
+      project.statusId = 'published';
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+
+      project.statusId = settings.projects.statuses[2]!.id;
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      expect(container.querySelector('[data-board-undo]')).toBeNull();
     } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('retains an in-flight Board Undo as one busy operation across a production remount', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const activeStatusId = settings.projects.statuses[0]!.id;
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: activeStatusId,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const setStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: activeStatusId,
+      nextStatusId: 'published',
+    });
+    const pendingUndo = deferred<{
+      type: 'ok';
+      previousStatusId: string;
+      nextStatusId: string;
+    }>();
+    const undoStatus = vi.fn(() => pendingUndo.promise);
+    const projectStore = {
+      list: () => [project],
+      get: () => project,
+      activeForLeftPanel: () => [project],
+      onUpdate: () => () => {},
+      refresh: vi.fn(),
+    } as never;
+    const state = new AppState();
+    state.set('mode', 'projects');
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      settings,
+      taskQueryApi(),
+      new StatusRegistry(settings.taskStatuses),
+      undefined,
+      projectStore,
+      { setStatus, undoStatus, create: vi.fn() } as never,
+    );
+    panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      container
+        .querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!
+        .dispatchEvent(new Event('dragstart', { bubbles: true }));
+      container
+        .querySelector<HTMLElement>('[data-board-column="published"]')!
+        .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+      project.statusId = 'published';
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+
+      container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+      await flushMicrotasks();
+      expect(undoStatus).toHaveBeenCalledOnce();
+
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      const currentUndo = container.querySelector<HTMLButtonElement>('[data-board-undo]')!;
+      expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+      expect(currentUndo.disabled || currentUndo.getAttribute('aria-disabled') === 'true').toBe(
+        true,
+      );
+      currentUndo.click();
+      await flushMicrotasks();
+      expect(undoStatus).toHaveBeenCalledOnce();
+
+      pendingUndo.resolve({
+        type: 'ok',
+        previousStatusId: activeStatusId,
+        nextStatusId: 'published',
+      });
+      await flushMicrotasks();
+      expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+      expect(container.querySelector('[data-board-undo]')).toBeNull();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it.each([
+    {
+      outcome: 'a non-success result',
+      rejects: false,
+    },
+    {
+      outcome: 'a rejected command',
+      rejects: true,
+    },
+  ])('makes Undo retryable after $outcome survives a production remount', async ({ rejects }) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const activeStatusId = settings.projects.statuses[0]!.id;
+    const project = {
+      path: 'Projects/A.md',
+      name: 'A',
+      frontmatter: {},
+      tags: [],
+      statusId: activeStatusId,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    let resolveOperation!: (result: ProjectPropertyCommandResult) => void;
+    let rejectOperation!: (reason: unknown) => void;
+    const operation = new Promise<ProjectPropertyCommandResult>((resolve, reject) => {
+      resolveOperation = resolve;
+      rejectOperation = reject;
+    });
+    const retry = deferred<ProjectPropertyCommandResult>();
+    const undoStatus = vi
+      .fn()
+      .mockImplementationOnce(() => operation)
+      .mockImplementationOnce(() => retry.promise);
+    const projectStore = {
+      list: () => [project],
+      get: () => project,
+      activeForLeftPanel: () => [project],
+      onUpdate: () => () => {},
+      refresh: vi.fn(),
+    } as never;
+    const state = new AppState();
+    state.set('mode', 'projects');
+    const panel = new CenterPanel(
+      state,
+      {} as App,
+      settings,
+      taskQueryApi(),
+      new StatusRegistry(settings.taskStatuses),
+      undefined,
+      projectStore,
+      {
+        setStatus: vi.fn().mockResolvedValue({
+          type: 'ok',
+          previousStatusId: activeStatusId,
+          nextStatusId: 'published',
+        }),
+        undoStatus,
+        create: vi.fn(),
+      } as never,
+    );
+    panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      container
+        .querySelector<HTMLElement>('[data-board-item="Projects/A.md"][draggable]')!
+        .dispatchEvent(new Event('dragstart', { bubbles: true }));
+      container
+        .querySelector<HTMLElement>('[data-board-column="published"]')!
+        .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+      await flushMicrotasks();
+      project.statusId = 'published';
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+      await flushMicrotasks();
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      await flushMicrotasks();
+      expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+
+      if (rejects) rejectOperation(new Error('write failed'));
+      else resolveOperation({ type: 'conflict', currentStatusId: 'published' });
+      await flushMicrotasks();
+      expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+      const settledToolbar = container.querySelector<HTMLElement>('.abyss-board-toolbar')!;
+      expect(settledToolbar.isConnected).toBe(true);
+      const currentUndo = container.querySelector<HTMLButtonElement>('[data-board-undo]')!;
+      expect(settledToolbar.contains(currentUndo)).toBe(true);
+      expect(currentUndo.disabled).toBe(false);
+      currentUndo.focus();
+      currentUndo.click();
+      await flushMicrotasks();
+      expect(undoStatus).toHaveBeenCalledTimes(2);
+      const retryToolbar = container.querySelector<HTMLElement>('.abyss-board-toolbar')!;
+      expect(activeDocument.activeElement).toBe(retryToolbar);
+      expect(retryToolbar.querySelector<HTMLElement>('[role="status"]')?.textContent).toBe(
+        'Undoing status change…',
+      );
+      expect(retryToolbar.querySelector<HTMLButtonElement>('[data-board-undo]')?.disabled).toBe(
+        true,
+      );
+    } finally {
+      retry.resolve({
+        type: 'ok',
+        previousStatusId: activeStatusId,
+        nextStatusId: 'published',
+      });
+      await flushMicrotasks();
       panel.destroy();
       container.remove();
     }
@@ -2769,14 +3018,16 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       scroll = container.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
       expect(scroll.scrollTop).toBe(100 * 52);
       const focused = container.querySelector<HTMLElement>(
-        '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 103.md"]',
+        '.abyss-work-note-row[data-work-note-path="Work Notes/Work note 103.md"] [data-work-note-identity-control]',
       )!;
       focused.focus();
       panel.refresh();
 
-      expect((activeDocument.activeElement as HTMLElement).dataset['workNotePath']).toBe(
-        'Work Notes/Work note 103.md',
-      );
+      expect(
+        (activeDocument.activeElement as HTMLElement)
+          .closest('.abyss-work-note-row')
+          ?.getAttribute('data-work-note-path'),
+      ).toBe('Work Notes/Work note 103.md');
       expect(container.querySelector<HTMLElement>('.abyss-work-notes-scroll')?.scrollTop).toBe(
         100 * 52,
       );
@@ -2800,28 +3051,32 @@ describe('CenterPanel projects mode teardown (regression)', () => {
   async function projectCaptureHarness(
     implementation: TaskCreateSession['execute'] = async () => projectCaptureSuccess(),
     settings: CalendarSettings = DEFAULT_SETTINGS,
+    projectTask: TaskSnapshot = task({
+      title: 'First project task',
+      source: { filePath: 'Projects/A.md', line: 0 },
+    }),
   ): Promise<{
     panel: CenterPanel;
     state: AppState;
     container: HTMLElement;
     sessionExecute: ReturnType<typeof vi.fn<TaskCreateSession['execute']>>;
+    planCreate: ReturnType<typeof vi.fn<TaskCaptureApplicationApi['planCreate']>>;
   }> {
     const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const queries = taskQueryApi({
-      list: () => [
-        task({ title: 'First project task', source: { filePath: 'Projects/A.md', line: 0 } }),
-      ],
+      list: () => [projectTask],
     });
     const sessionExecute = vi.fn<TaskCreateSession['execute']>(implementation);
+    const planCreate = vi.fn<TaskCaptureApplicationApi['planCreate']>(async () => ({
+      type: 'ready' as const,
+      destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
+      execute: sessionExecute,
+    }));
     const application: TaskApplicationApi & TaskCaptureApplicationApi = {
       queries,
-      planCreate: vi.fn(async () => ({
-        type: 'ready' as const,
-        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' as const } },
-        execute: sessionExecute,
-      })),
+      planCreate,
       execute: vi.fn(async () => ({
         type: 'invalid' as const,
         issues: [{ code: 'invalid-target' as const }],
@@ -2863,7 +3118,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     activeDocument.body.append(container);
     panel.mount(container);
     state.set('mode', 'projects');
-    return { panel, state, container, sessionExecute };
+    return { panel, state, container, sessionExecute, planCreate };
   }
 
   it('renders Next Action as an icon-only Project task-card control', async () => {
@@ -2976,6 +3231,94 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(container.querySelector('.abyss-capture-surface')).toBeNull();
       expect(trigger.hidden).toBe(false);
       expect(activeDocument.activeElement).toBe(trigger);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('applies focused Project workspace status and priority through the real capture target', async () => {
+    const focusedTask = task({
+      title: 'Focused project task',
+      status: 'in-progress',
+      statusSymbol: '/',
+      priority: 'A',
+      source: { filePath: 'Projects/A.md', line: 0 },
+    });
+    const { panel, container, sessionExecute, planCreate } = await projectCaptureHarness(
+      undefined,
+      DEFAULT_SETTINGS,
+      focusedTask,
+    );
+    try {
+      const resolve = vi.spyOn(
+        (
+          panel as unknown as {
+            captureTargets: { resolve(context: unknown): Promise<CaptureTarget> };
+          }
+        ).captureTargets,
+        'resolve',
+      );
+      container.querySelector<HTMLElement>('.abyss-task-card')!.focus();
+      const input = await openListCapture(container);
+      const destination = container.querySelector<HTMLElement>('.abyss-capture-destination')!;
+
+      expect.soft(resolve).toHaveBeenCalledWith({
+        type: 'project-workspace',
+        projectPath: 'Projects/A.md',
+        destinationPath: 'Projects/A.md',
+        statusSymbol: '/',
+        priority: 'A',
+      });
+      expect(planCreate).toHaveBeenCalledWith({
+        type: 'explicit',
+        destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
+      });
+      expect.soft(destination.textContent).toBe('Project: A · Status: In progress · Priority: A');
+      expect(input.getAttribute('aria-describedby')).toBe(destination.id);
+
+      setCaptureDraft(input, 'inherit focused defaults');
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledWith({
+        markdownBody: 'inherit focused defaults',
+        initial: { statusSymbol: '/', priority: { type: 'set', value: 'A' } },
+      });
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('omits Project capture status and priority when no workspace item is focused', async () => {
+    const { panel, container, sessionExecute } = await projectCaptureHarness();
+    try {
+      const resolve = vi.spyOn(
+        (
+          panel as unknown as {
+            captureTargets: { resolve(context: unknown): Promise<CaptureTarget> };
+          }
+        ).captureTargets,
+        'resolve',
+      );
+      const input = await openListCapture(container);
+      const destination = container.querySelector<HTMLElement>('.abyss-capture-destination')!;
+
+      expect(resolve).toHaveBeenCalledWith({
+        type: 'project-workspace',
+        projectPath: 'Projects/A.md',
+        destinationPath: 'Projects/A.md',
+      });
+      expect.soft(destination.textContent).toBe('Project: A');
+      expect(destination.textContent).not.toMatch(/Status|Priority/u);
+      expect(input.getAttribute('aria-describedby')).toBe(destination.id);
+
+      setCaptureDraft(input, 'no invented defaults');
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledWith({ markdownBody: 'no invented defaults' });
     } finally {
       panel.destroy();
       container.remove();

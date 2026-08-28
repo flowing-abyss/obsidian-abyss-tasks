@@ -1173,6 +1173,31 @@ export class CalendarSettingsTab extends PluginSettingTab {
       }),
     );
 
+    new Setting(card).setName('Lifecycle role').addDropdown((dropdown) =>
+      dropdown
+        .addOptions({
+          regular: 'Regular',
+          completed: 'Completed',
+          dropped: 'Dropped',
+          published: 'Published',
+        })
+        .setValue(status.behavior)
+        .onChange(async (value) => {
+          const behavior = value as typeof status.behavior;
+          if (behavior === 'dropped' || behavior === 'published') {
+            for (const candidate of statuses) {
+              if (candidate !== status && candidate.behavior === behavior) {
+                candidate.behavior = 'regular';
+              }
+            }
+          }
+          status.behavior = behavior;
+          await this.plugin.saveSettings();
+          // eslint-disable-next-line @typescript-eslint/no-deprecated
+          this.display();
+        }),
+    );
+
     new Setting(card).setName('Show on left panel').addToggle((tg) =>
       tg.setValue(status.onLeftPanel).onChange(async (v) => {
         status.onLeftPanel = v;

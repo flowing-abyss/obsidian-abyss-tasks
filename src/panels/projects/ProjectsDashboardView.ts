@@ -2,6 +2,7 @@ import { Menu, setIcon } from 'obsidian';
 import { selectProjectTasks } from '../../projects/selectProjectTasks';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { taskTimelineItem, workNoteTimelineItem } from './timelineProjection';
@@ -39,7 +40,10 @@ export function renderProjectDashboard(
     viewState: ctx.settings.projects.view.tasks,
     settings: ctx.settings,
   });
-  const selectedWorkNotes = ctx.selectWorkNotes?.(snapshot.workNotes) ?? snapshot.workNotes;
+  const allWorkNotes = [...snapshot.workNotes, ...snapshot.milestones];
+  const selectedWorkNotes = ctx.selectWorkNotes?.(allWorkNotes) ?? allWorkNotes;
+  const workNotesAvailable =
+    ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
@@ -55,12 +59,14 @@ export function renderProjectDashboard(
   pill.setText(status?.label ?? project.rawStatus ?? 'No status');
   pill.addEventListener('click', (e) => {
     const menu = new Menu();
-    for (const s of statuses) {
+    for (const action of projectStatusMenuModel(statuses, project)) {
       menu.addItem((item) =>
         item
-          .setTitle(s.label)
-          .setChecked(s.id === project.statusId)
-          .onClick(() => ctx.onSetStatus(project.path, s.id)),
+          .setTitle(action.label)
+          .setIcon(action.icon)
+          .setChecked(action.checked)
+          .setDisabled(action.disabled)
+          .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
       );
     }
     showMenuAtMouseEventWithFocus(menu, e);
@@ -104,11 +110,20 @@ export function renderProjectDashboard(
 
   let scope: ProjectWorkspaceScope = session.scope;
   let layout: ProjectWorkspaceLayout = session.layout;
+  if (scope === 'work-notes' && !workNotesAvailable) {
+    scope = 'tasks';
+    layout = 'list';
+    session.scope = scope;
+    session.layout = layout;
+  }
   const workspace = container.createDiv({
     cls: 'abyss-project-tasks',
     attr: { 'data-project-workspace': '' },
   });
-  workspace.createEl('h3', { cls: 'abyss-project-tasks-title', text: 'Tasks' });
+  const workspaceTitle = workspace.createEl('h3', {
+    cls: 'abyss-project-tasks-title',
+    text: scope === 'work-notes' ? 'Work Notes' : 'Tasks',
+  });
   const toolbar = workspace.createDiv({ cls: 'abyss-project-workspace-toolbar' });
   const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
   const scopeButtons: HTMLButtonElement[] = [];
@@ -130,11 +145,16 @@ export function renderProjectDashboard(
     syncTimelineButton();
     workspace.dataset['scope'] = scope;
     workspace.dataset['layout'] = layout;
+    workspaceTitle.setText(scope === 'work-notes' ? 'Work Notes' : 'Tasks');
     for (const button of scopeButtons) {
-      button.classList.toggle('is-active', button.dataset['projectScope'] === scope);
+      const active = button.dataset['projectScope'] === scope;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
     }
     for (const button of layoutButtons) {
-      button.classList.toggle('is-active', button.dataset['projectLayout'] === layout);
+      const active = button.dataset['projectLayout'] === layout;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-pressed', String(active));
       if (button.dataset['projectLayout'] === 'board') {
         button.disabled = !boardAvailable();
         button.setAttribute('aria-disabled', String(button.disabled));
@@ -150,9 +170,9 @@ export function renderProjectDashboard(
       if (layout === 'timeline' && ctx.renderWorkNoteTimeline) {
         child = ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes);
       } else if (layout === 'board' && ctx.renderWorkNoteBoard) {
-        child = ctx.renderWorkNoteBoard(content, project.path, snapshot.workNotes);
+        child = ctx.renderWorkNoteBoard(content, project.path, selectedWorkNotes);
       } else {
-        child = ctx.renderWorkNotes?.(content, project.path, snapshot.workNotes) ?? null;
+        child = ctx.renderWorkNotes?.(content, project.path, selectedWorkNotes) ?? null;
       }
     } else if (layout === 'timeline' && ctx.renderTaskTimeline) {
       child = ctx.renderTaskTimeline(content, project.path, selectedTasks);
@@ -199,13 +219,14 @@ export function renderProjectDashboard(
   };
 
   scopeButton('tasks', 'Tasks');
-  if (snapshot.workNotes.length > 0 || ctx.renderWorkNotes !== undefined) {
+  if (workNotesAvailable) {
     scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
   }
   layoutButton('list', 'List');
   if (
     snapshot.tasks.length > 0 ||
-    (snapshot.workNotes.length > 0 && ctx.renderWorkNoteBoard !== undefined)
+    ctx.renderTaskBoard !== undefined ||
+    ctx.renderWorkNoteBoard !== undefined
   ) {
     const button = toolbar.createEl('button', {
       text: 'Board',

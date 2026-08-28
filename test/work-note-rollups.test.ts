@@ -101,4 +101,24 @@ describe('Work Note rollups', () => {
       progress: null,
     });
   });
+
+  it('keeps legacy accepted slug ids in completed, dropped, and published lifecycle rollups', () => {
+    const currentStatuses: readonly ProjectStatus[] = [
+      { ...statuses[0]!, id: 'project-active-id' },
+      { ...statuses[1]!, id: 'project-completed-id' },
+      { ...statuses[2]!, id: 'project-published-id' },
+      { ...statuses[3]!, id: 'project-dropped-id' },
+    ];
+
+    expect(
+      computeWorkNoteRollup(
+        [
+          note('Work/Done.md', 'done', { rawStatus: 'DONE' }),
+          note('Work/Published.md', 'published', { rawStatus: 'published' }),
+          note('Work/Dropped.md', 'dropped', { rawStatus: 'Dropped' }),
+        ],
+        currentStatuses,
+      ),
+    ).toEqual({ active: 0, completed: 2, dropped: 1 });
+  });
 });

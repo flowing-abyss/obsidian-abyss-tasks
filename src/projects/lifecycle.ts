@@ -40,14 +40,39 @@ const BEHAVIORS = new Set<ProjectLifecycleBehavior>([
   'published',
 ]);
 
-function normalizedLabel(label: string): string {
-  return label
+function normalizedStatusSemantic(value: string): string {
+  return value
     .normalize('NFKC')
     .trim()
+    .replace(/^#/u, '')
     .replace(/^(?:\p{Extended_Pictographic}|\u200d|\ufe0f|\s)+/gu, '')
     .trim()
     .toLowerCase()
     .replace(/\s+/gu, ' ');
+}
+
+const normalizedLabel = normalizedStatusSemantic;
+
+export type SemanticProjectStatusResolution =
+  | { readonly type: 'unique'; readonly status: ProjectStatus }
+  | { readonly type: 'ambiguous' }
+  | { readonly type: 'unmatched' };
+
+/** Resolves legacy/raw Work Note status text against the configured Project status catalog. */
+export function resolveSemanticProjectStatus(
+  statuses: readonly ProjectStatus[],
+  rawStatus: string,
+): SemanticProjectStatusResolution {
+  const raw = normalizedStatusSemantic(rawStatus);
+  if (!raw) return { type: 'unmatched' };
+  const matches = statuses.filter((status) => {
+    const matchSemantic = status.match.kind === 'property' ? status.match.value : status.match.tag;
+    const label = normalizedStatusSemantic(status.label);
+    const match = normalizedStatusSemantic(matchSemantic);
+    return (label !== '' && label === raw) || (match !== '' && match === raw);
+  });
+  if (matches.length === 1) return { type: 'unique', status: matches[0]! };
+  return matches.length > 1 ? { type: 'ambiguous' } : { type: 'unmatched' };
 }
 
 export function inferLifecycleBehavior(label: string): ProjectLifecycleBehavior {

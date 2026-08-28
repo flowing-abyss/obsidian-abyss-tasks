@@ -6945,6 +6945,17 @@ body.abyss-modal-open .popover.hover-popover {
   min-height: 0;
   flex-direction: column;
 }
+.abyss-board-toolbar {
+  display: flex;
+  block-size: var(--input-height);
+  flex: 0 0 var(--input-height);
+  align-items: center;
+  justify-content: flex-end;
+  padding-inline: 12px;
+}
+.abyss-board-undo {
+  margin: 0;
+}
 .abyss-board-column-tabs {
   display: none;
   gap: 4px;

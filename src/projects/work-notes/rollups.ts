@@ -1,5 +1,5 @@
 import type { ProjectStatus } from '../../settings/types';
-import type { ProjectLifecycleBehavior } from '../lifecycle';
+import { resolveSemanticProjectStatus, type ProjectLifecycleBehavior } from '../lifecycle';
 import type { WorkNoteSnapshot } from './types';
 
 export interface WorkNoteRollup {
@@ -22,19 +22,23 @@ export function workNoteLifecycleBehavior(
   note: WorkNoteSnapshot,
   statuses: readonly ProjectStatus[],
 ): ProjectLifecycleBehavior {
-  return (note.statusId && behaviorByStatusId(statuses).get(note.statusId)) || 'regular';
+  const direct = note.statusId && behaviorByStatusId(statuses).get(note.statusId);
+  if (direct) return direct;
+  const semantic = note.rawStatus
+    ? resolveSemanticProjectStatus(statuses, note.rawStatus)
+    : { type: 'unmatched' as const };
+  return semantic.type === 'unique' ? semantic.status.behavior : 'regular';
 }
 
 function countLifecycle(
   notes: readonly WorkNoteSnapshot[],
   statuses: readonly ProjectStatus[],
 ): WorkNoteRollup {
-  const behaviors = behaviorByStatusId(statuses);
   let active = 0;
   let completed = 0;
   let dropped = 0;
   for (const note of notes) {
-    const behavior = (note.statusId && behaviors.get(note.statusId)) || 'regular';
+    const behavior = workNoteLifecycleBehavior(note, statuses);
     if (behavior === 'dropped') dropped += 1;
     else if (behavior === 'completed' || behavior === 'published') completed += 1;
     else active += 1;

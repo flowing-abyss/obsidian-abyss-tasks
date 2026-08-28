@@ -1,4 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
+import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type {
   WorkNoteCommandResult,
   WorkNoteCreateRequest,
@@ -42,6 +43,7 @@ export interface WorkNotesViewOptions {
   readonly announce?: (message: string) => void;
   readonly isNarrow?: boolean;
   readonly coarsePointer?: boolean;
+  readonly milestoneRollups?: ReadonlyMap<string, MilestoneRollup>;
 }
 
 export interface WorkNotesViewHandle {
@@ -73,9 +75,13 @@ export function selectWorkNotes(
 ): readonly WorkNoteSnapshot[] {
   if (!options.viewState) return [...options.notes];
   const allowed = options.viewState?.statusIds;
+  const knownStatusIds = new Set(options.statuses.map(({ id }) => id));
+  const effectiveAllowed = allowed?.filter((id) => knownStatusIds.has(id));
   const filtered =
-    allowed && allowed.length > 0
-      ? options.notes.filter(({ statusId }) => statusId === null || allowed.includes(statusId))
+    effectiveAllowed && effectiveAllowed.length > 0
+      ? options.notes.filter(
+          ({ statusId }) => statusId === null || effectiveAllowed.includes(statusId),
+        )
       : [...options.notes];
   const field = options.viewState?.sortBy.field ?? 'updated';
   const direction = options.viewState?.sortBy.dir === 'asc' ? 1 : -1;
@@ -130,13 +136,28 @@ function renderRow(
       'data-work-note-path': note.path,
     },
   });
+  const milestoneRollup =
+    note.kind === 'milestone' ? options.milestoneRollups?.get(note.path) : undefined;
+  const progressText =
+    milestoneRollup?.progress === null || milestoneRollup === undefined
+      ? undefined
+      : `${String(milestoneRollup.completed)} of ${String(
+          milestoneRollup.active + milestoneRollup.completed,
+        )} complete`;
   const identity = row.createEl('button', {
     cls: 'abyss-work-note-identity',
     attr: {
       type: 'button',
       'data-work-note-identity-control': '',
-      'data-work-note-path': note.path,
-      'aria-label': `${basename(note.path)}, ${statusText(note, options.statuses)}`,
+      'aria-label': [
+        options.layout === 'board' ? 'Open work note' : 'Work note details',
+        basename(note.path),
+        note.kind === 'milestone' ? 'Milestone' : 'Ordinary',
+        statusText(note, options.statuses),
+        progressText,
+      ]
+        .filter((part): part is string => part !== undefined)
+        .join(', '),
     },
   });
   identity.createSpan({ cls: 'abyss-work-note-title', text: basename(note.path) });
@@ -147,33 +168,46 @@ function renderRow(
   });
   meta.createSpan({ cls: 'abyss-work-note-project', text: basename(note.projectPath) });
   if (note.priority) meta.createSpan({ cls: 'abyss-work-note-priority', text: note.priority });
-  const status = row.createEl('button', {
-    cls: 'abyss-work-note-status',
-    text: statusText(note, options.statuses),
-    attr: {
-      type: 'button',
-      'aria-label': 'Change work note status',
-      title:
-        options.commandsEnabled === false
-          ? 'Requires an accepted compatibility audit with update capability'
-          : 'Change work note status',
-    },
+  if (milestoneRollup?.progress !== null && milestoneRollup !== undefined) {
+    meta.createSpan({
+      cls: 'abyss-work-note-rollup',
+      text: `${String(milestoneRollup.completed)}/${String(
+        milestoneRollup.active + milestoneRollup.completed,
+      )}`,
+    });
+  }
+  if (options.layout === 'list') {
+    const status = row.createEl('button', {
+      cls: 'abyss-work-note-status',
+      text: statusText(note, options.statuses),
+      attr: {
+        type: 'button',
+        'aria-label': 'Change work note status',
+        title:
+          options.commandsEnabled === false
+            ? 'Requires an accepted compatibility audit with update capability'
+            : 'Change work note status',
+      },
+    });
+    status.disabled = options.commandsEnabled === false;
+    status.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!status.disabled) renderStatusMenu(event, note, options, presenter, status);
+    });
+    const open = row.createEl('button', {
+      cls: 'abyss-work-note-open',
+      attr: { type: 'button', 'aria-label': 'Open work note', title: 'Open work note' },
+    });
+    setIcon(open, 'file-text');
+    open.addEventListener('click', (event) => {
+      event.stopPropagation();
+      options.openNote(note.path);
+    });
+  }
+  identity.addEventListener('click', () => {
+    if (options.layout === 'list') select();
+    else options.openNote(note.path);
   });
-  status.disabled = options.commandsEnabled === false;
-  status.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (!status.disabled) renderStatusMenu(event, note, options, presenter, status);
-  });
-  const open = row.createEl('button', {
-    cls: 'abyss-work-note-open',
-    attr: { type: 'button', 'aria-label': 'Open work note', title: 'Open work note' },
-  });
-  setIcon(open, 'file-text');
-  open.addEventListener('click', (event) => {
-    event.stopPropagation();
-    options.openNote(note.path);
-  });
-  identity.addEventListener('click', select);
   return row;
 }
 
@@ -355,7 +389,9 @@ function renderList(
     if (retainedNote) {
       const mountedIdentity = (): HTMLElement | undefined =>
         Array.from(rows.querySelectorAll<HTMLElement>('[data-work-note-identity-control]')).find(
-          ({ dataset }) => dataset['workNotePath'] === retainedInspectorPath,
+          (identity) =>
+            identity.closest('.abyss-work-note-row')?.getAttribute('data-work-note-path') ===
+            retainedInspectorPath,
         );
       let retainedTarget = mountedIdentity();
       if (!retainedTarget) {
@@ -372,7 +408,9 @@ function renderList(
   }
   if (
     pendingCreatedPath &&
-    activeDocument.activeElement?.getAttribute('data-work-note-path') === pendingCreatedPath
+    (activeDocument.activeElement as HTMLElement | null)
+      ?.closest('.abyss-work-note-row')
+      ?.getAttribute('data-work-note-path') === pendingCreatedPath
   ) {
     if (options.session) options.session.pendingCreatedPath = null;
   }
@@ -400,9 +438,11 @@ function renderWorkNoteBoard(
     notes,
     statuses: options.statuses,
     onMoveStatus: (note, statusId) => Promise.resolve(options.onSetStatus(note, statusId)),
-    renderItem: (host, note) => renderRow(host, note, options, presenter, () => undefined),
+    renderItem: (host, note) =>
+      renderRow(host, note, options, presenter, () => options.openNote(note.path)),
     executeMutation: (command, initiator) => presenter.run(command, initiator),
     session: options.session?.board,
+    commandsEnabled: options.commandsEnabled,
   });
 }
 

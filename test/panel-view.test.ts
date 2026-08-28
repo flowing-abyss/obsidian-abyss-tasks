@@ -442,6 +442,54 @@ describe('PanelView', () => {
       expect(host?.parentElement).toBe(shell);
     });
 
+    it('resolves global Quick Capture against the current Project without inventing task defaults', () => {
+      const focused = task({
+        title: 'Focused project task',
+        status: 'in-progress',
+        statusSymbol: '/',
+        priority: 'A',
+        source: { filePath: 'Projects/Current.md', line: 2 },
+      });
+      const internals = view as unknown as {
+        state: AppState;
+        quickCaptureContext(): unknown;
+        center: {
+          projectWorkspaceSession: {
+            tasks: {
+              reconcile(actions: readonly unknown[]): void;
+              focusOnly(ref: TaskRef): void;
+            };
+          };
+        };
+      };
+      internals.state.set('mode', 'projects');
+      internals.state.set('projectsPanel', { view: 'dashboard', path: 'Projects/Current.md' });
+
+      expect(internals.quickCaptureContext()).toEqual({
+        type: 'project-workspace',
+        projectPath: 'Projects/Current.md',
+        destinationPath: 'Projects/Current.md',
+      });
+
+      internals.center.projectWorkspaceSession.tasks.reconcile([
+        {
+          task: focused,
+          projectPath: 'Projects/Current.md',
+          dependency: { type: 'allowed' },
+          owner: { type: 'project', path: 'Projects/Current.md' },
+        },
+      ]);
+      internals.center.projectWorkspaceSession.tasks.focusOnly(focused.ref);
+
+      expect(internals.quickCaptureContext()).toEqual({
+        type: 'project-workspace',
+        projectPath: 'Projects/Current.md',
+        destinationPath: 'Projects/Current.md',
+        statusSymbol: '/',
+        priority: 'A',
+      });
+    });
+
     it('keeps collapsed Tasks panes reachable through keyboard-native compact controls', () => {
       activeDocument.body.appendChild(view.containerEl);
       const internals = view as unknown as { state: AppState; panelNavigation: PanelNavigator };

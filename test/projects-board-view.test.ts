@@ -379,6 +379,26 @@ describe('shared board view', () => {
     expect(published.dataset['boardTerminalDragZone']).toBeUndefined();
   });
 
+  it('does not label filtered terminal drop zones with tabs that are not rendered', () => {
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [
+        column('dropped', 'terminal-left'),
+        column('active', 'regular', [{ id: 'a', name: 'A' }]),
+        column('published', 'terminal-right'),
+      ],
+      visibleColumnKeys: new Set(['active']),
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+
+    for (const panel of el.querySelectorAll<HTMLElement>('[data-terminal-filtered="true"]')) {
+      const labelledBy = panel.getAttribute('aria-labelledby');
+      expect(labelledBy === null || el.querySelector(`#${labelledBy}`) !== null).toBe(true);
+    }
+  });
+
   it('keeps a terminal item visible when its filter is enabled and removes it only after a successful filtered write', async () => {
     const item = { id: 'a', name: 'A' };
     const move = vi.fn().mockResolvedValue({ type: 'ok' });
@@ -453,7 +473,6 @@ describe('shared board view', () => {
       renderItem: (host, current) => host.createDiv({ text: current.name }),
       undo,
     });
-
     const source = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
     const target = el.querySelector<HTMLElement>('[data-board-column="published"]')!;
     source.dispatchEvent(new Event('dragstart', { bubbles: true }));
@@ -461,11 +480,232 @@ describe('shared board view', () => {
     await flushMicrotasks();
     el.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
     await flushMicrotasks();
+    expect(el.querySelector('[aria-busy="true"]')).toBeNull();
 
     expect(undo).toHaveBeenCalledWith(item, 'published', {
       type: 'ok',
       previousStatusId: 'active',
     });
     expect(el.textContent).toContain('A');
+  });
+
+  it('does not start a second board mutation while the current Undo is in flight', async () => {
+    const first = { id: 'a', name: 'A' };
+    const second = { id: 'b', name: 'B' };
+    const move = vi.fn().mockResolvedValue({ type: 'ok', previousStatusId: 'active' });
+    const pendingUndo = deferred<{
+      type: 'ok';
+      previousStatusId: string;
+      nextStatusId: string;
+    }>();
+    const undo = vi.fn(() => pendingUndo.promise);
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [
+        column('active', 'regular', [first, second]),
+        column('published', 'terminal-right'),
+      ],
+      mutation: { move, menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => {
+        const card = host.createDiv();
+        card.createEl('button', {
+          text: current.name,
+          attr: { type: 'button', 'data-project-identity-control': '' },
+        });
+        card.createEl('button', {
+          text: 'Open',
+          attr: { type: 'button', 'aria-label': `Open ${current.name}` },
+        });
+        return card;
+      },
+      undo,
+    });
+    const stableStructure = {
+      columns: el.querySelectorAll('[data-board-column]').length,
+      cards: el.querySelectorAll('[data-board-item][draggable]').length,
+    };
+
+    const published = el.querySelector<HTMLElement>('[data-board-column="published"]')!;
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    published.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    await flushMicrotasks();
+    const undoTrigger = el.querySelector<HTMLButtonElement>('[data-board-undo]')!;
+    undoTrigger.click();
+    await flushMicrotasks();
+
+    const busyRegion = el.querySelector<HTMLElement>('[aria-busy="true"]');
+    expect(busyRegion).not.toBeNull();
+    expect(busyRegion?.textContent).toContain('Undo');
+    expect({
+      columns: el.querySelectorAll('[data-board-column]').length,
+      cards: el.querySelectorAll('[data-board-item][draggable]').length,
+    }).toEqual(stableStructure);
+    expect(undoTrigger.disabled || undoTrigger.getAttribute('aria-disabled') === 'true').toBe(true);
+    expect(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-board-status-menu')).every(
+        (control) => control.disabled || control.getAttribute('aria-disabled') === 'true',
+      ),
+    ).toBe(true);
+    expect(
+      Array.from(el.querySelectorAll<HTMLElement>('[data-board-item][draggable]')).every(
+        (surface) => surface.closest('[aria-disabled="true"]') === null,
+      ),
+    ).toBe(true);
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLButtonElement>(
+          '[data-project-identity-control], [aria-label^="Open "]',
+        ),
+      ).every((control) => !control.disabled && control.getAttribute('aria-disabled') !== 'true'),
+    ).toBe(true);
+    expect(
+      Array.from(el.querySelectorAll<HTMLElement>('[data-board-item][draggable]')).every(
+        (surface) => surface.getAttribute('draggable') === 'false',
+      ),
+    ).toBe(true);
+
+    const blockedCard = el.querySelector<HTMLElement>('[data-board-item="b"][draggable]')!;
+    blockedCard.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    expect(el.querySelector('.abyss-board-columns')?.classList.contains('is-drag-active')).toBe(
+      false,
+    );
+    expect(el.querySelector('[data-board-terminal-drag-zone]')).toBeNull();
+    published.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    await flushMicrotasks();
+    expect(move).toHaveBeenCalledOnce();
+
+    pendingUndo.resolve({ type: 'ok', previousStatusId: 'active', nextStatusId: 'published' });
+    await flushMicrotasks();
+    expect(el.querySelector('[aria-busy="true"]')).toBeNull();
+    const settledUndo = el.querySelector<HTMLButtonElement>('[data-board-undo]');
+    expect(
+      settledUndo === null ||
+        (!settledUndo.disabled && settledUndo.getAttribute('aria-disabled') !== 'true'),
+    ).toBe(true);
+    expect(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-board-status-menu')).some(
+        (control) => !control.disabled && control.getAttribute('aria-disabled') !== 'true',
+      ),
+    ).toBe(true);
+
+    el.querySelector<HTMLElement>('[data-board-item="b"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="published"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    expect(move).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    { context: 'a visible destination card', visible: 'all' as const, selected: 'published' },
+    { context: 'a filtered terminal destination', visible: 'active' as const, selected: 'active' },
+    {
+      context: 'a responsive non-active destination',
+      visible: 'all' as const,
+      selected: 'active',
+    },
+  ])('focuses the stable busy toolbar for $context', async ({ visible, selected }) => {
+    const item = { id: 'a', name: 'A' };
+    const pendingUndo = deferred<{ type: 'ok'; previousStatusId: string; nextStatusId: string }>();
+    const el = freshContainer();
+    activeDocument.body.appendChild(el);
+    const session: WorkNoteBoardSession = {
+      selectedColumnKey: selected,
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    };
+    const handle = renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('published', 'terminal-right')],
+      mutation: {
+        move: vi.fn().mockResolvedValue({
+          type: 'ok',
+          previousStatusId: 'active',
+          nextStatusId: 'published',
+        }),
+        menuItems: () => [],
+      },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => {
+        const card = host.createDiv();
+        card.createEl('button', {
+          text: current.name,
+          attr: { type: 'button', 'data-project-identity-control': '' },
+        });
+        return card;
+      },
+      undo: () => pendingUndo.promise,
+      session,
+      ...(visible === 'active' ? { visibleColumnKeys: new Set(['active']) } : {}),
+    });
+    try {
+      el.querySelector<HTMLElement>('[data-board-item="a"][draggable]')!.dispatchEvent(
+        new Event('dragstart', { bubbles: true }),
+      );
+      el.querySelector<HTMLElement>('[data-board-column="published"]')!.dispatchEvent(
+        new Event('drop', { bubbles: true, cancelable: true }),
+      );
+      await flushMicrotasks();
+      const undo = el.querySelector<HTMLButtonElement>('[data-board-undo]')!;
+      undo.focus();
+      undo.click();
+      await flushMicrotasks();
+
+      const toolbar = el.querySelector<HTMLElement>('.abyss-board-toolbar')!;
+      expect(toolbar.isConnected).toBe(true);
+      expect(toolbar.tabIndex).toBe(-1);
+      expect(activeDocument.activeElement).toBe(toolbar);
+      expect(toolbar.querySelector<HTMLElement>('[role="status"]')?.textContent).toBe(
+        'Undoing status change…',
+      );
+      const currentUndo = toolbar.querySelector<HTMLButtonElement>('[data-board-undo]')!;
+      expect(currentUndo.getAttribute('aria-label') ?? currentUndo.textContent).toBe('Undo');
+    } finally {
+      pendingUndo.resolve({
+        type: 'ok',
+        previousStatusId: 'active',
+        nextStatusId: 'published',
+      });
+      await flushMicrotasks();
+      handle.destroy();
+      el.remove();
+    }
+  });
+
+  it('keeps one compact toolbar host before and after Undo becomes available', async () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('published', 'terminal-right')],
+      mutation: { move: vi.fn().mockResolvedValue({ type: 'ok' }), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+    });
+    const initialToolbar = el.querySelector<HTMLElement>('.abyss-board-toolbar')!;
+    expect(el.querySelectorAll('.abyss-board-toolbar')).toHaveLength(1);
+    const reservedBlockSize = getComputedStyle(initialToolbar).blockSize;
+
+    el.querySelector<HTMLElement>('[data-board-item="a"][draggable]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="published"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    const currentToolbar = el.querySelector<HTMLElement>('.abyss-board-toolbar')!;
+    expect(el.querySelectorAll('.abyss-board-toolbar')).toHaveLength(1);
+    expect(currentToolbar.querySelector('[data-board-undo]')).not.toBeNull();
+    expect(getComputedStyle(currentToolbar).blockSize).toBe(reservedBlockSize);
+    expect(
+      currentToolbar.compareDocumentPosition(el.querySelector('.abyss-board-columns')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
   });
 });

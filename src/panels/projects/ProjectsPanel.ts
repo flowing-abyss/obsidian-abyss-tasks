@@ -8,6 +8,7 @@ import type { ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
+import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
 import type { CalendarSettings } from '../../settings/types';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
@@ -41,7 +42,12 @@ export interface ProjectsPanelOptions {
   onSaveSettings?: () => Promise<void>;
   pendingBoardUndo?: PendingProjectBoardUndo;
   onBoardUndoPending?: (pending: PendingProjectBoardUndo) => void;
-  onBoardUndoResolved?: () => void;
+  onBoardUndoStarted?: (pending: PendingProjectBoardUndo) => void;
+  onBoardUndoResolved?: (pending: PendingProjectBoardUndo, successful: boolean) => void;
+  boardUndoOwner?: {
+    started(pending: PendingProjectBoardUndo): void;
+    resolved(pending: PendingProjectBoardUndo, successful: boolean): void;
+  };
   workNoteCommands?: WorkNoteCommandService;
   projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
@@ -52,6 +58,7 @@ export interface PendingProjectBoardUndo {
   readonly path: string;
   readonly columnKey: string;
   readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
+  readonly undoInFlight?: boolean;
 }
 
 /**
@@ -69,12 +76,23 @@ export class ProjectsPanel {
   private readonly onSaveSettings: () => Promise<void>;
   private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
   private readonly onBoardUndoPending: ((pending: PendingProjectBoardUndo) => void) | undefined;
-  private readonly onBoardUndoResolved: (() => void) | undefined;
+  private readonly onBoardUndoStarted: ((pending: PendingProjectBoardUndo) => void) | undefined;
+  private readonly onBoardUndoResolved:
+    | ((pending: PendingProjectBoardUndo, successful: boolean) => void)
+    | undefined;
+  private readonly boardUndoOwner: ProjectsPanelOptions['boardUndoOwner'];
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
   private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
   private readonly onAnnounce: (message: string) => void;
   private viewCleanup: (() => void) | null = null;
+  private readonly portfolioScroll = new Map<string, number>();
+
+  private portfolioScrollKey(scroll: HTMLElement): string {
+    const column = scroll.closest<HTMLElement>('[data-board-column]');
+    if (column) return `board:${column.dataset['boardColumn'] ?? ''}`;
+    return scroll.classList.contains('abyss-timeline-scroll') ? 'timeline' : 'overview';
+  }
 
   constructor(
     private state: AppState,
@@ -91,7 +109,9 @@ export class ProjectsPanel {
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
     this.pendingBoardUndo = opts.pendingBoardUndo;
     this.onBoardUndoPending = opts.onBoardUndoPending;
+    this.onBoardUndoStarted = opts.onBoardUndoStarted;
     this.onBoardUndoResolved = opts.onBoardUndoResolved;
+    this.boardUndoOwner = opts.boardUndoOwner;
     this.workNoteCommands = opts.workNoteCommands;
     this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
@@ -153,6 +173,7 @@ export class ProjectsPanel {
     projectPath: string,
     notes: ProjectWorkspaceSnapshot['workNotes'],
     layout: 'list' | 'board',
+    milestoneRollups: ReadonlyMap<string, MilestoneRollup>,
   ): ProjectChildRenderHandle {
     if (!this.workNoteCommands) return { destroy: () => undefined };
     const capabilities = this.workNoteCommands.capabilities();
@@ -177,6 +198,7 @@ export class ProjectsPanel {
       announce: this.onAnnounce,
       isNarrow,
       coarsePointer,
+      milestoneRollups,
     });
     let destroyed = false;
     const ResizeObserverCtor = host.ownerDocument.defaultView?.ResizeObserver;
@@ -202,6 +224,7 @@ export class ProjectsPanel {
             announce: this.onAnnounce,
             isNarrow,
             coarsePointer,
+            milestoneRollups,
           });
         })
       : null;
@@ -226,10 +249,58 @@ export class ProjectsPanel {
       commands: this.workNoteCommands,
       commandsEnabled: this.workNoteCommands.capabilities().update,
       session: this.workspaceSession.timelines.workNotes,
+      openNote: (path) => this.openNote(path),
     });
   }
 
+  private capturePortfolioContinuity(): string | null {
+    if (!this.el) return null;
+    const active = this.el.ownerDocument.activeElement;
+    let focusKey: string | null = null;
+    if (active instanceof HTMLElement && this.el.contains(active)) {
+      if (active.dataset['projectPortfolioLayout']) {
+        focusKey = `layout:${active.dataset['projectPortfolioLayout']}`;
+      } else if (active.dataset['projectStatusFilter']) {
+        focusKey = `status:${active.dataset['projectStatusFilter']}`;
+      } else if (active.hasAttribute('data-project-unmapped-filter')) {
+        focusKey = 'unmapped';
+      }
+    }
+    for (const scroll of this.el.querySelectorAll<HTMLElement>(
+      '.abyss-projects-scroll, .abyss-timeline-scroll, .abyss-board-column-scroll',
+    )) {
+      this.portfolioScroll.set(this.portfolioScrollKey(scroll), scroll.scrollTop);
+    }
+    return focusKey;
+  }
+
+  private restorePortfolioContinuity(focusKey: string | null): void {
+    for (const scroll of this.el.querySelectorAll<HTMLElement>(
+      '.abyss-projects-scroll, .abyss-timeline-scroll, .abyss-board-column-scroll',
+    )) {
+      const top = this.portfolioScroll.get(this.portfolioScrollKey(scroll));
+      if (top !== undefined) scroll.scrollTop = top;
+    }
+    if (!focusKey) return;
+    const replacement = (() => {
+      if (focusKey === 'unmapped') {
+        return this.el.querySelector<HTMLElement>('[data-project-unmapped-filter]');
+      }
+      const [kind, value] = focusKey.split(':', 2);
+      const attribute = kind === 'layout' ? 'projectPortfolioLayout' : 'projectStatusFilter';
+      return (
+        Array.from(
+          this.el.querySelectorAll<HTMLElement>(
+            '[data-project-portfolio-layout], [data-project-status-filter]',
+          ),
+        ).find((element) => element.dataset[attribute] === value) ?? null
+      );
+    })();
+    replacement?.focus({ preventScroll: true });
+  }
+
   private render(): void {
+    const portfolioFocus = this.capturePortfolioContinuity();
     this.viewCleanup?.();
     this.viewCleanup = null;
     this.el.empty();
@@ -238,36 +309,36 @@ export class ProjectsPanel {
 
     if (view.view === 'dashboard') {
       const container = this.el.createDiv();
-      const dashboard = renderProjectDashboard(
-        container,
-        this.snapshots.find(({ project }) => project.path === view.path),
-        {
-          state: this.state,
-          settings: this.settings,
-          onSetStatus: (p, id) => void this.setStatus(p, id),
-          openNote: (p) => this.openNote(p),
-          workspaceSession: this.workspaceSession,
-          renderTasks: this.renderTasks,
-          ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
-          ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
-          ...(this.workNoteCommands
-            ? {
-                selectWorkNotes: (notes) =>
-                  selectWorkNotes({
-                    notes,
-                    statuses: this.workNoteCommands!.statuses(),
-                    viewState: this.settings.projects.view.workNotes,
-                  }),
-                renderWorkNotes: (host, path, notes) =>
-                  this.renderWorkNotes(host, path, notes, 'list'),
-                renderWorkNoteBoard: (host, path, notes) =>
-                  this.renderWorkNotes(host, path, notes, 'board'),
-                renderWorkNoteTimeline: (host, _path, notes) =>
-                  this.renderWorkNoteTimeline(host, notes),
-              }
-            : {}),
-        },
-      );
+      const snapshot = this.snapshots.find(({ project }) => project.path === view.path);
+      const dashboard = renderProjectDashboard(container, snapshot, {
+        state: this.state,
+        settings: this.settings,
+        onSetStatus: (p, id) => void this.setStatus(p, id),
+        openNote: (p) => this.openNote(p),
+        workspaceSession: this.workspaceSession,
+        renderTasks: this.renderTasks,
+        ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
+        ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
+        ...(this.workNoteCommands && snapshot
+          ? {
+              workNotesAvailable:
+                snapshot.workNotes.length + snapshot.milestones.length > 0 ||
+                this.workNoteCommands.capabilities().create,
+              selectWorkNotes: (notes) =>
+                selectWorkNotes({
+                  notes,
+                  statuses: this.workNoteCommands!.statuses(),
+                  viewState: this.settings.projects.view.workNotes,
+                }),
+              renderWorkNotes: (host, path, notes) =>
+                this.renderWorkNotes(host, path, notes, 'list', snapshot.milestoneRollups),
+              renderWorkNoteBoard: (host, path, notes) =>
+                this.renderWorkNotes(host, path, notes, 'board', snapshot.milestoneRollups),
+              renderWorkNoteTimeline: (host, _path, notes) =>
+                this.renderWorkNoteTimeline(host, notes),
+            }
+          : {}),
+      });
       this.viewCleanup = () => dashboard.destroy();
       return;
     }
@@ -305,11 +376,13 @@ export class ProjectsPanel {
         projects: timelineSnapshots.map(({ project }) => project),
         commands: this.projectCommands,
         session: this.workspaceSession.portfolioTimeline,
+        openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
         onMutation: (_project, result) => {
           if (result.type === 'ok') this.projectStore.refresh();
         },
       });
       this.viewCleanup = () => handle.destroy();
+      this.restorePortfolioContinuity(portfolioFocus);
       return;
     }
     if (this.settings.projects.view.portfolioLayout === 'timeline') {
@@ -327,8 +400,14 @@ export class ProjectsPanel {
         onUndoPending: (pending) => {
           this.onBoardUndoPending?.(pending);
         },
-        onUndoResolved: () => {
-          this.onBoardUndoResolved?.();
+        onUndoStarted: (pending) => {
+          this.boardUndoOwner?.started(pending);
+          this.onBoardUndoStarted?.(pending);
+        },
+        onUndoResolved: (pending, successful) => {
+          this.boardUndoOwner?.resolved(pending, successful);
+          if (!this.viewCleanup) return;
+          this.onBoardUndoResolved?.(pending, successful);
         },
         session: this.workspaceSession.portfolioBoard,
       });
@@ -336,6 +415,7 @@ export class ProjectsPanel {
     } else {
       this.viewCleanup = renderProjectsList(container, this.snapshots, portfolioContext);
     }
+    this.restorePortfolioContinuity(portfolioFocus);
   }
 
   destroy(): void {

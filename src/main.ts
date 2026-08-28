@@ -115,11 +115,13 @@ export default class TaskCalendarPlugin extends Plugin {
       this.app,
       () => this.settings.projects.workNoteCompatibility,
       this.queries,
+      () => this.settings.projects.statuses,
     );
     this.workNoteCommands = new WorkNoteCommandService(
       this.app,
       () => this.settings.projects.workNoteCompatibility,
       this.workNoteIndex,
+      () => this.settings.projects.statuses,
     );
     this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
     this.projectWorkspace = new ProjectWorkspaceCoordinator(
@@ -252,6 +254,10 @@ export default class TaskCalendarPlugin extends Plugin {
     );
     if (accepted.type === 'ok') {
       this.settings.projects.workNoteCompatibility = accepted.preset;
+      this.settings.projects.view.workNotes = {
+        ...this.settings.projects.view.workNotes,
+        statusIds: Object.keys(accepted.preset.rawStatusByStatusId),
+      };
       await this.saveSettings();
     }
     return accepted;

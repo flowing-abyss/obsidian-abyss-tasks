@@ -33,6 +33,8 @@ export interface BoardViewOptions<T> {
   readonly renderItem: (host: HTMLElement, item: T) => HTMLElement;
   readonly visibleColumnKeys?: ReadonlySet<string>;
   readonly manageStatusMenu?: boolean;
+  readonly mutationEnabled?: boolean;
+  readonly mutationDisabledTitle?: string;
   readonly onMutation?: (item: T, columnKey: string, result: BoardMutationResult) => void;
   readonly executeMutation?: (
     command: () => Promise<BoardMutationResult>,
@@ -49,6 +51,7 @@ export interface BoardViewOptions<T> {
     readonly columnKey: string;
     readonly result: BoardMutationResult;
   };
+  readonly initialUndoInFlight?: boolean;
   readonly undo?: (
     item: T,
     columnKey: string,
@@ -73,6 +76,7 @@ export interface WorkNotesBoardOptions {
     initiator: HTMLElement,
   ) => Promise<WorkNoteCommandResult>;
   readonly session?: WorkNoteBoardSession;
+  readonly commandsEnabled?: boolean;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -91,6 +95,14 @@ function adjacentTabIndex(key: string, current: number, count: number): number |
   if (key === 'ArrowLeft') return Math.max(0, current - 1);
   if (key === 'ArrowRight') return Math.min(count - 1, current + 1);
   return null;
+}
+
+function boardPanelLabel(
+  visible: boolean,
+  tabId: string,
+  label: string,
+): Readonly<Record<string, string>> {
+  return visible ? { 'aria-labelledby': tabId } : { 'aria-label': label };
 }
 
 /** Semantically neutral, bounded Kanban shell shared by Project and Task adapters. */
@@ -119,9 +131,11 @@ export function renderBoard<T>(
     readonly columnKey: string;
     readonly result: BoardMutationResult;
   } | null = options.initialUndo ?? null;
+  let undoInFlight = options.initialUndoInFlight === true;
   const cleanups: Array<() => void> = [];
 
   const showStatusMenu = (event: MouseEvent, item: T, initiator: HTMLElement): void => {
+    if (undoInFlight || options.mutationEnabled === false) return;
     const actions = options.mutation.menuItems(item);
     if (actions.length === 0) return;
     event.preventDefault();
@@ -158,6 +172,7 @@ export function renderBoard<T>(
   };
 
   const commitMove = (item: T, columnKey: string, initiator: HTMLElement): void => {
+    if (undoInFlight || options.mutationEnabled === false) return;
     if (options.session) {
       options.session.focusedKey = options.itemKey(item);
       options.session.restoreFocus = true;
@@ -177,22 +192,39 @@ export function renderBoard<T>(
       .catch(() => undefined);
   };
 
-  const renderUndo = (): void => {
+  const renderUndo = (host: HTMLElement): void => {
     if (!undoPending || !options.undo) return;
     const pending = undoPending;
-    const undo = container.createEl('button', {
+    const undo = host.createEl('button', {
       cls: 'abyss-board-undo',
       text: 'Undo',
       attr: { type: 'button', 'data-board-undo': '' },
     });
+    undo.disabled = undoInFlight;
+    undo.setAttribute('aria-disabled', String(undoInFlight));
+    if (undoInFlight) undo.setAttribute('aria-busy', 'true');
     undo.addEventListener('click', () => {
-      void options.undo?.(pending.item, pending.columnKey, pending.result).then((result) => {
-        if (destroyed) return;
-        if (!successful(result)) return;
-        overrides.delete(options.itemKey(pending.item));
-        undoPending = null;
-        render();
-      });
+      if (undoInFlight) return;
+      undoInFlight = true;
+      undo.disabled = true;
+      undo.setAttribute('aria-disabled', 'true');
+      render();
+      container.querySelector<HTMLElement>('.abyss-board-toolbar')?.focus({ preventScroll: true });
+      void options
+        .undo?.(pending.item, pending.columnKey, pending.result)
+        .then((result) => {
+          if (destroyed) return;
+          if (successful(result)) {
+            overrides.delete(options.itemKey(pending.item));
+            undoPending = null;
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (destroyed) return;
+          undoInFlight = false;
+          render();
+        });
     });
   };
 
@@ -201,7 +233,17 @@ export function renderBoard<T>(
       container.ownerDocument.activeElement?.getAttribute('data-board-column-tab');
     for (const cleanup of cleanups.splice(0)) cleanup();
     container.empty();
-    renderUndo();
+    container.toggleAttribute('aria-busy', undoInFlight);
+    const toolbar = container.createDiv({
+      cls: 'abyss-board-toolbar',
+      attr: { tabindex: '-1' },
+    });
+    toolbar.createDiv({
+      cls: 'abyss-board-undo-status',
+      text: undoInFlight ? 'Undoing status change…' : '',
+      attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+    });
+    renderUndo(toolbar);
     const tabs = container.createDiv({
       cls: 'abyss-board-column-tabs',
       attr: { role: 'tablist', 'aria-label': 'Board columns' },
@@ -278,7 +320,7 @@ export function renderBoard<T>(
           'data-selected-column': String(selectedColumnKey === column.key),
           role: 'tabpanel',
           id: `${boardId}-panel-${columnToken}`,
-          'aria-labelledby': `${boardId}-tab-${columnToken}`,
+          ...boardPanelLabel(visible, `${boardId}-tab-${columnToken}`, column.label),
           ...(terminal && !visible ? { 'data-terminal-filtered': 'true' } : {}),
         },
       });
@@ -338,7 +380,8 @@ export function renderBoard<T>(
             if (focusTarget.tabIndex < 0) focusTarget.tabIndex = 0;
             focusTarget.dataset['boardItemFocus'] = key;
             focusTarget.dataset['boardItem'] = key;
-            itemEl.setAttribute('draggable', 'true');
+            const mutationLocked = undoInFlight || options.mutationEnabled === false;
+            itemEl.setAttribute('draggable', String(!mutationLocked));
             focusTarget.addEventListener('focus', () => {
               bounded.focus(key);
               options.onItemFocus?.(item);
@@ -357,6 +400,7 @@ export function renderBoard<T>(
               renderWindow(true);
             });
             itemEl.addEventListener('dragstart', () => {
+              if (mutationLocked) return;
               dragging = { item, initiator: focusTarget };
               setDraggingState(true);
             });
@@ -374,9 +418,14 @@ export function renderBoard<T>(
                   type: 'button',
                   'data-board-status-menu': key,
                   'aria-label': 'Change status',
-                  title: 'Change status',
+                  title:
+                    options.mutationEnabled === false
+                      ? (options.mutationDisabledTitle ?? 'Status changes are unavailable')
+                      : 'Change status',
                 },
               });
+              statusMenu.disabled = mutationLocked;
+              statusMenu.setAttribute('aria-disabled', String(mutationLocked));
               if (focusTarget === itemEl) host.appendChild(statusMenu);
               setIcon(statusMenu, 'ellipsis');
               statusMenu.addEventListener('click', (event) =>
@@ -425,6 +474,7 @@ export function renderBoard<T>(
       });
       columnEl.addEventListener('dragleave', () => columnEl.removeClass('is-drop-target'));
       columnEl.addEventListener('drop', (event) => {
+        if (undoInFlight || options.mutationEnabled === false) return;
         const dragged = dragging;
         if (dragged === null) return;
         event.preventDefault();
@@ -462,6 +512,8 @@ export function renderWorkNotesBoard(
     itemKey: ({ path }) => path,
     renderItem: options.renderItem,
     session: options.session,
+    mutationEnabled: options.commandsEnabled,
+    mutationDisabledTitle: 'Requires an accepted compatibility audit with update capability',
     executeMutation:
       options.executeMutation === undefined
         ? undefined
@@ -485,9 +537,14 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
     readonly path: string;
     readonly columnKey: string;
     readonly result: Extract<ProjectPropertyCommandResult, { type: 'ok' }>;
+    readonly undoInFlight?: boolean;
   };
   readonly onUndoPending?: (pending: NonNullable<ProjectsBoardOptions['pendingUndo']>) => void;
-  readonly onUndoResolved?: () => void;
+  readonly onUndoStarted?: (pending: NonNullable<ProjectsBoardOptions['pendingUndo']>) => void;
+  readonly onUndoResolved?: (
+    pending: NonNullable<ProjectsBoardOptions['pendingUndo']>,
+    successful: boolean,
+  ) => void;
   readonly session?: WorkNoteBoardSession;
 }
 
@@ -526,22 +583,34 @@ export function renderProjectsBoard(
       ? undefined
       : (() => {
           const item = projects.find((project) => project.path === pendingUndo.path);
-          return item === undefined ? undefined : { ...pendingUndo, item };
+          return item ? { ...pendingUndo, item } : undefined;
         })();
+  if (pendingUndo && !initialUndo) {
+    queueMicrotask(() => {
+      if (!destroyed) options.onUndoResolved?.(pendingUndo, true);
+    });
+  }
   const board = renderBoard(boardHost, {
     columns: projectBoardColumns(statuses, projects),
     visibleColumnKeys,
     mutation,
-    undo: (project, _columnKey, result) => {
+    undo: (project, columnKey, result) => {
       if (!isProjectStatusMove(result)) return Promise.resolve(result);
+      const operation = { path: project.path, columnKey, result };
+      options.onUndoStarted?.(operation);
       return options
         .onUndoStatus(project.path, result.nextStatusId, result.previousStatusId)
         .then((undoResult) => {
-          if (!destroyed && successful(undoResult)) options.onUndoResolved?.();
+          options.onUndoResolved?.(operation, successful(undoResult));
           return undoResult;
+        })
+        .catch((error: unknown) => {
+          options.onUndoResolved?.(operation, false);
+          throw error;
         });
     },
     initialUndo,
+    initialUndoInFlight: pendingUndo?.undoInFlight,
     onMutation: (project, columnKey, result) => {
       if (!isProjectStatusMove(result)) return;
       options.onUndoPending?.({ path: project.path, columnKey, result });

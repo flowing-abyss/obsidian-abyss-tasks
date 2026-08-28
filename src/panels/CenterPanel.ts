@@ -281,6 +281,7 @@ export class CenterPanel {
   // CenterPanel survives the ProjectStore subscriber's full projects-mode redraw; the inner
   // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
   private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
+  private pendingProjectBoardUndoObservedNext = false;
   private readonly projectWorkspaceSession = new ProjectWorkspaceSession();
   private projectTaskList: MountedProjectTaskList | null = null;
   private projectTaskListCleanup: (() => void) | null = null;
@@ -658,6 +659,37 @@ export class CenterPanel {
 
   setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
     this.projectSnapshots = snapshots;
+    if (this.state.get('mode') === 'projects' && this.el?.isConnected) this.refresh();
+  }
+
+  projectCaptureContext(projectPath: string): CaptureContext {
+    const focusedRef = this.projectWorkspaceSession.tasks.focusedRef();
+    const focused = focusedRef
+      ? this.projectWorkspaceSession.tasks.actionForRef(focusedRef)
+      : undefined;
+    const task = focused?.projectPath === projectPath ? focused.task : undefined;
+    return {
+      type: 'project-workspace',
+      projectPath,
+      destinationPath: projectPath,
+      ...(task && { statusSymbol: task.statusSymbol, priority: task.priority }),
+    };
+  }
+
+  private reconcilePendingProjectBoardUndo(): void {
+    const pending = this.pendingProjectBoardUndo;
+    if (!pending) return;
+    const statusId = this.projectSnapshots.find(({ project }) => project.path === pending.path)
+      ?.project.statusId;
+    if (statusId === pending.result.nextStatusId) {
+      this.pendingProjectBoardUndoObservedNext = true;
+      return;
+    }
+    if (!this.pendingProjectBoardUndoObservedNext && statusId === pending.result.previousStatusId) {
+      return;
+    }
+    this.pendingProjectBoardUndo = undefined;
+    this.pendingProjectBoardUndoObservedNext = false;
   }
 
   calendarView(): CalViewType {
@@ -1228,6 +1260,7 @@ export class CenterPanel {
     if (mode !== 'projects') {
       this.destroyProjectsPanel();
       this.pendingProjectBoardUndo = undefined;
+      this.pendingProjectBoardUndoObservedNext = false;
       this.projectWorkspaceSession.closeProject();
     }
 
@@ -1255,6 +1288,7 @@ export class CenterPanel {
     if (mode === 'projects') {
       this.el.addClass('abyss-center--projects');
       if (this.projectStore && this.projectManager) {
+        this.reconcilePendingProjectBoardUndo();
         // Rebuild the panel fresh; it owns its own subscriptions and cleans them
         // up in destroy(), so recreating on each render is leak-free.
         this.destroyProjectsPanel();
@@ -1274,11 +1308,31 @@ export class CenterPanel {
             pendingBoardUndo: this.pendingProjectBoardUndo,
             onBoardUndoPending: (pending) => {
               this.pendingProjectBoardUndo = pending;
+              this.pendingProjectBoardUndoObservedNext = false;
               this.projectStore?.refresh();
             },
-            onBoardUndoResolved: () => {
-              this.pendingProjectBoardUndo = undefined;
-              this.projectStore?.refresh();
+            boardUndoOwner: {
+              started: (pending) => {
+                if (this.pendingProjectBoardUndo?.result !== pending.result) return;
+                this.pendingProjectBoardUndo = {
+                  ...this.pendingProjectBoardUndo,
+                  undoInFlight: true,
+                };
+              },
+              resolved: (pending, successful) => {
+                if (this.pendingProjectBoardUndo?.result !== pending.result) return;
+                if (successful) {
+                  this.pendingProjectBoardUndo = undefined;
+                  this.pendingProjectBoardUndoObservedNext = false;
+                } else {
+                  this.pendingProjectBoardUndo = {
+                    ...this.pendingProjectBoardUndo,
+                    undoInFlight: false,
+                  };
+                }
+                this.projectStore?.refresh();
+                this.refresh();
+              },
             },
             workNoteCommands: this.workNoteCommands,
             projectCommands: this.projectCommands,
@@ -2303,6 +2357,7 @@ export class CenterPanel {
     applyTaskPresentationIdentity(card, task.ref);
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
+    this.registerProjectTaskFocus(card, task, context.projectTaskCollection === true);
 
     const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
 
@@ -2762,6 +2817,17 @@ export class CenterPanel {
         showMenuAtMouseEventWithFocus(menu, e);
       });
     return card;
+  }
+
+  private registerProjectTaskFocus(
+    card: HTMLElement,
+    task: TaskSnapshot,
+    projectTaskCollection: boolean,
+  ): void {
+    if (!projectTaskCollection) return;
+    card.addEventListener('focus', () => {
+      this.projectWorkspaceSession.tasks.focusOnly(task.ref);
+    });
   }
 
   private bulkTagIndicator(count: number, total: number): string {
@@ -3453,11 +3519,7 @@ export class CenterPanel {
     trigger.addEventListener('click', () => {
       const context: CaptureContext =
         placement.type === 'project'
-          ? {
-              type: 'project-workspace',
-              projectPath: placement.path,
-              destinationPath: placement.path,
-            }
+          ? this.projectCaptureContext(placement.path)
           : { type: 'list', selection: this.state.get('selectedList') };
       this.openCapture(placement, context, trigger);
     });

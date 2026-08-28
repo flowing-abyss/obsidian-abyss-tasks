@@ -5,6 +5,7 @@ import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { BoundedWindow } from './BoundedWindow';
 import { renderProjectsToolbar } from './ProjectsToolbar';
+import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
 import { joinedNextAction, type ProjectsListContext } from './viewContext';
 
@@ -272,7 +273,8 @@ export function renderProjectRow(
   const workNoteCount =
     snapshot.workNoteRollup.active +
     snapshot.workNoteRollup.completed +
-    snapshot.workNoteRollup.dropped;
+    snapshot.workNoteRollup.dropped +
+    snapshot.milestones.length;
   const overdueCount = snapshot.overdue.tasks + snapshot.overdue.workNotes;
   const nextAction = joinedNextAction(snapshot.tasks);
   const hasMetadata =
@@ -358,12 +360,14 @@ export function renderProjectRow(
   statusBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     const menu = new Menu();
-    for (const s of statuses) {
+    for (const action of projectStatusMenuModel(statuses, project)) {
       menu.addItem((item) =>
         item
-          .setTitle(s.label)
-          .setChecked(s.id === project.statusId)
-          .onClick(() => ctx.onSetStatus(project.path, s.id)),
+          .setTitle(action.label)
+          .setIcon(action.icon)
+          .setChecked(action.checked)
+          .setDisabled(action.disabled)
+          .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
       );
     }
     showMenuAtMouseEventWithFocus(menu, e);

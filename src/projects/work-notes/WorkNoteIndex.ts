@@ -6,6 +6,7 @@ import {
   type CachedMetadata,
   type TAbstractFile,
 } from 'obsidian';
+import type { ProjectStatus } from '../../settings/types';
 import type { TaskIndexSettledEvent, TaskQueryApi } from '../../tasks';
 import {
   acceptWorkNoteAudit,
@@ -27,6 +28,7 @@ import type {
 } from './types';
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
+type ProjectStatusProvider = () => readonly ProjectStatus[];
 type TaskTopologySettlement = Extract<TaskIndexSettledEvent, { readonly reason: 'topology' }>;
 
 interface PendingCompatibilityPreview {
@@ -42,6 +44,7 @@ function compatibilityAcceptanceSignature(
   audit: WorkNoteAuditResult,
   scanned: number,
   excluded: number,
+  projectStatuses: readonly ProjectStatus[],
 ): string {
   return JSON.stringify({
     presetFingerprint: computeWorkNotePresetFingerprint(candidate),
@@ -52,6 +55,12 @@ function compatibilityAcceptanceSignature(
     capabilities: audit.capabilities,
     scanned,
     excluded,
+    projectStatuses: projectStatuses.map(({ id, label, behavior, match }) => ({
+      id,
+      label,
+      behavior,
+      match,
+    })),
   });
 }
 
@@ -169,6 +178,7 @@ export class WorkNoteIndex {
     private readonly app: App,
     private readonly presetProvider: PresetProvider,
     private readonly taskSettlements?: Pick<TaskQueryApi, 'subscribeSettled'>,
+    private readonly projectStatusProvider: ProjectStatusProvider = () => [],
   ) {}
 
   private preset(): WorkNoteCompatibilityPreset {
@@ -297,20 +307,30 @@ export class WorkNoteIndex {
       this.pendingCompatibilityPreview = null;
       const audit = auditWorkNotes(source, configured);
       const accepted = isAuditAccepted(configured);
+      const acceptedCapabilities = configured.acceptedAudit?.capabilities;
       return Promise.resolve(
         aggregateCompatibilityPreview(
           audit,
           source.files().length,
           Math.max(0, source.files().length - audit.snapshots.length),
           { enabled: true, accepted },
-          accepted ? audit.capabilities : { update: false, create: false },
+          accepted
+            ? {
+                update: audit.capabilities.update && acceptedCapabilities?.update === true,
+                create: audit.capabilities.create && acceptedCapabilities?.create === true,
+              }
+            : { update: false, create: false },
         ),
       );
     }
-    const suggestion = suggestWorkNotePreset(source);
+    const projectStatuses = this.projectStatusProvider();
+    const suggestion = suggestWorkNotePreset(source, projectStatuses);
     const audit = auditWorkNotes(source, suggestion.preset);
     const candidate: WorkNoteCompatibilityPreset = { ...suggestion.preset, enabled: true };
-    const candidateAudit = auditWorkNotes(source, candidate);
+    const auditedCandidate = auditWorkNotes(source, candidate);
+    const candidateAudit = suggestion.ambiguousStatusMapping
+      ? { ...auditedCandidate, capabilities: { update: false, create: false } }
+      : auditedCandidate;
     this.previewNonce += 1;
     const token = `work-note-preview-${this.previewNonce.toString(36)}`;
     this.pendingCompatibilityPreview = {
@@ -321,6 +341,7 @@ export class WorkNoteIndex {
         candidateAudit,
         suggestion.observations.fileCount,
         suggestion.preview.rejectedCandidateCount,
+        projectStatuses,
       ),
       scanned: suggestion.observations.fileCount,
       excluded: suggestion.preview.rejectedCandidateCount,
@@ -348,17 +369,22 @@ export class WorkNoteIndex {
       });
     }
     const source = this.source();
-    const suggestion = suggestWorkNotePreset(source);
+    const projectStatuses = this.projectStatusProvider();
+    const suggestion = suggestWorkNotePreset(source, projectStatuses);
     const candidate: WorkNoteCompatibilityPreset = {
       ...suggestion.preset,
       enabled: true,
     };
-    const audit = auditWorkNotes(source, candidate);
+    const auditedCandidate = auditWorkNotes(source, candidate);
+    const audit = suggestion.ambiguousStatusMapping
+      ? { ...auditedCandidate, capabilities: { update: false, create: false } }
+      : auditedCandidate;
     const signature = compatibilityAcceptanceSignature(
       candidate,
       audit,
       suggestion.observations.fileCount,
       suggestion.preview.rejectedCandidateCount,
+      projectStatuses,
     );
     if (
       computeWorkNotePresetFingerprint(candidate) !==

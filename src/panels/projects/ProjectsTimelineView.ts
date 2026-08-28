@@ -58,6 +58,7 @@ export interface ProjectsTimelineOptions {
   readonly session?: LogicalViewportSession;
   readonly isNarrow?: boolean;
   readonly onMutation?: (project: Project, result: ProjectRangeCommandResult) => void;
+  readonly openProject?: (path: string) => void;
 }
 
 export interface WorkNotesTimelineOptions {
@@ -67,6 +68,7 @@ export interface WorkNotesTimelineOptions {
   readonly session?: LogicalViewportSession;
   readonly isNarrow?: boolean;
   readonly onMutation?: (note: WorkNoteSnapshot, result: WorkNoteCommandResult) => void;
+  readonly openNote?: (path: string) => void;
 }
 
 export interface TasksTimelineOptions {
@@ -163,8 +165,8 @@ function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
 }
 
-function timelineIdentityAttributes(key: string, editable: boolean): Record<string, string> {
-  return editable ? {} : { tabindex: '0', 'data-timeline-key': key };
+function timelineIdentityAttributes(key: string): Record<string, string> {
+  return { 'data-timeline-key': key };
 }
 
 function renderEntryIdentity<T>(
@@ -178,6 +180,15 @@ function renderEntryIdentity<T>(
   }
   host.createSpan({ cls: 'abyss-timeline-title', text: entry.label });
   if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
+}
+
+function timelineRowFocusTarget(row: HTMLElement, identity: HTMLElement): HTMLElement {
+  const focusTarget =
+    row.querySelector<HTMLElement>('.abyss-timeline-date-handle:not(:disabled)') ??
+    identity.querySelector<HTMLElement>('button, a[href], [role="button"]');
+  if (focusTarget) return focusTarget;
+  row.tabIndex = -1;
+  return row;
 }
 
 /** Semantically neutral bounded Timeline shell shared by Project, Work Note, and Task adapters. */
@@ -292,7 +303,7 @@ export function renderTimeline<T>(
           });
           const identity = row.createDiv({
             cls: 'abyss-timeline-identity',
-            attr: timelineIdentityAttributes(entry.item.key, options.onSetDate !== undefined),
+            attr: timelineIdentityAttributes(entry.item.key),
           });
           renderEntryIdentity(identity, entry, options.renderIdentity);
           const roles = pointRoles(entry.item);
@@ -422,9 +433,7 @@ export function renderTimeline<T>(
               session.restoreFocus = true;
             }
           });
-          return (
-            row.querySelector<HTMLElement>('.abyss-timeline-date-handle:not(:disabled)') ?? identity
-          );
+          return timelineRowFocusTarget(row, identity);
         },
       });
       if (restoreFocus || seedFirst !== undefined) {
@@ -520,10 +529,27 @@ export function renderProjectsTimeline(
   container: HTMLElement,
   options: ProjectsTimelineOptions,
 ): TimelineViewHandle {
-  return renderTimeline(container, {
+  return renderTimeline<Project>(container, {
     entries: options.projects.map(projectTimelineEntry),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
+    ...(options.openProject
+      ? {
+          renderIdentity: (host, entry) => {
+            const button = host.createEl('button', {
+              cls: 'abyss-timeline-title abyss-project-identity-control',
+              text: entry.label,
+              attr: {
+                type: 'button',
+                'data-project-identity-control': '',
+                'aria-label': `Open project ${entry.label}`,
+              },
+            });
+            button.addEventListener('click', () => options.openProject?.(entry.value.path));
+            if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
+          },
+        }
+      : {}),
     onSetDate: async (entry, role, date) => {
       if (role !== 'start' && role !== 'end') return { type: 'invalid', issue: 'invalid-start' };
       const value = movedProjectDate(entry.value.range[role], date);
@@ -565,10 +591,27 @@ export function renderWorkNotesTimeline(
     options.onMutation?.(entry.value, result);
     return result;
   };
-  return renderTimeline(container, {
+  return renderTimeline<WorkNoteSnapshot>(container, {
     entries: prepared.map(({ entry }) => entry),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
+    ...(options.openNote
+      ? {
+          renderIdentity: (host, entry) => {
+            const button = host.createEl('button', {
+              cls: 'abyss-timeline-title abyss-work-note-identity',
+              text: entry.label,
+              attr: {
+                type: 'button',
+                'data-work-note-identity-control': '',
+                'aria-label': `Open work note ${entry.label}`,
+              },
+            });
+            button.addEventListener('click', () => options.openNote?.(entry.value.path));
+            if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
+          },
+        }
+      : {}),
     ...(options.commandsEnabled === false ? {} : { onSetDate }),
   });
 }

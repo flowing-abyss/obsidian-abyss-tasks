@@ -998,6 +998,46 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]?.behavior,
     ).toBe('regular');
   });
+
+  it('lets each Project status persist one of the four lifecycle roles', () => {
+    const { tab, plugin, captured } = makeTab();
+    openSection(tab, 5);
+    const lifecycle = captured.filter(
+      (entry) => entry.name === 'Lifecycle role' && entry.type === 'dropdown',
+    );
+
+    expect(lifecycle).toHaveLength(plugin.settings.projects.statuses.length);
+    const select = (lifecycle[0]!.comp as unknown as { selectEl: HTMLSelectElement }).selectEl;
+    expect(Array.from(select.options).map(({ value }) => value)).toEqual([
+      'regular',
+      'completed',
+      'dropped',
+      'published',
+    ]);
+
+    lifecycle[0]!.comp.setValue('completed');
+    expect(plugin.settings.projects.statuses[0]!.behavior).toBe('completed');
+    expect(plugin.saveSettings).toHaveBeenCalled();
+  });
+
+  it.each(['dropped', 'published'] as const)(
+    'keeps the %s lifecycle role unique when it is reassigned',
+    (role) => {
+      const { tab, plugin, captured } = makeTab();
+      openSection(tab, 5);
+      const lifecycle = captured.filter(
+        (entry) => entry.name === 'Lifecycle role' && entry.type === 'dropdown',
+      );
+
+      expect(lifecycle).toHaveLength(plugin.settings.projects.statuses.length);
+      if (lifecycle.length < 2) return;
+      lifecycle[0]!.comp.setValue(role);
+      lifecycle[1]!.comp.setValue(role);
+
+      expect(plugin.settings.projects.statuses[0]!.behavior).toBe('regular');
+      expect(plugin.settings.projects.statuses[1]!.behavior).toBe(role);
+    },
+  );
 });
 
 describe('CalendarSettingsTab card badges (manual/prefix, property/tag)', () => {

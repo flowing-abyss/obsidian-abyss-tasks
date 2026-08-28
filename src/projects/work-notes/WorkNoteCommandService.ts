@@ -1,4 +1,5 @@
 import { normalizePath, parseYaml, stringifyYaml, TFile, type App } from 'obsidian';
+import type { ProjectStatus } from '../../settings/types';
 import { markdownSemanticLiteralRanges } from '../../tags/markdownTagRename';
 import type { ProjectRangePatch } from '../ProjectCommandService';
 import { parseProjectDate, parseProjectRange } from '../projectDates';
@@ -17,6 +18,7 @@ import type {
 import type { WorkNoteIndex } from './WorkNoteIndex';
 
 type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibilityPreset);
+type ProjectStatusProvider = () => readonly ProjectStatus[];
 
 interface PreparedCreation {
   readonly preset: WorkNoteCompatibilityPreset;
@@ -150,6 +152,7 @@ export class WorkNoteCommandService {
     private readonly app: App,
     private readonly presetProvider: PresetProvider,
     private readonly index: WorkNoteIndex,
+    private readonly projectStatusProvider: ProjectStatusProvider = () => [],
   ) {}
 
   private preset(): WorkNoteCompatibilityPreset {
@@ -166,7 +169,18 @@ export class WorkNoteCommandService {
   }
 
   statuses(): readonly WorkNoteStatusDefinition[] {
-    return Object.entries(this.preset().rawStatusByStatusId).map(([id, label]) => ({ id, label }));
+    const mapping = this.preset().rawStatusByStatusId;
+    const presented: WorkNoteStatusDefinition[] = [];
+    const included = new Set<string>();
+    for (const status of this.projectStatusProvider()) {
+      if (!Object.prototype.hasOwnProperty.call(mapping, status.id)) continue;
+      presented.push({ id: status.id, label: status.label });
+      included.add(status.id);
+    }
+    for (const [id, label] of Object.entries(mapping)) {
+      if (!included.has(id)) presented.push({ id, label });
+    }
+    return presented;
   }
 
   observe(snapshot: WorkNoteSnapshot): WorkNoteObservedFields | null {

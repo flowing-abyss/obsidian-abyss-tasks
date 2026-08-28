@@ -110,7 +110,7 @@ describe('renderWorkNotesView', () => {
     activeDocument.body.appendChild(root);
     const notes = Array.from({ length: 150 }, (_, index) => note(index));
     try {
-      renderWorkNotesView(root, {
+      const handle = renderWorkNotesView(root, {
         notes,
         statuses: DEFAULT_SETTINGS.projects.statuses,
         layout: 'list',
@@ -125,7 +125,7 @@ describe('renderWorkNotesView', () => {
       scroll.scrollTop = WORK_NOTE_ROW_EXTENT * 100;
       scroll.dispatchEvent(new Event('scroll'));
       const current = root.querySelector<HTMLElement>(
-        '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 100.md"]',
+        '.abyss-work-note-row[data-work-note-path="Work Notes/Work note 100.md"] [data-work-note-identity-control]',
       )!;
       current.focus();
       for (let index = 0; index < 7; index += 1) {
@@ -134,9 +134,11 @@ describe('renderWorkNotesView', () => {
         );
       }
 
-      expect((activeDocument.activeElement as HTMLElement).dataset['workNotePath']).toBe(
-        'Work Notes/Work note 107.md',
-      );
+      expect(
+        (activeDocument.activeElement as HTMLElement)
+          .closest('.abyss-work-note-row')
+          ?.getAttribute('data-work-note-path'),
+      ).toBe('Work Notes/Work note 107.md');
       expect(scroll.scrollTop).toBe(WORK_NOTE_ROW_EXTENT * 103);
       expect(
         root.querySelector<HTMLElement>('[data-bounded-window-edge="start"]')?.style.blockSize,
@@ -171,7 +173,7 @@ describe('renderWorkNotesView', () => {
       scroll.dispatchEvent(new Event('scroll'));
       root
         .querySelector<HTMLElement>(
-          '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 103.md"]',
+          '.abyss-work-note-row[data-work-note-path="Work Notes/Work note 103.md"] [data-work-note-identity-control]',
         )!
         .focus();
 
@@ -180,9 +182,11 @@ describe('renderWorkNotesView', () => {
       scroll = root.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
 
       expect(scroll.scrollTop).toBe(WORK_NOTE_ROW_EXTENT * 100);
-      expect((activeDocument.activeElement as HTMLElement).dataset['workNotePath']).toBe(
-        'Work Notes/Work note 103.md',
-      );
+      expect(
+        (activeDocument.activeElement as HTMLElement)
+          .closest('.abyss-work-note-row')
+          ?.getAttribute('data-work-note-path'),
+      ).toBe('Work Notes/Work note 103.md');
       handle.destroy();
     } finally {
       root.remove();
@@ -215,6 +219,90 @@ describe('renderWorkNotesView', () => {
       'Work note 001',
     );
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('owns ordinary and milestone identity on the actual row and retains focus for status and open controls', () => {
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/P.md');
+    const ordinary = note(1);
+    const milestone = note(2, { kind: 'milestone' });
+    try {
+      const handle = renderWorkNotesView(root, {
+        notes: [ordinary, milestone],
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        layout: 'list',
+        session: session.workNotes,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+      });
+
+      for (const current of [ordinary, milestone]) {
+        expect(root.querySelectorAll(`[data-work-note-path="${current.path}"]`)).toHaveLength(1);
+        const row = root.querySelector<HTMLElement>(
+          `.abyss-work-note-row[data-work-note-path="${current.path}"]`,
+        );
+        expect(row).not.toBeNull();
+        row?.querySelector<HTMLButtonElement>('.abyss-work-note-status')?.focus();
+        expect(session.workNotes.list.focusedKey).toBe(current.path);
+        expect(
+          activeDocument.activeElement
+            ?.closest('.abyss-work-note-row')
+            ?.getAttribute('data-work-note-path'),
+        ).toBe(current.path);
+        row?.querySelector<HTMLButtonElement>('.abyss-work-note-open')?.focus();
+        expect(session.workNotes.list.focusedKey).toBe(current.path);
+      }
+      handle.destroy();
+    } finally {
+      root.remove();
+    }
+  });
+
+  it('announces milestone identity and useful automatic progress without inventing zero progress', () => {
+    const root = freshContainer();
+    const completed = note(1, { kind: 'milestone', path: 'Work Notes/Release.md' });
+    let handle = renderWorkNotesView(root, {
+      notes: [completed],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      milestoneRollups: new Map([
+        [completed.path, { active: 1, completed: 2, dropped: 0, progress: 2 / 3 }],
+      ]),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(
+      root
+        .querySelector<HTMLElement>('[data-work-note-identity-control]')
+        ?.getAttribute('aria-label'),
+    ).toContain('Milestone');
+    expect(
+      root
+        .querySelector<HTMLElement>('[data-work-note-identity-control]')
+        ?.getAttribute('aria-label'),
+    ).toContain('2 of 3 complete');
+
+    handle.destroy();
+    handle = renderWorkNotesView(root, {
+      notes: [completed],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      milestoneRollups: new Map([
+        [completed.path, { active: 0, completed: 0, dropped: 0, progress: null }],
+      ]),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+    expect(root.textContent).not.toContain('0/0');
+    expect(
+      root
+        .querySelector<HTMLElement>('[data-work-note-identity-control]')
+        ?.getAttribute('aria-label'),
+    ).not.toContain('0 of 0 complete');
+    handle.destroy();
   });
 
   it('keeps a long Work Note title and ordinary metadata separated inside the bounded identity', () => {
@@ -371,7 +459,11 @@ describe('renderWorkNotesView', () => {
       handle.destroy();
       handle = renderWorkNotesView(root, { ...base, notes: settled });
       const scroll = root.querySelector<HTMLElement>('.abyss-work-notes-scroll')!;
-      expect(activeDocument.activeElement?.getAttribute('data-work-note-path')).toBe(created.path);
+      expect(
+        (activeDocument.activeElement as HTMLElement | null)
+          ?.closest('.abyss-work-note-row')
+          ?.getAttribute('data-work-note-path'),
+      ).toBe(created.path);
       expect(scroll.scrollTop).toBeGreaterThan(0);
       expect(root.querySelectorAll('.abyss-work-note-row').length).toBeLessThanOrEqual(60);
       expect(root.querySelector(`[data-work-note-path="${created.path}"]`)).not.toBeNull();
@@ -467,7 +559,7 @@ describe('renderWorkNotesView', () => {
       let handle = renderWorkNotesView(root, { ...base, notes });
       root
         .querySelector<HTMLButtonElement>(
-          '[data-work-note-identity-control][data-work-note-path="Work Notes/Work note 002.md"]',
+          '.abyss-work-note-row[data-work-note-path="Work Notes/Work note 002.md"] [data-work-note-identity-control]',
         )!
         .click();
       expect(root.querySelector('[role="dialog"]')).not.toBeNull();
@@ -477,9 +569,11 @@ describe('renderWorkNotesView', () => {
       const drawer = root.querySelector<HTMLElement>('[role="dialog"]')!;
       expect(drawer).not.toBeNull();
       drawer.querySelector<HTMLButtonElement>('[aria-label="Close Work Note details"]')!.click();
-      expect(activeDocument.activeElement?.getAttribute('data-work-note-path')).toBe(
-        'Work Notes/Work note 002.md',
-      );
+      expect(
+        (activeDocument.activeElement as HTMLElement | null)
+          ?.closest('.abyss-work-note-row')
+          ?.getAttribute('data-work-note-path'),
+      ).toBe('Work Notes/Work note 002.md');
       handle.destroy();
     } finally {
       root.remove();
@@ -533,6 +627,25 @@ describe('renderWorkNotesView', () => {
     ).toEqual(['Work note 002', 'Work note 001']);
   });
 
+  it('shows all Work Notes when every persisted status filter id is stale', () => {
+    const root = freshContainer();
+    const statuses = DEFAULT_SETTINGS.projects.statuses;
+    renderWorkNotesView(root, {
+      notes: [note(1, { statusId: statuses[0]!.id }), note(2, { statusId: statuses[1]!.id })],
+      statuses,
+      layout: 'list',
+      viewState: {
+        groupBy: 'none',
+        sortBy: { field: 'title', dir: 'asc' },
+        statusIds: ['legacy-active', 'legacy-done'],
+      },
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(root.querySelectorAll('[data-work-note-path]')).toHaveLength(2);
+  });
+
   it.each([
     ['compatibility-conflict', { type: 'compatibility-conflict', reason: 'latest-audit-rejected' }],
     ['conflict', { type: 'conflict', field: 'status' }],
@@ -572,6 +685,7 @@ describe('renderWorkNotesView', () => {
 
   it('makes Work Notes selectable while every dashboard still opens in Tasks/List', () => {
     const root = freshContainer();
+    const session = new ProjectWorkspaceSession();
     const renderTasks = vi.fn((host: HTMLElement) => {
       host.createDiv({ text: 'Tasks list' });
       return { destroy: () => host.empty() };
@@ -602,25 +716,38 @@ describe('renderWorkNotesView', () => {
       dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
       diagnostics: [],
     };
-    renderProjectDashboard(root, snapshot, {
+    const context = {
       state: new AppState(),
       settings: DEFAULT_SETTINGS,
+      workspaceSession: session,
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
       renderTasks,
       renderWorkNotes,
       renderWorkNoteBoard: vi.fn(() => ({ destroy: () => undefined })),
-    });
+    };
+    let handle = renderProjectDashboard(root, snapshot, context);
 
     const workspace = root.querySelector<HTMLElement>('[data-project-workspace]')!;
     expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'list' });
+    expect(root.querySelector('.abyss-project-tasks-title')?.textContent).toBe('Tasks');
     const scope = root.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!;
     expect(scope.disabled).toBe(false);
     scope.click();
     expect(workspace.dataset).toMatchObject({ scope: 'work-notes', layout: 'list' });
+    expect(root.querySelector('.abyss-project-tasks-title')?.textContent).toBe('Work Notes');
     expect(renderWorkNotes).toHaveBeenCalledOnce();
     root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
     expect(workspace.dataset).toMatchObject({ scope: 'work-notes', layout: 'board' });
+    handle.destroy();
+
+    handle = renderProjectDashboard(root, snapshot, context);
+    expect(root.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject({
+      scope: 'work-notes',
+      layout: 'board',
+    });
+    expect(root.querySelector('.abyss-project-tasks-title')?.textContent).toBe('Work Notes');
+    handle.destroy();
   });
 
   it('retains the same open Project workspace but resets a newly opened or different Project', () => {
@@ -730,6 +857,86 @@ describe('renderWorkNotesView', () => {
 });
 
 describe('Work Note board adapter', () => {
+  it('keeps read-only Board notes openable while every mutation affordance is inert', async () => {
+    const root = freshContainer();
+    const openNote = vi.fn();
+    const onSetStatus = vi.fn();
+    const handle = renderWorkNotesView(root, {
+      notes: [note(1)],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'board',
+      commandsEnabled: false,
+      onSetStatus,
+      openNote,
+    });
+    const identity = root.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!;
+    const card = root.querySelector<HTMLElement>('.abyss-work-note-row[data-board-item]')!;
+    const status = root.querySelector<HTMLButtonElement>('.abyss-board-status-menu')!;
+
+    expect(identity.disabled).toBe(false);
+    identity.click();
+    expect(openNote).toHaveBeenCalledOnce();
+    expect(status.disabled).toBe(true);
+    expect(status.title).toMatch(/accepted compatibility audit/iu);
+    expect(card.getAttribute('draggable')).toBe('false');
+    expect(card.closest('[aria-disabled="true"]')).toBeNull();
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    card.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    root
+      .querySelector<HTMLElement>('[data-board-column]')!
+      .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+    await flushMicrotasks();
+    expect(root.querySelector('.abyss-board-columns')?.classList.contains('is-drag-active')).toBe(
+      false,
+    );
+    expect(onSetStatus).not.toHaveBeenCalled();
+    handle.destroy();
+  });
+
+  it('opens a Work Note exactly once from the enabled board identity button', () => {
+    const root = freshContainer();
+    const openNote = vi.fn();
+    const handle = renderWorkNotesView(root, {
+      notes: [note(1)],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'board',
+      onSetStatus: vi.fn(),
+      openNote,
+    });
+    const identity = root.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!;
+
+    expect(identity.type).toBe('button');
+    expect(identity.disabled).toBe(false);
+    expect(identity.getAttribute('aria-label')).toMatch(/open work note/iu);
+    expect(root.querySelectorAll('.abyss-work-note-open')).toHaveLength(0);
+    expect(root.querySelectorAll('.abyss-work-note-status')).toHaveLength(0);
+    expect(root.querySelectorAll('.abyss-board-status-menu')).toHaveLength(1);
+    identity.click();
+
+    expect(openNote).toHaveBeenCalledOnce();
+    expect(openNote).toHaveBeenCalledWith(note(1).path);
+    handle.destroy();
+  });
+
+  it('keeps list identity for details with one separate Open and status control', () => {
+    const root = freshContainer();
+    const handle = renderWorkNotesView(root, {
+      notes: [note(1)],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(
+      root.querySelector('[data-work-note-identity-control]')?.getAttribute('aria-label'),
+    ).toMatch(/details/iu);
+    expect(root.querySelectorAll('.abyss-work-note-open')).toHaveLength(1);
+    expect(root.querySelectorAll('.abyss-work-note-status')).toHaveLength(1);
+    expect(root.querySelectorAll('.abyss-board-status-menu')).toHaveLength(0);
+    handle.destroy();
+  });
+
   it('uses the complete canonical status menu for both drag and menu commands', async () => {
     const statuses = DEFAULT_SETTINGS.projects.statuses;
     const workNote = note(1);

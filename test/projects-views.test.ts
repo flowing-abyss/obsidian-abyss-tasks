@@ -1,7 +1,9 @@
 // eslint-disable-next-line import/no-nodejs-modules -- geometry contract loads the shipped CSS.
 import { readFileSync } from 'node:fs';
+import { Menu, TFile, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { createProjectBoardMutation } from '../src/panels/projects/boardProjection';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
@@ -19,6 +21,11 @@ import { deferred, freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
 const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
+
+function declarationsFor(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&');
+  return shippedStyles.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`, 'u'))?.[1] ?? '';
+}
 
 function attachedContainer(): HTMLElement {
   const container = freshContainer();
@@ -118,6 +125,13 @@ describe('renderProgressBar', () => {
 });
 
 describe('renderProjectsList', () => {
+  it('reserves a compact in-flow Board toolbar instead of overlaying Undo on content', () => {
+    const toolbar = declarationsFor('.abyss-board-toolbar');
+    expect(toolbar).toContain('block-size: var(--input-height)');
+    expect(toolbar).toContain('display: flex');
+    expect(declarationsFor('.abyss-board-undo')).not.toMatch(/position:\s*(?:absolute|fixed)/u);
+  });
+
   const ctx = {
     state: new AppState(),
     settings: DEFAULT_SETTINGS,
@@ -514,6 +528,28 @@ describe('renderProjectsList', () => {
     expect(el.querySelector('.abyss-project-overdue')?.textContent).toBe('3');
     expect(el.querySelector('.abyss-project-diagnostics')?.textContent).toBe('1');
     expect(el.textContent).not.toMatch(/\bActions?\b|Action progress/u);
+  });
+
+  it('includes milestones in the portfolio Work Notes count for a milestone-only Project', () => {
+    const el = freshContainer();
+    const milestone = {
+      ...workNote('Work Notes/Release.md', ACTIVE_ID, '2026-08-29'),
+      kind: 'milestone' as const,
+    };
+    const cleanup = renderProjectsList(
+      el,
+      [
+        workspace(proj({}), {
+          workNotes: [],
+          milestones: [milestone],
+          workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+        }),
+      ],
+      { ...ctx, state: new AppState() },
+    );
+
+    expect(el.querySelector('.abyss-project-work-notes')?.textContent).toBe('Work Notes 1');
+    cleanup();
   });
 
   it('opens the joined Next Action in the Task inspector from an icon-only control', () => {
@@ -975,6 +1011,89 @@ describe('renderProjectDashboard', () => {
     expect(status.style.color).toBe('');
   });
 
+  it('uses the same status actions and icons as the Project board menu', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const current = proj({});
+    const expected = createProjectBoardMutation(settings.projects.statuses, async () => ({
+      type: 'unchanged',
+    })).menuItems(current);
+    const captured: Array<{
+      label: string;
+      icon: string;
+      checked: boolean;
+      disabled: boolean;
+    }> = [];
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      build,
+    ) {
+      let label = '';
+      let icon = '';
+      let checked = false;
+      let disabled = false;
+      const item = {
+        setTitle(value: string) {
+          label = value;
+          return this;
+        },
+        setIcon(value: string) {
+          icon = value;
+          return this;
+        },
+        setChecked(value: boolean) {
+          checked = value;
+          return this;
+        },
+        setDisabled(value: boolean) {
+          disabled = value;
+          return this;
+        },
+        onClick() {
+          captured.push({
+            get label() {
+              return label;
+            },
+            get icon() {
+              return icon;
+            },
+            get checked() {
+              return checked;
+            },
+            get disabled() {
+              return disabled;
+            },
+          });
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    try {
+      const el = freshContainer();
+      renderProjectDashboard(el, workspace(current), {
+        state: new AppState(),
+        settings,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(),
+      });
+
+      el.querySelector<HTMLButtonElement>('.abyss-status-pill')!.click();
+
+      expect(captured).toEqual(
+        expected.map(({ label, icon, checked, disabled }) => ({
+          label,
+          icon,
+          checked,
+          disabled,
+        })),
+      );
+    } finally {
+      addItem.mockRestore();
+    }
+  });
+
   it('applies the configured Work Note filter and sort before Timeline availability/rendering', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.workNotes = {
@@ -1267,6 +1386,109 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const stubMgr = { setStatus: vi.fn().mockResolvedValue(undefined) } as never;
 
+  it('keeps portfolio layout focus on the corresponding current control across sync remounts', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'overview';
+    const datedProject = proj({
+      frontmatter: { start: '2026-08-26', end: '2026-08-30' },
+      range: parseProjectRange('2026-08-26', '2026-08-30'),
+    });
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(datedProject)],
+      projectCommands: {
+        observeRange: vi.fn().mockReturnValue({
+          path: datedProject.path,
+          start: '2026-08-26',
+          end: '2026-08-30',
+        }),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    try {
+      for (const layout of ['board', 'timeline', 'overview'] as const) {
+        const current = el.querySelector<HTMLButtonElement>(
+          `[data-project-portfolio-layout="${layout}"]`,
+        )!;
+        current.focus();
+        current.click();
+        const replacement = el.querySelector<HTMLButtonElement>(
+          `[data-project-portfolio-layout="${layout}"]`,
+        )!;
+        expect(replacement.isConnected).toBe(true);
+        expect(el.contains(replacement)).toBe(true);
+        expect(activeDocument.activeElement).toBe(replacement);
+      }
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it.each(
+    (['overview', 'board', 'timeline'] as const).flatMap((layout) => [
+      {
+        layout,
+        name: 'status',
+        selector: `[data-project-status-filter="${ACTIVE_ID}"]`,
+      },
+      { layout, name: 'unmapped', selector: '[data-project-unmapped-filter]' },
+    ]),
+  )('keeps $layout $name filter focus and scroll across a sync remount', ({ layout, selector }) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = layout;
+    const secondStatus = settings.projects.statuses.find((status) => status.id !== ACTIVE_ID)!;
+    settings.projects.view.visibleStatusIds = [ACTIVE_ID, secondStatus.id];
+    const datedProject = proj({
+      frontmatter: { start: '2026-08-26', end: '2026-08-30' },
+      range: parseProjectRange('2026-08-26', '2026-08-30'),
+    });
+    const survivingProject = proj({
+      path: 'Projects/B.md',
+      name: 'B',
+      statusId: secondStatus.id,
+      frontmatter: { start: '2026-08-27', end: '2026-08-31' },
+      range: parseProjectRange('2026-08-27', '2026-08-31'),
+    });
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(datedProject), workspace(survivingProject)],
+      projectCommands: {
+        observeRange: vi.fn((project: Project) => ({
+          path: project.path,
+          start: project.frontmatter['start'],
+          end: project.frontmatter['end'],
+        })),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    try {
+      const scrollSelector =
+        layout === 'overview'
+          ? '.abyss-projects-scroll'
+          : layout === 'board'
+            ? `[data-board-column="${secondStatus.id}"] .abyss-board-column-scroll`
+            : '.abyss-timeline-scroll';
+      const scroll = el.querySelector<HTMLElement>(scrollSelector)!;
+      scroll.scrollTop = 91;
+      scroll.dispatchEvent(new Event('scroll'));
+      const control = el.querySelector<HTMLButtonElement>(selector)!;
+      control.focus();
+      control.click();
+      const replacement = el.querySelector<HTMLButtonElement>(selector)!;
+      expect(replacement.isConnected).toBe(true);
+      expect(el.contains(replacement)).toBe(true);
+      expect(activeDocument.activeElement).toBe(replacement);
+      expect(settings.projects.view.portfolioLayout).toBe(layout);
+      expect(el.querySelector<HTMLElement>(scrollSelector)?.scrollTop).toBe(91);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
   it('renders the list view by default', () => {
     const state = new AppState();
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
@@ -1286,6 +1508,166 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
     panel.mount(el);
     expect(el.querySelector('.abyss-projects-dashboard')).toBeTruthy();
+  });
+
+  it('omits the Work Notes scope when no eligible notes or audited creation are available', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const commands = {
+      capabilities: () => ({ update: false, create: false }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+      workNoteCommands: commands,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+
+    expect(el.querySelector('[data-project-scope="work-notes"]')).toBeNull();
+    panel.destroy();
+  });
+
+  it('offers the Work Notes scope without existing notes when audited creation is available', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const commands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+      workNoteCommands: commands,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+
+    expect(el.querySelector('[data-project-scope="work-notes"]')).not.toBeNull();
+    panel.destroy();
+  });
+
+  it('keeps a coherent layout when an empty creatable Work Notes workspace retained Board', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    session.scope = 'work-notes';
+    session.layout = 'board';
+    const commands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+      create: vi.fn(),
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace()],
+      workNoteCommands: commands,
+      workspaceSession: session,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+
+    const workspaceEl = el.querySelector<HTMLElement>('[data-project-workspace]')!;
+    const activeLayout = el.querySelector<HTMLButtonElement>(
+      `[data-project-layout="${workspaceEl.dataset['layout']}"]`,
+    );
+    expect(String(session.layout)).toBe(workspaceEl.dataset['layout']);
+    expect(activeLayout).not.toBeNull();
+    expect(activeLayout?.disabled).toBe(false);
+    expect(activeLayout?.getAttribute('aria-pressed')).toBe('true');
+    panel.destroy();
+  });
+
+  it('presents and opens milestone Work Notes with their automatic rollup', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const milestone = {
+      ...workNote('Work Notes/Release milestone.md', ACTIVE_ID, '2026-08-30'),
+      kind: 'milestone' as const,
+      range: {},
+    };
+    const ordinary = {
+      ...workNote('Work Notes/Ship build.md', ACTIVE_ID, '2026-08-29'),
+      milestonePath: milestone.path,
+    };
+    const snapshot = workspace(proj({}), {
+      workNotes: [ordinary],
+      milestones: [milestone],
+      workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+      milestoneRollups: new Map([
+        [milestone.path, { active: 1, completed: 2, dropped: 0, progress: 2 / 3 }],
+      ]),
+    });
+    const file = Object.assign(Object.create(TFile.prototype) as object, {
+      path: milestone.path,
+      extension: 'md',
+    }) as TFile;
+    const openFile = vi.fn().mockResolvedValue(undefined);
+    const app = {
+      vault: { getAbstractFileByPath: (path: string) => (path === file.path ? file : null) },
+      workspace: { getLeaf: () => ({ openFile }) },
+    } as never;
+    const commands = {
+      capabilities: () => ({ update: false, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+      create: vi.fn(),
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
+      snapshots: [snapshot],
+      workNoteCommands: commands,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    const milestoneRow = el.querySelector<HTMLElement>(
+      `.abyss-work-note-row[data-work-note-path="${milestone.path}"]`,
+    );
+
+    expect(milestoneRow).not.toBeNull();
+    expect(milestoneRow?.textContent).toContain('2/3');
+    milestoneRow?.querySelector<HTMLButtonElement>('.abyss-work-note-open')?.click();
+    expect(openFile).toHaveBeenCalledWith(file);
+    panel.destroy();
+  });
+
+  it('includes milestone Work Notes in the production Timeline projection', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const milestone = {
+      ...workNote('Work Notes/Release milestone.md', ACTIVE_ID, '2026-08-30'),
+      kind: 'milestone' as const,
+      range: {},
+    };
+    const commands = {
+      capabilities: () => ({ update: false, create: true }),
+      statuses: () => DEFAULT_SETTINGS.projects.statuses,
+      create: vi.fn(),
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [
+        workspace(proj({}), {
+          milestones: [milestone],
+          milestoneRollups: new Map([
+            [milestone.path, { active: 0, completed: 0, dropped: 0, progress: null }],
+          ]),
+        }),
+      ],
+      workNoteCommands: commands,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    const timeline = el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]');
+    expect(timeline).not.toBeNull();
+    timeline?.click();
+    expect(
+      el.querySelector('[data-timeline-key="work-note:Work Notes/Release milestone.md"]'),
+    ).not.toBeNull();
+    panel.destroy();
   });
 
   it('destroys the active dashboard child renderer when the real ProjectsPanel is destroyed', () => {
@@ -1629,7 +2011,7 @@ describe('ProjectsPanel dispatch', () => {
       expect(releasedTab.defaultPrevented).toBe(false);
       expect(activeDocument.activeElement).not.toBe(wideControls[0]);
       const returnTarget = el.querySelector<HTMLElement>(
-        `[data-work-note-identity-control][data-work-note-path="${note.path}"]`,
+        `.abyss-work-note-row[data-work-note-path="${note.path}"] [data-work-note-identity-control]`,
       )!;
       inspector.querySelector<HTMLButtonElement>('[aria-label="Close Work Note details"]')!.click();
       expect(activeDocument.activeElement).toBe(returnTarget);
@@ -1691,6 +2073,83 @@ describe('ProjectsPanel dispatch', () => {
       },
       { end: expect.objectContaining({ raw: '2026-09-01', precision: 'date' }) },
     );
+  });
+
+  it('routes a portfolio Timeline Project identity through the real ProjectsPanel state', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const datedProject = proj({
+      frontmatter: { start: '2026-08-26' },
+      range: parseProjectRange('2026-08-26', undefined),
+    });
+    const state = new AppState();
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(datedProject)],
+      projectCommands: {
+        observeRange: vi.fn().mockReturnValue({
+          path: datedProject.path,
+          start: '2026-08-26',
+          end: undefined,
+        }),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    try {
+      const identity = el.querySelector<HTMLButtonElement>('[data-project-identity-control]')!;
+      expect(identity.tagName).toBe('BUTTON');
+      identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(state.get('projectsPanel')).toEqual({
+        view: 'dashboard',
+        path: 'Projects/A.md',
+      });
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it('opens a read-only Work Note Timeline identity through the real dashboard adapter', () => {
+    const project = proj({});
+    const note = {
+      ...workNote('Work Notes/Read only.md', ACTIVE_ID, '2026-08-27'),
+      range: parseProjectRange('2026-08-27', undefined),
+    };
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    const file = Object.assign(Object.create(TFile.prototype) as object, {
+      path: note.path,
+      extension: 'md',
+    }) as TFile;
+    const openFile = vi.fn().mockResolvedValue(undefined);
+    const app = {
+      vault: { getAbstractFileByPath: (path: string) => (path === note.path ? file : null) },
+      workspace: { getLeaf: () => ({ openFile }) },
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
+      snapshots: [workspace(project, { workNotes: [note] })],
+      workNoteCommands: {
+        capabilities: () => ({ update: false, create: false }),
+        statuses: () => DEFAULT_SETTINGS.projects.statuses,
+        observeRange: vi.fn(),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    try {
+      el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+      const identity = el.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!;
+      expect(identity.tagName).toBe('BUTTON');
+      identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+      expect(openFile).toHaveBeenCalledOnce();
+      expect(openFile).toHaveBeenCalledWith(file);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
   });
 
   it('retains pending Undo through a synchronous Project store refresh', async () => {

@@ -69,4 +69,6 @@ export interface ProjectsDashboardContext {
   ) => ProjectChildRenderHandle;
   /** Applies the configured Work Note filter/sort before alternate layouts render. */
   selectWorkNotes?: (notes: readonly WorkNoteSnapshot[]) => readonly WorkNoteSnapshot[];
+  /** Eligible records or an audited create capability make the optional scope visible. */
+  workNotesAvailable?: boolean;
 }

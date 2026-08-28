@@ -1,10 +1,14 @@
 import { TFile, TFolder, type CachedMetadata } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveSemanticProjectStatus } from '../src/projects/lifecycle';
 import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
+import { acceptWorkNoteAudit } from '../src/projects/work-notes/compatibility';
+import { workNoteLifecycleBehavior } from '../src/projects/work-notes/rollups';
 import type {
   WorkNoteCompatibilityPreset,
   WorkNoteIndexEvent,
 } from '../src/projects/work-notes/types';
+import type { ProjectStatus } from '../src/settings/types';
 import type { TaskIndexSettledEvent } from '../src/tasks';
 
 const fields: WorkNoteCompatibilityPreset['fields'] = {
@@ -32,6 +36,22 @@ const preset: WorkNoteCompatibilityPreset = {
   fields,
   rawStatusByStatusId: { active: 'Active', done: 'Done' },
 };
+
+type StatusAwareWorkNoteIndexConstructor = new (
+  app: ConstructorParameters<typeof WorkNoteIndex>[0],
+  configuredPreset: ConstructorParameters<typeof WorkNoteIndex>[1],
+  taskSettlements: ConstructorParameters<typeof WorkNoteIndex>[2],
+  projectStatuses: () => readonly ProjectStatus[],
+) => WorkNoteIndex;
+
+function statusAwareIndex(
+  app: ConstructorParameters<typeof WorkNoteIndex>[0],
+  configuredPreset: WorkNoteCompatibilityPreset,
+  projectStatuses: () => readonly ProjectStatus[],
+): WorkNoteIndex {
+  const Constructor = WorkNoteIndex as unknown as StatusAwareWorkNoteIndexConstructor;
+  return new Constructor(app, configuredPreset, undefined, projectStatuses);
+}
 
 function tfile(path: string): TFile {
   return Object.assign(Object.create(TFile.prototype) as object, {
@@ -392,6 +412,456 @@ describe('WorkNoteIndex', () => {
       },
     });
     expect(accepted.preview.capabilities).toEqual({ update: true, create: true });
+  });
+
+  it('intersects live capabilities with the accepted audit ceiling for an enabled preset', async () => {
+    const h = harness(
+      [
+        {
+          path: 'Work Notes/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+        {
+          path: 'Work Notes/M.md',
+          tags: ['#work-note/milestone'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Done' },
+        },
+      ],
+      {
+        'Work Notes/A.md\0Projects/A': 'Projects/A.md',
+        'Work Notes/M.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+    const candidate = acceptWorkNoteAudit(
+      {
+        ...preset,
+        creation: {
+          folder: 'Work Notes',
+          defaultKind: 'ordinary',
+          defaultStatusId: 'active',
+          kindMarkers: {
+            ordinary: { kind: 'frontmatter-tag', value: 'work-note/task' },
+            milestone: { kind: 'frontmatter-tag', value: 'work-note/milestone' },
+          },
+        },
+      },
+      { update: false, create: true },
+      '2026-08-27T00:00:00Z',
+    );
+    const index = new WorkNoteIndex(h.app, candidate);
+
+    expect((await index.previewCompatibility()).capabilities).toEqual({
+      update: false,
+      create: false,
+    });
+  });
+
+  it('reuses semantic Project status ids and keeps an unmatched raw status collision-free', async () => {
+    const h = harness(
+      [
+        {
+          path: 'Work Notes/A.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'ACTIVE' },
+        },
+        {
+          path: 'Work Notes/B.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'dOnE' },
+        },
+        {
+          path: 'Work Notes/C.md',
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'review' },
+        },
+      ],
+      {
+        'Work Notes/A.md\0Projects/A': 'Projects/A.md',
+        'Work Notes/B.md\0Projects/A': 'Projects/A.md',
+        'Work Notes/C.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+    const projectStatuses: readonly ProjectStatus[] = [
+      {
+        id: 'project-active-id',
+        label: 'Active',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'in progress' },
+      },
+      {
+        id: 'project-done-id',
+        label: 'Complete',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'status', value: 'Done' },
+      },
+      {
+        id: 'review',
+        label: 'Someday',
+        onLeftPanel: false,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'someday' },
+      },
+    ];
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => projectStatuses);
+
+    const preview = await index.previewCompatibility();
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
+
+    expect(accepted.type).toBe('ok');
+    if (accepted.type !== 'ok') throw new Error('Expected exact preview acceptance');
+    expect(accepted.preset.rawStatusByStatusId['project-active-id']).toBe('ACTIVE');
+    expect(accepted.preset.rawStatusByStatusId['project-done-id']).toBe('dOnE');
+    const unmatched = Object.entries(accepted.preset.rawStatusByStatusId).find(
+      ([, raw]) => raw === 'review',
+    );
+    expect(unmatched).toBeDefined();
+    expect(unmatched?.[0]).not.toBe('review');
+    expect(projectStatuses.map(({ id }) => id)).not.toContain(unmatched?.[0]);
+  });
+
+  it('rejects acceptance when the Project status provider changes after preview', async () => {
+    const path = 'Work Notes/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    let statuses: readonly ProjectStatus[] = [
+      {
+        id: 'active-v1',
+        label: 'Active',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'active' },
+      },
+    ];
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+    const preview = await index.previewCompatibility();
+    statuses = [{ ...statuses[0]!, id: 'active-v2' }];
+
+    expect(
+      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
+    ).toEqual({ type: 'stale-preview' });
+  });
+
+  it('does not stale an exact preview for presentation-only Project status changes', async () => {
+    const path = 'Work Notes/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    let statuses: readonly ProjectStatus[] = [
+      {
+        id: 'active',
+        label: 'Active',
+        color: '#123456',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'active' },
+      },
+    ];
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+    const preview = await index.previewCompatibility();
+    statuses = [{ ...statuses[0]!, color: '#abcdef', onLeftPanel: false }];
+
+    expect(
+      await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
+    ).toMatchObject({ type: 'ok' });
+  });
+
+  it.each(['id', 'label', 'match', 'behavior'] as const)(
+    'stales an exact preview when mapping-relevant Project status %s changes',
+    async (field) => {
+      const path = 'Work Notes/A.md';
+      const h = harness(
+        [
+          {
+            path,
+            tags: ['#work-note/task'],
+            frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+          },
+        ],
+        { [`${path}\0Projects/A`]: 'Projects/A.md' },
+      );
+      let statuses: readonly ProjectStatus[] = [
+        {
+          id: 'active',
+          label: 'Active',
+          onLeftPanel: true,
+          behavior: 'regular',
+          match: { kind: 'property', property: 'status', value: 'active' },
+        },
+      ];
+      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+      const preview = await index.previewCompatibility();
+      statuses = [
+        field === 'id'
+          ? { ...statuses[0]!, id: 'active-v2' }
+          : field === 'label'
+            ? { ...statuses[0]!, label: 'Doing' }
+            : field === 'match'
+              ? {
+                  ...statuses[0]!,
+                  match: { kind: 'property', property: 'status', value: 'doing' },
+                }
+              : { ...statuses[0]!, behavior: 'completed' },
+      ];
+
+      expect(
+        await index.acceptSuggestedCompatibility(preview.acceptanceToken!, '2026-08-27T00:00:00Z'),
+      ).toEqual({ type: 'stale-preview' });
+    },
+  );
+
+  it('keeps case aliases collision-free and disables both writes when they target one Project status', async () => {
+    const paths = ['Work Notes/A.md', 'Work Notes/B.md'];
+    const h = harness(
+      paths.map((path, index) => ({
+        path,
+        tags: ['#work-note/task'],
+        frontmatter: { Project: '[[Projects/A]]', Status: index === 0 ? 'Done' : 'done' },
+      })),
+      Object.fromEntries(paths.map((path) => [`${path}\0Projects/A`, 'Projects/A.md'])),
+    );
+    const statuses: readonly ProjectStatus[] = [
+      {
+        id: 'canonical-done',
+        label: 'Done',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'status', value: 'done' },
+      },
+      {
+        id: 'canonical-done-2',
+        label: 'Reviewed',
+        onLeftPanel: false,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'reviewed' },
+      },
+    ];
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+    const preview = await index.previewCompatibility();
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
+
+    expect(accepted.type).toBe('ok');
+    if (accepted.type !== 'ok') throw new Error('Expected safe read-only acceptance');
+    expect(Object.values(accepted.preset.rawStatusByStatusId).sort()).toEqual(['Done', 'done']);
+    expect(new Set(Object.keys(accepted.preset.rawStatusByStatusId)).size).toBe(2);
+    const alias = Object.entries(accepted.preset.rawStatusByStatusId).find(
+      ([id]) => id !== 'canonical-done',
+    )!;
+    expect(alias[0]).not.toBe('canonical-done-2');
+    expect(
+      workNoteLifecycleBehavior(
+        {
+          ...(index.list()[0] ?? (await index.audit()).snapshots[0]!),
+          statusId: alias[0],
+          rawStatus: alias[1],
+        },
+        statuses,
+      ),
+    ).toBe('completed');
+    expect(accepted.preview.capabilities).toEqual({ update: false, create: false });
+  });
+
+  it('preserves prototype-like and Unicode raw statuses with collision-free fallback ids', async () => {
+    const rawStatuses = ['__proto__', 'constructor', 'toString', '🧪', '🧪️'];
+    const paths = rawStatuses.map((_, index) => `Work Notes/${String(index)}.md`);
+    const h = harness(
+      paths.map((path, index) => ({
+        path,
+        tags: ['#work-note/task'],
+        frontmatter: { Project: '[[Projects/A]]', Status: rawStatuses[index] },
+      })),
+      Object.fromEntries(paths.map((path) => [`${path}\0Projects/A`, 'Projects/A.md'])),
+    );
+    const reserved = ['__proto__', 'constructor', 'toString', 'status', 'work-note-status'];
+    const statuses: readonly ProjectStatus[] = reserved.map((id) => ({
+      id,
+      label: `Reserved ${id}`,
+      onLeftPanel: false,
+      behavior: 'regular',
+      match: { kind: 'property', property: 'status', value: `reserved-${id}` },
+    }));
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+    const preview = await index.previewCompatibility();
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
+
+    expect(accepted.type).toBe('ok');
+    if (accepted.type !== 'ok') throw new Error('Expected collision-free acceptance');
+    const mapping = accepted.preset.rawStatusByStatusId;
+    expect(Object.values(mapping).sort()).toEqual([...rawStatuses].sort());
+    expect(Object.keys(mapping)).toHaveLength(rawStatuses.length);
+    expect(Object.keys(mapping).some((id) => reserved.includes(id))).toBe(false);
+  });
+
+  it.each([
+    ['✅️ Ｄｏｎｅ', 'Done'],
+    ['Done', '✅ Ｄｏｎｅ'],
+  ])(
+    'matches emoji, variation selectors, and NFKC status semantics symmetrically',
+    async (label, raw) => {
+      const path = 'Work Notes/A.md';
+      const h = harness(
+        [
+          {
+            path,
+            tags: ['#work-note/task'],
+            frontmatter: { Project: '[[Projects/A]]', Status: raw },
+          },
+        ],
+        { [`${path}\0Projects/A`]: 'Projects/A.md' },
+      );
+      const statuses: readonly ProjectStatus[] = [
+        {
+          id: 'canonical-done',
+          label,
+          onLeftPanel: false,
+          behavior: 'completed',
+          match: { kind: 'property', property: 'status', value: 'unrelated' },
+        },
+      ];
+      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+      const preview = await index.previewCompatibility();
+      const accepted = await index.acceptSuggestedCompatibility(
+        preview.acceptanceToken!,
+        '2026-08-27T00:00:00Z',
+      );
+
+      expect(accepted.type).toBe('ok');
+      if (accepted.type !== 'ok') throw new Error('Expected semantic acceptance');
+      expect(accepted.preset.rawStatusByStatusId['canonical-done']).toBe(raw);
+    },
+  );
+
+  it.each([
+    ['unrelated emoji-only', '✅'],
+    ['blank', '   '],
+  ])(
+    'does not treat an emoji-only raw status as a canonical %s Project status',
+    async (_, label) => {
+      const path = 'Work Notes/A.md';
+      const rawStatus = '🧪️';
+      const h = harness(
+        [
+          {
+            path,
+            tags: ['#work-note/task'],
+            frontmatter: { Project: '[[Projects/A]]', Status: rawStatus },
+          },
+        ],
+        { [`${path}\0Projects/A`]: 'Projects/A.md' },
+      );
+      const statuses: readonly ProjectStatus[] = [
+        {
+          id: 'configured-status',
+          label,
+          onLeftPanel: false,
+          behavior: 'completed',
+          match: { kind: 'property', property: 'status', value: label },
+        },
+      ];
+      expect(resolveSemanticProjectStatus(statuses, rawStatus)).toEqual({ type: 'unmatched' });
+      const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => statuses);
+
+      const preview = await index.previewCompatibility();
+      const accepted = await index.acceptSuggestedCompatibility(
+        preview.acceptanceToken!,
+        '2026-08-27T00:00:00Z',
+      );
+
+      expect(accepted.type).toBe('ok');
+      if (accepted.type !== 'ok') throw new Error('Expected read-only fallback acceptance');
+      expect(accepted.preset.rawStatusByStatusId['configured-status']).toBeUndefined();
+      const fallback = Object.entries(accepted.preset.rawStatusByStatusId).find(
+        ([, raw]) => raw === rawStatus,
+      )!;
+      expect(
+        workNoteLifecycleBehavior(
+          {
+            path,
+            presetRevision: accepted.preset.revision,
+            presetFingerprint: '',
+            kind: 'ordinary',
+            projectPath: 'Projects/A.md',
+            statusId: fallback[0],
+            rawStatus: fallback[1],
+            writableStatusShape: true,
+            range: {},
+            blockedByPaths: [],
+            relatedPaths: [],
+            diagnostics: [],
+          },
+          statuses,
+        ),
+      ).toBe('regular');
+    },
+  );
+
+  it('keeps an ambiguous semantic Project status match read-only instead of choosing a winner', async () => {
+    const path = 'Work Notes/A.md';
+    const h = harness(
+      [
+        {
+          path,
+          tags: ['#work-note/task'],
+          frontmatter: { Project: '[[Projects/A]]', Status: 'Done' },
+        },
+      ],
+      { [`${path}\0Projects/A`]: 'Projects/A.md' },
+    );
+    const competingStatuses: readonly ProjectStatus[] = [
+      {
+        id: 'done-by-label',
+        label: 'Done',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'status', value: 'complete' },
+      },
+      {
+        id: 'done-by-property',
+        label: 'Finished',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'status', value: 'Done' },
+      },
+    ];
+    const index = statusAwareIndex(h.app, { ...preset, enabled: false }, () => competingStatuses);
+
+    const preview = await index.previewCompatibility();
+    const accepted = await index.acceptSuggestedCompatibility(
+      preview.acceptanceToken!,
+      '2026-08-27T00:00:00Z',
+    );
+
+    expect(accepted.type).toBe('ok');
+    if (accepted.type !== 'ok') throw new Error('Expected read-only compatibility acceptance');
+    expect(Object.keys(accepted.preset.rawStatusByStatusId)).not.toContain('done-by-label');
+    expect(Object.keys(accepted.preset.rawStatusByStatusId)).not.toContain('done-by-property');
+    expect(accepted.preview.capabilities).toEqual({ update: false, create: false });
   });
 
   it('rejects acceptance when vault metadata drifts after the exact preview', async () => {

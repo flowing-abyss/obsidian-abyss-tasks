@@ -136,15 +136,22 @@ export function createProjectBoardMutation(
       }
       return command(project, columnKey);
     },
-    menuItems: (project) =>
-      statuses.map((status) => ({
-        columnKey: status.id,
-        label: status.label,
-        icon: 'circle-dot',
-        checked: status.id === project.statusId,
-        disabled: status.id === project.statusId,
-      })),
+    menuItems: (project) => projectStatusMenuModel(statuses, project),
   };
+}
+
+/** Canonical Project status action model shared by every Project status menu. */
+export function projectStatusMenuModel(
+  statuses: readonly ProjectStatus[],
+  project: Pick<Project, 'statusId'>,
+): readonly BoardStatusAction[] {
+  return statuses.map((status) => ({
+    columnKey: status.id,
+    label: status.label,
+    icon: 'circle-dot',
+    checked: status.id === project.statusId,
+    disabled: status.id === project.statusId,
+  }));
 }
 
 export function createTaskBoardMutation(

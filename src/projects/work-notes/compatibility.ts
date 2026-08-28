@@ -1,4 +1,6 @@
 import { evaluateQuery } from '../../query/evaluateQuery';
+import type { ProjectStatus } from '../../settings/types';
+import { resolveSemanticProjectStatus } from '../lifecycle';
 import { parseProjectRange } from '../projectDates';
 import type {
   AcceptedWorkNoteAudit,
@@ -512,11 +514,48 @@ function mostCommon(counts: Readonly<Record<string, number>>): string {
 function slug(raw: string): string {
   return (
     raw
+      .normalize('NFKC')
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9]+/gu, '-')
+      .replace(/[^\p{L}\p{N}]+/gu, '-')
       .replace(/^-|-$/gu, '') || 'status'
   );
+}
+
+function suggestedStatusMapping(
+  rawStatuses: readonly string[],
+  projectStatuses: readonly ProjectStatus[],
+): {
+  readonly rawStatusByStatusId: Readonly<Record<string, string>>;
+  readonly ambiguous: boolean;
+} {
+  const mapping = new Map<string, string>();
+  const reservedStatusIds = new Set(projectStatuses.map(({ id }) => id));
+  let ambiguous = false;
+  const fallbackId = (rawStatus: string): string => {
+    let base = slug(rawStatus);
+    if (reservedStatusIds.has(base) || mapping.has(base)) base = `work-note-${base}`;
+    let id = base;
+    let suffix = 2;
+    while (reservedStatusIds.has(id) || mapping.has(id)) {
+      id = `${base}-${String(suffix)}`;
+      suffix += 1;
+    }
+    return id;
+  };
+  for (const rawStatus of rawStatuses) {
+    const semantic = resolveSemanticProjectStatus(projectStatuses, rawStatus);
+    if (semantic.type === 'ambiguous') ambiguous = true;
+    let id: string;
+    if (semantic.type === 'unique' && !mapping.has(semantic.status.id)) {
+      id = semantic.status.id;
+    } else {
+      if (semantic.type === 'unique') ambiguous = true;
+      id = fallbackId(rawStatus);
+    }
+    mapping.set(id, rawStatus);
+  }
+  return { rawStatusByStatusId: Object.fromEntries(mapping), ambiguous };
 }
 
 export interface WorkNotePresetSuggestion {
@@ -533,6 +572,7 @@ export interface WorkNotePresetSuggestion {
     readonly rejectedCandidateCount: number;
     readonly issueCounts: Readonly<Record<string, number>>;
   };
+  readonly ambiguousStatusMapping: boolean;
 }
 
 function sharedTagPrefix(tags: readonly string[]): string {
@@ -628,11 +668,14 @@ function simpleTagMarker(query: string): WorkNoteKindMarker | undefined {
     : undefined;
 }
 
-export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePresetSuggestion {
-  const folderCounts: Record<string, number> = {};
-  const propertyCounts: Record<string, number> = {};
-  const tagCounts: Record<string, number> = {};
-  const statusValueCounts: Record<string, number> = {};
+export function suggestWorkNotePreset(
+  source: WorkNoteAuditSource,
+  projectStatuses: readonly ProjectStatus[] = [],
+): WorkNotePresetSuggestion {
+  const folderCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+  const propertyCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+  const tagCounts: Record<string, number> = Object.create(null) as Record<string, number>;
+  const statusValueCounts: Record<string, number> = Object.create(null) as Record<string, number>;
   const files = source.files();
   for (const file of files) {
     for (const key of Object.keys(file.frontmatter)) increment(propertyCounts, key);
@@ -645,7 +688,10 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
           file.frontmatter[pair.status] !== undefined,
       )
     : [];
-  const clusterPropertyCounts: Record<string, number> = {};
+  const clusterPropertyCounts: Record<string, number> = Object.create(null) as Record<
+    string,
+    number
+  >;
   for (const file of pairSeeds) {
     for (const key of Object.keys(file.frontmatter)) increment(clusterPropertyCounts, key);
   }
@@ -668,18 +714,10 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
   const commonTag = milestoneTag
     ? sharedTagPrefix([ordinaryTag, milestoneTag]) || mostCommon(tagCounts)
     : ordinaryTag;
-  const rawStatusByStatusId: Record<string, string> = {};
-  for (const rawStatus of Object.keys(statusValueCounts).sort((left, right) =>
-    left.localeCompare(right),
-  )) {
-    let id = slug(rawStatus);
-    let suffix = 2;
-    while (rawStatusByStatusId[id] !== undefined) {
-      id = `${slug(rawStatus)}-${String(suffix)}`;
-      suffix += 1;
-    }
-    rawStatusByStatusId[id] = rawStatus;
-  }
+  const { rawStatusByStatusId, ambiguous: ambiguousStatusMapping } = suggestedStatusMapping(
+    Object.keys(statusValueCounts).sort((left, right) => left.localeCompare(right)),
+    projectStatuses,
+  );
   const candidate: WorkNoteCompatibilityPreset = {
     revision: 1,
     enabled: false,
@@ -726,6 +764,7 @@ export function suggestWorkNotePreset(source: WorkNoteAuditSource): WorkNotePres
   for (const { type } of preview.issues) increment(issueCounts, type);
   return {
     preset,
+    ambiguousStatusMapping,
     observations: {
       fileCount: files.length,
       folderCounts,

@@ -40,7 +40,7 @@ type Resolution =
   | { readonly type: 'ambiguous' };
 
 /**
- * The sole logical authority for Project Tasks/List. It owns complete ProjectActions and stable
+ * The sole logical authority for Project Tasks/List/Board/Timeline. It owns complete ProjectActions and stable
  * TaskRefs; mounted rows and the geometry window are intentionally not consulted for selection,
  * focus, inspector continuity, or bulk inputs.
  */

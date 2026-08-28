@@ -50,7 +50,7 @@ export class CaptureSurface {
     this.destination = ownerDocument.createElement('span');
     this.destination.className = 'abyss-capture-destination';
     this.destination.id = `abyss-capture-destination-${id}`;
-    this.destination.textContent = controller.target.label;
+    this.destination.textContent = controller.target.presentationLabel ?? controller.target.label;
 
     this.pending = ownerDocument.createElement('span');
     this.pending.className = 'abyss-capture-pending';

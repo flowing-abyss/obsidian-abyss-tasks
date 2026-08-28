@@ -26,6 +26,7 @@ export type CaptureContext =
 
 export interface CaptureTarget {
   readonly label: string;
+  readonly presentationLabel?: string;
   readonly context: CaptureContext;
   readonly session: TaskCreateSession;
   readonly markdownPrefix: string;
@@ -59,6 +60,18 @@ function cloneContext(context: CaptureContext): CaptureContext {
 function normalizedTag(value: string): string {
   const tag = value.trim();
   return tag.length === 0 || tag.startsWith('#') ? tag : `#${tag}`;
+}
+
+function projectCaptureLabel(context: ProjectCaptureContext, statusLabel?: string): string {
+  const pathParts = context.projectPath.split('/');
+  const fileName = pathParts[pathParts.length - 1] ?? context.projectPath;
+  const projectName = fileName.replace(/\.md$/u, '');
+  const parts = [`Project: ${projectName}`];
+  if (context.statusSymbol !== undefined) {
+    parts.push(`Status: ${statusLabel ?? context.statusSymbol}`);
+  }
+  if (context.priority !== undefined) parts.push(`Priority: ${context.priority}`);
+  return parts.join(' · ');
 }
 
 export class CaptureTargetResolver {
@@ -172,6 +185,12 @@ export class CaptureTargetResolver {
         : { type: 'append' as const };
     return {
       label: destinationPath,
+      ...(context.type === 'project-workspace' && {
+        presentationLabel: projectCaptureLabel(
+          context,
+          this.settings.taskStatuses.find(({ symbol }) => symbol === context.statusSymbol)?.name,
+        ),
+      }),
       context,
       session: await this.application.planCreate({
         type: 'explicit',

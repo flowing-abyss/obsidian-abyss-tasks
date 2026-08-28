@@ -17,6 +17,7 @@ import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { presentTaskCommandResult } from '../ui/taskCommandResult';
 import { PanelNavigator, type PanelNavigationActions } from '../views/panelNavigation';
+import { projectStatusMenuModel } from './projects/boardProjection';
 
 const PROJECTS_CAP = 10;
 
@@ -340,12 +341,14 @@ export class LeftPanel {
         item.setTitle('Change status').setIcon('circle-dot');
         // setSubmenu is available at runtime but not in the public typings.
         const sub = (item as unknown as { setSubmenu: () => Menu }).setSubmenu();
-        for (const s of statuses) {
+        for (const action of projectStatusMenuModel(statuses, project)) {
           sub.addItem((si) =>
             si
-              .setTitle(s.label)
-              .setChecked(s.id === project.statusId)
-              .onClick(() => this.changeProjectStatus(project.path, s.id)),
+              .setTitle(action.label)
+              .setIcon(action.icon)
+              .setChecked(action.checked)
+              .setDisabled(action.disabled)
+              .onClick(() => this.changeProjectStatus(project.path, action.columnKey)),
           );
         }
       });

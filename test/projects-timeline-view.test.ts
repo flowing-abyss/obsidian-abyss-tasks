@@ -1,13 +1,16 @@
 // eslint-disable-next-line import/no-nodejs-modules -- responsive geometry contract loads shipped CSS.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
 import {
+  renderProjectsTimeline,
   renderTimeline,
   renderWorkNotesTimeline,
   type TimelineEntry,
 } from '../src/panels/projects/ProjectsTimelineView';
 import type { LogicalViewportSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { TimelineItem } from '../src/panels/projects/timelineProjection';
+import type { Project } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { flushMicrotasks, freshContainer } from './helpers';
 
@@ -50,6 +53,107 @@ function range(id: string): TimelineEntry<Fixture> {
 }
 
 describe('shared Timeline view', () => {
+  it('opens a portfolio Project dashboard from its one native title button', () => {
+    const container = freshContainer();
+    const state = new AppState();
+    const project: Project = {
+      path: 'Projects/Launch.md',
+      name: 'Launch',
+      frontmatter: { start: '2026-08-27' },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: {
+        start: {
+          raw: '2026-08-27',
+          precision: 'date',
+          instantMs: Date.UTC(2026, 7, 27),
+        },
+      },
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const options = {
+      projects: [project],
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      openProject: (path: string) => state.set('projectsPanel', { view: 'dashboard', path }),
+    } as Parameters<typeof renderProjectsTimeline>[1] & {
+      openProject(path: string): void;
+    };
+    renderProjectsTimeline(container, options);
+
+    const identity = container.querySelector<HTMLButtonElement>('[data-project-identity-control]')!;
+    expect(identity.tagName).toBe('BUTTON');
+    expect(identity.type).toBe('button');
+    expect(identity.textContent).toContain('Launch');
+    expect(container.querySelectorAll('[data-project-identity-control]')).toHaveLength(1);
+    expect(container.querySelectorAll('[aria-label^="Open project"]')).toHaveLength(1);
+
+    identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+
+    expect(state.get('projectsPanel')).toEqual({
+      view: 'dashboard',
+      path: 'Projects/Launch.md',
+    });
+  });
+
+  it('opens a Work Note from its native title button when date mutation is disabled', () => {
+    const container = freshContainer();
+    const openNote = vi.fn();
+    const note: WorkNoteSnapshot = {
+      path: 'Work Notes/Read only.md',
+      presetRevision: 1,
+      presetFingerprint: 'fingerprint',
+      kind: 'ordinary',
+      projectPath: 'Projects/Launch.md',
+      statusId: null,
+      rawStatus: null,
+      writableStatusShape: false,
+      range: {
+        start: {
+          raw: '2026-08-27',
+          precision: 'date',
+          instantMs: Date.UTC(2026, 7, 27),
+        },
+      },
+      blockedByPaths: [],
+      relatedPaths: [],
+      diagnostics: [],
+    };
+    const options = {
+      notes: [note],
+      commandsEnabled: false,
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      openNote,
+    } as Parameters<typeof renderWorkNotesTimeline>[1] & {
+      openNote(path: string): void;
+    };
+    renderWorkNotesTimeline(container, options);
+
+    const identity = container.querySelector<HTMLButtonElement>(
+      '[data-work-note-identity-control]',
+    )!;
+    expect(identity.tagName).toBe('BUTTON');
+    expect(identity.type).toBe('button');
+    expect(identity.textContent).toContain('Read only');
+    expect(container.querySelectorAll('[data-work-note-identity-control]')).toHaveLength(1);
+    expect(container.querySelectorAll('[aria-label^="Open work note"]')).toHaveLength(1);
+
+    identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
+
+    expect(openNote).toHaveBeenCalledOnce();
+    expect(openNote).toHaveBeenCalledWith('Work Notes/Read only.md');
+  });
+
+  it('keeps the shared noninteractive identity fallback out of the tab order without a dead opener', () => {
+    const container = freshContainer();
+    renderTimeline(container, { entries: [point('Fallback')] });
+
+    const identity = container.querySelector<HTMLElement>('.abyss-timeline-identity')!;
+    expect(identity.hasAttribute('tabindex')).toBe(false);
+    expect(identity.querySelector('button, a[href], [role="button"]')).toBeNull();
+    expect(container.querySelector('[aria-label^="Open "]')).toBeNull();
+  });
+
   it('draws ranges and retained-role points against the shared date spine', () => {
     const container = freshContainer();
     renderTimeline(container, {

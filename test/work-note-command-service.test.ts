@@ -11,6 +11,7 @@ import type {
 } from '../src/projects/work-notes/types';
 import { WorkNoteCommandService } from '../src/projects/work-notes/WorkNoteCommandService';
 import { WorkNoteIndex } from '../src/projects/work-notes/WorkNoteIndex';
+import type { ProjectStatus } from '../src/settings/types';
 import { createAppWithFiles, flushMicrotasks, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -105,6 +106,63 @@ describe('WorkNoteCommandService', () => {
       { id: 'active', label: 'Active raw' },
       { id: 'done', label: 'Finished raw' },
     ]);
+  });
+
+  it('presents mapped Project labels in Project order, appends unmatched raw statuses, and writes the exact mapped raw value', async () => {
+    const candidate = enabledPreset({
+      rawStatusByStatusId: {
+        'raw-active': 'Active raw',
+        'raw-planned': 'Planned raw',
+        unmatched: 'Review raw',
+      },
+      creation: {
+        folder: 'Work Notes',
+        defaultKind: 'ordinary',
+        defaultStatusId: 'raw-active',
+        kindMarkers: {
+          ordinary: { kind: 'frontmatter-tag', value: 'work-note/task' },
+          milestone: { kind: 'frontmatter-tag', value: 'work-note/milestone' },
+        },
+      },
+    });
+    const app = await createAppWithFiles({
+      'Projects/P.md': '# P\n',
+      'Work Notes/A.md':
+        '---\nProject: "[[Projects/P]]"\nStatus: Active raw\ntags:\n  - work-note/task\n---\n# A\n',
+    });
+    const statuses: readonly ProjectStatus[] = [
+      {
+        id: 'raw-planned',
+        label: 'Planned',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'planned' },
+      },
+      {
+        id: 'raw-active',
+        label: 'In progress',
+        onLeftPanel: true,
+        behavior: 'regular',
+        match: { kind: 'property', property: 'status', value: 'active' },
+      },
+    ];
+    const index = new WorkNoteIndex(app, candidate);
+    const service = new WorkNoteCommandService(app, candidate, index, () => statuses);
+    const snapshot = (await index.audit()).snapshots[0]!;
+
+    expect(service.statuses()).toEqual([
+      { id: 'raw-planned', label: 'Planned' },
+      { id: 'raw-active', label: 'In progress' },
+      { id: 'unmatched', label: 'Review raw' },
+    ]);
+    const observation = service.observe(snapshot)!;
+    expect(await service.setStatus(observation, 'raw-planned')).toEqual({
+      type: 'ok',
+      path: 'Work Notes/A.md',
+    });
+    expect(await app.vault.cachedRead(await fileAt(app, 'Work Notes/A.md'))).toContain(
+      'Status: Planned raw',
+    );
   });
 
   it.each(['membership', 'project', 'kind', 'preset'] as const)(

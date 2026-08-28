@@ -1,4 +1,4 @@
-import { App } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { DEFAULT_SETTINGS, buildDefaultProjectsSettings } from '../src/settings/defaults';
@@ -44,6 +44,12 @@ interface PluginLike {
   saveSettings: () => Promise<void>;
   openPanel: () => Promise<void>;
   previewWorkNoteCompatibility: () => Promise<unknown>;
+  acceptWorkNoteCompatibility: (token: string) => Promise<unknown>;
+  workNoteIndex: {
+    acceptSuggestedCompatibility: (token: string, acceptedAt: string) => Promise<unknown>;
+    refresh: () => void;
+  };
+  workNoteCommands: { statuses: () => readonly { id: string; label: string }[] };
   readOnlyCompatibilityDiagnostic: () => {
     readonly buildCommit: string;
     readonly prohibitedWorkNoteMutationCommandIds: readonly string[];
@@ -124,6 +130,104 @@ describe('TaskCalendarPlugin saveSettings', () => {
     const spy = vi.spyOn(plugin, 'saveData');
     await plugin.saveSettings();
     expect(spy).toHaveBeenCalledWith(plugin.settings);
+  });
+
+  it('initializes the Work Notes status filter from the accepted mapping ids', async () => {
+    const plugin = makePlugin();
+    await plugin.loadSettings();
+    plugin.settings.projects.view.workNotes = {
+      ...plugin.settings.projects.view.workNotes,
+      statusIds: ['legacy-active', 'legacy-done'],
+    };
+    const acceptedPreset = {
+      ...plugin.settings.projects.workNoteCompatibility,
+      enabled: true,
+      rawStatusByStatusId: {
+        'project-active-id': 'Active',
+        'project-done-id': 'Done',
+        'unmatched-review': 'Review',
+      },
+    };
+    plugin.workNoteIndex = {
+      acceptSuggestedCompatibility: vi.fn().mockResolvedValue({
+        type: 'ok',
+        preset: acceptedPreset,
+        preview: {},
+      }),
+      refresh: vi.fn(),
+    };
+
+    await plugin.acceptWorkNoteCompatibility('preview-token');
+
+    expect(plugin.settings.projects.view.workNotes.statusIds).toEqual([
+      'project-active-id',
+      'project-done-id',
+      'unmatched-review',
+    ]);
+    expect(plugin.settings.projects.workNoteCompatibility).toBe(acceptedPreset);
+  });
+});
+
+describe('TaskCalendarPlugin Work Note compatibility wiring', () => {
+  it('passes the configured Project statuses through the real preview and acceptance path', async () => {
+    const projects = buildDefaultProjectsSettings();
+    projects.statuses = [
+      {
+        id: 'canonical-completed-id',
+        label: 'Complete',
+        onLeftPanel: false,
+        behavior: 'completed',
+        match: { kind: 'property', property: 'Status', value: 'Done' },
+      },
+    ];
+    projects.defaultStatusId = 'canonical-completed-id';
+    const plugin = makePlugin({ projects });
+    const app = plugin.app as unknown as App;
+    const workNote = Object.assign(Object.create(TFile.prototype) as object, {
+      path: 'Work Notes/Ship.md',
+      extension: 'md',
+    }) as TFile;
+    const project = Object.assign(Object.create(TFile.prototype) as object, {
+      path: 'Projects/A.md',
+      extension: 'md',
+    }) as TFile;
+    vi.spyOn(app.vault, 'getMarkdownFiles').mockReturnValue([workNote]);
+    vi.spyOn(app.vault, 'getAbstractFileByPath').mockImplementation((path) =>
+      path === project.path ? project : path === workNote.path ? workNote : null,
+    );
+    vi.spyOn(app.metadataCache, 'getFileCache').mockImplementation((file) =>
+      file.path === workNote.path
+        ? ({
+            tags: [{ tag: '#work-note/task', position: undefined }],
+            frontmatter: { Project: '[[Projects/A]]', Status: 'dOnE' },
+          } as never)
+        : null,
+    );
+    vi.spyOn(app.metadataCache, 'getFirstLinkpathDest').mockImplementation(
+      (linkpath, sourcePath) =>
+        linkpath === 'Projects/A' && sourcePath === workNote.path ? project : null,
+    );
+
+    await plugin.onload();
+    try {
+      const preview = (await plugin.previewWorkNoteCompatibility()) as {
+        acceptanceToken?: string;
+      };
+      const accepted = (await plugin.acceptWorkNoteCompatibility(preview.acceptanceToken!)) as {
+        type: string;
+        preset?: { rawStatusByStatusId: Readonly<Record<string, string>> };
+      };
+
+      expect(accepted.type).toBe('ok');
+      expect(accepted.preset?.rawStatusByStatusId).toEqual({
+        'canonical-completed-id': 'dOnE',
+      });
+      expect(plugin.workNoteCommands.statuses()).toEqual([
+        { id: 'canonical-completed-id', label: 'Complete' },
+      ]);
+    } finally {
+      plugin.onunload();
+    }
   });
 });
 
