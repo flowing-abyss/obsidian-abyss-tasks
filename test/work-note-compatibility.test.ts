@@ -107,6 +107,49 @@ describe('Work Note compatibility audit', () => {
     expect(auditWorkNotes(fixture, preset()).eligiblePaths).not.toContain('Aggregates/Service.md');
   });
 
+  it('projects only a supported scalar description and diagnoses an unsupported structure', () => {
+    const fixture = source(
+      [
+        {
+          path: 'Tasks/Scalar.md',
+          tags: ['#work-note/task'],
+          frontmatter: {
+            Project: '[[Projects/A]]',
+            Status: 'Active',
+            Description: 'Release readiness and customer handoff',
+          },
+        },
+        {
+          path: 'Tasks/Structured.md',
+          tags: ['#work-note/task'],
+          frontmatter: {
+            Project: '[[Projects/A]]',
+            Status: 'Active',
+            Description: ['do not', 'stringify'],
+          },
+        },
+      ],
+      {
+        'Tasks/Scalar.md\0Projects/A': 'Projects/A.md',
+        'Tasks/Structured.md\0Projects/A': 'Projects/A.md',
+      },
+    );
+
+    const audit = auditWorkNotes(fixture, preset());
+
+    expect(audit.snapshots.find(({ path }) => path === 'Tasks/Scalar.md')).toMatchObject({
+      description: 'Release readiness and customer handoff',
+    });
+    expect(audit.snapshots.find(({ path }) => path === 'Tasks/Structured.md')).not.toHaveProperty(
+      'description',
+    );
+    expect(audit.diagnosticsByPath['Tasks/Structured.md']).toContainEqual({
+      type: 'non-scalar-description',
+      field: 'description',
+      rawValue: ['do not', 'stringify'],
+    });
+  });
+
   it('audits update and create independently and rejects unsafe creation contracts', () => {
     const fixture = source(
       [

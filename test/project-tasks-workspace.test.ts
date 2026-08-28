@@ -103,6 +103,61 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
 }
 
 describe('Project Tasks workspace', () => {
+  it('feeds the same canonical Task search result identities to List, Board, and Timeline', () => {
+    const container = freshContainer();
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    session.scopeSession('tasks').textQuery = 'ship';
+    const matching = {
+      task: task({
+        title: 'Ship release',
+        planning: { due: '2026-08-30' as never },
+        source: { filePath: 'Projects/A.md', line: 4 },
+      }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    };
+    const excluded = {
+      task: task({
+        title: 'Archive notes',
+        planning: { due: '2026-08-31' as never },
+        source: { filePath: 'Projects/A.md', line: 5 },
+      }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    };
+    const identities: string[][] = [];
+    const capture = (
+      _host: HTMLElement,
+      _path: string,
+      actions: ProjectWorkspaceSnapshot['tasks'],
+    ): ProjectChildRenderHandle => {
+      identities.push(actions.map(({ task: current }) => current.title));
+      return { destroy: () => undefined };
+    };
+
+    renderProjectDashboard(
+      container,
+      { ...snapshot('dated'), tasks: [excluded, matching] },
+      {
+        state: new AppState(),
+        settings: DEFAULT_SETTINGS,
+        workspaceSession: session,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: capture,
+        renderTaskBoard: capture,
+        renderTaskTimeline: capture,
+      },
+    );
+    container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+
+    expect(identities).toEqual([['Ship release'], ['Ship release'], ['Ship release']]);
+  });
+
   it('requires the shared cleanup handle from every child renderer hook', () => {
     expectTypeOf<
       ReturnType<NonNullable<ProjectsDashboardContext['renderTasks']>>
@@ -165,6 +220,42 @@ describe('Project Tasks workspace', () => {
 
     expect(renderTasks.mock.calls[0]?.[3]).toBe(override);
     expect(renderTaskBoard.mock.calls[0]?.[3]).toBe(override);
+  });
+
+  it('owns Project-card property filters in the Task scope override', () => {
+    const container = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const state = new AppState();
+    const session = new ProjectWorkspaceSession();
+    const renderTasks = vi.fn<NonNullable<ProjectsDashboardContext['renderTasks']>>(
+      (host, _path, _tasks, _viewState, _allTasks, onAddPropertyFilter) => {
+        const filter = host.createEl('button', { attr: { 'data-test-project-filter': '' } });
+        filter.addEventListener('click', () =>
+          onAddPropertyFilter?.({ type: 'tag', value: '#project-only' }),
+        );
+        return { destroy: () => undefined };
+      },
+    );
+
+    renderProjectDashboard(container, snapshot('small'), {
+      state,
+      settings,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      workspaceSession: session,
+      renderTasks,
+    });
+    container.querySelector<HTMLButtonElement>('[data-test-project-filter]')!.click();
+
+    expect(renderTasks.mock.lastCall?.[3].filters).toContainEqual({
+      type: 'tag',
+      value: '#project-only',
+    });
+    expect(session.scopeSession('tasks').viewOverride?.filters).toContainEqual({
+      type: 'tag',
+      value: '#project-only',
+    });
+    expect(state.get('centerListViewState').filters).toEqual([]);
   });
 
   it('destroys each child renderer before replacement and destroys the active child with the dashboard', () => {

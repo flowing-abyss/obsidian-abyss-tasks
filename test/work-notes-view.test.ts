@@ -14,6 +14,7 @@ import {
   WORK_NOTE_OVERSCAN,
   WORK_NOTE_ROW_EXTENT,
   renderWorkNotesView,
+  selectWorkNotes,
 } from '../src/panels/projects/WorkNotesView';
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
@@ -86,6 +87,88 @@ function note(index: number, over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnap
 }
 
 describe('renderWorkNotesView', () => {
+  it.each([
+    ['title', 'Release brief'],
+    ['path', 'Research'],
+    ['status', 'In progress'],
+    ['priority', 'Urgent'],
+    ['description', 'customer handoff'],
+  ] as const)('searches Work Notes by %s through one selector', (_field, query) => {
+    const statuses = [{ id: 'doing', label: 'In progress' }];
+    const selected = selectWorkNotes({
+      notes: [
+        note(1, {
+          path: 'Work Notes/Research/Release brief.md',
+          statusId: 'doing',
+          rawStatus: 'Doing',
+          priority: 'Urgent',
+          description: 'Prepare the customer handoff',
+        }),
+        note(2, { path: 'Work Notes/Archive.md', statusId: null, rawStatus: null }),
+      ],
+      statuses,
+      textQuery: query,
+      viewState: { groupBy: 'none', sortBy: { field: 'title', dir: 'asc' }, statusIds: [] },
+    });
+
+    expect(selected.map(({ path }) => path)).toEqual(['Work Notes/Research/Release brief.md']);
+  });
+
+  it('projects real priority groups before applying the configured within-group sort', () => {
+    const selected = selectWorkNotes({
+      notes: [
+        note(1, { path: 'Work Notes/A low.md', priority: 'Low' }),
+        note(2, { path: 'Work Notes/Z high.md', priority: 'High' }),
+        note(3, { path: 'Work Notes/B high.md', priority: 'High' }),
+      ],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      viewState: {
+        groupBy: 'priority',
+        sortBy: { field: 'title', dir: 'asc' },
+        statusIds: [],
+      },
+    });
+
+    expect(selected.map(({ path }) => path)).toEqual([
+      'Work Notes/B high.md',
+      'Work Notes/Z high.md',
+      'Work Notes/A low.md',
+    ]);
+  });
+
+  it('renders explicit ordered group sections from the selected Work Note projection', () => {
+    const root = freshContainer();
+    renderWorkNotesView(root, {
+      notes: [
+        note(1, { path: 'Work Notes/A low.md', priority: 'Low' }),
+        note(2, { path: 'Work Notes/Z high.md', priority: 'High' }),
+        note(3, { path: 'Work Notes/B high.md', priority: 'High' }),
+      ],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      viewState: {
+        groupBy: 'priority',
+        sortBy: { field: 'title', dir: 'asc' },
+        statusIds: [],
+      },
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(
+      [...root.querySelectorAll('[data-work-note-group]')].map((group) => group.textContent),
+    ).toEqual(['High', 'Low']);
+    expect(
+      [...root.querySelectorAll('[data-work-note-path]')].map((row) => row.textContent),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('B high'),
+        expect.stringContaining('Z high'),
+        expect.stringContaining('A low'),
+      ]),
+    );
+  });
+
   it('emits a common-host selection intent instead of creating a local inspector', () => {
     const root = freshContainer();
     const onSelect = vi.fn();
@@ -825,7 +908,12 @@ describe('renderWorkNotesView', () => {
     const scope = root.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!;
     expect(scope).not.toBeNull();
     scope.click();
-    expect(renderWorkNotes).toHaveBeenCalledWith(expect.any(HTMLElement), 'Projects/P.md', []);
+    expect(renderWorkNotes).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      'Projects/P.md',
+      [],
+      DEFAULT_SETTINGS.projects.view.workNotes,
+    );
   });
 });
 

@@ -36,6 +36,7 @@ function uniqueActions(actions: readonly ProjectAction[]): readonly ProjectActio
 
 type Resolution =
   | { readonly type: 'resolved'; readonly key: string }
+  | { readonly type: 'hidden'; readonly key: string }
   | { readonly type: 'missing' }
   | { readonly type: 'ambiguous' };
 
@@ -47,6 +48,7 @@ type Resolution =
 export class ProjectTaskCollectionSession {
   private actions: readonly ProjectAction[];
   private actionByKey = new Map<string, ProjectAction>();
+  private universeByKey = new Map<string, ProjectAction>();
   private selected = new Set<string>();
   private anchorKey: string | null = null;
   private focusKey: string | null = null;
@@ -60,6 +62,7 @@ export class ProjectTaskCollectionSession {
   ) {
     this.actions = uniqueActions(actions);
     this.rebuildIndex();
+    this.universeByKey = new Map(this.actionByKey);
   }
 
   setResolver(resolver: TaskQueryApi['resolve']): void {
@@ -97,7 +100,7 @@ export class ProjectTaskCollectionSession {
       return true;
     }
     const key = keyOf(ref);
-    if (!this.actionByKey.has(key)) {
+    if (!this.universeByKey.has(key)) {
       this.inspectorKey = null;
       this.effect = null;
       return false;
@@ -113,7 +116,7 @@ export class ProjectTaskCollectionSession {
   }
 
   actionForRef(ref: TaskRef): ProjectAction | undefined {
-    return this.actionByKey.get(keyOf(ref));
+    return this.universeByKey.get(keyOf(ref));
   }
 
   selectOnly(ref: TaskRef): boolean {
@@ -219,8 +222,9 @@ export class ProjectTaskCollectionSession {
     return target;
   }
 
-  reconcile(actions: readonly ProjectAction[]): void {
+  reconcile(actions: readonly ProjectAction[], universe: readonly ProjectAction[] = actions): void {
     const previousActions = this.actions;
+    const previousUniverseByKey = this.universeByKey;
     const previousIndex = new Map(
       previousActions.map((action, index) => [keyOf(action.task.ref), index] as const),
     );
@@ -228,6 +232,10 @@ export class ProjectTaskCollectionSession {
     const nextActions = uniqueActions(actions);
     const nextByKey = new Map(
       nextActions.map((action) => [keyOf(action.task.ref), action] as const),
+    );
+    const nextUniverse = uniqueActions(universe);
+    const nextUniverseByKey = new Map(
+      nextUniverse.map((action) => [keyOf(action.task.ref), action] as const),
     );
     const resolutionCache = new Map<string, Resolution>();
     const resolve = (key: string): Resolution => {
@@ -238,10 +246,15 @@ export class ProjectTaskCollectionSession {
         resolutionCache.set(key, exact);
         return exact;
       }
-      const oldAction = previousByKey.get(key);
+      if (nextUniverseByKey.has(key)) {
+        const hidden = { type: 'hidden' as const, key };
+        resolutionCache.set(key, hidden);
+        return hidden;
+      }
+      const oldAction = previousByKey.get(key) ?? previousUniverseByKey.get(key);
       if (!oldAction) return { type: 'missing' };
       const result = this.resolver(oldAction.task.ref);
-      const resolved = this.resolveIntoNext(result, nextByKey);
+      const resolved = this.resolveIntoNext(result, nextByKey, nextUniverseByKey);
       resolutionCache.set(key, resolved);
       return resolved;
     };
@@ -250,7 +263,9 @@ export class ProjectTaskCollectionSession {
       const result = new Set<string>();
       for (const key of keys) {
         const resolution = resolve(key);
-        if (resolution.type === 'resolved') result.add(resolution.key);
+        if (resolution.type === 'resolved' || resolution.type === 'hidden') {
+          result.add(resolution.key);
+        }
       }
       return result;
     };
@@ -262,9 +277,13 @@ export class ProjectTaskCollectionSession {
 
     this.actions = nextActions;
     this.actionByKey = nextByKey;
+    this.universeByKey = nextUniverseByKey;
     this.selected = remap(this.selected);
     const remappedAnchor = this.anchorKey === null ? null : resolve(this.anchorKey);
-    this.anchorKey = remappedAnchor?.type === 'resolved' ? remappedAnchor.key : null;
+    this.anchorKey =
+      remappedAnchor?.type === 'resolved' || remappedAnchor?.type === 'hidden'
+        ? remappedAnchor.key
+        : null;
 
     if (focusResolution?.type === 'ambiguous') {
       this.selected.clear();
@@ -281,9 +300,23 @@ export class ProjectTaskCollectionSession {
       return;
     }
 
+    if (focusResolution?.type === 'hidden') {
+      this.focusKey = focusResolution.key;
+      this.inspectorKey =
+        inspectorResolution?.type === 'resolved' || inspectorResolution?.type === 'hidden'
+          ? inspectorResolution.key
+          : null;
+      this.restoreFocus = false;
+      this.effect = null;
+      return;
+    }
+
     if (focusResolution?.type === 'resolved') {
       this.focusKey = focusResolution.key;
-      this.inspectorKey = inspectorResolution?.type === 'resolved' ? inspectorResolution.key : null;
+      this.inspectorKey =
+        inspectorResolution?.type === 'resolved' || inspectorResolution?.type === 'hidden'
+          ? inspectorResolution.key
+          : null;
       const focusChanged = focusResolution.key !== oldFocusKey;
       const inspectorChanged = this.inspectorKey !== oldInspectorKey;
       if (focusChanged || inspectorChanged) {
@@ -314,8 +347,11 @@ export class ProjectTaskCollectionSession {
     }
 
     this.focusKey = null;
-    this.inspectorKey = inspectorResolution?.type === 'resolved' ? inspectorResolution.key : null;
-    if (nextActions.length === 0) this.clearEmptyState();
+    this.inspectorKey =
+      inspectorResolution?.type === 'resolved' || inspectorResolution?.type === 'hidden'
+        ? inspectorResolution.key
+        : null;
+    if (nextActions.length === 0 && nextUniverse.length === 0) this.clearEmptyState();
   }
 
   consumeEffect(): ProjectTaskCollectionEffect | null {
@@ -325,8 +361,14 @@ export class ProjectTaskCollectionSession {
   }
 
   restoreEffect(): ProjectTaskCollectionEffect | null {
-    const focus = this.restoreFocus ? this.refForKey(this.focusKey) : null;
-    const inspect = this.refForKey(this.inspectorKey);
+    const focus =
+      this.restoreFocus && this.focusKey !== null && this.actionByKey.has(this.focusKey)
+        ? this.refForKey(this.focusKey)
+        : null;
+    const inspect =
+      this.inspectorKey !== null && this.actionByKey.has(this.inspectorKey)
+        ? this.refForKey(this.inspectorKey)
+        : null;
     if (!focus && !inspect) return null;
     return {
       ...(focus ? { focus, scrollTo: focus } : {}),
@@ -346,6 +388,7 @@ export class ProjectTaskCollectionSession {
   reset(): void {
     this.actions = [];
     this.actionByKey.clear();
+    this.universeByKey.clear();
     this.selected.clear();
     this.anchorKey = null;
     this.focusKey = null;
@@ -357,6 +400,7 @@ export class ProjectTaskCollectionSession {
   private resolveIntoNext(
     result: TaskResolution,
     nextByKey: ReadonlyMap<string, ProjectAction>,
+    nextUniverseByKey: ReadonlyMap<string, ProjectAction>,
   ): Resolution {
     if (result.type === 'ambiguous' || result.type === 'uncertain' || result.type === 'visual') {
       return { type: 'ambiguous' };
@@ -364,7 +408,8 @@ export class ProjectTaskCollectionSession {
     if (result.type === 'not-found') return { type: 'missing' };
     const candidate = result.type === 'rebased' ? result.current : result.task;
     const key = keyOf(candidate.ref);
-    return nextByKey.has(key) ? { type: 'resolved', key } : { type: 'missing' };
+    if (nextByKey.has(key)) return { type: 'resolved', key };
+    return nextUniverseByKey.has(key) ? { type: 'hidden', key } : { type: 'missing' };
   }
 
   private setFocus(key: string, inspect: boolean): void {
@@ -381,7 +426,7 @@ export class ProjectTaskCollectionSession {
 
   private refForKey(key: string | null): TaskRef | null {
     if (key === null) return null;
-    const ref = this.actionByKey.get(key)?.task.ref;
+    const ref = (this.actionByKey.get(key) ?? this.universeByKey.get(key))?.task.ref;
     return ref ? copyRef(ref) : null;
   }
 

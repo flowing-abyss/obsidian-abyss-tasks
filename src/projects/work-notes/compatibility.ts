@@ -392,6 +392,17 @@ function projectSnapshot(
   scalarString(endRaw, 'end', 'non-scalar-date', diagnostics);
   const range = parseProjectRange(startRaw, endRaw);
   const priorityRaw = frontmatter[preset.fields.priority];
+  const descriptionRaw = frontmatter[preset.fields.description];
+  const description = (() => {
+    if (descriptionRaw === undefined || descriptionRaw === null) return undefined;
+    if (typeof descriptionRaw === 'string') return descriptionRaw;
+    diagnostics.push({
+      type: 'non-scalar-description',
+      field: 'description',
+      rawValue: descriptionRaw,
+    });
+    return undefined;
+  })();
   const updatedRaw = frontmatter[preset.fields.updated];
   const idRaw = frontmatter[preset.fields.id];
 
@@ -419,6 +430,7 @@ function projectSnapshot(
     rawStatus: rawStatus ?? null,
     writableStatusShape: statusRawValue === undefined || typeof statusRawValue === 'string',
     ...(typeof priorityRaw === 'string' && { priority: priorityRaw }),
+    ...(description !== undefined && { description }),
     ...(typeof updatedRaw === 'string' && { updated: updatedRaw }),
     range,
     ...(typeof idRaw === 'string' && { id: idRaw }),

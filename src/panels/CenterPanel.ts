@@ -1,11 +1,6 @@
 import { Component, Menu, setIcon, type App, type MenuItem } from 'obsidian';
 import type { AppState } from '../app/AppState';
-import {
-  isListViewCustomized,
-  listSelectionToKey,
-  normalizeStatusGroups,
-  statusGroupsEqual,
-} from '../app/listViewState';
+import { listSelectionToKey, normalizeStatusGroups, statusGroupsEqual } from '../app/listViewState';
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
@@ -49,6 +44,7 @@ import { LinkEditModal } from '../ui/LinkEditModal';
 import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
+import { renderCollectionControls } from '../ui/collection/CollectionControls';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { inspectorSelectionKey, type InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
@@ -171,6 +167,13 @@ interface MountedProjectTaskList {
   readonly rows: readonly ProjectTaskVirtualRow[];
   readonly taskRowIndex: ReadonlyMap<string, number>;
   renderWindow(): void;
+}
+
+interface TaskCollectionControlBinding {
+  readonly viewState: ListViewState;
+  readonly defaults: ListViewState;
+  readonly onUpdate: (next: ListViewState) => void;
+  readonly onRemoveFilter?: (index: number) => void;
 }
 
 type CalendarCapturePlacement =
@@ -761,6 +764,9 @@ export class CenterPanel {
     path: string,
     actions: readonly ProjectAction[],
     viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
+    allActions: readonly ProjectAction[] = actions,
+    onAddPropertyFilter: (filter: PropertyFilter) => void = (filter) =>
+      this.addPropertyFilter(filter),
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
@@ -768,7 +774,14 @@ export class CenterPanel {
     if (actions.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      this.mountProjectTaskCollection(scroll, path, actions, viewState);
+      this.mountProjectTaskCollection(
+        scroll,
+        path,
+        actions,
+        viewState,
+        allActions,
+        onAddPropertyFilter,
+      );
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -852,11 +865,14 @@ export class CenterPanel {
     projectPath: string,
     actions: readonly ProjectAction[],
     viewState: ProjectTasksViewState,
+    allActions: readonly ProjectAction[] = actions,
+    onAddPropertyFilter: (filter: PropertyFilter) => void = (filter) =>
+      this.addPropertyFilter(filter),
   ): void {
     const { rows, orderedActions } = this.projectTaskRows(actions, viewState);
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
-    session.reconcile(orderedActions);
+    session.reconcile(orderedActions, allActions);
     const geometry = this.projectWorkspaceSession.taskListGeometry;
     const rowKeys = rows.map(({ key }) => key);
     geometry.setKeys(rowKeys);
@@ -989,6 +1005,7 @@ export class CenterPanel {
                 projectPath,
                 dependencyDecision: row.action.dependency,
                 projectTaskCollection: true,
+                onAddPropertyFilter,
               });
               card.dataset['virtualRowKind'] = 'task';
               card.dataset['virtualRowKey'] = row.key;
@@ -1094,11 +1111,14 @@ export class CenterPanel {
     path: string,
     actions: readonly ProjectAction[],
     viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
+    allActions: readonly ProjectAction[] = actions,
+    onAddPropertyFilter: (filter: PropertyFilter) => void = (filter) =>
+      this.addPropertyFilter(filter),
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
-    session.reconcile(actions);
+    session.reconcile(actions, allActions);
     let board: ProjectChildRenderHandle | null = null;
     if (actions.length === 0) {
       host.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
@@ -1131,6 +1151,7 @@ export class CenterPanel {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
+            onAddPropertyFilter,
           }),
       });
     }
@@ -1180,11 +1201,14 @@ export class CenterPanel {
     path: string,
     actions: readonly ProjectAction[],
     _viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
+    allActions: readonly ProjectAction[] = actions,
+    onAddPropertyFilter: (filter: PropertyFilter) => void = (filter) =>
+      this.addPropertyFilter(filter),
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
-    session.reconcile(actions);
+    session.reconcile(actions, allActions);
     const timeline = renderTasksTimeline(host, {
       actions,
       collectionSession: session,
@@ -1193,6 +1217,7 @@ export class CenterPanel {
           projectPath: path,
           dependencyDecision: action.dependency,
           projectTaskCollection: true,
+          onAddPropertyFilter,
         });
       },
       onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
@@ -1338,12 +1363,42 @@ export class CenterPanel {
           this.settings,
           this.app,
           {
-            renderTasks: (host, path, tasks, viewState) =>
-              this.renderProjectTasks(host, path, tasks, viewState),
-            renderTaskBoard: (host, path, tasks, viewState) =>
-              this.renderProjectTaskBoard(host, path, tasks, viewState),
-            renderTaskTimeline: (host, path, tasks, viewState) =>
-              this.renderProjectTaskTimeline(host, path, tasks, viewState),
+            renderTasks: (host, path, tasks, viewState, allTasks, onAddPropertyFilter) =>
+              this.renderProjectTasks(host, path, tasks, viewState, allTasks, onAddPropertyFilter),
+            renderTaskBoard: (host, path, tasks, viewState, allTasks, onAddPropertyFilter) =>
+              this.renderProjectTaskBoard(
+                host,
+                path,
+                tasks,
+                viewState,
+                allTasks,
+                onAddPropertyFilter,
+              ),
+            renderTaskTimeline: (host, path, tasks, viewState, allTasks, onAddPropertyFilter) =>
+              this.renderProjectTaskTimeline(
+                host,
+                path,
+                tasks,
+                viewState,
+                allTasks,
+                onAddPropertyFilter,
+              ),
+            renderTaskCollectionControls: (host, viewState, defaults, onUpdate) =>
+              this.renderTaskCollectionControls(host, {
+                viewState: {
+                  groupBy: viewState.groupBy,
+                  sortBy: { ...viewState.sortBy },
+                  filters: [...viewState.filters],
+                  ...(viewState.statusGroups ? { statusGroups: [...viewState.statusGroups] } : {}),
+                },
+                defaults: {
+                  groupBy: defaults.groupBy,
+                  sortBy: { ...defaults.sortBy },
+                  filters: [...defaults.filters],
+                  ...(defaults.statusGroups ? { statusGroups: [...defaults.statusGroups] } : {}),
+                },
+                onUpdate,
+              }),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,
             pendingBoardUndo: this.pendingProjectBoardUndo,
@@ -1400,15 +1455,20 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle() });
 
-    const controls = header.createDiv({ cls: 'abyss-center-controls' });
-    this.renderPropertyChips(controls);
-    this.renderViewStateButton(controls);
-
-    const searchInput = controls.createEl('input', {
-      cls: 'abyss-center-search',
-      attr: { type: 'text', placeholder: 'Filter…', 'aria-label': 'Filter tasks' },
+    const { searchInput } = renderCollectionControls(header, {
+      query: this.state.get('centerFilter'),
+      searchLabel: 'Filter tasks',
+      renderLeading: (controls) => {
+        this.renderTaskCollectionControls(controls);
+      },
+      onQueryInput: (value) => {
+        window.clearTimeout(this.filterDebounce);
+        this.filterDebounce = window.setTimeout(() => {
+          this.refocusSearch = true;
+          this.state.set('centerFilter', value);
+        }, 150);
+      },
     });
-    searchInput.value = this.state.get('centerFilter');
     // Restore focus + caret after a debounced filter re-render so typing stays smooth.
     if (this.refocusSearch) {
       this.refocusSearch = false;
@@ -1417,16 +1477,6 @@ export class CenterPanel {
         searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
       }, 0);
     }
-    // Debounce: each keystroke would otherwise re-render the whole list (running the
-    // markdown pipeline per task) — costly at hundreds of tasks. Apply after a pause.
-    searchInput.addEventListener('input', () => {
-      window.clearTimeout(this.filterDebounce);
-      this.filterDebounce = window.setTimeout(() => {
-        this.refocusSearch = true;
-        this.state.set('centerFilter', searchInput.value);
-      }, 150);
-    });
-
     const tasks = this.getFilteredTasks();
     const scroll = this.el.createDiv({ cls: 'abyss-center-scroll' });
 
@@ -2377,6 +2427,7 @@ export class CenterPanel {
       readonly manageStatusMarker?: boolean;
       readonly dependencyDecision?: DependencyCompletionDecision;
       readonly projectTaskCollection?: boolean;
+      readonly onAddPropertyFilter?: (filter: PropertyFilter) => void;
     } = {},
   ): HTMLElement {
     const dependencyDecision =
@@ -2424,6 +2475,8 @@ export class CenterPanel {
     const commentCount = task.comments?.length ?? 0;
     const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
     const suppressToday = sel === 'today' && d === today;
+    const addPropertyFilter =
+      context.onAddPropertyFilter ?? ((filter: PropertyFilter) => this.addPropertyFilter(filter));
 
     const body = mainRow.createDiv({ cls: 'abyss-task-body' });
     const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
@@ -2497,7 +2550,7 @@ export class CenterPanel {
         datePart.createEl('span', { text: this.formatDate(d) });
         datePart.addEventListener('click', (e) => {
           e.stopPropagation();
-          this.addPropertyFilter({ type: 'date', value: d });
+          addPropertyFilter({ type: 'date', value: d });
         });
         // Time part: clock icon + time text — click to filter by time
         if (task.planning.time) {
@@ -2509,7 +2562,7 @@ export class CenterPanel {
           timePart.createEl('span', { text: task.planning.time });
           timePart.addEventListener('click', (e) => {
             e.stopPropagation();
-            this.addPropertyFilter({ type: 'time', value: task.planning.time! });
+            addPropertyFilter({ type: 'time', value: task.planning.time! });
           });
         }
       } else if (!d && task.planning.time) {
@@ -2519,14 +2572,14 @@ export class CenterPanel {
         timeEl.createEl('span', { text: task.planning.time });
         timeEl.addEventListener('click', (e) => {
           e.stopPropagation();
-          this.addPropertyFilter({ type: 'time', value: task.planning.time! });
+          addPropertyFilter({ type: 'time', value: task.planning.time! });
         });
       }
 
       // Source note chip before tags
       if (showSourceNote) {
         renderSourceNoteChip(metaRight, task, (filePath) => {
-          this.addPropertyFilter({ type: 'file', filePath });
+          addPropertyFilter({ type: 'file', filePath });
         });
       }
 
@@ -2540,7 +2593,7 @@ export class CenterPanel {
         }
         tagEl.addEventListener('click', (e) => {
           e.stopPropagation();
-          this.addPropertyFilter({ type: 'tag', value: tag });
+          addPropertyFilter({ type: 'tag', value: tag });
         });
         tagEl.addClass('abyss-cursor-pointer');
         // Drop target: dragging a tag onto a chip replaces it
@@ -2802,7 +2855,7 @@ export class CenterPanel {
             .setTitle('Filter by this priority')
             .setIcon('filter')
             .setSection('priority')
-            .onClick(() => this.addPropertyFilter({ type: 'priority', value: task.priority })),
+            .onClick(() => addPropertyFilter({ type: 'priority', value: task.priority })),
         );
 
         menu.addItem((item) =>
@@ -2810,7 +2863,7 @@ export class CenterPanel {
             .setTitle('Filter by this status')
             .setIcon('filter')
             .setSection('priority')
-            .onClick(() => this.addPropertyFilter({ type: 'status', value: task.statusSymbol })),
+            .onClick(() => addPropertyFilter({ type: 'status', value: task.statusSymbol })),
         );
 
         // ── Set tag… ───────────────────────────────────────────
@@ -3125,8 +3178,29 @@ export class CenterPanel {
     showMenuAtMouseEventWithFocus(menu, e);
   }
 
-  private renderPropertyChips(container: HTMLElement): void {
-    const vs = this.state.get('centerListViewState');
+  private mainTaskCollectionControlBinding(): TaskCollectionControlBinding {
+    const listKey = this.activeListKey();
+    return {
+      viewState: this.state.get('centerListViewState'),
+      defaults: getListViewDefaults(listKey),
+      onUpdate: (next) => this.updateViewState(next),
+      onRemoveFilter: (index) => this.removePropertyFilter(index),
+    };
+  }
+
+  private renderTaskCollectionControls(
+    container: HTMLElement,
+    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
+  ): void {
+    this.renderPropertyChips(container, binding);
+    this.renderViewStateButton(container, binding);
+  }
+
+  private renderPropertyChips(
+    container: HTMLElement,
+    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
+  ): void {
+    const vs = binding.viewState;
     for (let i = 0; i < vs.filters.length; i++) {
       const f = vs.filters[i]!;
       const label = this.filterChipLabel(f);
@@ -3136,7 +3210,11 @@ export class CenterPanel {
       const idx = i;
       x.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.removePropertyFilter(idx);
+        if (binding.onRemoveFilter) {
+          binding.onRemoveFilter(idx);
+          return;
+        }
+        binding.onUpdate({ ...vs, filters: vs.filters.filter((_, index) => index !== idx) });
       });
     }
   }
@@ -3173,8 +3251,7 @@ export class CenterPanel {
 
   private removePropertyFilter(idx: number): void {
     const vs = this.state.get('centerListViewState');
-    const next: ListViewState = { ...vs, filters: vs.filters.filter((_, i) => i !== idx) };
-    this.updateViewState(next);
+    this.updateViewState({ ...vs, filters: vs.filters.filter((_, index) => index !== idx) });
   }
 
   private updateViewState(next: ListViewState): void {
@@ -3188,9 +3265,12 @@ export class CenterPanel {
     return listSelectionToKey(this.state.get('selectedList'));
   }
 
-  private renderViewStateButton(container: HTMLElement): void {
-    const vs = this.state.get('centerListViewState');
-    const defaults = getListViewDefaults(this.activeListKey());
+  private renderViewStateButton(
+    container: HTMLElement,
+    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
+  ): void {
+    const vs = binding.viewState;
+    const defaults = binding.defaults;
     const isNonDefault =
       vs.groupBy !== defaults.groupBy ||
       vs.sortBy.field !== defaults.sortBy.field ||
@@ -3202,21 +3282,25 @@ export class CenterPanel {
       attr: { 'aria-label': 'Sort & group options' },
     });
     setIcon(btn, 'arrow-up-down');
-    btn.addEventListener('click', () => this.showViewStatePopover(btn));
+    btn.addEventListener('click', () => this.showViewStatePopover(btn, binding));
 
     if (this.reopenStatusGroupPopover) {
       this.reopenStatusGroupPopover = false;
-      this.showViewStatePopover(btn, true);
+      this.showViewStatePopover(btn, binding, true);
     }
   }
 
-  private showViewStatePopover(anchor: HTMLElement, autoOpenStatusGroupRow = false): void {
+  private showViewStatePopover(
+    anchor: HTMLElement,
+    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
+    autoOpenStatusGroupRow = false,
+  ): void {
     if (this.viewStatePopoverCleanup) {
       this.viewStatePopoverCleanup(true);
       return;
     }
 
-    const vs = this.state.get('centerListViewState');
+    const vs = binding.viewState;
     const popover = this.el.createDiv({
       cls: 'abyss-view-state-popover abyss-popover',
       attr: { role: 'dialog', 'aria-label': 'Sort and group options' },
@@ -3426,7 +3510,7 @@ export class CenterPanel {
       return `${effective.length} selected`;
     };
 
-    const defaults = getListViewDefaults(this.activeListKey());
+    const defaults = binding.defaults;
 
     makeRow(
       'layout-list',
@@ -3436,7 +3520,7 @@ export class CenterPanel {
       defaults.groupBy,
       GROUP_BY_OPTIONS,
       (val) => {
-        this.updateViewState({ ...vs, groupBy: val as ListViewState['groupBy'] });
+        binding.onUpdate({ ...vs, groupBy: val as ListViewState['groupBy'] });
       },
     );
 
@@ -3451,7 +3535,7 @@ export class CenterPanel {
         const field = val as ListViewState['sortBy']['field'];
         const dir: 'asc' | 'desc' =
           vs.sortBy.field === field && vs.sortBy.dir === 'asc' ? 'desc' : 'asc';
-        this.updateViewState({ ...vs, sortBy: { field, dir } });
+        binding.onUpdate({ ...vs, sortBy: { field, dir } });
       },
     );
 
@@ -3462,7 +3546,7 @@ export class CenterPanel {
     const applyStatusGroupsChange = (nextStatusGroups: TaskStatusType[] | undefined): void => {
       this.reopenStatusGroupPopover = true;
       close();
-      this.updateViewState({ ...vs, statusGroups: nextStatusGroups });
+      binding.onUpdate({ ...vs, statusGroups: nextStatusGroups });
     };
 
     makeMultiRow(
@@ -3499,7 +3583,12 @@ export class CenterPanel {
 
     // Reset to defaults row — only shown when state differs from defaults.
     // Same predicate as the left-panel customization dot.
-    if (isListViewCustomized(vs, this.activeListKey())) {
+    if (
+      vs.groupBy !== defaults.groupBy ||
+      vs.sortBy.field !== defaults.sortBy.field ||
+      vs.sortBy.dir !== defaults.sortBy.dir ||
+      !statusGroupsEqual(vs.statusGroups, defaults.statusGroups)
+    ) {
       const resetRow = popover.createDiv({ cls: 'abyss-view-state-reset' });
       const resetBtn = resetRow.createEl('button', {
         cls: 'abyss-view-state-reset-btn',
@@ -3507,7 +3596,7 @@ export class CenterPanel {
       });
       resetBtn.addEventListener('click', () => {
         close();
-        this.updateViewState(getListViewDefaults(this.activeListKey()));
+        binding.onUpdate({ ...defaults, filters: [...defaults.filters] });
       });
     }
 

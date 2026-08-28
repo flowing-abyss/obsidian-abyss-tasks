@@ -1,6 +1,19 @@
 import { Menu, setIcon } from 'obsidian';
+import {
+  projectHealthProjection,
+  type ProjectHealthProjection,
+} from '../../projects/ProjectHealthProjection';
 import { selectProjectTasks } from '../../projects/selectProjectTasks';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import type {
+  ProjectTasksViewState,
+  PropertyFilter,
+  WorkNotesViewState,
+} from '../../settings/types';
+import {
+  renderCollectionActions,
+  renderCollectionControls,
+} from '../../ui/collection/CollectionControls';
 import {
   deriveInspectorSelection,
   inspectorSelectionKey,
@@ -19,6 +32,47 @@ import {
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
 export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
 
+function currentLocalDate(): string {
+  const now = new Date();
+  return `${String(now.getFullYear()).padStart(4, '0')}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function healthReason(health: ProjectHealthProjection): string {
+  switch (health.reason.type) {
+    case 'overdue-next-action':
+      return 'Next action overdue';
+    case 'blocked-critical-path':
+      return 'Critical path blocked';
+    case 'overdue-actionable-work':
+      return 'Actionable work overdue';
+    case 'blocked-next-action':
+      return 'Next action blocked';
+    case 'unblocked-next-action':
+      return 'Next action ready';
+    case 'insufficient-actionable-evidence':
+      return 'No actionable next action';
+  }
+}
+
+function compactDate(health: ProjectHealthProjection): string | undefined {
+  const raw = health.date?.value;
+  if (!raw) return undefined;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/u.exec(raw);
+  if (!match) return undefined;
+  const instant = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(instant);
+}
+
+function propertyFilterIdentity(filter: PropertyFilter): string {
+  return filter.type === 'file'
+    ? `${filter.type}:${filter.filePath}`
+    : `${filter.type}:${filter.value}`;
+}
+
 /** Detail view for a single project: header, stats, description, its tasks. */
 export function renderProjectDashboard(
   container: HTMLElement,
@@ -27,12 +81,11 @@ export function renderProjectDashboard(
 ): ProjectChildRenderHandle {
   container.addClass('abyss-projects-dashboard');
 
-  const back = container.createEl('button', { cls: 'abyss-project-back' });
-  setIcon(back, 'arrow-left');
-  back.createSpan({ text: 'Back to projects' });
-  back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
-
   if (!snapshot) {
+    const back = container.createEl('button', { cls: 'abyss-project-back' });
+    setIcon(back, 'arrow-left');
+    back.createSpan({ text: 'Back to projects' });
+    back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
     container.createDiv({ cls: 'abyss-projects-empty', text: 'Project not found' });
     return { destroy: () => container.empty() };
   }
@@ -41,20 +94,25 @@ export function renderProjectDashboard(
   session.openProject(project.path);
   const taskScope = session.scopeSession('tasks');
   const workNotesScope = session.scopeSession('work-notes');
-  const taskViewState = taskScope.effectiveView(ctx.settings.projects.view.tasks);
-  const workNotesViewState = workNotesScope.effectiveView(ctx.settings.projects.view.workNotes);
-  const selectedTasks = selectProjectTasks({
-    actions: snapshot.tasks,
-    viewState: taskViewState,
-    settings: ctx.settings,
-    ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
-  });
   const allWorkNotes = [...snapshot.workNotes, ...snapshot.milestones];
-  const selectedWorkNotes =
-    ctx.selectWorkNotes?.(allWorkNotes, workNotesViewState, workNotesScope.textQuery) ??
-    allWorkNotes;
   const workNotesAvailable =
     ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
+  const workNotesAvailability =
+    ctx.workNotesAvailability ?? ({ state: workNotesAvailable ? 'available' : 'hidden' } as const);
+  const taskViewState = (): ProjectTasksViewState =>
+    taskScope.effectiveView(ctx.settings.projects.view.tasks);
+  const workNotesViewState = (): WorkNotesViewState =>
+    workNotesScope.effectiveView(ctx.settings.projects.view.workNotes);
+  const selectedTasks = (): readonly (typeof snapshot.tasks)[number][] =>
+    selectProjectTasks({
+      actions: snapshot.tasks,
+      viewState: taskViewState(),
+      settings: ctx.settings,
+      ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
+    });
+  const selectedWorkNotes = (): typeof allWorkNotes =>
+    (ctx.selectWorkNotes?.(allWorkNotes, workNotesViewState(), workNotesScope.textQuery) ??
+      allWorkNotes) as typeof allWorkNotes;
   const sameSelection = (
     left: ReturnType<typeof deriveInspectorSelection> | null,
     right: ReturnType<typeof deriveInspectorSelection>,
@@ -76,7 +134,21 @@ export function renderProjectDashboard(
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
 
-  const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
+  const health = projectHealthProjection(snapshot, { today: ctx.today?.() ?? currentLocalDate() });
+  const summary = container.createDiv({
+    cls: 'abyss-project-dashboard-summary',
+    attr: { 'data-project-summary': '' },
+  });
+  const header = summary.createDiv({
+    cls: 'abyss-project-dashboard-header',
+    attr: { 'data-project-summary-row': 'primary' },
+  });
+  const back = header.createEl('button', {
+    cls: 'abyss-project-back',
+    attr: { type: 'button', 'aria-label': 'Back to projects', title: 'Back to projects' },
+  });
+  setIcon(back, 'arrow-left');
+  back.addEventListener('click', () => ctx.state.set('projectsPanel', { view: 'list' }));
   const inspect = header.createEl('button', {
     cls: 'abyss-project-dashboard-title',
     text: project.name,
@@ -92,6 +164,15 @@ export function renderProjectDashboard(
       ctx.state.set('inspectorOrigin', { selection: projectInspectorSelection, element: inspect });
     }),
   );
+
+  header.createSpan({
+    cls: `abyss-project-health abyss-project-health--${health.severity}`,
+    attr: {
+      role: 'img',
+      title: healthReason(health),
+      'aria-label': `Project health: ${health.severity}; ${healthReason(health)}`,
+    },
+  });
 
   const pill = header.createEl('button', {
     cls: 'abyss-status-pill',
@@ -114,6 +195,14 @@ export function renderProjectDashboard(
     showMenuAtMouseEventWithFocus(menu, e);
   });
 
+  if (project.priority && project.priority !== 'D') {
+    header.createSpan({
+      cls: 'abyss-project-priority',
+      text: project.priority,
+      attr: { 'data-priority': project.priority, 'aria-label': `Priority ${project.priority}` },
+    });
+  }
+
   const open = header.createEl('button', {
     cls: 'abyss-project-open-btn',
     attr: { 'aria-label': 'Open note' },
@@ -121,14 +210,17 @@ export function renderProjectDashboard(
   setIcon(open, 'file-text');
   open.addEventListener('click', () => ctx.openNote(project.path));
 
-  const stats = container.createDiv({ cls: 'abyss-project-dashboard-stats' });
+  const stats = summary.createDiv({
+    cls: 'abyss-project-dashboard-stats',
+    attr: { 'data-project-summary-row': 'secondary' },
+  });
   renderProgressBar(
     stats,
     snapshot.taskRollup.done,
     snapshot.taskRollup.total,
     `${project.name} task progress`,
   );
-  const nextAction = joinedNextAction(snapshot.tasks);
+  const nextAction = health.selectedNextAction ?? joinedNextAction(snapshot.tasks);
   if (nextAction) {
     /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
     const next = stats.createEl('button', {
@@ -141,18 +233,45 @@ export function renderProjectDashboard(
     });
     /* eslint-enable obsidianmd/ui/sentence-case */
     setIcon(next, 'list-checks');
-    next.addEventListener('click', () => ctx.state.set('taskStack', [nextAction.task]));
+    next.addEventListener('click', () => {
+      scope = 'tasks';
+      session.scope = scope;
+      layout = session.layout;
+      renderWorkspace();
+      if (!session.tasks.activate(nextAction.task.ref)) {
+        session.tasks.reconcile(snapshot.tasks, snapshot.tasks);
+        session.tasks.activate(nextAction.task.ref);
+      }
+      session.tasks.consumeEffect();
+      const selection = deriveInspectorSelection({
+        project: { type: 'project', path: project.path },
+        activeScope: 'tasks',
+        task: { type: 'task', task: nextAction.task.ref },
+      });
+      next.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+      ctx.state.batch(() => {
+        ctx.state.set('taskStack', [nextAction.task]);
+        ctx.state.set('inspectorSelection', selection);
+        ctx.state.set('inspectorOrigin', { selection, element: next });
+      });
+    });
+    stats.createSpan({ cls: 'abyss-project-summary-next-title', text: nextAction.task.title });
+  } else {
+    stats.createSpan({
+      cls: 'abyss-project-summary-reason',
+      text: healthReason(health),
+      attr: { 'data-project-summary-reason': '' },
+    });
   }
-
-  const rawDesc = project.frontmatter['description'];
-  const desc = typeof rawDesc === 'string' ? rawDesc.trim() : '';
-  if (desc) {
-    container.createDiv({ cls: 'abyss-project-description', text: desc });
+  if (nextAction && (health.severity === 'off-track' || health.severity === 'at-risk')) {
+    stats.createSpan({ cls: 'abyss-project-summary-risk', text: healthReason(health) });
   }
+  const date = compactDate(health);
+  if (date) stats.createSpan({ cls: 'abyss-project-date-signal', text: date });
 
   let scope: ProjectWorkspaceScope = session.scope;
   let layout: ProjectWorkspaceLayout = session.layout;
-  if (scope === 'work-notes' && !workNotesAvailable) {
+  if (scope === 'work-notes' && workNotesAvailability.state !== 'available') {
     scope = 'tasks';
     session.scope = scope;
     layout = session.layout;
@@ -161,12 +280,14 @@ export function renderProjectDashboard(
     cls: 'abyss-project-tasks',
     attr: { 'data-project-workspace': '' },
   });
-  const workspaceTitle = workspace.createEl('h3', {
-    cls: 'abyss-project-tasks-title',
-    text: scope === 'work-notes' ? 'Work Notes' : 'Tasks',
+  const scopeRow = workspace.createDiv({
+    cls: 'abyss-project-scope-controls',
+    attr: { 'data-project-scope-controls': '', role: 'group', 'aria-label': 'Project scope' },
   });
-  const toolbar = workspace.createDiv({ cls: 'abyss-project-workspace-toolbar' });
-  const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
+  const workspaceTitle = scopeRow.createEl('h3', {
+    cls: 'abyss-project-tasks-title',
+    text: 'Tasks',
+  });
   const scopeButtons: HTMLButtonElement[] = [];
   const layoutButtons: HTMLButtonElement[] = [];
   const boardAvailable = (): boolean =>
@@ -174,10 +295,11 @@ export function renderProjectDashboard(
   const timelineAvailable = (): boolean =>
     scope === 'tasks'
       ? ctx.renderTaskTimeline !== undefined &&
-        selectedTasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
+        snapshot.tasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
       : ctx.renderWorkNoteTimeline !== undefined &&
-        selectedWorkNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
+        allWorkNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
   let syncTimelineButton = (): void => undefined;
+  let syncCollectionControls = (): void => undefined;
   let child: ProjectChildRenderHandle | null = null;
   let destroyed = false;
   let arbitrationVersion = 0;
@@ -188,7 +310,7 @@ export function renderProjectDashboard(
       if (destroyed || version !== arbitrationVersion) return;
       const rememberedTask = session.tasks.inspectorRef();
       const visibleTask = rememberedTask
-        ? selectedTasks.find(
+        ? selectedTasks().find(
             ({ task }) =>
               task.ref.filePath === rememberedTask.filePath &&
               task.ref.line === rememberedTask.line &&
@@ -197,7 +319,7 @@ export function renderProjectDashboard(
         : undefined;
       const rememberedWorkNotePath = session.scopeSession('work-notes').selection.inspectorKey;
       const visibleWorkNote = rememberedWorkNotePath
-        ? selectedWorkNotes.find(({ path }) => path === rememberedWorkNotePath)
+        ? selectedWorkNotes().find(({ path }) => path === rememberedWorkNotePath)
         : undefined;
       const effective = deriveInspectorSelection({
         project: { type: 'project', path: project.path },
@@ -233,6 +355,7 @@ export function renderProjectDashboard(
 
   const renderWorkspace = (): void => {
     if (destroyed) return;
+    syncCollectionControls();
     syncTimelineButton();
     workspace.dataset['scope'] = scope;
     workspace.dataset['layout'] = layout;
@@ -259,26 +382,58 @@ export function renderProjectDashboard(
     content.empty();
     if (scope === 'work-notes') {
       if (layout === 'timeline' && ctx.renderWorkNoteTimeline) {
-        child = ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes);
+        child = ctx.renderWorkNoteTimeline(content, project.path, selectedWorkNotes());
       } else if (layout === 'board' && ctx.renderWorkNoteBoard) {
-        child = ctx.renderWorkNoteBoard(content, project.path, selectedWorkNotes);
+        child = ctx.renderWorkNoteBoard(content, project.path, selectedWorkNotes());
       } else {
-        child = ctx.renderWorkNotes?.(content, project.path, selectedWorkNotes) ?? null;
+        child =
+          ctx.renderWorkNotes?.(content, project.path, selectedWorkNotes(), workNotesViewState()) ??
+          null;
       }
     } else if (layout === 'timeline' && ctx.renderTaskTimeline) {
-      child = ctx.renderTaskTimeline(content, project.path, selectedTasks, taskViewState);
+      child = ctx.renderTaskTimeline(
+        content,
+        project.path,
+        selectedTasks(),
+        taskViewState(),
+        snapshot.tasks,
+        addTaskFilter,
+      );
     } else if (layout === 'board' && ctx.renderTaskBoard) {
-      child = ctx.renderTaskBoard(content, project.path, selectedTasks, taskViewState);
+      child = ctx.renderTaskBoard(
+        content,
+        project.path,
+        selectedTasks(),
+        taskViewState(),
+        snapshot.tasks,
+        addTaskFilter,
+      );
     } else {
-      child = ctx.renderTasks(content, project.path, selectedTasks, taskViewState);
+      child = ctx.renderTasks(
+        content,
+        project.path,
+        selectedTasks(),
+        taskViewState(),
+        snapshot.tasks,
+        addTaskFilter,
+      );
     }
     publishEffectiveInspector();
   };
 
-  const scopeButton = (value: ProjectWorkspaceScope, label: string, selectable = true): void => {
-    const button = toolbar.createEl('button', {
+  const scopeButton = (
+    value: ProjectWorkspaceScope,
+    label: string,
+    selectable = true,
+    reason?: string,
+  ): void => {
+    const button = scopeRow.createEl('button', {
       text: label,
-      attr: { type: 'button', 'data-project-scope': value },
+      attr: {
+        type: 'button',
+        'data-project-scope': value,
+        ...(reason ? { title: reason, 'aria-label': `${label}: ${reason}` } : {}),
+      },
     });
     button.disabled = !selectable;
     button.setAttribute('aria-disabled', String(!selectable));
@@ -292,8 +447,10 @@ export function renderProjectDashboard(
     }
     scopeButtons.push(button);
   };
+  let layoutHost!: HTMLElement;
+  let scopeCollectionControlsHost!: HTMLElement;
   const layoutButton = (value: ProjectWorkspaceLayout, label: string, selectable = true): void => {
-    const button = toolbar.createEl('button', {
+    const button = layoutHost.createEl('button', {
       text: label,
       attr: { type: 'button', 'data-project-layout': value },
     });
@@ -310,10 +467,17 @@ export function renderProjectDashboard(
   };
 
   scopeButton('tasks', 'Tasks');
-  if (workNotesAvailable) {
+  if (workNotesAvailability.state === 'available') {
     scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
+  } else if (workNotesAvailability.state === 'invalid') {
+    scopeButton('work-notes', 'Work Notes', false, workNotesAvailability.reason);
+    const settings = scopeRow.createEl('button', {
+      text: 'Settings',
+      attr: { type: 'button', 'data-work-notes-settings': '' },
+    });
+    settings.addEventListener('click', () => ctx.onOpenWorkNotesSettings?.());
   }
-  const useAsDefault = toolbar.createEl('button', {
+  const useAsDefault = scopeRow.createEl('button', {
     text: 'Use as default',
     attr: { type: 'button', 'data-project-use-as-default': '' },
   });
@@ -322,26 +486,142 @@ export function renderProjectDashboard(
     const intent = session.consumeUseAsDefaultIntent();
     if (intent) ctx.onUseWorkspaceDefault?.(intent);
   });
-  layoutButton('list', 'List');
-  if (
-    snapshot.tasks.length > 0 ||
-    ctx.renderTaskBoard !== undefined ||
-    ctx.renderWorkNoteBoard !== undefined
-  ) {
-    const button = toolbar.createEl('button', {
-      text: 'Board',
-      attr: { type: 'button', 'data-project-layout': 'board' },
-    });
-    button.disabled = !boardAvailable();
-    button.setAttribute('aria-disabled', String(button.disabled));
-    button.addEventListener('click', () => {
-      if (!boardAvailable()) return;
-      layout = 'board';
-      session.layout = layout;
+
+  const updateTaskView = (next: ProjectTasksViewState): void => {
+    taskScope.viewOverride = next;
+    renderWorkspace();
+  };
+  const addTaskFilter = (filter: PropertyFilter): void => {
+    const current = taskViewState();
+    const identity = propertyFilterIdentity(filter);
+    if (current.filters.some((candidate) => propertyFilterIdentity(candidate) === identity)) return;
+    updateTaskView({ ...current, filters: [...current.filters, filter] });
+  };
+  const updateWorkNotesView = (next: WorkNotesViewState): void => {
+    workNotesScope.viewOverride = next;
+    renderWorkspace();
+  };
+  const showFilterMenu = (event: MouseEvent): void => {
+    const menu = new Menu();
+    if (scope === 'tasks') {
+      menu.addItem((item) =>
+        item
+          .setTitle('Active')
+          .onClick(() =>
+            updateTaskView({ ...taskViewState(), statusGroups: ['todo', 'in-progress'] }),
+          ),
+      );
+      menu.addItem((item) =>
+        item.setTitle('All').onClick(() => {
+          const next = { ...taskViewState() };
+          delete next.statusGroups;
+          updateTaskView(next);
+        }),
+      );
+    } else {
+      menu.addItem((item) =>
+        item
+          .setTitle('All')
+          .onClick(() => updateWorkNotesView({ ...workNotesViewState(), statusIds: [] })),
+      );
+      for (const status of ctx.workNoteStatuses ?? []) {
+        menu.addItem((item) =>
+          item
+            .setTitle(status.label)
+            .setChecked(workNotesViewState().statusIds.includes(status.id))
+            .onClick(() =>
+              updateWorkNotesView({ ...workNotesViewState(), statusIds: [status.id] }),
+            ),
+        );
+      }
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  };
+  const showGroupMenu = (event: MouseEvent): void => {
+    const menu = new Menu();
+    const values =
+      scope === 'tasks'
+        ? (['none', 'date', 'priority', 'tag', 'status'] as const)
+        : (['none', 'status', 'priority', 'milestone'] as const);
+    for (const value of values) {
+      menu.addItem((item) =>
+        item
+          .setTitle(value === 'none' ? 'None' : `${value[0]!.toUpperCase()}${value.slice(1)}`)
+          .onClick(() => {
+            if (scope === 'tasks')
+              updateTaskView({
+                ...taskViewState(),
+                groupBy: value as ProjectTasksViewState['groupBy'],
+              });
+            else
+              updateWorkNotesView({
+                ...workNotesViewState(),
+                groupBy: value as WorkNotesViewState['groupBy'],
+              });
+          }),
+      );
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  };
+  const showSortMenu = (event: MouseEvent): void => {
+    const menu = new Menu();
+    const fields =
+      scope === 'tasks'
+        ? (['date', 'priority', 'title', 'tag', 'status'] as const)
+        : (['title', 'status', 'priority', 'start', 'end', 'updated'] as const);
+    for (const field of fields) {
+      menu.addItem((item) =>
+        item.setTitle(`${field[0]!.toUpperCase()}${field.slice(1)}`).onClick(() => {
+          if (scope === 'tasks') {
+            const current = taskViewState().sortBy;
+            updateTaskView({
+              ...taskViewState(),
+              sortBy: {
+                field: field as ProjectTasksViewState['sortBy']['field'],
+                dir: current.field === field && current.dir === 'asc' ? 'desc' : 'asc',
+              },
+            });
+          } else {
+            const current = workNotesViewState().sortBy;
+            updateWorkNotesView({
+              ...workNotesViewState(),
+              sortBy: {
+                field: field as WorkNotesViewState['sortBy']['field'],
+                dir: current.field === field && current.dir === 'asc' ? 'desc' : 'asc',
+              },
+            });
+          }
+        }),
+      );
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  };
+
+  const controls = renderCollectionControls(workspace, {
+    query: scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery,
+    searchLabel: scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes',
+    renderLeading: (host) => {
+      layoutHost = host.createDiv({
+        cls: 'abyss-project-layout-controls',
+        attr: { role: 'group', 'aria-label': 'Collection layout' },
+      });
+      layoutButton('list', 'List');
+      if (
+        snapshot.tasks.length > 0 ||
+        ctx.renderTaskBoard !== undefined ||
+        ctx.renderWorkNoteBoard !== undefined
+      ) {
+        layoutButton('board', 'Board');
+      }
+      scopeCollectionControlsHost = host.createDiv({ cls: 'abyss-scope-collection-controls' });
+    },
+    onQueryInput: (value) => {
+      if (scope === 'tasks') taskScope.textQuery = value;
+      else workNotesScope.textQuery = value;
       renderWorkspace();
-    });
-    layoutButtons.push(button);
-  }
+    },
+  });
+  const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
   let timelineButton: HTMLButtonElement | null = null;
   syncTimelineButton = (): void => {
     if (!timelineAvailable()) {
@@ -358,7 +638,7 @@ export function renderProjectDashboard(
       return;
     }
     if (timelineButton) return;
-    timelineButton = toolbar.createEl('button', {
+    timelineButton = layoutHost.createEl('button', {
       text: 'Timeline',
       attr: { type: 'button', 'data-project-layout': 'timeline' },
     });
@@ -369,6 +649,28 @@ export function renderProjectDashboard(
       renderWorkspace();
     });
     layoutButtons.push(timelineButton);
+  };
+  syncCollectionControls = (): void => {
+    scopeCollectionControlsHost.empty();
+    if (scope === 'tasks' && ctx.renderTaskCollectionControls) {
+      ctx.renderTaskCollectionControls(
+        scopeCollectionControlsHost,
+        taskViewState(),
+        ctx.settings.projects.view.tasks,
+        updateTaskView,
+      );
+    } else {
+      renderCollectionActions(scopeCollectionControlsHost, [
+        { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showFilterMenu },
+        { kind: 'group', label: 'Group', icon: 'layout-list', onActivate: showGroupMenu },
+        { kind: 'sort', label: 'Sort', icon: 'arrow-up-down', onActivate: showSortMenu },
+      ]);
+    }
+    controls.searchInput.value = scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery;
+    controls.searchInput.setAttribute(
+      'aria-label',
+      scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes',
+    );
   };
   renderWorkspace();
   return {

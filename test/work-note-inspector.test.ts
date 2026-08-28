@@ -18,6 +18,7 @@ const snapshot: WorkNoteSnapshot = {
   rawStatus: 'Active raw',
   writableStatusShape: true,
   priority: 'High',
+  description: 'Customer handoff and release readiness',
   range: {},
   milestonePath: 'Work Notes/Milestone.md',
   blockedByPaths: ['Work Notes/Blocker.md'],
@@ -38,6 +39,10 @@ describe('renderWorkNoteInspector', () => {
     expect(root.textContent).toContain('Ordinary');
     expect(root.textContent).toContain('Product');
     expect(root.textContent).toContain('High');
+    expect(root.textContent).toContain('Customer handoff and release readiness');
+    expect(root.querySelector('[data-work-note-description]')?.textContent).toBe(
+      'Customer handoff and release readiness',
+    );
     expect(root.textContent).toContain('Milestone');
     expect(root.textContent).toContain('Blocker');
     expect(root.textContent).toContain('Related');

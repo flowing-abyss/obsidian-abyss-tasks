@@ -73,6 +73,48 @@ function statusText(note: WorkNoteSnapshot, statuses: readonly WorkNoteStatusDef
   );
 }
 
+function groupKey(
+  note: WorkNoteSnapshot,
+  groupBy: NonNullable<WorkNotesViewOptions['viewState']>['groupBy'],
+  statuses: readonly WorkNoteStatusDefinition[],
+): string {
+  if (groupBy === 'status') return statusText(note, statuses);
+  if (groupBy === 'priority') return note.priority ?? 'No priority';
+  if (groupBy === 'milestone') return note.kind === 'milestone' ? 'Milestones' : 'Work Notes';
+  return '';
+}
+
+type WorkNoteListEntry =
+  | { readonly kind: 'group'; readonly key: string; readonly label: string }
+  | { readonly kind: 'note'; readonly key: string; readonly note: WorkNoteSnapshot };
+
+function workNoteListEntries(
+  notes: readonly WorkNoteSnapshot[],
+  options: WorkNotesViewOptions,
+): readonly WorkNoteListEntry[] {
+  const groupBy = options.viewState?.groupBy ?? 'none';
+  if (groupBy === 'none') {
+    return notes.map((note) => ({ kind: 'note', key: note.path, note }));
+  }
+  const entries: WorkNoteListEntry[] = [];
+  let previous = '';
+  let groupIndex = 0;
+  for (const note of notes) {
+    const label = groupKey(note, groupBy, options.statuses);
+    if (label !== previous) {
+      entries.push({
+        kind: 'group',
+        key: `group:${groupBy}:${String(groupIndex)}:${label}`,
+        label,
+      });
+      previous = label;
+      groupIndex += 1;
+    }
+    entries.push({ kind: 'note', key: note.path, note });
+  }
+  return entries;
+}
+
 export function selectWorkNotes(
   options: Pick<WorkNotesViewOptions, 'notes' | 'statuses' | 'textQuery' | 'viewState'>,
 ): readonly WorkNoteSnapshot[] {
@@ -88,7 +130,16 @@ export function selectWorkNotes(
       : [...options.notes];
   const query = options.textQuery?.trim().toLocaleLowerCase();
   const textFiltered = query
-    ? filtered.filter((note) => basename(note.path).toLocaleLowerCase().includes(query))
+    ? filtered.filter((note) =>
+        [
+          basename(note.path),
+          note.path,
+          statusText(note, options.statuses),
+          note.rawStatus,
+          note.priority,
+          note.description,
+        ].some((value) => value?.toLocaleLowerCase().includes(query)),
+      )
     : filtered;
   const field = options.viewState?.sortBy.field ?? 'updated';
   const direction = options.viewState?.sortBy.dir === 'asc' ? 1 : -1;
@@ -102,7 +153,11 @@ export function selectWorkNotes(
       if (field === 'updated') return note.updated ?? '';
       return basename(note.path);
     };
-    return direction * value(left).localeCompare(value(right));
+    const groupBy = options.viewState?.groupBy ?? 'none';
+    const grouped = groupKey(left, groupBy, options.statuses).localeCompare(
+      groupKey(right, groupBy, options.statuses),
+    );
+    return grouped || direction * value(left).localeCompare(value(right));
   });
 }
 
@@ -238,8 +293,13 @@ function renderList(
     cls: 'abyss-work-note-rows',
     attr: { tabindex: '-1', role: 'list', 'aria-label': 'Work Notes' },
   });
+  const entries = workNoteListEntries(notes, options);
+  const entryByKey = new Map(entries.map((entry) => [entry.key, entry] as const));
+  const noteEntryKeys = new Set(
+    entries.filter((entry) => entry.kind === 'note').map(({ key }) => key),
+  );
   const bounded = new BoundedWindow(
-    notes.map(({ path }) => path),
+    entries.map(({ key }) => key),
     WORK_NOTE_OVERSCAN,
   );
   const session: LogicalViewportSession | undefined = options.session?.list;
@@ -248,12 +308,14 @@ function renderList(
     session.focusedKey = pendingCreatedPath;
     session.restoreFocus = true;
     session.firstKey = pendingCreatedPath;
-    session.firstIndex = notes.findIndex(({ path }) => path === pendingCreatedPath);
+    session.firstIndex = entries.findIndex(
+      (entry) => entry.kind === 'note' && entry.note.path === pendingCreatedPath,
+    );
   }
   if (session?.focusedKey) bounded.focus(session.focusedKey);
   const initialFirst = logicalViewportFirst(
     session,
-    notes.map(({ path }) => path),
+    entries.map(({ key }) => key),
   );
   scroll.scrollTop = initialFirst * WORK_NOTE_ROW_EXTENT;
   let destroyed = false;
@@ -277,8 +339,16 @@ function renderList(
       ...viewport(),
       itemExtent: WORK_NOTE_ROW_EXTENT,
       restoreFocus,
-      render: (host, _key, logicalIndex) => {
-        const note = notes[logicalIndex]!;
+      render: (host, key) => {
+        const entry = entryByKey.get(key)!;
+        if (entry.kind === 'group') {
+          return host.createDiv({
+            cls: 'abyss-work-note-group',
+            text: entry.label,
+            attr: { role: 'heading', 'aria-level': '4', 'data-work-note-group': entry.label },
+          });
+        }
+        const note = entry.note;
         let identity: HTMLElement | null = null;
         const row = renderRow(host, note, options, presenter, () => {
           if (identity) select(note, identity);
@@ -300,7 +370,13 @@ function renderList(
           if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
           event.preventDefault();
           bounded.focus(note.path);
-          if (bounded.move(event.key === 'ArrowDown' ? 1 : -1) === null) return;
+          if (
+            bounded.move(
+              event.key === 'ArrowDown' ? 1 : -1,
+              noteEntryKeys.has.bind(noteEntryKeys),
+            ) === null
+          )
+            return;
           const first = bounded.viewportForFocus(viewport());
           scroll.scrollTop = first * WORK_NOTE_ROW_EXTENT;
           renderWindow(true);
@@ -327,7 +403,13 @@ function renderList(
   const rememberViewport = (): void => {
     if (!session) return;
     session.firstIndex = viewport().first;
-    session.firstKey = notes[session.firstIndex]?.path ?? null;
+    const firstNote = entries
+      .slice(session.firstIndex)
+      .find(
+        (entry): entry is Extract<WorkNoteListEntry, { readonly kind: 'note' }> =>
+          entry.kind === 'note',
+      );
+    session.firstKey = firstNote?.note.path ?? null;
   };
   const onScroll = (): void => {
     rememberViewport();

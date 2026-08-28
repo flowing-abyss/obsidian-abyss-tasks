@@ -15,6 +15,7 @@ import type { ProjectChildRenderHandle } from '../src/panels/projects/viewContex
 import { selectWorkNotes } from '../src/panels/projects/WorkNotesView';
 import { parseProjectRange } from '../src/projects/projectDates';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
+import { computeWorkNotePresetFingerprint } from '../src/projects/work-notes/compatibility';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { deferred, freshContainer, task } from './helpers';
@@ -1049,6 +1050,131 @@ describe('renderProjectsList', () => {
 });
 
 describe('renderProjectDashboard', () => {
+  it('keeps the Project summary to two semantic rows and separates scope from collection controls', () => {
+    const el = freshContainer();
+    const project = proj({
+      priority: 'A',
+      description: 'Inspector-only description',
+      frontmatter: { description: 'Inspector-only description' },
+    });
+    renderProjectDashboard(el, workspace(project), {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+    });
+
+    const summary = el.querySelector('[data-project-summary]')!;
+    expect(summary.querySelectorAll(':scope > [data-project-summary-row]')).toHaveLength(2);
+    expect(summary.textContent).toContain('A');
+    expect(summary.textContent).not.toContain('Inspector-only description');
+    expect(el.querySelector('.abyss-project-description')).toBeNull();
+    const scopeRow = el.querySelector('[data-project-scope-controls]')!;
+    const collectionRow = el.querySelector('[data-collection-controls]')!;
+    expect(scopeRow).not.toBe(collectionRow);
+    expect(scopeRow.querySelector('[data-project-layout]')).toBeNull();
+    expect(collectionRow.querySelector('[data-project-scope]')).toBeNull();
+    expect(collectionRow.querySelectorAll('input[aria-label="Filter tasks"]')).toHaveLength(1);
+    expect(collectionRow.querySelector('[data-collection-filter]')).not.toBeNull();
+    expect(collectionRow.querySelector('[data-collection-group]')).not.toBeNull();
+    expect(collectionRow.querySelector('[data-collection-sort]')).not.toBeNull();
+    expect(el.querySelector('button button, button input, a button, button a')).toBeNull();
+  });
+
+  it('mounts the canonical Task chips and Group Sort Show owner for Project-local view intents', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.tasks = {
+      ...settings.projects.view.tasks,
+      filters: [{ type: 'tag', value: '#focus' }],
+    };
+    const renderTaskCollectionControls = vi.fn(
+      (
+        host: HTMLElement,
+        viewState: typeof settings.projects.view.tasks,
+        _defaults: typeof settings.projects.view.tasks,
+        onUpdate: (next: typeof settings.projects.view.tasks) => void,
+      ) => {
+        const filter = viewState.filters[0];
+        host.createSpan({
+          cls: 'abyss-filter-chip',
+          text: filter?.type === 'tag' ? filter.value : '',
+        });
+        const show = host.createEl('button', { cls: 'abyss-view-state-btn', text: 'Show' });
+        show.addEventListener('click', () => onUpdate({ ...viewState, statusGroups: undefined }));
+      },
+    );
+    const renderTasks = vi.fn((..._args: unknown[]) => ({ destroy: () => undefined }));
+    const el = freshContainer();
+
+    renderProjectDashboard(el, workspace(), {
+      state: new AppState(),
+      settings,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks,
+      renderTaskCollectionControls,
+    });
+
+    expect(renderTaskCollectionControls).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({ filters: [{ type: 'tag', value: '#focus' }] }),
+      settings.projects.view.tasks,
+      expect.any(Function),
+    );
+    expect(el.querySelector('.abyss-filter-chip')?.textContent).toBe('#focus');
+    expect(el.querySelector('.abyss-view-state-btn')).not.toBeNull();
+    expect(el.querySelector('[data-collection-filter]')).toBeNull();
+    el.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+    expect(renderTasks.mock.lastCall?.[3] as object).toMatchObject({ statusGroups: undefined });
+  });
+
+  it('ships bounded two-row summary and wrapping collection controls for narrow panes', () => {
+    expect(declarationsFor('.abyss-project-dashboard-summary')).toContain('overflow: hidden');
+    expect(declarationsFor('.abyss-project-dashboard-header')).toContain('flex-wrap: nowrap');
+    expect(declarationsFor('.abyss-project-dashboard-stats')).toContain('white-space: nowrap');
+    expect(declarationsFor('.abyss-project-scope-controls')).toContain('flex-wrap: wrap');
+    expect(declarationsFor('.abyss-collection-controls')).toContain('flex-wrap: wrap');
+    expect(declarationsFor('.abyss-collection-search')).toContain('min-width: 8rem');
+  });
+
+  it('keeps the scope row visually singular and defeats native title-button chrome', () => {
+    expect(declarationsFor('.abyss-project-tasks-title')).toContain('display: none');
+    const title = declarationsFor(
+      '.abyss-project-dashboard-header > button.abyss-project-dashboard-title',
+    );
+    expect(title).toContain('background: transparent');
+    expect(title).toContain('box-shadow: none');
+    expect(title).toContain('text-align: start');
+  });
+
+  it('keeps shared Task identities readable inside Board and Timeline adapters', () => {
+    const projectTaskNextAction = declarationsFor(
+      '.abyss-projects-dashboard .abyss-task-next-action',
+    );
+    expect(projectTaskNextAction).toContain('flex: 0 0 24px');
+    expect(projectTaskNextAction).toContain('inline-size: 24px');
+
+    const compactMeta = declarationsFor(
+      '.abyss-board-items > .abyss-task-card .abyss-task-meta-right,\n.abyss-board-items > .abyss-task-card .abyss-task-delete-btn,\n.abyss-timeline-identity > .abyss-task-card .abyss-task-meta-right,\n.abyss-timeline-identity > .abyss-task-card .abyss-task-delete-btn',
+    );
+    expect(compactMeta).toContain('display: none');
+
+    const nextAction = declarationsFor(
+      '.abyss-board-items > .abyss-task-card .abyss-task-next-action,\n.abyss-timeline-identity > .abyss-task-card .abyss-task-next-action',
+    );
+    expect(nextAction).toContain('display: inline-flex');
+    expect(nextAction).toContain('flex: 0 0 24px');
+
+    const compactTitle = declarationsFor(
+      '.abyss-board-items > .abyss-task-card .abyss-task-title,\n.abyss-timeline-identity > .abyss-task-card .abyss-task-title',
+    );
+    expect(compactTitle).toContain('overflow: hidden');
+    expect(compactTitle).toContain('text-overflow: ellipsis');
+    expect(compactTitle).toContain('white-space: nowrap');
+    expect(compactTitle).toContain('word-break: normal');
+  });
+
   it('renders header + back button; back returns to list; renders tasks', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
@@ -1366,9 +1492,11 @@ describe('renderProjectDashboard', () => {
     ).toEqual(['Work Notes/B.md', 'Work Notes/Z.md']);
   });
 
-  it('omits a dead Timeline control when the selected Work Note projection has no dated rows', () => {
+  it('preserves Timeline layout while a Work Note filter temporarily hides every dated row', () => {
     const el = freshContainer();
     const datedTask = task({ planning: { due: '2026-08-30' } });
+    const renderWorkNoteTimeline = vi.fn();
+    let filtered = true;
     renderProjectDashboard(
       el,
       workspace(proj({}), {
@@ -1390,16 +1518,83 @@ describe('renderProjectDashboard', () => {
         renderTasks: vi.fn(),
         renderTaskTimeline: vi.fn(),
         renderWorkNotes: vi.fn(),
-        renderWorkNoteTimeline: vi.fn(),
-        selectWorkNotes: () => [],
+        renderWorkNoteTimeline,
+        selectWorkNotes: (notes) => (filtered ? [] : notes),
       },
     );
 
     expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
     el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
-    expect(el.querySelector('[data-project-layout="timeline"]')).toBeNull();
-    el.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!.click();
-    expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
+    const timeline = el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!;
+    expect(timeline).not.toBeNull();
+    timeline.click();
+    expect(timeline.getAttribute('aria-pressed')).toBe('true');
+    expect(renderWorkNoteTimeline.mock.lastCall?.[2]).toEqual([]);
+
+    filtered = false;
+    const search = el.querySelector<HTMLInputElement>('.abyss-collection-search')!;
+    search.value = 'restored';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(el.querySelector('[data-project-layout="timeline"]')?.getAttribute('aria-pressed')).toBe(
+      'true',
+    );
+    expect(renderWorkNoteTimeline.mock.lastCall?.[2]).toHaveLength(1);
+  });
+
+  it('builds the Work Note Filter menu from the audited Work Note status catalog', () => {
+    const titles: string[] = [];
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      build,
+    ) {
+      const item = {
+        setTitle(value: string) {
+          titles.push(value);
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        onClick() {
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      return this;
+    });
+    try {
+      const el = freshContainer();
+      renderProjectDashboard(
+        el,
+        workspace(proj({}), {
+          workNotes: [workNote('Work Notes/A.md', 'mapped-complete', '2026-08-29')],
+        }),
+        {
+          state: new AppState(),
+          settings: DEFAULT_SETTINGS,
+          onSetStatus: vi.fn(),
+          openNote: vi.fn(),
+          renderTasks: vi.fn(),
+          renderWorkNotes: vi.fn(),
+          workNotesAvailability: { state: 'available' },
+          workNoteStatuses: [{ id: 'mapped-complete', label: 'Mapped Complete' }],
+          selectWorkNotes: (notes) => notes,
+        },
+      );
+
+      el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      el.querySelector<HTMLButtonElement>('[aria-label="Filter"]')!.click();
+
+      expect(titles).toEqual(['All', 'Mapped Complete']);
+    } finally {
+      addItem.mockRestore();
+      show.mockRestore();
+    }
   });
 
   it('adds Timeline only in Work Notes scope when only the selected Work Notes are dated', () => {
@@ -1427,7 +1622,7 @@ describe('renderProjectDashboard', () => {
     expect(el.querySelector('[data-project-layout="timeline"]')).not.toBeNull();
   });
 
-  it('renders the compact-summary Next Action as an icon only and nothing when unset', () => {
+  it('opens the compact-summary Next Action in the Task inspector and shows a calm reason when unset', async () => {
     const next = task({ title: 'Do this', tags: ['#task/next_action'] });
     const action = {
       task: next,
@@ -1435,24 +1630,53 @@ describe('renderProjectDashboard', () => {
       dependency: { type: 'allowed' as const },
       owner: { type: 'project' as const, path: 'Projects/A.md' },
     };
+    const state = new AppState();
+    const workspaceSession = new ProjectWorkspaceSession();
+    workspaceSession.openProject('Projects/A.md');
+    workspaceSession.scope = 'work-notes';
     const ctx = {
-      state: new AppState(),
+      state,
       settings: DEFAULT_SETTINGS,
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
       renderTasks: vi.fn(),
+      renderWorkNotes: vi.fn(),
+      workNotesAvailability: { state: 'available' as const },
+      workspaceSession,
     };
     const set = freshContainer();
     const unset = freshContainer();
 
-    renderProjectDashboard(set, workspace(proj({}), { tasks: [action] }), ctx);
-    renderProjectDashboard(unset, workspace(), ctx);
+    renderProjectDashboard(
+      set,
+      workspace(proj({}), {
+        tasks: [action],
+        workNotes: [workNote('Work Notes/Remembered.md', ACTIVE_ID, '2026-08-29')],
+      }),
+      ctx,
+    );
+    renderProjectDashboard(unset, workspace(), {
+      ...ctx,
+      state: new AppState(),
+      workspaceSession: new ProjectWorkspaceSession(),
+    });
     const control = set.querySelector<HTMLButtonElement>('[aria-label="Open Next Action"]')!;
 
     expect(control.textContent?.trim()).toBe('');
     expect(control.getAttribute('title')).toBeTruthy();
     expect(set.querySelector('.abyss-next-action-slot')).toBeNull();
+    control.click();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(state.get('taskStack')).toEqual([next]);
+    expect(state.get('inspectorSelection')).toMatchObject({ type: 'task', task: next.ref });
+    expect(workspaceSession.tasks.inspectorRef()).toEqual(next.ref);
+    expect(workspaceSession.scope).toBe('tasks');
+    expect(set.querySelector('[data-project-scope="tasks"]')?.getAttribute('aria-pressed')).toBe(
+      'true',
+    );
     expect(unset.querySelector('[aria-label="Open Next Action"]')).toBeNull();
+    expect(unset.querySelector('[data-project-summary-reason]')?.textContent).not.toBe('');
   });
 });
 
@@ -1980,6 +2204,41 @@ describe('ProjectsPanel dispatch', () => {
     panel.mount(el);
 
     expect(el.querySelector('[data-project-scope="work-notes"]')).not.toBeNull();
+    panel.destroy();
+  });
+
+  it('shows an enabled but unaccepted Work Notes scope disabled with one settings action', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.workNoteCompatibility = {
+      ...settings.projects.workNoteCompatibility,
+      enabled: true,
+      acceptedAudit: undefined,
+    };
+    const openSettings = vi.fn();
+    const openSettingsTab = vi.fn();
+    const app = {
+      vault: { getAbstractFileByPath: () => null },
+      workspace: { getLeaf: () => ({ openFile: vi.fn() }) },
+      setting: { open: openSettings, openTabById: openSettingsTab },
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, app, {
+      snapshots: [workspace()],
+      workNoteCommands: {
+        capabilities: () => ({ update: false, create: false }),
+        statuses: () => settings.projects.statuses,
+      } as never,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+    const scope = el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!;
+    expect(scope.disabled).toBe(true);
+    expect(scope.getAttribute('aria-label')).toContain('needs validation');
+    el.querySelector<HTMLButtonElement>('[data-work-notes-settings]')!.click();
+    expect(openSettings).toHaveBeenCalledOnce();
+    expect(openSettingsTab).toHaveBeenCalledWith('task-calendar');
     panel.destroy();
   });
 
@@ -2519,7 +2778,18 @@ describe('ProjectsPanel dispatch', () => {
       vault: { getAbstractFileByPath: () => null },
       workspace: { getLeaf: () => ({ openFile: vi.fn() }) },
     } as never;
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const enabledPreset = { ...settings.projects.workNoteCompatibility, enabled: true };
+    settings.projects.workNoteCompatibility = {
+      ...enabledPreset,
+      acceptedAudit: {
+        presetFingerprint: computeWorkNotePresetFingerprint(enabledPreset),
+        acceptedRevision: enabledPreset.revision,
+        acceptedAt: '2026-08-28T00:00:00.000Z',
+        capabilities: { update: false, create: false },
+      },
+    };
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, app, {
       snapshots: [workspace(project, { workNotes: [note] })],
       workNoteCommands: {
         capabilities: () => ({ update: false, create: false }),

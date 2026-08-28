@@ -60,6 +60,7 @@ export interface WorkNoteDiagnostic {
     | 'broken-project'
     | 'invalid-project-entry'
     | 'non-scalar-status'
+    | 'non-scalar-description'
     | 'unknown-status'
     | 'non-scalar-date'
     | 'invalid-relation-entry'
@@ -90,6 +91,8 @@ export interface WorkNoteSnapshot {
   readonly rawStatus: string | null;
   readonly writableStatusShape: boolean;
   readonly priority?: string;
+  /** Supported configured scalar metadata; never synthesized from structured values. */
+  readonly description?: string;
   readonly updated?: string;
   readonly range: ProjectRange;
   readonly id?: string;

@@ -39,10 +39,10 @@ function diagnosticLabel(type: WorkNoteSnapshot['diagnostics'][number]['type']):
     .join(' ');
 }
 
-function metadataRow(host: HTMLElement, label: string, value: string): void {
+function metadataRow(host: HTMLElement, label: string, value: string): HTMLElement {
   const row = host.createDiv({ cls: 'abyss-work-note-inspector-row' });
   row.createSpan({ cls: 'abyss-work-note-inspector-label', text: label });
-  row.createSpan({ cls: 'abyss-work-note-inspector-value', text: value });
+  return row.createSpan({ cls: 'abyss-work-note-inspector-value', text: value });
 }
 
 function draftResultText(result: InspectorDraftResult | undefined): string {
@@ -198,6 +198,9 @@ export function renderWorkNoteInspector(
   metadataRow(metadata, 'Kind', note.kind === 'ordinary' ? 'Ordinary' : 'Milestone');
   metadataRow(metadata, 'Project', basename(note.projectPath));
   if (note.priority) metadataRow(metadata, 'Priority', note.priority);
+  if (note.description) {
+    metadataRow(metadata, 'Description', note.description).dataset['workNoteDescription'] = '';
+  }
   if (note.milestonePath) metadataRow(metadata, 'Milestone', basename(note.milestonePath));
   if (note.blockedByPaths.length > 0) {
     metadataRow(metadata, 'Blocked by', note.blockedByPaths.map(basename).join(', '));

@@ -11,7 +11,7 @@ import type { ProjectPropertyCommandResult } from '../src/projects/ProjectComman
 import type { Project, ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { CalendarSettings } from '../src/settings/types';
+import type { CalendarSettings, PropertyFilter } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type {
   DependencyProjectionPort,
@@ -2598,6 +2598,77 @@ describe('CenterPanel projects mode teardown (regression)', () => {
   );
 
   it.each(['list', 'board', 'timeline'] as const)(
+    'routes %s Project-card metadata filters to the Project collection owner only',
+    (layout) => {
+      const current = task({
+        tags: ['#project-scope'],
+        planning: layout === 'timeline' ? { due: localDate('2026-08-28') } : {},
+        source: { filePath: 'Projects/A.md', line: 1 },
+      });
+      const action: ProjectAction = {
+        task: current,
+        projectPath: 'Projects/A.md',
+        dependency: { type: 'allowed' },
+        owner: { type: 'project', path: 'Projects/A.md' },
+      };
+      const state = new AppState();
+      const panel = makeStaticPanel(state, [current]);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      try {
+        panel.mount(container);
+        const host = container.createDiv();
+        const projectFilters: PropertyFilter[] = [];
+        const onAddPropertyFilter = (filter: PropertyFilter): void => {
+          projectFilters.push(filter);
+        };
+        if (layout === 'list') {
+          call(
+            panel,
+            'renderProjectTasks',
+            host,
+            'Projects/A.md',
+            [action],
+            DEFAULT_SETTINGS.projects.view.tasks,
+            [action],
+            onAddPropertyFilter,
+          );
+        } else if (layout === 'board') {
+          call(
+            panel,
+            'renderProjectTaskBoard',
+            host,
+            'Projects/A.md',
+            [action],
+            DEFAULT_SETTINGS.projects.view.tasks,
+            [action],
+            onAddPropertyFilter,
+          );
+        } else {
+          call(
+            panel,
+            'renderProjectTaskTimeline',
+            host,
+            'Projects/A.md',
+            [action],
+            DEFAULT_SETTINGS.projects.view.tasks,
+            [action],
+            onAddPropertyFilter,
+          );
+        }
+
+        host.querySelector<HTMLElement>('.abyss-task-tag')!.click();
+
+        expect(projectFilters).toEqual([{ type: 'tag', value: '#project-scope' }]);
+        expect(state.get('centerListViewState').filters).toEqual([]);
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
+  it.each(['list', 'board', 'timeline'] as const)(
     'restores the remembered Task inspector and stack after a Work Note scope visit in %s',
     (layout) => {
       const current = task({
@@ -3175,6 +3246,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       tags: [],
       statusId: settings.projects.statuses[0]!.id,
       rawStatus: null,
+      range: {},
       stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
     };
     const projectStore = {
@@ -3255,6 +3327,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       tags: [],
       statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
       rawStatus: null,
+      range: {},
       stats: { total: 1, done: 0, cancelled: 0, inProgress: 0 },
     };
     const panel = new CenterPanel(
@@ -3602,6 +3675,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       tags: [],
       statusId: DEFAULT_SETTINGS.projects.statuses[0]!.id,
       rawStatus: null,
+      range: {},
       stats: { total: 0, done: 0, cancelled: 0, inProgress: 0 },
     };
     const projectStore = {

@@ -968,6 +968,28 @@ describe('WorkNoteIndex', () => {
     index.destroy();
   });
 
+  it('carries the configured scalar description from metadata into the indexed snapshot', () => {
+    const h = harness(
+      [
+        {
+          path: 'Tasks/Described.md',
+          tags: ['#work-note/task'],
+          frontmatter: {
+            Project: '[[Projects/A]]',
+            Status: 'Active',
+            Description: 'Indexed release narrative',
+          },
+        },
+      ],
+      { 'Tasks/Described.md\0Projects/A': 'Projects/A.md' },
+    );
+    const index = new WorkNoteIndex(h.app, preset);
+    index.initialize();
+
+    expect(index.get('Tasks/Described.md')?.description).toBe('Indexed release narrative');
+    index.destroy();
+  });
+
   it('resolves relative and aliased project links through metadata cache', () => {
     const h = harness(
       [

@@ -43,6 +43,54 @@ function exactResolver(tasks: readonly TaskSnapshot[]): TaskQueryApi['resolve'] 
 }
 
 describe('ProjectTaskCollectionSession', () => {
+  it('remembers a filter-hidden inspector identity and restores it when visible again', () => {
+    const hidden = action('Projects/A.md', 1, 'hidden');
+    const visible = action('Projects/A.md', 2, 'visible');
+    const universe = [hidden, visible];
+    const session = new ProjectTaskCollectionSession(
+      universe,
+      exactResolver(universe.map(({ task: current }) => current)),
+    );
+    session.activate(hidden.task.ref);
+    session.consumeEffect();
+
+    session.reconcile([visible], universe);
+
+    expect(session.inspectorRef()).toEqual(hidden.task.ref);
+    expect(session.isSelected(hidden.task.ref)).toBe(false);
+    expect(session.consumeEffect()).toBeNull();
+
+    session.reconcile(universe, universe);
+    expect(session.inspectorRef()).toEqual(hidden.task.ref);
+    expect(session.consumeEffect()).toBeNull();
+  });
+
+  it('rebases a filter-hidden inspector identity against the full Project universe', () => {
+    const before = action('Projects/A.md', 1, 'old');
+    const after = action('Projects/A.md', 1, 'new');
+    const visible = action('Projects/A.md', 2, 'visible');
+    const session = new ProjectTaskCollectionSession([before, visible], (ref) =>
+      ref.revision === 'old'
+        ? {
+            type: 'rebased',
+            previous: before.task,
+            current: after.task,
+            evidence: 'byte-identical-relocation',
+            basis: { observed: before.task },
+          }
+        : exactResolver([after.task, visible.task])(ref),
+    );
+    session.activate(before.task.ref);
+    session.consumeEffect();
+
+    session.reconcile([visible], [after, visible]);
+
+    expect(session.inspectorRef()).toEqual(after.task.ref);
+    expect(session.focusedRef()).toEqual(after.task.ref);
+    expect(session.consumeEffect()).toBeNull();
+    expect(session.restoreEffect()).toBeNull();
+  });
+
   it('owns complete ProjectActions for off-window range and bulk inputs', () => {
     const actions = Array.from({ length: 100 }, (_, index) =>
       action(index < 20 ? 'Projects/A.md' : 'Work Notes/A.md', index, `r${index}`),

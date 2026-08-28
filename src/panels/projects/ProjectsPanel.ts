@@ -8,11 +8,13 @@ import type { ProjectCreateResult, ProjectManager } from '../../projects/Project
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
+import { isAuditAccepted } from '../../projects/work-notes/compatibility';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
 import type {
   CalendarSettings,
   ProjectTasksViewState,
+  PropertyFilter,
   WorkNotesViewState,
 } from '../../settings/types';
 import {
@@ -42,19 +44,31 @@ export interface ProjectsPanelOptions {
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
     viewState: ProjectTasksViewState,
+    allTasks?: ProjectWorkspaceSnapshot['tasks'],
+    onAddPropertyFilter?: (filter: PropertyFilter) => void,
   ) => ProjectChildRenderHandle;
   renderTaskBoard?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
     viewState: ProjectTasksViewState,
+    allTasks?: ProjectWorkspaceSnapshot['tasks'],
+    onAddPropertyFilter?: (filter: PropertyFilter) => void,
   ) => ProjectChildRenderHandle;
   renderTaskTimeline?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
     viewState: ProjectTasksViewState,
+    allTasks?: ProjectWorkspaceSnapshot['tasks'],
+    onAddPropertyFilter?: (filter: PropertyFilter) => void,
   ) => ProjectChildRenderHandle;
+  renderTaskCollectionControls?: (
+    host: HTMLElement,
+    viewState: ProjectTasksViewState,
+    defaults: ProjectTasksViewState,
+    onUpdate: (next: ProjectTasksViewState) => void,
+  ) => void;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
   pendingBoardUndo?: PendingProjectBoardUndo;
@@ -89,6 +103,7 @@ export class ProjectsPanel {
   private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
   private readonly renderTaskBoard: ProjectsPanelOptions['renderTaskBoard'];
   private readonly renderTaskTimeline: ProjectsPanelOptions['renderTaskTimeline'];
+  private readonly renderTaskCollectionControls: ProjectsPanelOptions['renderTaskCollectionControls'];
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
   private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
@@ -123,6 +138,7 @@ export class ProjectsPanel {
     this.renderTasks = opts.renderTasks ?? (() => ({ destroy: () => undefined }));
     this.renderTaskBoard = opts.renderTaskBoard;
     this.renderTaskTimeline = opts.renderTaskTimeline;
+    this.renderTaskCollectionControls = opts.renderTaskCollectionControls;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
     this.pendingBoardUndo = opts.pendingBoardUndo;
@@ -202,6 +218,7 @@ export class ProjectsPanel {
     host: HTMLElement,
     projectPath: string,
     notes: ProjectWorkspaceSnapshot['workNotes'],
+    viewState: WorkNotesViewState,
     layout: 'list' | 'board',
     milestoneRollups: ReadonlyMap<string, MilestoneRollup>,
   ): ProjectChildRenderHandle {
@@ -217,6 +234,7 @@ export class ProjectsPanel {
       notes,
       statuses: this.workNoteCommands.statuses(),
       layout,
+      viewState,
       commandsEnabled: capabilities.update,
       createEnabled: capabilities.create,
       projectPath,
@@ -255,6 +273,7 @@ export class ProjectsPanel {
             notes,
             statuses: this.workNoteCommands!.statuses(),
             layout,
+            viewState,
             commandsEnabled: capabilities.update,
             createEnabled: capabilities.create,
             projectPath,
@@ -384,6 +403,23 @@ export class ProjectsPanel {
     if (view.view === 'dashboard') {
       const container = this.el.createDiv();
       const snapshot = this.snapshots.find(({ project }) => project.path === view.path);
+      const workNotePreset = this.settings.projects.workNoteCompatibility;
+      const workNoteCapabilities = this.workNoteCommands?.capabilities();
+      let workNotesAvailability:
+        | { readonly state: 'available' | 'hidden' }
+        | { readonly state: 'invalid'; readonly reason: string };
+      if (workNoteCapabilities?.update === true || workNoteCapabilities?.create === true) {
+        workNotesAvailability = { state: 'available' };
+      } else if (!workNotePreset.enabled) {
+        workNotesAvailability = { state: 'hidden' };
+      } else if (isAuditAccepted(workNotePreset)) {
+        workNotesAvailability = { state: 'available' };
+      } else {
+        workNotesAvailability = {
+          state: 'invalid',
+          reason: 'Work Notes setup needs validation',
+        };
+      }
       const dashboard = renderProjectDashboard(container, snapshot, {
         state: this.state,
         settings: this.settings,
@@ -393,12 +429,26 @@ export class ProjectsPanel {
         renderTasks: this.renderTasks,
         ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
         ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
+        ...(this.renderTaskCollectionControls
+          ? { renderTaskCollectionControls: this.renderTaskCollectionControls }
+          : {}),
         onUseWorkspaceDefault: (intent) => void this.useWorkspaceDefault(intent),
+        workNotesAvailability,
+        onOpenWorkNotesSettings: () => {
+          const settingsController = (
+            this.app as App & {
+              readonly setting?: { open?(): void; openTabById?(id: string): void };
+            }
+          ).setting;
+          settingsController?.open?.();
+          settingsController?.openTabById?.('task-calendar');
+        },
         ...(this.workNoteCommands && snapshot
           ? {
               workNotesAvailable:
                 snapshot.workNotes.length + snapshot.milestones.length > 0 ||
                 this.workNoteCommands.capabilities().create,
+              workNoteStatuses: this.workNoteCommands.statuses(),
               selectWorkNotes: (notes, viewState, textQuery) =>
                 selectWorkNotes({
                   notes,
@@ -406,10 +456,26 @@ export class ProjectsPanel {
                   viewState,
                   textQuery,
                 }),
-              renderWorkNotes: (host, path, notes) =>
-                this.renderWorkNotes(host, path, notes, 'list', snapshot.milestoneRollups),
+              renderWorkNotes: (host, path, notes, viewState) =>
+                this.renderWorkNotes(
+                  host,
+                  path,
+                  notes,
+                  viewState,
+                  'list',
+                  snapshot.milestoneRollups,
+                ),
               renderWorkNoteBoard: (host, path, notes) =>
-                this.renderWorkNotes(host, path, notes, 'board', snapshot.milestoneRollups),
+                this.renderWorkNotes(
+                  host,
+                  path,
+                  notes,
+                  this.workspaceSession
+                    .scopeSession('work-notes')
+                    .effectiveView(this.settings.projects.view.workNotes),
+                  'board',
+                  snapshot.milestoneRollups,
+                ),
               renderWorkNoteTimeline: (host, _path, notes) =>
                 this.renderWorkNoteTimeline(host, notes),
             }
