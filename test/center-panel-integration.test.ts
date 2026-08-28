@@ -2655,6 +2655,10 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     // This is the same production subscription that PanelView installs: a store event full-renders
     // CenterPanel, which disposes and recreates its ProjectsPanel instance.
     subscribeToProjectStore(() => panel.refresh());
+    const publishProjectSnapshot = (): void => {
+      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      onProjectStoreUpdate();
+    };
     panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
     const container = freshContainer();
     activeDocument.body.append(container);
@@ -2671,7 +2675,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
 
       project.statusId = 'published';
-      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      publishProjectSnapshot();
       await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
 
@@ -2680,7 +2684,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(undoStatus).toHaveBeenCalledWith('Projects/A.md', 'published', activeStatusId);
 
       project.statusId = activeStatusId;
-      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      publishProjectSnapshot();
       await flushMicrotasks();
       const nextCard = container.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
       const nextTarget = container.querySelector<HTMLElement>('[data-board-column="published"]')!;
@@ -2690,12 +2694,12 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
 
       project.statusId = 'published';
-      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      publishProjectSnapshot();
       await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
 
       project.statusId = settings.projects.statuses[2]!.id;
-      panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      publishProjectSnapshot();
       await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).toBeNull();
     } finally {
