@@ -20,6 +20,16 @@ export interface ParsedCommentTimestampPrefix {
   readonly text: string;
 }
 
+/** One scalar Project comment value, preserving its timestamp/body source split. */
+export type ParsedCommentTimestampBody =
+  | {
+      readonly kind: 'timestamp';
+      readonly prefix: string;
+      readonly timestamp: CommentTimestamp;
+      readonly text: string;
+    }
+  | { readonly kind: 'undated' | 'malformed'; readonly text: string };
+
 const LIST_PREFIX_RE = /^([\s>]*- )(.+)$/u;
 // Fixed-width date prefix is bounded; the lint heuristic cannot infer that here.
 // eslint-disable-next-line sonarjs/super-linear-regex
@@ -28,6 +38,7 @@ const INSTANT_PREFIX_RE =
   // Fixed-width timestamp grammar is bounded; the lint heuristic cannot infer that here.
   // eslint-disable-next-line sonarjs/super-linear-regex
   /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):([0-5]\d):([0-5]\d)(\.\d+)?(Z|[+-]\d{2}:\d{2}):([ \t]*)(.*)$/u;
+const TIMESTAMP_SHAPED_RE = /^\d{4}-\d{2}-\d{2}(?:T|:|\s|$)/u;
 
 export function atomDateTime(value: string): AtomDateTime {
   return value as AtomDateTime;
@@ -89,6 +100,45 @@ function epochForInstant(match: RegExpExecArray): number | undefined {
   return Number.isFinite(epochMs) ? epochMs : undefined;
 }
 
+/**
+ * Parse one `ATOM_OR_DAY: body` scalar without changing its source lexemes.
+ * Timestamp-shaped invalid input remains distinct from ordinary undated prose.
+ */
+export function parseCommentTimestampBody(value: string): ParsedCommentTimestampBody {
+  const instant = INSTANT_PREFIX_RE.exec(value);
+  if (instant) {
+    const epochMs = epochForInstant(instant);
+    if (epochMs !== undefined) {
+      const raw = value.slice(0, value.length - instant[8]!.length - instant[7]!.length - 1);
+      return {
+        kind: 'timestamp',
+        prefix: value.slice(0, value.length - instant[8]!.length),
+        timestamp: { precision: 'instant', atom: atomDateTime(raw), epochMs, raw },
+        text: instant[8]!,
+      };
+    }
+  }
+
+  const day = DAY_PREFIX_RE.exec(value);
+  if (day) {
+    try {
+      const timestamp = { precision: 'day' as const, value: localDate(day[1]!), raw: day[1]! };
+      return {
+        kind: 'timestamp',
+        prefix: value.slice(0, value.length - day[3]!.length),
+        timestamp,
+        text: day[3]!,
+      };
+    } catch {
+      // Timestamp-shaped invalid input is preserved below.
+    }
+  }
+
+  return TIMESTAMP_SHAPED_RE.test(value)
+    ? { kind: 'malformed', text: value }
+    : { kind: 'undated', text: value };
+}
+
 /** Parse one Markdown comment line while preserving its exact timestamp prefix for later edits. */
 export function parseCommentTimestampPrefix(
   line: string,
@@ -98,35 +148,15 @@ export function parseCommentTimestampPrefix(
   if (!list) return undefined;
   const listPrefix = list[1]!;
   const body = list[2]!;
-
-  const instant = INSTANT_PREFIX_RE.exec(body);
-  if (instant) {
-    const epochMs = epochForInstant(instant);
-    if (epochMs !== undefined) {
-      const raw = body.slice(0, body.length - instant[8]!.length - instant[7]!.length - 1);
-      return {
-        prefix: `${listPrefix}${raw}:${instant[7]}`,
-        timestamp: { precision: 'instant', atom: atomDateTime(raw), epochMs, raw },
-        text: instant[8]!,
-      };
-    }
+  const parsed = parseCommentTimestampBody(body);
+  if (parsed.kind !== 'timestamp') {
+    return { prefix: listPrefix, timestamp: undefined, text: parsed.text };
   }
-
-  const day = DAY_PREFIX_RE.exec(body);
-  if (day) {
-    try {
-      const value = localDate(day[1]!);
-      return {
-        prefix: `${listPrefix}${day[1]}:${day[2]}`,
-        timestamp: { precision: 'day', value, raw: day[1]! },
-        text: day[3]!,
-      };
-    } catch {
-      // Timestamp-shaped invalid input is an undated comment, preserving every character.
-    }
-  }
-
-  return { prefix: listPrefix, timestamp: undefined, text: body };
+  return {
+    prefix: `${listPrefix}${parsed.prefix}`,
+    timestamp: parsed.timestamp,
+    text: parsed.text,
+  };
 }
 
 export function formatNewCommentTimestamp(reading: ClockReading): AtomDateTime {

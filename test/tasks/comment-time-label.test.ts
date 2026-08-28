@@ -58,6 +58,7 @@ describe('comment time labels', () => {
     [60_000, 'in 1 minute'],
     [80 * 60_000, 'in 1 hour 20 minutes'],
     [24 * 60 * 60_000, 'in 1 day'],
+    [6 * 24 * 60 * 60_000 + 60 * 60_000, 'in 6 days 1 hour'],
   ] as const)('renders elapsed future delta %d with symmetric skew handling', (delta, expected) => {
     expect(label(instant(NOW + delta))).toBe(expected);
   });
@@ -71,5 +72,18 @@ describe('comment time labels', () => {
   it('renders instants older than seven elapsed days in the requested current zone', () => {
     const timestamp = instant(Date.parse('2026-08-01T20:30:00Z'));
     expect(label(timestamp)).toBe('Aug 2, 2026, 3:30 AM');
+  });
+
+  it('uses the supplied locale and timezone rather than the host defaults for absolute instants', () => {
+    const timestamp = instant(Date.parse('2026-08-01T20:30:00Z'));
+    expect(
+      formatCommentTimeLabel({
+        timestamp,
+        nowEpochMs: NOW,
+        today: localDate('2026-08-11'),
+        locale: 'en-GB',
+        timeZone: 'America/New_York',
+      }),
+    ).toBe('1 Aug 2026, 16:30');
   });
 });

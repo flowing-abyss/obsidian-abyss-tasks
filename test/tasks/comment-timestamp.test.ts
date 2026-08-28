@@ -46,6 +46,14 @@ describe('comment timestamp codec', () => {
     expect(parseCommentTimestampPrefix('  - ')).toBeUndefined();
   });
 
+  it('preserves list and blockquote prefixes plus CRLF handling through the adapter', () => {
+    expect(parseCommentTimestampPrefix('> \t- 2026-08-11:  body\r')).toEqual({
+      prefix: '> \t- 2026-08-11:  ',
+      timestamp: { precision: 'day', value: '2026-08-11', raw: '2026-08-11' },
+      text: 'body',
+    });
+  });
+
   it('formats a new comment from the already captured clock reading', () => {
     const reading = clockFrom(Date.parse('2026-08-11T09:32:10Z'), 420).read();
 
