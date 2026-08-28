@@ -115,6 +115,15 @@ function datesBetween(from: string, to: string): readonly string[] {
   return [...dates];
 }
 
+function presentationDates(dates: readonly string[]): readonly string[] {
+  const maximumLabels = 8;
+  if (dates.length <= maximumLabels) return dates;
+  return Array.from(
+    { length: maximumLabels },
+    (_, index) => dates[Math.round(((dates.length - 1) * index) / (maximumLabels - 1))]!,
+  );
+}
+
 function datePosition(date: string, from: string, to: string): number | undefined {
   const dateMs = Date.parse(`${date}T00:00:00.000Z`);
   const fromMs = Date.parse(`${from}T00:00:00.000Z`);
@@ -197,6 +206,7 @@ export function renderTimeline<T>(
   const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
   const window = options.dateWindow ?? inferredDateWindow(dated);
   const dates = window ? datesBetween(window.from, window.to) : [];
+  const axisDates = presentationDates(dates);
   let dragging: DragIntent<T> | null = null;
   let destroyed = false;
   const cleanups: Array<() => void> = [];
@@ -236,9 +246,9 @@ export function renderTimeline<T>(
         attr: { 'aria-hidden': 'true' },
       });
       axis.createDiv({ cls: 'abyss-timeline-axis-label' });
-      const axisDates = axis.createDiv({ cls: 'abyss-timeline-axis-dates' });
-      axisDates.style.setProperty('--abyss-timeline-days', String(Math.max(1, dates.length)));
-      for (const date of dates) axisDates.createSpan({ text: date.slice(5) });
+      const axisLabels = axis.createDiv({ cls: 'abyss-timeline-axis-dates' });
+      axisLabels.style.setProperty('--abyss-timeline-days', String(Math.max(1, axisDates.length)));
+      for (const date of axisDates) axisLabels.createSpan({ text: date.slice(5) });
     }
     const scroll = datedSection.createDiv({ cls: 'abyss-timeline-scroll' });
     const rows = scroll.createDiv({

@@ -98,6 +98,44 @@ describe('shared Timeline view', () => {
     expect(container.querySelector('[data-timeline-range]')).not.toBeNull();
   });
 
+  it('keeps a long desktop date axis scannable instead of rendering overlapping daily labels', () => {
+    const container = freshContainer();
+    renderTimeline(container, {
+      entries: [
+        {
+          value: { id: 'Long range' },
+          label: 'Long range',
+          item: {
+            kind: 'range',
+            key: 'project:Long range',
+            startMs: Date.UTC(2026, 7, 1),
+            endMs: Date.UTC(2026, 8, 11),
+          },
+          dateByRole: { start: '2026-08-01', end: '2026-09-11' },
+        },
+      ],
+      dateWindow: { from: '2026-08-01', to: '2026-09-11' },
+    });
+
+    const labels = Array.from(
+      container.querySelectorAll('.abyss-timeline-axis-dates > span'),
+      (label) => label.textContent,
+    ).filter((label): label is string => Boolean(label));
+    const dropDates = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-timeline-drop-date]'),
+      (cell) => cell.dataset.timelineDropDate,
+    ).filter((date): date is string => Boolean(date));
+
+    expect(labels.length).toBeGreaterThanOrEqual(2);
+    expect(labels.length).toBeLessThanOrEqual(8);
+    expect(labels[0]).toBe('08-01');
+    expect(labels[labels.length - 1]).toBe('09-11');
+    expect(dropDates).toHaveLength(42);
+    expect(dropDates[0]).toBe('2026-08-01');
+    expect(dropDates).toContain('2026-08-21');
+    expect(dropDates[dropDates.length - 1]).toBe('2026-09-11');
+  });
+
   it('routes drag, keyboard, and native date-picker changes through the same retained-role command', async () => {
     const container = freshContainer();
     const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });

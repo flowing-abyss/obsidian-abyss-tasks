@@ -6293,6 +6293,8 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-project-name {
   color: var(--text-normal);
+  min-width: 0;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6307,6 +6309,7 @@ body.abyss-modal-open .popover.hover-popover {
   align-items: center;
   justify-content: flex-end;
   min-width: 0;
+  overflow-x: hidden;
   gap: 8px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);

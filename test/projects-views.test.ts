@@ -271,6 +271,86 @@ describe('renderProjectsList', () => {
     }
   });
 
+  it('constrains a long Project title to its Board identity control', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
+    const el = attachedContainer();
+    try {
+      renderProjectsBoard(el, {
+        ...ctx,
+        state: new AppState(),
+        settings,
+        snapshots: [
+          workspace(
+            proj({
+              name: 'A deliberately long Project title that must not escape its Board card',
+            }),
+            {
+              workNoteRollup: { active: 12, completed: 8, dropped: 4 },
+              overdue: { tasks: 3, workNotes: 2 },
+              diagnostics: [
+                {
+                  type: 'work-note',
+                  path: 'Work Notes/Dense fixture.md',
+                  diagnostic: { type: 'broken-relation', field: 'blockedBy' },
+                },
+              ],
+            },
+          ),
+        ],
+        onMoveStatus: vi.fn(),
+        onUndoStatus: vi.fn(),
+      });
+
+      const identity = el.querySelector<HTMLElement>('.abyss-project-row-name')!;
+      const title = el.querySelector<HTMLElement>('.abyss-project-name')!;
+      expect(getComputedStyle(identity).minWidth).toBe('0px');
+      expect(getComputedStyle(title).minWidth).toBe('0px');
+      expect(getComputedStyle(title).maxWidth).toBe('100%');
+    } finally {
+      style.remove();
+      el.remove();
+    }
+  });
+
+  it('contains dense Board metadata paint within its Project card', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
+    const el = attachedContainer();
+    try {
+      renderProjectsBoard(el, {
+        ...ctx,
+        state: new AppState(),
+        settings,
+        snapshots: [
+          workspace(proj({ name: 'Dense metadata Project' }), {
+            workNoteRollup: { active: 12, completed: 8, dropped: 4 },
+            overdue: { tasks: 3, workNotes: 2 },
+            diagnostics: [
+              {
+                type: 'work-note',
+                path: 'Work Notes/Dense fixture.md',
+                diagnostic: { type: 'broken-relation', field: 'blockedBy' },
+              },
+            ],
+          }),
+        ],
+        onMoveStatus: vi.fn(),
+        onUndoStatus: vi.fn(),
+      });
+
+      const metadata = el.querySelector<HTMLElement>('.abyss-project-row-meta')!;
+      expect(['hidden', 'clip']).toContain(getComputedStyle(metadata).overflowX);
+    } finally {
+      style.remove();
+      el.remove();
+    }
+  });
+
   it('row click switches to the dashboard view', () => {
     const state = new AppState();
     const el = freshContainer();
