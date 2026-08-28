@@ -10,8 +10,15 @@ import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
-import type { CalendarSettings } from '../../settings/types';
-import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
+import type {
+  CalendarSettings,
+  ProjectTasksViewState,
+  WorkNotesViewState,
+} from '../../settings/types';
+import {
+  ProjectWorkspaceSession,
+  type UseProjectWorkspaceDefaultIntent,
+} from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import { renderProjectsList, showNewProjectInput } from './ProjectsListView';
@@ -166,6 +173,19 @@ export class ProjectsPanel {
     const observed = this.workNoteCommands?.observe(note);
     if (!this.workNoteCommands || !observed) return { type: 'invalid', field: 'path' };
     return this.workNoteCommands.setStatus(observed, statusId);
+  }
+
+  private async useWorkspaceDefault(intent: UseProjectWorkspaceDefaultIntent): Promise<void> {
+    if (intent.scope === 'tasks') {
+      this.settings.projects.view.tasks = structuredClone(
+        intent.viewState,
+      ) as ProjectTasksViewState;
+    } else {
+      this.settings.projects.view.workNotes = structuredClone(
+        intent.viewState,
+      ) as WorkNotesViewState;
+    }
+    await this.onSaveSettings();
   }
 
   private renderWorkNotes(
@@ -324,12 +344,13 @@ export class ProjectsPanel {
               workNotesAvailable:
                 snapshot.workNotes.length + snapshot.milestones.length > 0 ||
                 this.workNoteCommands.capabilities().create,
-              selectWorkNotes: (notes) =>
+              selectWorkNotes: (notes, viewState) =>
                 selectWorkNotes({
                   notes,
                   statuses: this.workNoteCommands!.statuses(),
-                  viewState: this.settings.projects.view.workNotes,
+                  viewState,
                 }),
+              onUseWorkspaceDefault: (intent) => void this.useWorkspaceDefault(intent),
               renderWorkNotes: (host, path, notes) =>
                 this.renderWorkNotes(host, path, notes, 'list', snapshot.milestoneRollups),
               renderWorkNoteBoard: (host, path, notes) =>

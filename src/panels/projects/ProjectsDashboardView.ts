@@ -35,13 +35,20 @@ export function renderProjectDashboard(
   const project = snapshot.project;
   const session = ctx.workspaceSession ?? new ProjectWorkspaceSession();
   session.openProject(project.path);
+  const taskScope = session.scopeSession('tasks');
+  const workNotesScope = session.scopeSession('work-notes');
   const selectedTasks = selectProjectTasks({
     actions: snapshot.tasks,
-    viewState: ctx.settings.projects.view.tasks,
+    viewState: taskScope.effectiveView(ctx.settings.projects.view.tasks),
     settings: ctx.settings,
+    ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
   });
   const allWorkNotes = [...snapshot.workNotes, ...snapshot.milestones];
-  const selectedWorkNotes = ctx.selectWorkNotes?.(allWorkNotes) ?? allWorkNotes;
+  const selectedWorkNotes =
+    ctx.selectWorkNotes?.(
+      allWorkNotes,
+      workNotesScope.effectiveView(ctx.settings.projects.view.workNotes),
+    ) ?? allWorkNotes;
   const workNotesAvailable =
     ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
 
@@ -112,9 +119,8 @@ export function renderProjectDashboard(
   let layout: ProjectWorkspaceLayout = session.layout;
   if (scope === 'work-notes' && !workNotesAvailable) {
     scope = 'tasks';
-    layout = 'list';
     session.scope = scope;
-    session.layout = layout;
+    layout = session.layout;
   }
   const workspace = container.createDiv({
     cls: 'abyss-project-tasks',
@@ -193,9 +199,8 @@ export function renderProjectDashboard(
     if (selectable) {
       button.addEventListener('click', () => {
         scope = value;
-        layout = 'list';
         session.scope = scope;
-        session.layout = layout;
+        layout = session.layout;
         renderWorkspace();
       });
     }
@@ -222,6 +227,15 @@ export function renderProjectDashboard(
   if (workNotesAvailable) {
     scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
   }
+  const useAsDefault = toolbar.createEl('button', {
+    text: 'Use as default',
+    attr: { type: 'button', 'data-project-use-as-default': '' },
+  });
+  useAsDefault.addEventListener('click', () => {
+    session.requestUseAsDefault(scope);
+    const intent = session.consumeUseAsDefaultIntent();
+    if (intent) ctx.onUseWorkspaceDefault?.(intent);
+  });
   layoutButton('list', 'List');
   if (
     snapshot.tasks.length > 0 ||

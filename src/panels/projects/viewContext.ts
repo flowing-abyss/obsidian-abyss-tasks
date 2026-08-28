@@ -1,8 +1,11 @@
 import type { AppState } from '../../app/AppState';
 import type { ProjectAction } from '../../projects/types';
 import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
-import type { CalendarSettings } from '../../settings/types';
-import type { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
+import type { CalendarSettings, WorkNotesViewState } from '../../settings/types';
+import type {
+  ProjectWorkspaceSession,
+  UseProjectWorkspaceDefaultIntent,
+} from './ProjectWorkspaceSession';
 
 /** Lifecycle owned by a Project dashboard child renderer. */
 export interface ProjectChildRenderHandle {
@@ -68,7 +71,12 @@ export interface ProjectsDashboardContext {
     notes: readonly WorkNoteSnapshot[],
   ) => ProjectChildRenderHandle;
   /** Applies the configured Work Note filter/sort before alternate layouts render. */
-  selectWorkNotes?: (notes: readonly WorkNoteSnapshot[]) => readonly WorkNoteSnapshot[];
+  selectWorkNotes?: (
+    notes: readonly WorkNoteSnapshot[],
+    viewState: WorkNotesViewState,
+  ) => readonly WorkNoteSnapshot[];
+  /** Owner callback for the explicit one-way session-to-preference promotion. */
+  onUseWorkspaceDefault?: (intent: UseProjectWorkspaceDefaultIntent) => void;
   /** Eligible records or an audited create capability make the optional scope visible. */
   workNotesAvailable?: boolean;
 }
