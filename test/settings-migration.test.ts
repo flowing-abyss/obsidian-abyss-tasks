@@ -17,8 +17,9 @@ describe('migrateSettings', () => {
     };
     expect(projects.view['board']).toEqual({
       version: 1,
-      statusIds: projects.statuses.map(({ id }) => id),
-      dormantStatusIds: [],
+      columnOrder: projects.statuses.map(({ id }) => id),
+      collapsedColumnIds: [],
+      hiddenColumnIds: [],
     });
     expect(projects.view['timeline']).toEqual({
       version: 1,
@@ -58,8 +59,9 @@ describe('migrateSettings', () => {
     const view = (raw['projects'] as { view: Record<string, unknown> }).view;
     expect(view['board']).toEqual({
       version: 1,
-      statusIds: ['planned', 'active', 'done'],
-      dormantStatusIds: ['retired', 'legacy'],
+      columnOrder: ['planned', 'active', 'done', 'retired', 'legacy'],
+      collapsedColumnIds: [],
+      hiddenColumnIds: [],
     });
     expect(view['timeline']).toEqual({
       version: 1,

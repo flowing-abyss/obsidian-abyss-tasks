@@ -1,3 +1,13 @@
+import {
+  buildBoardPreference,
+  migrateBoardPreference,
+  reconcileBoardPreference,
+  resetBoardPreference,
+  type BoardViewPreference,
+} from './boardPreferences';
+
+export type { BoardViewPreference as ProjectBoardPreference } from './boardPreferences';
+
 export const PROJECT_IDENTITY_WIDTH_MIN = 160;
 export const PROJECT_IDENTITY_WIDTH_MAX = 360;
 export const DEFAULT_PROJECT_IDENTITY_WIDTH = 240;
@@ -5,12 +15,6 @@ export const DEFAULT_PROJECT_IDENTITY_WIDTH = 240;
 export type PortfolioTimelineScale = 'week' | 'month' | 'quarter' | 'year';
 export type TaskTimelineScale = 'day' | 'week' | 'month';
 export type WorkNotesDateRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
-
-export interface ProjectBoardPreference {
-  readonly version: 1;
-  readonly statusIds: readonly string[];
-  readonly dormantStatusIds: readonly string[];
-}
 
 export interface ProjectTimelinePreferences {
   readonly version: 1;
@@ -34,21 +38,13 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-function stringArray(value: unknown): readonly string[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : [];
-}
-
-function unique(ids: readonly string[]): string[] {
-  return [...new Set(ids)];
-}
-
 export function clampProjectIdentityWidth(value: unknown): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_PROJECT_IDENTITY_WIDTH;
   return Math.max(PROJECT_IDENTITY_WIDTH_MIN, Math.min(PROJECT_IDENTITY_WIDTH_MAX, value));
 }
 
-export function buildProjectBoardPreference(statusIds: readonly string[]): ProjectBoardPreference {
-  return { version: 1, statusIds: unique(statusIds), dormantStatusIds: [] };
+export function buildProjectBoardPreference(statusIds: readonly string[]): BoardViewPreference {
+  return buildBoardPreference(statusIds);
 }
 
 export function buildProjectTimelinePreferences(): ProjectTimelinePreferences {
@@ -62,49 +58,25 @@ export function buildProjectTimelinePreferences(): ProjectTimelinePreferences {
 
 /** Separates temporarily unknown IDs so a later status restoration can recover them. */
 export function reconcileProjectBoardPreference(
-  preference: ProjectBoardPreference,
+  preference: BoardViewPreference,
   configuredStatusIds: readonly string[],
-): ProjectBoardPreference {
-  const configured = unique(configuredStatusIds);
-  const configuredSet = new Set(configured);
-  const stored = unique([...preference.statusIds, ...preference.dormantStatusIds]);
-  const active = stored.filter((id) => configuredSet.has(id));
-  const activeSet = new Set(active);
-  active.push(...configured.filter((id) => !activeSet.has(id)));
-  return {
-    version: 1,
-    statusIds: active,
-    dormantStatusIds: stored.filter((id) => !configuredSet.has(id)),
-  };
+): BoardViewPreference {
+  return reconcileBoardPreference(preference, configuredStatusIds);
 }
 
 /** Resets only the active columns; dormant IDs remain available for future restoration. */
 export function resetProjectBoardStatusOrder(
-  preference: ProjectBoardPreference,
+  preference: BoardViewPreference,
   configuredStatusIds: readonly string[],
-): ProjectBoardPreference {
-  const reconciled = reconcileProjectBoardPreference(preference, configuredStatusIds);
-  return {
-    version: 1,
-    statusIds: unique(configuredStatusIds),
-    dormantStatusIds: reconciled.dormantStatusIds,
-  };
+): BoardViewPreference {
+  return resetBoardPreference(preference, configuredStatusIds);
 }
 
 export function migrateProjectBoardPreference(
   value: unknown,
   configuredStatusIds: readonly string[],
-): ProjectBoardPreference {
-  const candidate = record(value);
-  if (!candidate) return buildProjectBoardPreference(configuredStatusIds);
-  return reconcileProjectBoardPreference(
-    {
-      version: 1,
-      statusIds: stringArray(candidate['statusIds']),
-      dormantStatusIds: stringArray(candidate['dormantStatusIds']),
-    },
-    configuredStatusIds,
-  );
+): BoardViewPreference {
+  return migrateBoardPreference(value, configuredStatusIds);
 }
 
 function isPortfolioTimelineScale(value: unknown): value is PortfolioTimelineScale {

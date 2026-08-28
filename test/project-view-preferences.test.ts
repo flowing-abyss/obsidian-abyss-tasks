@@ -10,16 +10,18 @@ describe('Project view preferences', () => {
     const preference = reconcileProjectBoardPreference(
       {
         version: 1,
-        statusIds: ['planned', 'retired', 'planned', 'active'],
-        dormantStatusIds: ['retired', 'legacy'],
+        columnOrder: ['planned', 'retired', 'planned', 'active', 'legacy'],
+        collapsedColumnIds: [],
+        hiddenColumnIds: [],
       },
       ['active', 'planned', 'done'],
     );
 
     expect(preference).toEqual({
       version: 1,
-      statusIds: ['planned', 'active', 'done'],
-      dormantStatusIds: ['retired', 'legacy'],
+      columnOrder: ['planned', 'active', 'done', 'retired', 'legacy'],
+      collapsedColumnIds: [],
+      hiddenColumnIds: [],
     });
   });
 
@@ -27,16 +29,18 @@ describe('Project view preferences', () => {
     const preference = reconcileProjectBoardPreference(
       {
         version: 1,
-        statusIds: ['active'],
-        dormantStatusIds: ['retired'],
+        columnOrder: ['active', 'retired'],
+        collapsedColumnIds: [],
+        hiddenColumnIds: [],
       },
       ['active', 'retired'],
     );
 
     expect(preference).toEqual({
       version: 1,
-      statusIds: ['active', 'retired'],
-      dormantStatusIds: [],
+      columnOrder: ['active', 'retired'],
+      collapsedColumnIds: [],
+      hiddenColumnIds: [],
     });
   });
 
@@ -45,15 +49,17 @@ describe('Project view preferences', () => {
       resetProjectBoardStatusOrder(
         {
           version: 1,
-          statusIds: ['planned', 'active'],
-          dormantStatusIds: ['retired', 'legacy'],
+          columnOrder: ['planned', 'active', 'retired', 'legacy'],
+          collapsedColumnIds: [],
+          hiddenColumnIds: [],
         },
         ['active', 'planned', 'retired', 'done'],
       ),
     ).toEqual({
       version: 1,
-      statusIds: ['active', 'planned', 'retired', 'done'],
-      dormantStatusIds: ['legacy'],
+      columnOrder: ['active', 'planned', 'retired', 'done', 'legacy'],
+      collapsedColumnIds: [],
+      hiddenColumnIds: [],
     });
   });
 
