@@ -489,6 +489,7 @@ export function renderProjectRow(
   onMoveFocus: (path: string, delta: number) => void,
   ownsArrowNavigation = true,
   showStatusControl = true,
+  spaceActivates = true,
 ): HTMLElement {
   const project = snapshot.project;
   const row = parent.createDiv({
@@ -655,7 +656,7 @@ export function renderProjectRow(
       onMoveFocus(project.path, event.key === 'ArrowDown' ? 1 : -1);
       return;
     }
-    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (event.key !== 'Enter' && (event.key !== ' ' || !spaceActivates)) return;
     if (event.target !== nameWrap) return;
     event.preventDefault();
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });

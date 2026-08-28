@@ -15,6 +15,11 @@ export interface BoardColumn<T> {
   readonly items: readonly T[];
 }
 
+export interface ProjectBoardProjectionOptions {
+  readonly columnOrder?: readonly string[];
+  readonly includeUnmapped?: boolean;
+}
+
 export type BoardMutationResult =
   | ProjectPropertyCommandResult
   | WorkNoteCommandResult
@@ -44,6 +49,7 @@ function projectRole(status: ProjectStatus): Exclude<BoardColumn<Project>['role'
 export function projectBoardColumns(
   statuses: readonly ProjectStatus[],
   projects: readonly Project[] = [],
+  options: ProjectBoardProjectionOptions = {},
 ): readonly BoardColumn<Project>[] {
   const columnFor = (status: ProjectStatus): BoardColumn<Project> => ({
     key: status.id,
@@ -51,10 +57,21 @@ export function projectBoardColumns(
     role: projectRole(status),
     items: projects.filter((project) => project.statusId === status.id),
   });
+  const configuredById = new Map(statuses.map((status) => [status.id, status]));
+  const storedOrder = options.columnOrder ?? statuses.map(({ id }) => id);
+  const orderedStatuses = [
+    ...storedOrder.flatMap((id) => {
+      const status = configuredById.get(id);
+      return status ? [status] : [];
+    }),
+    ...statuses.filter((status) => !storedOrder.includes(status.id)),
+  ];
   const dropped = statuses
     .filter((status) => projectRole(status) === 'terminal-left')
     .map(columnFor);
-  const regular = statuses.filter((status) => projectRole(status) === 'regular').map(columnFor);
+  const regular = orderedStatuses
+    .filter((status) => projectRole(status) === 'regular')
+    .map(columnFor);
   const published = statuses
     .filter((status) => projectRole(status) === 'terminal-right')
     .map(columnFor);
@@ -64,7 +81,12 @@ export function projectBoardColumns(
     role: 'unmapped',
     items: projects.filter((project) => project.statusId === null),
   };
-  return [...dropped, ...regular, unmapped, ...published];
+  return [
+    ...dropped,
+    ...regular,
+    ...(options.includeUnmapped === false ? [] : [unmapped]),
+    ...published,
+  ];
 }
 
 /** Each configured task status remains an independent column, even when types match. */

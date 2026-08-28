@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildProjectBoardPreference,
   migrateProjectTimelinePreferences,
   reconcileProjectBoardPreference,
   resetProjectBoardStatusOrder,
 } from '../src/panels/projects/projectViewPreferences';
 
 describe('Project view preferences', () => {
+  it('collapses terminal lifecycle rails in a fresh portfolio preference', () => {
+    expect(
+      buildProjectBoardPreference(['dropped', 'active', 'published'], ['dropped', 'published']),
+    ).toEqual({
+      version: 1,
+      columnOrder: ['dropped', 'active', 'published'],
+      collapsedColumnIds: ['dropped', 'published'],
+      hiddenColumnIds: [],
+    });
+  });
+
   it('reconciles active board IDs in their stored order while preserving dormant IDs', () => {
     const preference = reconcileProjectBoardPreference(
       {

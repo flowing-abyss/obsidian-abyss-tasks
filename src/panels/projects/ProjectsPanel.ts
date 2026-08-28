@@ -588,6 +588,7 @@ export class ProjectsPanel {
           this.onBoardUndoResolved?.(pending, successful);
         },
         session: this.workspaceSession.portfolioBoard,
+        onAnnounce: this.onAnnounce,
       });
       this.viewCleanup = () => board.destroy();
     } else {

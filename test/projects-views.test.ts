@@ -241,6 +241,236 @@ describe('renderProjectsList', () => {
     expect(el.querySelector('[aria-label="New project"]')).not.toBeNull();
   });
 
+  it('renders terminal and regular collapsed rails while removing hidden columns from the DOM', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.statuses.push(
+      {
+        id: 'dropped',
+        label: 'Dropped',
+        behavior: 'dropped',
+        onLeftPanel: false,
+        match: { kind: 'property', property: 'status', value: 'dropped' },
+      },
+      {
+        id: 'published',
+        label: 'Published',
+        behavior: 'published',
+        onLeftPanel: false,
+        match: { kind: 'property', property: 'status', value: 'published' },
+      },
+    );
+    const [active, planned] = settings.projects.statuses;
+    const dropped = settings.projects.statuses.find(({ behavior }) => behavior === 'dropped')!;
+    const published = settings.projects.statuses.find(({ behavior }) => behavior === 'published')!;
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      version: 1,
+      columnOrder: [dropped.id, active!.id, planned!.id, published.id],
+      collapsedColumnIds: [dropped.id, planned!.id, published.id],
+      hiddenColumnIds: [active!.id],
+    };
+    const el = freshContainer();
+
+    renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+    });
+
+    expect(el.querySelector(`[data-board-column="${active!.id}"]`)).toBeNull();
+    expect(el.querySelectorAll('.abyss-board-column.is-column-collapsed')).toHaveLength(3);
+    const hidden = el.querySelector<HTMLButtonElement>('[data-board-hidden-disclosure]');
+    expect(hidden?.textContent).toContain('Hidden');
+    expect(hidden?.textContent).toContain('1');
+  });
+
+  it('shows one repair diagnostic and disables every lifecycle mutation for duplicate terminals', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.statuses.push(
+      {
+        id: 'dropped',
+        label: 'Dropped',
+        behavior: 'dropped',
+        onLeftPanel: false,
+        match: { kind: 'property', property: 'status', value: 'dropped' },
+      },
+      {
+        id: 'second-dropped',
+        label: 'Abandoned',
+        behavior: 'dropped',
+        onLeftPanel: false,
+        match: { kind: 'property', property: 'status', value: 'abandoned' },
+      },
+    );
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const el = freshContainer();
+
+    renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+    });
+
+    expect(el.querySelectorAll('[data-board-lifecycle-diagnostic]')).toHaveLength(1);
+    expect(el.querySelector('[data-board-lifecycle-diagnostic]')?.textContent).toMatch(
+      /only one.*dropped/i,
+    );
+    expect(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('[data-board-status-menu]')).every(
+        ({ disabled }) => disabled,
+      ),
+    ).toBe(true);
+    expect(el.querySelector('[data-board-interaction-root]')?.getAttribute('aria-disabled')).toBe(
+      'true',
+    );
+  });
+
+  it('persists regular column collapse, hide, restore, reorder, and reset from Board controls', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const regular = settings.projects.statuses.filter(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    );
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const el = freshContainer();
+
+    const render = () =>
+      renderProjectsBoard(el, {
+        ...ctx,
+        settings,
+        onSaveSettings,
+        snapshots: [workspace()],
+        onMoveStatus: vi.fn(),
+        onUndoStatus: vi.fn(),
+      });
+    let handle = render();
+    el.querySelector<HTMLButtonElement>(
+      `[data-board-collapse-column="${regular[0]!.id}"]`,
+    )!.click();
+    await Promise.resolve();
+    expect(settings.projects.view.board.collapsedColumnIds).toContain(regular[0]!.id);
+
+    el.querySelector<HTMLButtonElement>(`[data-board-hide-column="${regular[1]!.id}"]`)!.click();
+    await Promise.resolve();
+    expect(settings.projects.view.board.hiddenColumnIds).toContain(regular[1]!.id);
+    handle.destroy();
+    handle = render();
+    el.querySelector<HTMLButtonElement>('[data-board-hidden-disclosure]')!.click();
+    el.querySelector<HTMLButtonElement>(`[data-board-restore-column="${regular[1]!.id}"]`)!.click();
+    await Promise.resolve();
+    expect(settings.projects.view.board.hiddenColumnIds).not.toContain(regular[1]!.id);
+
+    el.querySelector<HTMLButtonElement>(
+      `[data-board-reorder-handle="${regular[0]!.id}"]`,
+    )!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await Promise.resolve();
+    expect(settings.projects.view.board.columnOrder.indexOf(regular[0]!.id)).toBeGreaterThan(
+      settings.projects.view.board.columnOrder.indexOf(regular[1]!.id),
+    );
+    el.querySelector<HTMLButtonElement>('[data-board-reset-order]')!.click();
+    await Promise.resolve();
+    expect(settings.projects.view.board.columnOrder).toEqual(
+      settings.projects.statuses.map(({ id }) => id),
+    );
+    expect(onSaveSettings).toHaveBeenCalled();
+    handle.destroy();
+  });
+
+  it('uses the shared pointer controller for an exact single Project lifecycle move', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const state = new AppState();
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: active!.id,
+      nextStatusId: planned!.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state,
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+    const source = el.querySelector<HTMLElement>(`[data-board-column="${active!.id}"]`)!;
+    const target = el.querySelector<HTMLElement>(`[data-board-column="${planned!.id}"]`)!;
+    const columns = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 40, 220, 72);
+    source.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    target.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    columns.getBoundingClientRect = () => new DOMRect(0, 0, 560, 500);
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 60,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 9 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    expect(card.getAttribute('draggable')).toBe('false');
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    expect(el.querySelector('[data-board-drag-preview]')?.textContent).toContain('A');
+    expect(el.querySelector('[data-board-landing-gap]')).not.toBeNull();
+    pointer('pointerup', 320);
+    card.querySelector<HTMLButtonElement>('[data-project-identity-control]')!.click();
+    pointer('pointerup', 320);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(onMoveStatus).toHaveBeenCalledWith('Projects/A.md', planned!.id);
+    expect(state.get('projectsPanel')).toEqual({ view: 'list' });
+    expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+  });
+
+  it('offers the same controller move through Space and arrow keys', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const state = new AppState();
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: active!.id,
+      nextStatusId: planned!.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state,
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    const identity = el.querySelector<HTMLElement>('[data-board-item-focus="Projects/A.md"]')!;
+    identity.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    expect(state.get('projectsPanel')).toEqual({ view: 'list' });
+    identity.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    identity.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(onMoveStatus).toHaveBeenCalledWith('Projects/A.md', planned!.id);
+  });
+
   it('keeps deep reused Project rows constrained to the Board extent while keyboard traversal remounts', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';

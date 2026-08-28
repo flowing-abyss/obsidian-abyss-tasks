@@ -43,8 +43,14 @@ export function clampProjectIdentityWidth(value: unknown): number {
   return Math.max(PROJECT_IDENTITY_WIDTH_MIN, Math.min(PROJECT_IDENTITY_WIDTH_MAX, value));
 }
 
-export function buildProjectBoardPreference(statusIds: readonly string[]): BoardViewPreference {
-  return buildBoardPreference(statusIds);
+export function buildProjectBoardPreference(
+  statusIds: readonly string[],
+  initiallyCollapsedIds: readonly string[] = [],
+): BoardViewPreference {
+  return {
+    ...buildBoardPreference(statusIds),
+    collapsedColumnIds: [...new Set(initiallyCollapsedIds.filter((id) => statusIds.includes(id)))],
+  };
 }
 
 export function buildProjectTimelinePreferences(): ProjectTimelinePreferences {

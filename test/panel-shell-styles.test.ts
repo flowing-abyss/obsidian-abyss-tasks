@@ -225,6 +225,39 @@ describe('Panel shell top rhythm', () => {
   });
 });
 
+describe('Portfolio Board density contract', () => {
+  it('owns one horizontal scroller with readable expanded columns and fixed rails', () => {
+    const columns = declarationsFor('.abyss-board-columns');
+    const expanded = declarationsFor('.abyss-board-column');
+    const rail = declarationsFor('.abyss-board-column.is-column-collapsed');
+
+    expect(columns).toContain('overflow-x: auto');
+    expect(columns).toContain('grid-auto-columns: max-content');
+    expect(expanded).toContain('inline-size: 17rem');
+    expect(expanded).toContain('min-inline-size: 17rem');
+    expect(rail).toContain('inline-size: 3rem');
+    expect(columns).not.toContain('minmax(0, 1fr)');
+  });
+
+  it('keeps Project board titles readable instead of breaking words vertically', () => {
+    const title = declarationsFor('.abyss-board .abyss-project-name');
+    expect(title).toContain('white-space: normal');
+    expect(title).toContain('word-break: normal');
+    expect(title).toContain('overflow-wrap: anywhere');
+    expect(title).toContain('-webkit-line-clamp: 2');
+  });
+
+  it('does not reserve an empty fourth metadata track beside Project card titles', () => {
+    const primary = declarationsFor('.abyss-board .abyss-project-row-line--primary');
+    const progress = declarationsFor(
+      '.abyss-board .abyss-project-task-progress .abyss-progress-wrap',
+    );
+    expect(primary).toContain('grid-template-columns: 10px minmax(0, 1fr) auto auto');
+    expect(primary).not.toContain('minmax(5rem, auto)');
+    expect(progress).toContain('min-width: 4rem');
+  });
+});
+
 describe('Global search field geometry', () => {
   it('keeps the global search field flexible and bounded without width animation', () => {
     const globalSearch = declarationsFor('.abyss-search-global');
@@ -304,8 +337,8 @@ describe('Projects hardening styles', () => {
       '.abyss-board-status-menu',
     );
     expect(coarse).toContain('opacity: 1');
-    expect(coarse).toContain('min-block-size: 32px');
-    expect(coarse).toContain('min-inline-size: 32px');
+    expect(coarse).toContain('min-block-size: 44px');
+    expect(coarse).toContain('min-inline-size: 44px');
     const desktop = declarationsFor('.abyss-board-status-menu');
     expect(desktop).toContain('block-size: 26px');
     expect(desktop).toContain('inline-size: 26px');

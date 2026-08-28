@@ -78,6 +78,34 @@ describe('board projections', () => {
     ]);
   });
 
+  it('applies the reconciled regular-column override while preserving lifecycle bookends', () => {
+    const projects = [
+      project('Projects/A.md', 'active'),
+      project('Projects/B.md', 'completed'),
+      project('Projects/C.md', null),
+    ];
+
+    expect(
+      projectBoardColumns(projectStatuses, projects, {
+        columnOrder: ['published', 'completed', 'dropped', 'active'],
+        includeUnmapped: false,
+      }).map(({ key }) => key),
+    ).toEqual(['dropped', 'completed', 'active', 'published']);
+  });
+
+  it('retains canonical project order inside every status column', () => {
+    const projects = [
+      project('Projects/Z.md', 'active'),
+      project('Projects/A.md', 'completed'),
+      project('Projects/B.md', 'active'),
+    ];
+
+    const active = projectBoardColumns(projectStatuses, projects).find(
+      ({ key }) => key === 'active',
+    );
+    expect(active?.items.map(({ path }) => path)).toEqual(['Projects/Z.md', 'Projects/B.md']);
+  });
+
   it('keeps two configured Task statuses of the same semantic type separate', () => {
     const statuses: TaskStatusDef[] = [
       { id: 'todo-a', symbol: ' ', name: 'Ready', type: 'todo', icon: 'circle', core: false },

@@ -950,6 +950,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
       body: (bodyEl, idx) => this.renderStatusCard(bodyEl, idx),
       onReorder: (from, to) => {
         this.moveItem(projects.statuses, from, to);
+        if (projects.view.board['orderOverride'] !== true) {
+          const activeIds = projects.statuses.map(({ id }) => id);
+          const activeSet = new Set(activeIds);
+          const dormant = projects.view.board.columnOrder.filter((id) => !activeSet.has(id));
+          projects.view.board = {
+            ...projects.view.board,
+            columnOrder: [...activeIds, ...dormant],
+          };
+        }
         void this.plugin.saveSettings();
         // eslint-disable-next-line @typescript-eslint/no-deprecated
         this.display();
