@@ -325,7 +325,7 @@ describe('Projects hardening styles', () => {
   });
 
   it('resets compact Project identity button chrome and exposes existing row actions on coarse pointers', () => {
-    const identity = declarationsFor('.abyss-project-row-name');
+    const identity = declarationsFor('.abyss-project-row button.abyss-project-row-name');
     expect(identity).toContain('appearance: none');
     expect(identity).toContain('background: transparent');
     expect(identity).toContain('border: 0');
@@ -333,7 +333,10 @@ describe('Projects hardening styles', () => {
     expect(identity).toContain('padding: 0');
     expect(identity).toContain('font: inherit');
     expect(identity).toContain('text-align: start');
-    expect(declarationsFor('.abyss-project-row-name:focus-visible')).toContain('outline:');
+    expect(identity).toContain('justify-content: flex-start');
+    expect(
+      declarationsFor('.abyss-project-row button.abyss-project-row-name:focus-visible'),
+    ).toContain('outline:');
 
     const coarseActions = declarationsInAtRule(
       '@media (hover: none), (pointer: coarse)',

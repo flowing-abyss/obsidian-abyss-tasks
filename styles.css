@@ -6319,6 +6319,9 @@ body.abyss-modal-open .popover.hover-popover {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: -1px;
 }
+.abyss-project-row.is-single-line {
+  grid-template-rows: minmax(0, 1fr);
+}
 .abyss-project-row-line {
   min-width: 0;
   overflow: hidden;
@@ -6358,10 +6361,11 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--color-green);
   background: currentColor;
 }
-.abyss-project-row-name {
+.abyss-project-row button.abyss-project-row-name {
   appearance: none;
   min-width: 0;
   display: flex;
+  justify-content: flex-start;
   padding: 0;
   border: 0;
   background: transparent;
@@ -6370,7 +6374,7 @@ body.abyss-modal-open .popover.hover-popover {
   font: inherit;
   text-align: start;
 }
-.abyss-project-row-name:focus-visible {
+.abyss-project-row button.abyss-project-row-name:focus-visible {
   outline: 1px solid var(--background-modifier-border-focus);
   outline-offset: 1px;
 }

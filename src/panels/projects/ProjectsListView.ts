@@ -455,9 +455,19 @@ function healthReason(health: ProjectHealthProjection): string {
 
 function dateSignal(health: ProjectHealthProjection): string | undefined {
   if (!health.date) return undefined;
-  return health.date.type === 'overdue-actionable-task'
-    ? `Overdue ${health.date.value}`
-    : health.date.value;
+  const match = /^(\d{4})-(\d{2})-(\d{2})/u.exec(health.date.value);
+  if (!match) return undefined;
+  const instant = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+  const parts = new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).formatToParts(instant);
+  const day = parts.find(({ type }) => type === 'day')?.value;
+  const month = parts.find(({ type }) => type === 'month')?.value;
+  if (!day || !month) return undefined;
+  const compact = `${day} ${month}`;
+  return health.date.type === 'overdue-actionable-task' ? `Overdue ${compact}` : compact;
 }
 
 function currentLocalDate(): string {
@@ -521,44 +531,18 @@ export function renderProjectRow(
       attr: { 'data-priority': project.priority, 'aria-label': `Priority ${project.priority}` },
     });
   }
-  const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });
   if (snapshot.taskRollup.total > 0) {
+    const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });
     renderProgressBar(
       taskProgress,
       snapshot.taskRollup.done,
       snapshot.taskRollup.total,
       `${project.name} task progress`,
     );
-  } else {
-    taskProgress.createSpan({ cls: 'abyss-project-no-tasks', text: 'No tasks' });
   }
 
-  const secondLine = row.createDiv({
-    cls: 'abyss-project-row-line abyss-project-row-line--secondary',
-  });
   const nextAction = health.selectedNextAction;
-  if (nextAction) {
-    /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
-    const next = secondLine.createEl('button', {
-      cls: 'abyss-project-next-action',
-      attr: {
-        type: 'button',
-        'aria-label': 'Open Next Action',
-        title: 'Open Next Action',
-      },
-    });
-    /* eslint-enable obsidianmd/ui/sentence-case */
-    setIcon(next, 'list-checks');
-    next.createSpan({ cls: 'abyss-project-next-action-title', text: nextAction.task.title });
-    next.addEventListener('click', (event) => {
-      event.stopPropagation();
-      ctx.state.set('taskStack', [nextAction.task]);
-    });
-  } else {
-    secondLine.createSpan({ cls: 'abyss-project-health-reason', text: reason });
-  }
   const date = dateSignal(health);
-  if (date) secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
   const workNoteCount =
     snapshot.workNoteRollup.active +
     snapshot.workNoteRollup.completed +
@@ -570,32 +554,61 @@ export function renderProjectRow(
     Number(health.flags.duplicateNextAction) +
     Number(health.flags.malformedNextAction) +
     Number(health.flags.rangeIssue !== undefined);
-  if (workNoteCount > 0 || diagnosticCount > 0) {
-    const exceptions = secondLine.createSpan({ cls: 'abyss-project-exceptions' });
-    if (workNoteCount > 0) {
-      exceptions.createSpan({
-        cls: 'abyss-project-work-note-count',
-        text: String(workNoteCount),
-        attr: { 'aria-label': `${String(workNoteCount)} Work Notes`, title: 'Work Notes' },
-      });
-    }
-    if (diagnosticCount > 0) {
-      exceptions.createSpan({
-        cls: 'abyss-project-diagnostic-count',
-        text: String(diagnosticCount),
+  const meaningfulReason = health.reason.type !== 'insufficient-actionable-evidence';
+  if (nextAction || meaningfulReason || date || workNoteCount > 0 || diagnosticCount > 0) {
+    const secondLine = row.createDiv({
+      cls: 'abyss-project-row-line abyss-project-row-line--secondary',
+    });
+    if (nextAction) {
+      /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
+      const next = secondLine.createEl('button', {
+        cls: 'abyss-project-next-action',
         attr: {
-          'aria-label': `${String(diagnosticCount)} project diagnostics`,
-          title: 'Project diagnostics',
+          type: 'button',
+          'aria-label': 'Open Next Action',
+          title: 'Open Next Action',
+        },
+      });
+      /* eslint-enable obsidianmd/ui/sentence-case */
+      setIcon(next, 'list-checks');
+      next.createSpan({ cls: 'abyss-project-next-action-title', text: nextAction.task.title });
+      next.addEventListener('click', (event) => {
+        event.stopPropagation();
+        ctx.state.set('taskStack', [nextAction.task]);
+      });
+    } else if (meaningfulReason) {
+      secondLine.createSpan({ cls: 'abyss-project-health-reason', text: reason });
+    }
+    if (date) secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
+    if (workNoteCount > 0 || diagnosticCount > 0) {
+      const exceptions = secondLine.createSpan({ cls: 'abyss-project-exceptions' });
+      if (workNoteCount > 0) {
+        exceptions.createSpan({
+          cls: 'abyss-project-work-note-count',
+          text: String(workNoteCount),
+          attr: { 'aria-label': `${String(workNoteCount)} Work Notes`, title: 'Work Notes' },
+        });
+      }
+      if (diagnosticCount > 0) {
+        exceptions.createSpan({
+          cls: 'abyss-project-diagnostic-count',
+          text: String(diagnosticCount),
+          attr: {
+            'aria-label': `${String(diagnosticCount)} project diagnostics`,
+            title: 'Project diagnostics',
+          },
+        });
+      }
+      exceptions.createSpan({
+        cls: 'abyss-project-exception-summary',
+        text: '!',
+        attr: {
+          'aria-label': `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
         },
       });
     }
-    exceptions.createSpan({
-      cls: 'abyss-project-exception-summary',
-      text: '!',
-      attr: {
-        'aria-label': `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
-      },
-    });
+  } else {
+    row.addClass('is-single-line');
   }
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });

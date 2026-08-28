@@ -379,6 +379,27 @@ describe('renderProjectsList', () => {
     }
   });
 
+  it('keeps the native Overview title button quiet and left-aligned under Obsidian button chrome', () => {
+    const style = activeDocument.head.createEl('style');
+    style.textContent = `${shippedStyles}\nbutton:not(.clickable-icon) {
+      background-color: rgb(51, 51, 51);
+      justify-content: center;
+    }`;
+    const el = attachedContainer();
+    try {
+      renderProjectsList(el, [workspace()], { ...ctx, state: new AppState() });
+
+      const identity = el.querySelector<HTMLElement>('.abyss-project-row-name')!;
+      const computed = getComputedStyle(identity);
+      expect(computed.backgroundColor).toBe('rgba(0, 0, 0, 0)');
+      expect(computed.justifyContent).toBe('flex-start');
+      expect(computed.textAlign).toBe('start');
+    } finally {
+      style.remove();
+      el.remove();
+    }
+  });
+
   it('contains dense Board evidence in the same two-line Project card without metadata overflow', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
@@ -678,7 +699,7 @@ describe('renderProjectsList', () => {
     );
   });
 
-  it('keeps the two-line shell and overlaid actions stable with or without a Next Action', () => {
+  it('keeps row extent and overlaid actions stable with or without a secondary line', () => {
     const style = activeDocument.head.createEl('style');
     style.textContent = shippedStyles;
     const overview = freshContainer();
@@ -730,7 +751,7 @@ describe('renderProjectsList', () => {
       const setRow = overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!;
       const unsetActions = unsetRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
       const setActions = setRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
-      expect(unsetRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
+      expect(unsetRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(1);
       expect(setRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
       expect(unsetRow.querySelector('.abyss-project-row-meta')).toBeNull();
       expect(setRow.querySelector('.abyss-project-row-meta')).toBeNull();

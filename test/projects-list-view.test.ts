@@ -366,11 +366,12 @@ describe('renderProjectsList production Overview rows', () => {
     expect(row.querySelector('.abyss-project-next-action-title')?.textContent).toBe(
       'Ship the migration',
     );
-    expect(row.querySelector('.abyss-project-date-signal')?.textContent).toContain('2026-08-30');
+    expect(row.querySelector('.abyss-project-date-signal')?.textContent).toBe('30 Aug');
+    expect(row.querySelector('.abyss-project-exceptions')).toBeNull();
     expect(row.textContent).not.toMatch(/Projects\/Portfolio\.md|\bTasks\b|\bWork Notes\b/u);
   });
 
-  it('uses one calm reason and No tasks for an empty Project without a metadata scroller', () => {
+  it('omits empty progress and an insufficient-evidence secondary line', () => {
     const root = freshContainer();
     renderProjectsList(
       root,
@@ -395,11 +396,40 @@ describe('renderProjectsList production Overview rows', () => {
     );
 
     const row = root.querySelector<HTMLElement>('.abyss-project-row')!;
-    expect(row.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
-    expect(row.textContent).toContain('No tasks');
-    expect(row.textContent).toContain('No actionable next action');
+    expect(row.querySelectorAll('.abyss-project-row-line')).toHaveLength(1);
+    expect(row.querySelector('.abyss-project-task-progress')).toBeNull();
+    expect(row.textContent).not.toContain('No tasks');
+    expect(row.textContent).not.toContain('No actionable next action');
     expect(row.querySelector('.abyss-project-row-meta')).toBeNull();
     expect(row.querySelector('.abyss-project-folder')).toBeNull();
+  });
+
+  it('formats an Atom project range date as the compact Task-row date signal', () => {
+    const atom = '2026-09-15T17:00:00+07:00';
+    const root = freshContainer();
+    renderProjectsList(
+      root,
+      [
+        snapshot({
+          project: {
+            ...snapshot().project,
+            range: {
+              end: {
+                raw: atom,
+                precision: 'datetime',
+                instantMs: Date.parse(atom),
+                offsetMinutes: 420,
+              },
+            },
+          },
+        }),
+      ],
+      context(),
+    );
+
+    const signal = root.querySelector<HTMLElement>('.abyss-project-date-signal')!;
+    expect(signal.textContent).toBe('15 Sep');
+    expect(signal.textContent).not.toContain('T17:00:00');
   });
 
   it('keeps long multilingual titles in one title node and bounds 100+ rows', () => {
