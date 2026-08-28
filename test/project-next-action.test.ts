@@ -49,32 +49,51 @@ describe('Project Next Action', () => {
     });
   });
 
-  it('keeps one genuinely external Next Action untouched with joined membership', async () => {
-    const external = task({
-      title: 'External',
+  it('moves a direct Project Task from an inherited Next Action without touching another Project', async () => {
+    const inherited = task({
+      title: 'Inherited Work Note task',
       tags: ['#task/next_action'],
-      source: { filePath: 'Notes/Elsewhere.md', line: 1 },
+      source: { filePath: 'Notes/Work A.md', line: 1 },
+    });
+    const external = task({
+      title: 'Other Project task',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/B.md', line: 1 },
     });
     const target = task({
-      title: 'Joined target',
-      source: { filePath: 'Notes/Work B.md', line: 2 },
+      title: 'Direct Project task',
+      source: { filePath: 'Projects/A.md', line: 2 },
     });
-    const applyRootTagChanges = vi.fn();
+    const result = {
+      type: 'ok' as const,
+      outcome: { type: 'task' as const, task: target },
+      changed: true,
+    };
+    const applyRootTagChanges = vi.fn().mockResolvedValue(result);
     const application = {
-      queries: taskQueryApi({ list: () => [external, target] }),
+      queries: taskQueryApi({ list: () => [inherited, external, target] }),
       execute: vi.fn(),
       applyRootTagChanges,
     } as unknown as TaskApplicationApi;
     const membership = (_projectPath: string, candidate: typeof target): boolean =>
-      candidate.ref.filePath === target.ref.filePath && candidate.ref.line === target.ref.line;
+      [inherited, target].some(
+        (joined) =>
+          joined.ref.filePath === candidate.ref.filePath && joined.ref.line === candidate.ref.line,
+      );
 
     await expect(
       new NextActionService(application, membership).set('Projects/A.md', target),
-    ).resolves.toMatchObject({ type: 'integrity-conflict', tasks: [external] });
-    expect(applyRootTagChanges).not.toHaveBeenCalled();
+    ).resolves.toBe(result);
+    expect(applyRootTagChanges).toHaveBeenCalledWith({
+      primary: target.ref,
+      changes: [
+        { task: target, tags: { add: ['#task/next_action'] } },
+        { task: inherited, tags: { remove: ['#task/next_action'] } },
+      ],
+    });
   });
 
-  it('does not delete duplicate external next-action tags', async () => {
+  it('adds a direct Project Next Action without changing duplicate markers in other Projects', async () => {
     const first = task({
       title: 'First external',
       tags: ['#task/next_action'],
@@ -89,17 +108,28 @@ describe('Project Next Action', () => {
       title: 'Wanted',
       source: { filePath: 'Projects/A.md', line: 3 },
     });
-    const applyRootTagChanges = vi.fn();
+    const result = {
+      type: 'ok' as const,
+      outcome: { type: 'task' as const, task: target },
+      changed: true,
+    };
+    const applyRootTagChanges = vi.fn().mockResolvedValue(result);
     const application = {
       queries: taskQueryApi({ list: () => [first, second, target] }),
       execute: vi.fn(),
       applyRootTagChanges,
     } as unknown as TaskApplicationApi;
 
+    const membership = (_projectPath: string, candidate: typeof target): boolean =>
+      candidate.ref.filePath === target.ref.filePath && candidate.ref.line === target.ref.line;
+
     await expect(
-      new NextActionService(application).set('Projects/A.md', target),
-    ).resolves.toMatchObject({ type: 'integrity-conflict' });
-    expect(applyRootTagChanges).not.toHaveBeenCalled();
+      new NextActionService(application, membership).set('Projects/A.md', target),
+    ).resolves.toBe(result);
+    expect(applyRootTagChanges).toHaveBeenCalledWith({
+      primary: target.ref,
+      changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+    });
   });
 
   it('moves a same-file tag through one neutral multi-root application intent', async () => {

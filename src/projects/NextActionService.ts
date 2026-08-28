@@ -27,13 +27,10 @@ export class NextActionService {
   ): Promise<TaskCommandResult | NextActionConflict> {
     const tagged = this.application.queries
       .list({ tag: NEXT_ACTION_TAG })
-      .filter((candidate) => !sameTask(candidate, task));
-    if (tagged.length > 1) {
-      return { type: 'integrity-conflict', projectPath, tag: NEXT_ACTION_TAG, tasks: tagged };
-    }
-    if (tagged.length === 1 && !this.belongsToProject(projectPath, tagged[0]!, task)) {
-      return { type: 'integrity-conflict', projectPath, tag: NEXT_ACTION_TAG, tasks: tagged };
-    }
+      .filter(
+        (candidate) =>
+          !sameTask(candidate, task) && this.belongsToProject(projectPath, candidate, task),
+      );
     if (!this.application.applyRootTagChanges) return this.unavailable();
     return await this.application.applyRootTagChanges({
       primary: task.ref,

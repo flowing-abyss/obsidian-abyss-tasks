@@ -3142,7 +3142,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
-  it('opens connected inspection feedback and performs no write for an external Next Action conflict', async () => {
+  it('sets a Project Next Action without writing an external Project marker', async () => {
     const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
@@ -3156,7 +3156,11 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       source: { filePath: 'Notes/External.md', line: 3 },
     });
     const queries = taskQueryApi({ list: () => [target, external] });
-    const applyRootTagChanges = vi.fn();
+    const applyRootTagChanges = vi.fn().mockResolvedValue({
+      type: 'ok',
+      outcome: { type: 'task', task: target },
+      changed: true,
+    });
     const application = {
       queries,
       execute: vi.fn(),
@@ -3197,12 +3201,10 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       container.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]')!.click();
       await flushMicrotasks();
 
-      const modal = activeDocument.body.querySelector<HTMLElement>('.abyss-modal-backdrop');
-      const feedback = modal?.querySelector<HTMLElement>('.abyss-forecast-source-context');
-      expect(modal?.isConnected).toBe(true);
-      expect(feedback?.textContent).toContain('Next Action is already set');
-      expect(feedback?.textContent).toContain('nothing was changed');
-      expect(applyRootTagChanges).not.toHaveBeenCalled();
+      expect(applyRootTagChanges).toHaveBeenCalledWith({
+        primary: target.ref,
+        changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+      });
     } finally {
       panel.destroy();
       container.remove();
