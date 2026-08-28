@@ -311,6 +311,19 @@ describe('Projects hardening styles', () => {
     expect(desktop).toContain('inline-size: 26px');
   });
 
+  it('switches multi-column Boards to one-column tabs before cards collapse vertically', () => {
+    const compactBoard = '@container abyss-task-list (max-width: 52rem)';
+
+    expect(declarationsInAtRule(compactBoard, '.abyss-board-column-tabs')).toContain(
+      'display: flex',
+    );
+    expect(declarationsInAtRule(compactBoard, '.abyss-board-columns')).toContain('display: block');
+    expect(declarationsInAtRule(compactBoard, '.abyss-board-column')).toContain('display: none');
+    expect(declarationsInAtRule(compactBoard, '.abyss-board-column.is-active')).toContain(
+      'display: flex',
+    );
+  });
+
   it('resets compact Project identity button chrome and exposes existing row actions on coarse pointers', () => {
     const identity = declarationsFor('.abyss-project-row-name');
     expect(identity).toContain('appearance: none');

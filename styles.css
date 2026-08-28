@@ -7053,6 +7053,48 @@ body.abyss-modal-open .popover.hover-popover {
   outline-offset: 2px;
 }
 
+@container abyss-task-list (max-width: 52rem) {
+  .abyss-board-column-tabs {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  .abyss-board-columns {
+    display: block;
+    overflow: hidden;
+  }
+  .abyss-board-column {
+    display: none;
+    height: 100%;
+  }
+  .abyss-board-column.is-active {
+    display: flex;
+  }
+  .abyss-board-column.is-collapsed {
+    display: none;
+  }
+  .abyss-board-columns.is-drag-active {
+    position: relative;
+  }
+  .abyss-board-columns.is-drag-active .abyss-board-column[data-board-terminal-drag-zone] {
+    display: flex;
+    position: absolute;
+    inset-block: 8px;
+    z-index: 1;
+    inline-size: min(36%, 11rem);
+    max-inline-size: calc(50% - 12px);
+  }
+  .abyss-board-column[data-board-terminal-drag-zone='left'] {
+    inset-inline-start: 8px;
+  }
+  .abyss-board-column[data-board-terminal-drag-zone='right'] {
+    inset-inline-end: 8px;
+  }
+  .abyss-board-column-tab.is-active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+  }
+}
+
 @container abyss-task-list (max-width: 42rem) {
   .abyss-projects-toolbar {
     align-items: flex-start;
@@ -7127,46 +7169,6 @@ body.abyss-modal-open .popover.hover-popover {
     width: 100%;
     min-width: 0;
     max-width: 8rem;
-  }
-
-  .abyss-board-column-tabs {
-    display: flex;
-    flex-wrap: wrap;
-  }
-  .abyss-board-columns {
-    display: block;
-    overflow: hidden;
-  }
-  .abyss-board-column {
-    display: none;
-    height: 100%;
-  }
-  .abyss-board-column.is-active {
-    display: flex;
-  }
-  .abyss-board-column.is-collapsed {
-    display: none;
-  }
-  .abyss-board-columns.is-drag-active {
-    position: relative;
-  }
-  .abyss-board-columns.is-drag-active .abyss-board-column[data-board-terminal-drag-zone] {
-    display: flex;
-    position: absolute;
-    inset-block: 8px;
-    z-index: 1;
-    inline-size: min(36%, 11rem);
-    max-inline-size: calc(50% - 12px);
-  }
-  .abyss-board-column[data-board-terminal-drag-zone='left'] {
-    inset-inline-start: 8px;
-  }
-  .abyss-board-column[data-board-terminal-drag-zone='right'] {
-    inset-inline-end: 8px;
-  }
-  .abyss-board-column-tab.is-active {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
   }
 }
 
