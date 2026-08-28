@@ -1,13 +1,21 @@
 import { Menu, setIcon } from 'obsidian';
+import {
+  projectHealthProjection,
+  type ProjectHealthProjection,
+} from '../../projects/ProjectHealthProjection';
+import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import { orderedGroups, type StatusGroup } from '../../projects/status';
 import type { Project, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { BoundedWindow } from './BoundedWindow';
+import type { ProjectCaptureSession } from './ProjectWorkspaceSession';
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
-import { joinedNextAction, type ProjectsListContext } from './viewContext';
+import type { ProjectsListContext } from './viewContext';
+
+export type { ProjectCaptureSession } from './ProjectWorkspaceSession';
 
 const PORTFOLIO_ITEM_EXTENT = 52;
 const PORTFOLIO_FALLBACK_VISIBLE_ROWS = 10;
@@ -57,42 +65,194 @@ function parentFolder(path: string): string {
   return idx === -1 ? '' : path.slice(0, idx);
 }
 
+interface ProjectCaptureOptions {
+  readonly session: ProjectCaptureSession;
+  readonly trigger: HTMLButtonElement;
+  readonly liveRegion: HTMLElement;
+  readonly openNote?: (path: string) => void;
+  readonly onSettled?: () => void;
+}
+
+function captureMessage(result: Extract<ProjectCreateResult, { type: 'file-created' }>): string {
+  if (!result.indexed && result.status === 'conflict') {
+    return 'Project note created, but it is not visible in Projects and its default status could not be applied.';
+  }
+  if (!result.indexed) return 'Project note created, but it is not visible in Projects.';
+  if (result.status === 'conflict') {
+    return 'Project created, but its default status could not be applied.';
+  }
+  return 'Project created.';
+}
+
 export function showNewProjectInput(
   host: HTMLElement,
-  onCreate: (name: string) => Promise<void>,
-): void {
-  const existing = host.querySelector('.abyss-projects-new-input');
-  if (existing) {
-    (existing as HTMLInputElement).focus();
-    return;
-  }
-  const input = host.createEl('input', {
-    cls: 'abyss-projects-new-input',
-    attr: { type: 'text', placeholder: 'Project name…' },
-  });
-  let committed = false;
-  const commit = (): void => {
-    if (committed) return;
-    committed = true;
-    const name = input.value.trim();
-    if (name) void onCreate(name);
-    else input.remove();
+  onCreate: (name: string) => Promise<ProjectCreateResult | void>,
+  options?: ProjectCaptureOptions,
+): () => void {
+  if (focusExistingProjectCapture(host)) return (): void => {};
+  const session = options?.session ?? {
+    open: true,
+    draft: '',
+    pending: false,
+    createdPath: null,
   };
+  session.open = true;
+  const capture = host.createDiv({
+    cls: 'abyss-project-capture',
+    attr: { role: 'dialog', 'aria-modal': 'false', 'aria-label': 'New project' },
+  });
+  const input = capture.createEl('input', {
+    cls: 'abyss-projects-new-input',
+    value: session.draft,
+    attr: {
+      type: 'text',
+      placeholder: 'Project name…',
+      'aria-label': 'Project name',
+    },
+  });
+  input.disabled = session.pending;
+  const feedback = capture.createSpan({ cls: 'abyss-project-capture-feedback' });
+  let destroyed = false;
+  let removeOutsidePointer = (): void => {};
+  const announce = (message: string): void => {
+    feedback.textContent = message;
+    if (options) options.liveRegion.textContent = message;
+  };
+  const close = (clearDraft: boolean): void => {
+    session.open = false;
+    session.pending = false;
+    if (clearDraft) {
+      session.draft = '';
+      session.terminalResult = undefined;
+    }
+    removeOutsidePointer();
+    capture.remove();
+    options?.trigger.focus({ preventScroll: true });
+  };
+  const renderTerminal = (result: Extract<ProjectCreateResult, { type: 'file-created' }>): void => {
+    session.terminalResult = result;
+    session.pending = false;
+    session.draft = '';
+    input.remove();
+    if (capture.querySelector('.abyss-project-capture-open-note')) return;
+    capture
+      .createEl('button', {
+        cls: 'abyss-project-capture-open-note',
+        text: 'Open created note',
+        attr: { type: 'button' },
+      })
+      .addEventListener('click', () => {
+        options?.openNote?.(result.path);
+        close(true);
+      });
+  };
+  const settle = (result: ProjectCreateResult | void): void => {
+    if (result?.type === 'failed-before-create') {
+      session.pending = false;
+      session.terminalResult = undefined;
+      input.disabled = false;
+      announce(result.reason);
+      input.focus({ preventScroll: true });
+      return;
+    }
+    if (result?.type === 'file-created') {
+      session.createdPath = result.indexed ? result.path : null;
+      announce(captureMessage(result));
+      if (!result.indexed) {
+        renderTerminal(result);
+        return;
+      }
+    } else {
+      announce('Project created.');
+    }
+    close(true);
+    options?.onSettled?.();
+  };
+  const observe = (promise: Promise<ProjectCreateResult | void>): void => {
+    void promise.then((result) => {
+      if (destroyed || session.pendingPromise !== promise) return;
+      session.pendingPromise = undefined;
+      settle(result);
+    });
+  };
+  const commit = (): void => {
+    if (session.pending) return;
+    const name = input.value.trim();
+    if (!name) {
+      close(true);
+      return;
+    }
+    session.draft = name;
+    session.pending = true;
+    input.disabled = true;
+    announce('Creating project…');
+    const createProject = async (): Promise<ProjectCreateResult | void> => {
+      try {
+        return await onCreate(name);
+      } catch {
+        return {
+          type: 'failed-before-create',
+          reason: 'Project note could not be created.',
+        };
+      }
+    };
+    const promise = createProject();
+    session.pendingPromise = promise;
+    observe(promise);
+  };
+  input.addEventListener('input', () => {
+    session.draft = input.value;
+  });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'Enter' && !e.isComposing && !e.repeat) {
       e.preventDefault();
       commit();
-    } else if (e.key === 'Escape') {
-      committed = true;
-      input.remove();
+    } else if (e.key === 'Escape' && !session.pending) {
+      e.preventDefault();
+      close(true);
     }
   });
-  input.addEventListener('blur', () => {
-    window.setTimeout(() => {
-      if (activeDocument.activeElement !== input) commit();
-    }, 150);
+  capture.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || session.pending) return;
+    event.preventDefault();
+    close(true);
   });
-  window.setTimeout(() => input.focus(), 0);
+  const onOutsidePointer = (event: PointerEvent): void => {
+    const target = event.target;
+    if (
+      !(target instanceof Node) ||
+      capture.contains(target) ||
+      options?.trigger.contains(target)
+    ) {
+      return;
+    }
+    if (session.draft.trim().length === 0 && !session.pending) close(true);
+  };
+  host.ownerDocument.addEventListener('pointerdown', onOutsidePointer);
+  removeOutsidePointer = (): void => {
+    host.ownerDocument.removeEventListener('pointerdown', onOutsidePointer);
+  };
+  if (session.pending && session.pendingPromise) {
+    announce('Creating project…');
+    observe(session.pendingPromise);
+  } else if (session.terminalResult && !session.terminalResult.indexed) {
+    announce(captureMessage(session.terminalResult));
+    renderTerminal(session.terminalResult);
+  }
+  window.setTimeout(() => {
+    capture.querySelector<HTMLElement>('input, button')?.focus();
+  }, 0);
+  return (): void => {
+    destroyed = true;
+    removeOutsidePointer();
+  };
+}
+
+export function focusExistingProjectCapture(host: HTMLElement): boolean {
+  const existing = host.querySelector<HTMLElement>('.abyss-project-capture');
+  if (!existing) return false;
+  existing.querySelector<HTMLElement>('input, button')?.focus({ preventScroll: true });
+  return true;
 }
 
 /** Overview: all projects grouped by status (defined order → discovered → No status). */
@@ -102,15 +262,21 @@ export function renderProjectsList(
   ctx: ProjectsListContext,
 ): () => void {
   container.addClass('abyss-projects-list');
-  const { newProjectButton } = renderProjectsToolbar(container, ctx);
+  const toolbar = renderProjectsToolbar(container, ctx);
+  const { newProjectButton } = toolbar;
+  const captureSession =
+    ctx.captureSession ??
+    ({ open: false, draft: '', pending: false, createdPath: null } satisfies ProjectCaptureSession);
 
   const statuses = ctx.settings.projects.statuses;
   const statusById = new Map(statuses.map((s) => [s.id, s]));
   const visibleStatusIds = new Set(ctx.settings.projects.view.visibleStatusIds);
-  const visibleSnapshots = snapshots.filter(({ project }) =>
-    project.statusId === null
-      ? ctx.settings.projects.view.includeUnmapped
-      : visibleStatusIds.has(project.statusId),
+  const visibleSnapshots = snapshots.filter(
+    ({ project }) =>
+      project.path === captureSession.createdPath ||
+      (project.statusId === null
+        ? ctx.settings.projects.view.includeUnmapped
+        : visibleStatusIds.has(project.statusId)),
   );
   const projects = visibleSnapshots.map(({ project, taskRollup }) => ({
     ...project,
@@ -124,21 +290,34 @@ export function renderProjectsList(
   const nameCounts = new Map<string, number>();
   for (const p of projects) nameCounts.set(p.name, (nameCounts.get(p.name) ?? 0) + 1);
 
-  const newProjectInputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
   const scroll = container.createDiv({ cls: 'abyss-projects-scroll' });
+  let captureCleanup: (() => void) | undefined;
 
-  // "New project" shows an inline input at the top of the list — the same
-  // interaction as the left-panel "+", never a modal (kept consistent).
-  newProjectButton.addEventListener('click', () =>
-    showNewProjectInput(newProjectInputHost, ctx.onCreate),
-  );
+  const openCapture = (): void => {
+    captureSession.open = true;
+    if (focusExistingProjectCapture(toolbar.captureHost)) return;
+    captureCleanup?.();
+    captureCleanup = showNewProjectInput(toolbar.captureHost, ctx.onCreate, {
+      session: captureSession,
+      trigger: newProjectButton,
+      liveRegion: toolbar.liveRegion,
+      openNote: ctx.openNote,
+      onSettled: ctx.onCaptureSettled,
+    });
+  };
+
+  newProjectButton.addEventListener('click', openCapture);
+  if (captureSession.open) openCapture();
 
   if (visibleSnapshots.length === 0) {
     scroll.createDiv({
       cls: 'abyss-projects-empty',
       text: snapshots.length === 0 ? 'No projects yet' : 'No projects match the status filters',
     });
-    return (): void => {};
+    return (): void => {
+      captureCleanup?.();
+      toolbar.destroy();
+    };
   }
 
   const entries: PortfolioEntry[] = [];
@@ -206,6 +385,24 @@ export function renderProjectsList(
   scroll.addEventListener('scroll', onScroll);
   rowsHost.addEventListener('keydown', onWindowKeydown);
   renderWindow();
+  const createdPath = captureSession.createdPath;
+  if (createdPath && entries.some(({ key }) => key === `project:${createdPath}`)) {
+    bounded.focus(`project:${createdPath}`);
+    const first = bounded.viewportForFocus(viewport());
+    scroll.scrollTop = first * PORTFOLIO_ITEM_EXTENT;
+    renderWindow(true);
+    const created = Array.from(rowsHost.querySelectorAll<HTMLElement>('[data-bounded-key]')).find(
+      ({ dataset }) => dataset['boundedKey'] === `project:${createdPath}`,
+    );
+    created?.querySelector<HTMLElement>('[data-project-identity-control]')?.focus({
+      preventScroll: true,
+    });
+    const createdRow = created?.matches('.abyss-project-row')
+      ? created
+      : created?.querySelector<HTMLElement>('.abyss-project-row');
+    createdRow?.addClass('is-just-created');
+    captureSession.createdPath = null;
+  }
   const resizeObserver =
     typeof ResizeObserver === 'undefined'
       ? undefined
@@ -214,6 +411,8 @@ export function renderProjectsList(
   return (): void => {
     destroyed = true;
     resizeObserver?.disconnect();
+    captureCleanup?.();
+    toolbar.destroy();
     rowsHost.removeEventListener('keydown', onWindowKeydown);
     scroll.removeEventListener('scroll', onScroll);
   };
@@ -228,6 +427,45 @@ function renderGroupHeader(parent: HTMLElement, group: StatusGroup, count: numbe
   header.createSpan({ cls: 'abyss-projects-group-label', text: group.label });
   header.createSpan({ cls: 'abyss-projects-group-count', text: String(count) });
   return header;
+}
+
+function titleCaseHealth(severity: ProjectHealthProjection['severity']): string {
+  return severity
+    .split('-')
+    .map((word) => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`)
+    .join(' ');
+}
+
+function healthReason(health: ProjectHealthProjection): string {
+  switch (health.reason.type) {
+    case 'overdue-next-action':
+      return 'Next action overdue';
+    case 'blocked-critical-path':
+      return 'Critical path blocked';
+    case 'overdue-actionable-work':
+      return 'Actionable work overdue';
+    case 'blocked-next-action':
+      return 'Next action blocked';
+    case 'unblocked-next-action':
+      return 'Next action ready';
+    case 'insufficient-actionable-evidence':
+      return 'No actionable next action';
+  }
+}
+
+function dateSignal(health: ProjectHealthProjection): string | undefined {
+  if (!health.date) return undefined;
+  return health.date.type === 'overdue-actionable-task'
+    ? `Overdue ${health.date.value}`
+    : health.date.value;
+}
+
+function currentLocalDate(): string {
+  const now = new Date();
+  const year = String(now.getFullYear()).padStart(4, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 export function renderProjectRow(
@@ -245,142 +483,150 @@ export function renderProjectRow(
   const project = snapshot.project;
   const row = parent.createDiv({
     cls: 'abyss-project-row',
-    attr: { role: 'listitem' },
+    attr: { role: 'listitem', 'data-project-path': project.path },
   });
 
   const status = project.statusId ? statusById.get(project.statusId) : undefined;
-  const dot = row.createSpan({ cls: 'abyss-status-dot' });
-  if (status?.color) dot.style.background = status.color;
-  dot.setAttribute('role', 'img');
-  dot.setAttribute(
-    'aria-label',
-    `Project status: ${status?.label ?? project.rawStatus ?? 'No status'}`,
-  );
-
-  const nameWrap = row.createEl('button', {
+  const health = projectHealthProjection(snapshot, {
+    today: ctx.today?.() ?? currentLocalDate(),
+  });
+  const reason = healthReason(health);
+  const firstLine = row.createDiv({
+    cls: 'abyss-project-row-line abyss-project-row-line--primary',
+  });
+  firstLine.createSpan({
+    cls: `abyss-project-health abyss-project-health--${health.severity}`,
+    attr: {
+      role: 'img',
+      title: reason,
+      'aria-label': `Project health: ${titleCaseHealth(health.severity)} — ${reason}`,
+    },
+  });
+  const nameWrap = firstLine.createEl('button', {
     cls: 'abyss-project-row-name abyss-project-identity-control',
     attr: {
       type: 'button',
       'data-project-identity-control': '',
-      'aria-label': `Open project ${project.name}`,
+      'aria-label': `Open project ${project.name}; status ${status?.label ?? project.rawStatus ?? 'No status'}`,
     },
   });
   nameWrap.createSpan({ cls: 'abyss-project-name', text: project.name });
   if ((nameCounts.get(project.name) ?? 0) > 1) {
-    nameWrap.createSpan({ cls: 'abyss-project-folder', text: parentFolder(project.path) });
+    nameWrap.setAttribute('title', `${project.name} — ${parentFolder(project.path)}`);
+  }
+  if (project.priority && project.priority !== 'D') {
+    firstLine.createSpan({
+      cls: 'abyss-project-priority',
+      text: project.priority,
+      attr: { 'data-priority': project.priority, 'aria-label': `Priority ${project.priority}` },
+    });
+  }
+  const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });
+  if (snapshot.taskRollup.total > 0) {
+    renderProgressBar(
+      taskProgress,
+      snapshot.taskRollup.done,
+      snapshot.taskRollup.total,
+      `${project.name} task progress`,
+    );
+  } else {
+    taskProgress.createSpan({ cls: 'abyss-project-no-tasks', text: 'No tasks' });
   }
 
+  const secondLine = row.createDiv({
+    cls: 'abyss-project-row-line abyss-project-row-line--secondary',
+  });
+  const nextAction = health.selectedNextAction;
+  if (nextAction) {
+    /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
+    const next = secondLine.createEl('button', {
+      cls: 'abyss-project-next-action',
+      attr: {
+        type: 'button',
+        'aria-label': 'Open Next Action',
+        title: 'Open Next Action',
+      },
+    });
+    /* eslint-enable obsidianmd/ui/sentence-case */
+    setIcon(next, 'list-checks');
+    next.createSpan({ cls: 'abyss-project-next-action-title', text: nextAction.task.title });
+    next.addEventListener('click', (event) => {
+      event.stopPropagation();
+      ctx.state.set('taskStack', [nextAction.task]);
+    });
+  } else {
+    secondLine.createSpan({ cls: 'abyss-project-health-reason', text: reason });
+  }
+  const date = dateSignal(health);
+  if (date) secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
   const workNoteCount =
     snapshot.workNoteRollup.active +
     snapshot.workNoteRollup.completed +
     snapshot.workNoteRollup.dropped +
     snapshot.milestones.length;
-  const overdueCount = snapshot.overdue.tasks + snapshot.overdue.workNotes;
-  const nextAction = joinedNextAction(snapshot.tasks);
-  const hasMetadata =
-    snapshot.taskRollup.total > 0 ||
-    workNoteCount > 0 ||
-    overdueCount > 0 ||
-    snapshot.diagnostics.length > 0 ||
-    nextAction !== undefined;
-
-  if (hasMetadata) {
-    row.addClass('abyss-project-row--has-meta');
-    const meta = row.createDiv({ cls: 'abyss-project-row-meta' });
-    if (snapshot.taskRollup.total > 0) {
-      const taskProgress = meta.createDiv({ cls: 'abyss-project-task-progress' });
-      taskProgress.createSpan({ cls: 'abyss-project-metric-label', text: 'Tasks' });
-      renderProgressBar(
-        taskProgress,
-        snapshot.taskRollup.done,
-        snapshot.taskRollup.total,
-        `${project.name} task progress`,
-      );
-    }
+  const diagnosticCount =
+    snapshot.diagnostics.length +
+    Math.max(snapshot.dependencies.invalid, snapshot.dependencies.diagnostics.length) +
+    Number(health.flags.duplicateNextAction) +
+    Number(health.flags.malformedNextAction) +
+    Number(health.flags.rangeIssue !== undefined);
+  if (workNoteCount > 0 || diagnosticCount > 0) {
+    const exceptions = secondLine.createSpan({ cls: 'abyss-project-exceptions' });
     if (workNoteCount > 0) {
-      meta.createSpan({
-        cls: 'abyss-project-work-notes',
-        text: `Work Notes ${workNoteCount}`,
+      exceptions.createSpan({
+        cls: 'abyss-project-work-note-count',
+        text: String(workNoteCount),
+        attr: { 'aria-label': `${String(workNoteCount)} Work Notes`, title: 'Work Notes' },
+      });
+    }
+    if (diagnosticCount > 0) {
+      exceptions.createSpan({
+        cls: 'abyss-project-diagnostic-count',
+        text: String(diagnosticCount),
         attr: {
-          'aria-label': `${String(workNoteCount)} Work Note${workNoteCount === 1 ? '' : 's'}`,
+          'aria-label': `${String(diagnosticCount)} project diagnostics`,
+          title: 'Project diagnostics',
         },
       });
     }
-    if (overdueCount > 0) {
-      const overdue = meta.createSpan({
-        cls: 'abyss-project-attention abyss-project-overdue',
-        attr: {
-          title: `${String(overdueCount)} overdue`,
-          'aria-label': `${String(overdueCount)} overdue item${overdueCount === 1 ? '' : 's'}`,
-        },
-      });
-      const icon = overdue.createSpan({ cls: 'abyss-project-attention-icon' });
-      setIcon(icon, 'clock-alert');
-      overdue.createSpan({ text: String(overdueCount) });
-    }
-    if (snapshot.diagnostics.length > 0) {
-      const diagnostics = meta.createSpan({
-        cls: 'abyss-project-attention abyss-project-diagnostics',
-        attr: {
-          title: `${String(snapshot.diagnostics.length)} diagnostics`,
-          'aria-label': `${String(snapshot.diagnostics.length)} diagnostic${snapshot.diagnostics.length === 1 ? '' : 's'}`,
-        },
-      });
-      const icon = diagnostics.createSpan({ cls: 'abyss-project-attention-icon' });
-      setIcon(icon, 'triangle-alert');
-      diagnostics.createSpan({ text: String(snapshot.diagnostics.length) });
-    }
-    if (nextAction) {
-      /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
-      const next = meta.createEl('button', {
-        cls: 'abyss-project-next-action',
-        attr: {
-          type: 'button',
-          'aria-label': 'Open Next Action',
-          title: 'Open Next Action',
-        },
-      });
-      /* eslint-enable obsidianmd/ui/sentence-case */
-      setIcon(next, 'list-checks');
-      next.addEventListener('click', (event) => {
-        event.stopPropagation();
-        ctx.state.set('taskStack', [nextAction.task]);
-      });
-    }
+    exceptions.createSpan({
+      cls: 'abyss-project-exception-summary',
+      text: '!',
+      attr: {
+        'aria-label': `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
+      },
+    });
   }
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
 
-  const statusBtn = actions.createEl('button', {
-    cls: 'abyss-project-status-btn',
-    attr: { 'aria-label': 'Change status', title: 'Change status' },
+  const overflow = actions.createEl('button', {
+    cls: 'abyss-project-overflow-btn',
+    attr: { type: 'button', 'aria-label': 'Project actions', title: 'Project actions' },
   });
-  statusBtn.toggle(showStatusControl);
-  setIcon(statusBtn, 'circle-dot');
-  statusBtn.addEventListener('click', (e) => {
+  setIcon(overflow, 'ellipsis');
+  overflow.addEventListener('click', (e) => {
     e.stopPropagation();
     const menu = new Menu();
-    for (const action of projectStatusMenuModel(statuses, project)) {
-      menu.addItem((item) =>
-        item
-          .setTitle(action.label)
-          .setIcon(action.icon)
-          .setChecked(action.checked)
-          .setDisabled(action.disabled)
-          .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
-      );
+    menu.addItem((item) =>
+      item
+        .setTitle('Open note')
+        .setIcon('file-text')
+        .onClick(() => ctx.openNote(project.path)),
+    );
+    if (showStatusControl) {
+      for (const action of projectStatusMenuModel(statuses, project)) {
+        menu.addItem((item) =>
+          item
+            .setTitle(action.label)
+            .setIcon(action.icon)
+            .setChecked(action.checked)
+            .setDisabled(action.disabled)
+            .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
+        );
+      }
     }
     showMenuAtMouseEventWithFocus(menu, e);
-  });
-
-  const openBtn = actions.createEl('button', {
-    cls: 'abyss-project-open-btn',
-    attr: { 'aria-label': 'Open note', title: 'Open note' },
-  });
-  setIcon(openBtn, 'file-text');
-  openBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    ctx.openNote(project.path);
   });
 
   nameWrap.addEventListener('click', () => {
@@ -402,5 +648,9 @@ export function renderProjectRow(
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
   });
   nameWrap.addEventListener('focus', () => onFocus(project.path));
+  row.addEventListener('click', (event) => {
+    if ((event.target as Element | null)?.closest('button, a, input, select, textarea')) return;
+    ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
+  });
   return row;
 }

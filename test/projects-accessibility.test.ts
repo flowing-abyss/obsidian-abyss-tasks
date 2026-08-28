@@ -202,7 +202,7 @@ describe('Projects collection accessibility', () => {
     expectIconOnlyControlsNamed(row);
   });
 
-  it('renders Project rows as listitems with a dedicated identity control and named state/count metrics', () => {
+  it('renders Project rows as listitems with separate lifecycle, health, and progress names', () => {
     const root = freshContainer();
     renderProjectsList(root, [workspace()], {
       state: new AppState(),
@@ -217,16 +217,14 @@ describe('Projects collection accessibility', () => {
     expect(row.closest('[role="list"]')).not.toBeNull();
     expect(row.getAttribute('role')).toBe('listitem');
     expect(row.hasAttribute('tabindex')).toBe(false);
-    expect(row.querySelector('[data-project-identity-control]')).not.toBeNull();
-    expect(row.querySelector('.abyss-project-work-notes')?.getAttribute('aria-label')).toBe(
-      '1 Work Note',
+    expect(
+      row.querySelector('[data-project-identity-control]')?.getAttribute('aria-label'),
+    ).toMatch(/status/u);
+    expect(row.querySelector('[aria-label^="Project health:"]')).not.toBeNull();
+    expect(row.querySelector('[role="progressbar"]')?.getAttribute('aria-label')).toMatch(
+      /task progress/u,
     );
-    expect(row.querySelector('.abyss-project-overdue')?.getAttribute('aria-label')).toBe(
-      '2 overdue items',
-    );
-    expect(row.querySelector('.abyss-project-diagnostics')?.getAttribute('aria-label')).toBe(
-      '1 diagnostic',
-    );
+    expect(row.querySelector('.abyss-project-row-meta')).toBeNull();
     expect(row.querySelectorAll('[data-project-identity-control]')).toHaveLength(1);
     expectNoNestedInteractive(row);
     expectIconOnlyControlsNamed(row);

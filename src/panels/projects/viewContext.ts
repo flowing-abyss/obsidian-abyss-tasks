@@ -1,4 +1,5 @@
 import type { AppState } from '../../app/AppState';
+import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import type { ProjectAction } from '../../projects/types';
 import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type {
@@ -7,6 +8,7 @@ import type {
   WorkNotesViewState,
 } from '../../settings/types';
 import type {
+  ProjectCaptureSession,
   ProjectWorkspaceSession,
   UseProjectWorkspaceDefaultIntent,
 } from './ProjectWorkspaceSession';
@@ -24,10 +26,13 @@ export interface ProjectsListContext {
   state: AppState;
   settings: CalendarSettings;
   onSaveSettings: () => Promise<void>;
-  onFiltersChanged?: () => void;
+  onFiltersChanged?: (focusIntent?: 'status-summary') => void;
   onPortfolioLayoutChanged?: () => void;
+  onCaptureSettled?: () => void;
   timelineAvailable?: boolean;
-  onCreate: (name: string) => Promise<void>;
+  captureSession?: ProjectCaptureSession;
+  today?: () => string;
+  onCreate: (name: string) => Promise<ProjectCreateResult>;
   onSetStatus: (path: string, statusId: string) => void;
   openNote: (path: string) => void;
 }

@@ -1,9 +1,14 @@
-import { setIcon } from 'obsidian';
+import { Menu, setIcon } from 'obsidian';
 import type { ProjectStatus } from '../../settings/types';
+import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { ProjectsListContext } from './viewContext';
 
 export interface ProjectsToolbarResult {
   readonly newProjectButton: HTMLButtonElement;
+  readonly captureHost: HTMLElement;
+  readonly liveRegion: HTMLElement;
+  readonly statusSummaryButton: HTMLButtonElement;
+  destroy(): void;
 }
 
 function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext): void {
@@ -14,8 +19,8 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
   const layouts: Array<readonly ['overview' | 'board' | 'timeline', string]> = [
     ['overview', 'Overview'],
     ['board', 'Board'],
+    ['timeline', 'Timeline'],
   ];
-  if (ctx.timelineAvailable === true) layouts.push(['timeline', 'Timeline']);
   for (const [layout, label] of layouts) {
     const selected = ctx.settings.projects.view.portfolioLayout === layout;
     const button = switcher.createEl('button', {
@@ -27,6 +32,10 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
         'aria-current': selected ? 'page' : 'false',
       },
     });
+    if (layout === 'timeline' && ctx.timelineAvailable === false) {
+      button.disabled = true;
+      button.setAttribute('aria-disabled', 'true');
+    }
     button.addEventListener('click', () => {
       if (ctx.settings.projects.view.portfolioLayout === layout) return;
       ctx.settings.projects.view.portfolioLayout = layout;
@@ -34,6 +43,25 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
       ctx.onPortfolioLayoutChanged?.();
     });
   }
+}
+
+function saveFilterChange(ctx: ProjectsListContext, focusIntent?: 'status-summary'): void {
+  void ctx.onSaveSettings();
+  ctx.onFiltersChanged?.(focusIntent);
+}
+
+function toggleStatus(
+  ctx: ProjectsListContext,
+  statusId: string,
+  focusIntent?: 'status-summary',
+): void {
+  const visible = new Set(ctx.settings.projects.view.visibleStatusIds);
+  if (visible.has(statusId)) visible.delete(statusId);
+  else visible.add(statusId);
+  ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses
+    .map(({ id }) => id)
+    .filter((id) => visible.has(id));
+  saveFilterChange(ctx, focusIntent);
 }
 
 function renderStatusFilter(
@@ -61,15 +89,8 @@ function renderStatusFilter(
     const ownsFocus = button.ownerDocument.activeElement === button;
     const restoreKeyboardFocus = ownsFocus && !pointerActivation;
     pointerActivation = false;
-    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-list');
-    const visible = new Set(ctx.settings.projects.view.visibleStatusIds);
-    if (visible.has(status.id)) visible.delete(status.id);
-    else visible.add(status.id);
-    ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses
-      .map(({ id }) => id)
-      .filter((id) => visible.has(id));
-    void ctx.onSaveSettings();
-    ctx.onFiltersChanged?.();
+    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-panel, .abyss-projects-list');
+    toggleStatus(ctx, status.id);
     const active = button.ownerDocument.activeElement;
     const focusIsUnclaimed =
       active === button ||
@@ -105,10 +126,9 @@ function renderUnmappedFilter(controls: HTMLElement, ctx: ProjectsListContext): 
     const ownsFocus = button.ownerDocument.activeElement === button;
     const restoreKeyboardFocus = ownsFocus && !pointerActivation;
     pointerActivation = false;
-    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-list');
+    const projectsRoot = button.closest<HTMLElement>('.abyss-projects-panel, .abyss-projects-list');
     ctx.settings.projects.view.includeUnmapped = !selected;
-    void ctx.onSaveSettings();
-    ctx.onFiltersChanged?.();
+    saveFilterChange(ctx);
     const active = button.ownerDocument.activeElement;
     const focusIsUnclaimed =
       active === button ||
@@ -131,19 +151,109 @@ export function renderProjectsToolbar(
   header.createEl('h2', { cls: 'abyss-center-title abyss-projects-title', text: 'Projects' });
   const controls = header.createDiv({ cls: 'abyss-center-controls' });
 
-  renderPortfolioLayout(controls, ctx);
-
   const filters = controls.createDiv({
     cls: 'abyss-project-status-filters',
-    attr: { 'aria-label': 'Project status filters' },
+    attr: {
+      role: 'group',
+      'aria-label': 'Project status filters',
+      'data-portfolio-zone': 'filters',
+    },
   });
   for (const status of ctx.settings.projects.statuses) renderStatusFilter(filters, status, ctx);
   renderUnmappedFilter(filters, ctx);
 
-  const newProjectButton = controls.createEl('button', {
+  const statusSummaryButton = filters.createEl('button', {
+    cls: 'abyss-filter-chip abyss-project-status-summary',
+    text: 'Show',
+    attr: {
+      type: 'button',
+      'aria-label': 'Show project status filters',
+      'aria-haspopup': 'menu',
+      'aria-expanded': 'false',
+    },
+  });
+  statusSummaryButton.hidden = true;
+  statusSummaryButton.addEventListener('click', (event) => {
+    const menu = new Menu();
+    statusSummaryButton.setAttribute('aria-expanded', 'true');
+    menu.onHide(() => {
+      if (statusSummaryButton.isConnected) {
+        statusSummaryButton.setAttribute('aria-expanded', 'false');
+      }
+    });
+    for (const status of ctx.settings.projects.statuses) {
+      menu.addItem((item) => {
+        item.setTitle(status.label);
+        item.setChecked(ctx.settings.projects.view.visibleStatusIds.includes(status.id));
+        item.onClick(() => toggleStatus(ctx, status.id, 'status-summary'));
+      });
+    }
+    menu.addItem((item) => {
+      item.setTitle('Unmapped');
+      item.setChecked(ctx.settings.projects.view.includeUnmapped);
+      item.onClick(() => {
+        ctx.settings.projects.view.includeUnmapped = !ctx.settings.projects.view.includeUnmapped;
+        saveFilterChange(ctx, 'status-summary');
+      });
+    });
+    showMenuAtMouseEventWithFocus(menu, event);
+  });
+
+  const layoutZone = controls.createDiv({ attr: { 'data-portfolio-zone': 'layout' } });
+  renderPortfolioLayout(layoutZone, ctx);
+
+  const addZone = controls.createDiv({
+    cls: 'abyss-projects-add-zone',
+    attr: { 'data-portfolio-zone': 'add' },
+  });
+  const newProjectButton = addZone.createEl('button', {
     cls: 'abyss-projects-new abyss-project-open-btn',
     attr: { type: 'button', 'aria-label': 'New project', title: 'New project' },
   });
   setIcon(newProjectButton, 'plus');
-  return { newProjectButton };
+  const captureHost = header.createDiv({ cls: 'abyss-projects-new-input-host' });
+  const liveRegion = header.createDiv({
+    cls: 'abyss-sr-only abyss-project-create-live',
+    attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
+  });
+
+  let requiredFilterWidth = 0;
+  const updateOverflow = (): void => {
+    if (!filters.classList.contains('is-overflowing')) {
+      requiredFilterWidth = filters.scrollWidth;
+    }
+    const overflowing = requiredFilterWidth > filters.clientWidth && filters.clientWidth > 0;
+    filters.toggleClass('is-overflowing', overflowing);
+    const chips = Array.from(
+      filters.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
+    );
+    let retainedActive = 0;
+    let hiddenCount = 0;
+    statusSummaryButton.hidden = !overflowing;
+    let remainingWidth = Math.max(0, filters.clientWidth - statusSummaryButton.offsetWidth - 6);
+    for (const chip of chips) {
+      const active = chip.classList.contains('is-active');
+      const width = chip.offsetWidth;
+      const fits = width + (retainedActive > 0 ? 6 : 0) <= remainingWidth;
+      const hidden = overflowing && (!active || retainedActive >= 2 || !fits);
+      chip.toggleClass('is-overflow-hidden', hidden);
+      if (active && !hidden) {
+        retainedActive += 1;
+        remainingWidth -= width + (retainedActive > 1 ? 6 : 0);
+      }
+      if (hidden) hiddenCount += 1;
+    }
+    statusSummaryButton.textContent = overflowing ? `Show ${String(hiddenCount)}` : 'Show';
+  };
+  const ResizeObserverCtor = header.ownerDocument.defaultView?.ResizeObserver;
+  const observer = ResizeObserverCtor ? new ResizeObserverCtor(updateOverflow) : undefined;
+  observer?.observe(filters);
+  updateOverflow();
+  return {
+    newProjectButton,
+    captureHost,
+    liveRegion,
+    statusSummaryButton,
+    destroy: () => observer?.disconnect(),
+  };
 }

@@ -346,6 +346,7 @@ export class PanelView extends ItemView {
       resolver,
       selectionTasks,
       projectCommands,
+      projectStore,
     );
 
     this.rail = new RailPanel(this.state, this.app as never, this.panelNavigation);

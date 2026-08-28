@@ -4,7 +4,7 @@ import type {
   ProjectCommandService,
   ProjectPropertyCommandResult,
 } from '../../projects/ProjectCommandService';
-import type { ProjectManager } from '../../projects/ProjectManager';
+import type { ProjectCreateResult, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
@@ -25,11 +25,14 @@ import {
 } from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
-import { renderProjectsList, showNewProjectInput } from './ProjectsListView';
+import {
+  focusExistingProjectCapture,
+  renderProjectsList,
+  showNewProjectInput,
+} from './ProjectsListView';
 import { renderProjectsTimeline, renderWorkNotesTimeline } from './ProjectsTimelineView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderWorkNotesView, selectWorkNotes } from './WorkNotesView';
-import { projectTimelineItem } from './timelineProjection';
 import type { ProjectChildRenderHandle } from './viewContext';
 
 export interface ProjectsPanelOptions {
@@ -101,6 +104,7 @@ export class ProjectsPanel {
   private readonly onAnnounce: (message: string) => void;
   private viewCleanup: (() => void) | null = null;
   private readonly portfolioScroll = new Map<string, number>();
+  private portfolioFocusIntent: string | null = null;
 
   private portfolioScrollKey(scroll: HTMLElement): string {
     const column = scroll.closest<HTMLElement>('[data-board-column]');
@@ -132,9 +136,8 @@ export class ProjectsPanel {
     this.onAnnounce = opts.onAnnounce ?? ((): void => {});
   }
 
-  private async createProject(name: string): Promise<void> {
-    await this.projectManager.create(name);
-    this.projectStore.refresh();
+  private async createProject(name: string): Promise<ProjectCreateResult> {
+    return await this.projectManager.create(name);
   }
 
   mount(el: HTMLElement): void {
@@ -329,6 +332,8 @@ export class ProjectsPanel {
         focusKey = `status:${active.dataset['projectStatusFilter']}`;
       } else if (active.hasAttribute('data-project-unmapped-filter')) {
         focusKey = 'unmapped';
+      } else if (active.classList.contains('abyss-project-status-summary')) {
+        focusKey = 'status-summary';
       }
     }
     for (const scroll of this.el.querySelectorAll<HTMLElement>(
@@ -351,6 +356,9 @@ export class ProjectsPanel {
       if (focusKey === 'unmapped') {
         return this.el.querySelector<HTMLElement>('[data-project-unmapped-filter]');
       }
+      if (focusKey === 'status-summary') {
+        return this.el.querySelector<HTMLElement>('.abyss-project-status-summary');
+      }
       const [kind, value] = focusKey.split(':', 2);
       const attribute = kind === 'layout' ? 'projectPortfolioLayout' : 'projectStatusFilter';
       return (
@@ -365,7 +373,8 @@ export class ProjectsPanel {
   }
 
   private render(): void {
-    const portfolioFocus = this.capturePortfolioContinuity();
+    const portfolioFocus = this.portfolioFocusIntent ?? this.capturePortfolioContinuity();
+    this.portfolioFocusIntent = null;
     this.viewCleanup?.();
     this.viewCleanup = null;
     this.el.empty();
@@ -416,29 +425,51 @@ export class ProjectsPanel {
       state: this.state,
       settings: this.settings,
       onSaveSettings: this.onSaveSettings,
-      onFiltersChanged: () => this.render(),
+      onFiltersChanged: (focusIntent?: 'status-summary') => {
+        this.portfolioFocusIntent = focusIntent ?? null;
+        this.render();
+      },
       onPortfolioLayoutChanged: () => this.render(),
+      onCaptureSettled: () => this.render(),
       onCreate: (name: string) => this.createProject(name),
+      captureSession: this.workspaceSession.portfolioCapture,
       onSetStatus: (p: string, id: string) => void this.setStatus(p, id),
       openNote: (p: string) => this.openNote(p),
     };
     const visibleStatusIds = new Set(this.settings.projects.view.visibleStatusIds);
-    const timelineSnapshots = this.snapshots.filter(({ project }) =>
-      project.statusId === null
-        ? this.settings.projects.view.includeUnmapped
-        : visibleStatusIds.has(project.statusId),
+    const createdPath = this.workspaceSession.portfolioCapture.createdPath;
+    const timelineSnapshots = this.snapshots.filter(
+      ({ project }) =>
+        project.path === createdPath ||
+        (project.statusId === null
+          ? this.settings.projects.view.includeUnmapped
+          : visibleStatusIds.has(project.statusId)),
     );
-    const timelineAvailable =
-      this.projectCommands !== undefined &&
-      timelineSnapshots.some(({ project }) => projectTimelineItem(project).kind !== 'undated');
+    const timelineAvailable = this.projectCommands !== undefined;
     const portfolioContext = { ...listContext, timelineAvailable };
     if (this.settings.projects.view.portfolioLayout === 'timeline' && timelineAvailable) {
-      const { newProjectButton } = renderProjectsToolbar(container, portfolioContext);
-      const inputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
-      newProjectButton.addEventListener('click', () =>
-        showNewProjectInput(inputHost, listContext.onCreate),
-      );
+      const toolbar = renderProjectsToolbar(container, portfolioContext);
+      const { newProjectButton } = toolbar;
+      let captureCleanup: (() => void) | undefined;
+      const openCapture = (): void => {
+        this.workspaceSession.portfolioCapture.open = true;
+        if (focusExistingProjectCapture(toolbar.captureHost)) return;
+        captureCleanup?.();
+        captureCleanup = showNewProjectInput(toolbar.captureHost, listContext.onCreate, {
+          session: this.workspaceSession.portfolioCapture,
+          trigger: newProjectButton,
+          liveRegion: toolbar.liveRegion,
+          openNote: listContext.openNote,
+          onSettled: listContext.onCaptureSettled,
+        });
+      };
+      newProjectButton.addEventListener('click', openCapture);
+      if (this.workspaceSession.portfolioCapture.open) openCapture();
       const timelineHost = container.createDiv({ cls: 'abyss-projects-timeline-host' });
+      if (createdPath) {
+        this.workspaceSession.portfolioTimeline.focusedKey = `project:${createdPath}`;
+        this.workspaceSession.portfolioTimeline.restoreFocus = true;
+      }
       const handle = renderProjectsTimeline(timelineHost, {
         projects: timelineSnapshots.map(({ project }) => project),
         commands: this.projectCommands,
@@ -448,13 +479,27 @@ export class ProjectsPanel {
           if (result.type === 'ok') this.projectStore.refresh();
         },
       });
-      this.viewCleanup = () => handle.destroy();
+      if (createdPath) {
+        const identity = Array.from(
+          timelineHost.querySelectorAll<HTMLElement>('[data-timeline-key]'),
+        ).find(({ dataset }) => dataset['timelineKey'] === `project:${createdPath}`);
+        const row = identity?.closest<HTMLElement>(
+          '.abyss-timeline-row, .abyss-timeline-undated-row',
+        );
+        row?.addClass('is-just-created');
+        identity
+          ?.querySelector<HTMLElement>('[data-project-identity-control]')
+          ?.focus({ preventScroll: true });
+        row?.scrollIntoView?.({ block: 'nearest' });
+        if (identity) this.workspaceSession.portfolioCapture.createdPath = null;
+      }
+      this.viewCleanup = () => {
+        captureCleanup?.();
+        toolbar.destroy();
+        handle.destroy();
+      };
       this.restorePortfolioContinuity(portfolioFocus);
       return;
-    }
-    if (this.settings.projects.view.portfolioLayout === 'timeline') {
-      this.settings.projects.view.portfolioLayout = 'overview';
-      void this.onSaveSettings();
     }
     if (this.settings.projects.view.portfolioLayout === 'board') {
       const board = renderProjectsBoard(container, {

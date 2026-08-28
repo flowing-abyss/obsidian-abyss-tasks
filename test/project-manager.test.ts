@@ -223,15 +223,24 @@ describe('ProjectManager.moveTaskToProject', () => {
 });
 
 describe('ProjectManager.create', () => {
-  it('builds a path under createFolder, applies default status, opens the note', async () => {
+  it('reports file, membership index, and applied default status independently', async () => {
     const app = await createAppWithFiles({});
     const settings = clone();
     const resolver = new DailyNoteResolver(app as never, settings);
-    const pm = new ProjectManager(app as never, settings, resolver, {} as never);
-    const file = await pm.create('My Project');
+    const index = {
+      refresh: vi.fn(),
+      get: vi.fn().mockReturnValue({ path: 'Projects/My Project.md' }),
+    };
+    const pm = new ProjectManager(app as never, settings, resolver, {} as never, undefined, index);
+    const result = await pm.create('My Project');
     await flushMicrotasks();
-    expect(file).not.toBeNull();
-    expect(file!.path).toBe('Projects/My Project.md');
+    expect(result).toEqual({
+      type: 'file-created',
+      path: 'Projects/My Project.md',
+      indexed: true,
+      status: 'applied',
+    });
+    expect(index.refresh).toHaveBeenCalledOnce();
     const fm = await readFm(app, 'Projects/My Project.md');
     expect(fm['status']).toBe('active');
   });
@@ -241,13 +250,111 @@ describe('ProjectManager.create', () => {
     const settings = clone();
     const resolver = new DailyNoteResolver(app as never, settings);
     const pm = new ProjectManager(app as never, settings, resolver, {} as never);
-    const file = await pm.create('Dup');
-    expect(file!.path).toBe('Projects/Dup 2.md');
+    const result = await pm.create('Dup');
+    expect(result).toMatchObject({ type: 'file-created', path: 'Projects/Dup 2.md' });
   });
 
-  it('returns null for an empty name', async () => {
+  it('reports an empty name as failed before creation', async () => {
     const app = await createAppWithFiles({});
     const pm = new ProjectManager(app as never, clone(), {} as never, {} as never);
-    expect(await pm.create('   ')).toBeNull();
+    expect(await pm.create('   ')).toEqual({
+      type: 'failed-before-create',
+      reason: 'Project name is required.',
+    });
+  });
+
+  it('keeps a created file when default status conflicts and reports the partial outcome', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const resolver = new DailyNoteResolver(app as never, settings);
+    const commands = {
+      setStatus: vi.fn().mockResolvedValue({ type: 'conflict', currentStatusId: null }),
+      undoStatus: vi.fn(),
+    } as unknown as ProjectCommandService;
+    const index = { refresh: vi.fn(), get: vi.fn().mockReturnValue(undefined) };
+    const pm = new ProjectManager(app as never, settings, resolver, {} as never, commands, index);
+
+    const result = await pm.create('Partial');
+
+    expect(result).toEqual({
+      type: 'file-created',
+      path: 'Projects/Partial.md',
+      indexed: false,
+      status: 'conflict',
+    });
+    expect(
+      (
+        app as never as { vault: { getAbstractFileByPath(path: string): unknown } }
+      ).vault.getAbstractFileByPath('Projects/Partial.md'),
+    ).toBeInstanceOf(TFile);
+  });
+
+  it('reports no requested status independently when no default exists', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    settings.projects.defaultStatusId = '';
+    settings.projects.statuses = [];
+    const resolver = new DailyNoteResolver(app as never, settings);
+    const index = { refresh: vi.fn(), get: vi.fn().mockReturnValue({}) };
+    const pm = new ProjectManager(app as never, settings, resolver, {} as never, undefined, index);
+
+    expect(await pm.create('Unstaged')).toEqual({
+      type: 'file-created',
+      path: 'Projects/Unstaged.md',
+      indexed: true,
+      status: 'not-requested',
+    });
+  });
+
+  it('reports terminal file-created when template expansion throws after creating the note', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const resolver = {
+      createNoteFromTemplate: vi.fn(async (path: string) => {
+        await (
+          app as never as { vault: { create(p: string, body: string): Promise<TFile> } }
+        ).vault.create(path, '');
+        throw new Error('Templater expansion failed');
+      }),
+    };
+    const index = { refresh: vi.fn(), get: vi.fn().mockReturnValue(undefined) };
+    const pm = new ProjectManager(
+      app as never,
+      settings,
+      resolver as never,
+      {} as never,
+      undefined,
+      index,
+    );
+
+    const result = await pm.create('Template partial');
+
+    expect(result).toMatchObject({
+      type: 'file-created',
+      path: 'Projects/Template partial.md',
+      indexed: false,
+    });
+    expect(index.refresh).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a created note terminal when index refresh or lookup throws', async () => {
+    const app = await createAppWithFiles({});
+    const settings = clone();
+    const resolver = new DailyNoteResolver(app as never, settings);
+    const index = {
+      refresh: vi.fn(() => {
+        throw new Error('index unavailable');
+      }),
+      get: vi.fn(() => {
+        throw new Error('index unavailable');
+      }),
+    };
+    const pm = new ProjectManager(app as never, settings, resolver, {} as never, undefined, index);
+
+    await expect(pm.create('Index partial')).resolves.toMatchObject({
+      type: 'file-created',
+      path: 'Projects/Index partial.md',
+      indexed: false,
+    });
   });
 });

@@ -343,6 +343,62 @@ describe('Projects hardening styles', () => {
     expect(coarseActions).not.toContain('pointer-events: none');
   });
 
+  it('anchors New Project capture outside layout flow with theme-native tokens', () => {
+    const toolbar = declarationsFor('.abyss-projects-toolbar');
+    const host = declarationsFor('.abyss-projects-new-input-host');
+    const capture = declarationsFor('.abyss-project-capture');
+    expect(toolbar).toContain('position: relative');
+    expect(host).toContain('position: absolute');
+    expect(host).toMatch(/inset-(?:block|inline)/u);
+    expect(capture).toContain('background: var(--background-primary)');
+    expect(capture).toContain('border: 1px solid var(--background-modifier-border)');
+    expect(capture).not.toMatch(/#[\da-f]{3,8}|rgba?\(/iu);
+    const recovery = declarationsFor('.abyss-project-capture-open-note');
+    expect(recovery).toContain('white-space: nowrap');
+    expect(recovery).toContain('color: var(--text-accent)');
+  });
+
+  it('keeps Overview rows in the ordinary Task-card surface language without metadata scroll', () => {
+    const row = declarationsFor('.abyss-project-row');
+    expect(row).toContain('background: transparent');
+    expect(row).toContain('border: 0');
+    expect(row).toContain('border-radius: 6px');
+    expect(row).not.toContain('overflow-x: auto');
+    expect(declarationsFor('.abyss-project-row:hover')).toContain(
+      'background: var(--background-modifier-hover)',
+    );
+    expect(declarationsFor('.abyss-project-row:focus-within')).toContain(
+      'outline: 1px solid var(--background-modifier-border-focus)',
+    );
+    expect(declarationsFor('.abyss-project-row-line')).toContain('min-width: 0');
+    expect(declarationsFor('.abyss-project-name')).toContain('text-overflow: ellipsis');
+  });
+
+  it('overlays hover actions without a reserved desktop gap and keeps one 44px coarse action', () => {
+    const actions = declarationsFor('.abyss-project-row-actions');
+    expect(actions).toContain('position: absolute');
+    expect(actions).toMatch(/inset-inline-end:/u);
+    const coarse = declarationsInAtRule(
+      '@media (hover: none), (pointer: coarse)',
+      '.abyss-project-row-actions',
+    );
+    expect(coarse).toContain('inline-size: 44px');
+    expect(coarse).toContain('block-size: 44px');
+    expect(
+      declarationsInAtRule(
+        '@media (hover: none), (pointer: coarse)',
+        '.abyss-project-row-actions > button',
+      ),
+    ).toContain('min-inline-size: 44px');
+  });
+
+  it('collapses status overflow behind one Show summary without horizontal scrolling', () => {
+    const filters = declarationsFor('.abyss-project-status-filters');
+    expect(filters).toContain('overflow: hidden');
+    expect(filters).not.toContain('overflow-x: auto');
+    expect(declarationsFor('.abyss-project-status-summary')).toContain('flex: 0 0 auto');
+  });
+
   it('uses a static focus/state cue when Projects motion is reduced', () => {
     const header = '@media (prefers-reduced-motion: reduce)';
     expect(

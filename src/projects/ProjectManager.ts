@@ -5,6 +5,20 @@ import type { TaskApplicationApi, TaskCommandResult, TaskRef } from '../tasks';
 import { ProjectCommandService, type ProjectPropertyCommandResult } from './ProjectCommandService';
 import { resolveProjectLifecycle } from './lifecycle';
 
+export type ProjectCreateResult =
+  | { readonly type: 'failed-before-create'; readonly reason: string }
+  | {
+      readonly type: 'file-created';
+      readonly path: string;
+      readonly indexed: boolean;
+      readonly status: 'applied' | 'not-requested' | 'conflict';
+    };
+
+export interface ProjectIndexPort {
+  refresh(): void;
+  get(path: string): unknown;
+}
+
 /**
  * Creates project notes and writes their status markers. Status is stored
  * either as a frontmatter property or as a tag, depending on each status's
@@ -21,6 +35,7 @@ export class ProjectManager {
       app,
       () => settings.projects.statuses,
     ),
+    private index?: ProjectIndexPort,
   ) {}
 
   /**
@@ -76,10 +91,10 @@ export class ProjectManager {
     return this.commands.undoStatus(observed, previousStatusId);
   }
 
-  async create(name: string): Promise<TFile | null> {
+  async create(name: string): Promise<ProjectCreateResult> {
     const folder = this.settings.projects.createFolder.trim();
     const clean = name.trim().replace(/[\\/:*?"<>|]/g, '-');
-    if (!clean) return null;
+    if (!clean) return { type: 'failed-before-create', reason: 'Project name is required.' };
     if (folder && !this.app.vault.getAbstractFileByPath(folder)) {
       try {
         await this.app.vault.createFolder(folder);
@@ -94,15 +109,45 @@ export class ProjectManager {
       path = normalizePath(`${base} ${n}.md`);
       n++;
     }
-    const file = await this.resolver.createNoteFromTemplate(
-      path,
-      this.settings.projects.templatePath,
-      clean,
-    );
+    let file: TFile;
+    try {
+      file = await this.resolver.createNoteFromTemplate(
+        path,
+        this.settings.projects.templatePath,
+        clean,
+      );
+    } catch {
+      const created = this.app.vault.getAbstractFileByPath(path);
+      if (!(created instanceof TFile)) {
+        return { type: 'failed-before-create', reason: 'Project note could not be created.' };
+      }
+      file = created;
+    }
     const defaultId =
       this.settings.projects.defaultStatusId || this.settings.projects.statuses[0]?.id;
-    if (defaultId) await this.setStatus(file.path, defaultId);
-    await this.app.workspace.getLeaf(false).openFile(file);
-    return file;
+    let status: Extract<ProjectCreateResult, { type: 'file-created' }>['status'] = 'not-requested';
+    if (defaultId) {
+      try {
+        const result = await this.setStatus(file.path, defaultId);
+        status = result.type === 'ok' || result.type === 'unchanged' ? 'applied' : 'conflict';
+      } catch {
+        status = 'conflict';
+      }
+    }
+    let indexed = false;
+    if (this.index) {
+      try {
+        this.index.refresh();
+        indexed = this.index.get(file.path) !== undefined;
+      } catch {
+        // The note remains terminal even when the eventual Projects index is unavailable.
+      }
+    }
+    try {
+      await this.app.workspace.getLeaf(false).openFile(file);
+    } catch {
+      // The note already exists. Navigation failure cannot turn creation into a rollback.
+    }
+    return { type: 'file-created', path: file.path, indexed, status };
   }
 }

@@ -15,7 +15,11 @@ import {
   workNoteBoardColumns,
 } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
-import { renderProjectRow, showNewProjectInput } from './ProjectsListView';
+import {
+  focusExistingProjectCapture,
+  renderProjectRow,
+  showNewProjectInput,
+} from './ProjectsListView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import type { LogicalViewportSession, WorkNoteBoardSession } from './ProjectWorkspaceSession';
 import { boardColumnViewport, logicalViewportFirst } from './ProjectWorkspaceSession';
@@ -554,12 +558,30 @@ export function renderProjectsBoard(
   options: ProjectsBoardOptions,
 ): BoardViewHandle {
   let destroyed = false;
-  const { newProjectButton } = renderProjectsToolbar(container, options);
-  const newProjectInputHost = container.createDiv({ cls: 'abyss-projects-new-input-host' });
+  const toolbar = renderProjectsToolbar(container, options);
+  const { newProjectButton } = toolbar;
   const boardHost = container.createDiv();
-  newProjectButton.addEventListener('click', () =>
-    showNewProjectInput(newProjectInputHost, options.onCreate),
-  );
+  const captureSession = options.captureSession ?? {
+    open: false,
+    draft: '',
+    pending: false,
+    createdPath: null,
+  };
+  let captureCleanup: (() => void) | undefined;
+  const openCapture = (): void => {
+    captureSession.open = true;
+    if (focusExistingProjectCapture(toolbar.captureHost)) return;
+    captureCleanup?.();
+    captureCleanup = showNewProjectInput(toolbar.captureHost, options.onCreate, {
+      session: captureSession,
+      trigger: newProjectButton,
+      liveRegion: toolbar.liveRegion,
+      openNote: options.openNote,
+      onSettled: options.onCaptureSettled,
+    });
+  };
+  newProjectButton.addEventListener('click', openCapture);
+  if (captureSession.open) openCapture();
   const statuses = options.settings.projects.statuses;
   const snapshots = options.snapshots.map((snapshot) => ({
     ...snapshot,
@@ -574,6 +596,30 @@ export function renderProjectsBoard(
   const statusById = new Map(statuses.map((status) => [status.id, status]));
   const visibleColumnKeys = new Set(options.settings.projects.view.visibleStatusIds);
   if (options.settings.projects.view.includeUnmapped) visibleColumnKeys.add('unmapped');
+  const createdProject = projects.find(({ path }) => path === captureSession.createdPath);
+  if (createdProject?.statusId) visibleColumnKeys.add(createdProject.statusId);
+  else if (createdProject) visibleColumnKeys.add('unmapped');
+  const columns = projectBoardColumns(statuses, projects);
+  if (createdProject && options.session) {
+    const createdColumn = columns.find((column) =>
+      column.items.some(({ path }) => path === createdProject.path),
+    );
+    if (createdColumn) {
+      const createdIndex = createdColumn.items.findIndex(
+        ({ path }) => path === createdProject.path,
+      );
+      options.session.selectedColumnKey = createdColumn.key;
+      options.session.focusedKey = createdProject.path;
+      options.session.restoreFocus = true;
+      const columnViewport = boardColumnViewport(options.session, createdColumn.key);
+      if (columnViewport) {
+        columnViewport.firstKey = createdProject.path;
+        columnViewport.firstIndex = createdIndex;
+        columnViewport.focusedKey = createdProject.path;
+        columnViewport.restoreFocus = true;
+      }
+    }
+  }
   const mutation = createProjectBoardMutation(statuses, (project, statusId) =>
     options.onMoveStatus(project.path, statusId),
   );
@@ -591,7 +637,7 @@ export function renderProjectsBoard(
     });
   }
   const board = renderBoard(boardHost, {
-    columns: projectBoardColumns(statuses, projects),
+    columns,
     visibleColumnKeys,
     mutation,
     undo: (project, columnKey, result) => {
@@ -634,9 +680,26 @@ export function renderProjectsBoard(
     },
     session: options.session,
   });
+  if (captureSession.createdPath) {
+    const createdPath = captureSession.createdPath;
+    queueMicrotask(() => {
+      if (destroyed) return;
+      const row = Array.from(boardHost.querySelectorAll<HTMLElement>('[data-project-path]')).find(
+        ({ dataset }) => dataset['projectPath'] === createdPath,
+      );
+      row?.addClass('is-just-created');
+      row?.querySelector<HTMLElement>('[data-project-identity-control]')?.focus({
+        preventScroll: true,
+      });
+      row?.scrollIntoView?.({ block: 'nearest' });
+      if (row) captureSession.createdPath = null;
+    });
+  }
   return {
     destroy: () => {
       destroyed = true;
+      captureCleanup?.();
+      toolbar.destroy();
       board.destroy();
     },
   };

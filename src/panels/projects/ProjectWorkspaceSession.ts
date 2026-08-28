@@ -1,3 +1,4 @@
+import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import type { ProjectTasksViewState, WorkNotesViewState } from '../../settings/types';
 import { MeasuredWindow } from './BoundedWindow';
 import type { ProjectWorkspaceLayout, ProjectWorkspaceScope } from './ProjectsDashboardView';
@@ -42,6 +43,15 @@ export interface WorkNotesSession {
   readonly selection: ScopeSelectionSession;
   pendingCreatedPath: string | null;
   inspectorPath: string | null;
+}
+
+export interface ProjectCaptureSession {
+  open: boolean;
+  draft: string;
+  pending: boolean;
+  createdPath: string | null;
+  pendingPromise?: Promise<ProjectCreateResult | void>;
+  terminalResult?: Extract<ProjectCreateResult, { type: 'file-created' }>;
 }
 
 export interface UseProjectWorkspaceDefaultIntent {
@@ -211,6 +221,13 @@ export class ProjectWorkspaceSession {
     focusedKey: null,
     restoreFocus: false,
     columns: {},
+  };
+  /** New Project continuity is shared by Overview, Board, Timeline, and panel remounts. */
+  readonly portfolioCapture: ProjectCaptureSession = {
+    open: false,
+    draft: '',
+    pending: false,
+    createdPath: null,
   };
 
   get size(): number {

@@ -175,7 +175,6 @@ export class LeftPanel {
   private async createProject(name: string): Promise<void> {
     if (!this.projectManager) return;
     await this.projectManager.create(name);
-    this.projectStore?.refresh();
   }
 
   /**

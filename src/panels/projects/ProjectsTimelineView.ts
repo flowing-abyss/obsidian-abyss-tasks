@@ -487,28 +487,52 @@ export function renderTimeline<T>(
       entries.map(({ item }) => item.key),
       TIMELINE_OVERSCAN,
     );
-    const renderWindow = (): void => {
+    const keys = entries.map(({ item }) => item.key);
+    const focusedKey = options.focusedItemKey?.() ?? options.session?.focusedKey;
+    if (focusedKey && keys.includes(focusedKey)) bounded.focus(focusedKey);
+    const viewport = (): { first: number; visible: number } => ({
+      first: Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_DIAGNOSTIC_ROW_EXTENT),
+      visible:
+        scroll.clientHeight > 0
+          ? Math.ceil(scroll.clientHeight / TIMELINE_DIAGNOSTIC_ROW_EXTENT)
+          : TIMELINE_DIAGNOSTIC_VISIBLE_ROWS,
+    });
+    if (focusedKey && keys.includes(focusedKey)) {
+      scroll.scrollTop = bounded.viewportForFocus(viewport()) * TIMELINE_DIAGNOSTIC_ROW_EXTENT;
+    }
+    const renderWindow = (restoreFocus = false): void => {
       bounded.render(rows, {
-        first: Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_DIAGNOSTIC_ROW_EXTENT),
-        visible:
-          scroll.clientHeight > 0
-            ? Math.ceil(scroll.clientHeight / TIMELINE_DIAGNOSTIC_ROW_EXTENT)
-            : TIMELINE_DIAGNOSTIC_VISIBLE_ROWS,
+        ...viewport(),
         itemExtent: TIMELINE_DIAGNOSTIC_ROW_EXTENT,
+        restoreFocus,
         render: (host, _key, logicalIndex) => {
           const entry = entries[logicalIndex]!;
-          const row = host.createDiv({ cls: 'abyss-timeline-diagnostic-row' });
-          row.createSpan({ text: entry.label });
+          const row = host.createDiv({
+            cls: `abyss-timeline-diagnostic-row ${className}-row`,
+            attr: timelineIdentityAttributes(entry.item.key),
+          });
+          const identity = row.createDiv({ cls: 'abyss-timeline-identity' });
+          renderEntryIdentity(identity, entry, options.renderIdentity);
           if (entry.item.kind === 'invalid') {
             row.createSpan({ cls: 'abyss-timeline-diagnostic-reason', text: entry.item.reason });
           }
-          return row;
+          // eslint-disable-next-line sonarjs/no-nested-functions -- The bounded diagnostic row owns its focus listener.
+          row.addEventListener('focusin', () => {
+            bounded.focus(entry.item.key);
+            options.onItemFocus?.(entry);
+            if (options.session) {
+              options.session.focusedKey = entry.item.key;
+              options.session.restoreFocus = true;
+            }
+          });
+          return timelineRowFocusTarget(row, identity);
         },
       });
     };
-    scroll.addEventListener('scroll', renderWindow);
-    cleanups.push(() => scroll.removeEventListener('scroll', renderWindow));
-    renderWindow();
+    const onScroll = (): void => renderWindow(false);
+    scroll.addEventListener('scroll', onScroll);
+    cleanups.push(() => scroll.removeEventListener('scroll', onScroll));
+    renderWindow(focusedKey !== undefined && focusedKey !== null && keys.includes(focusedKey));
   };
   renderDiagnosticSection(undated, 'abyss-timeline-undated', 'Undated');
   renderDiagnosticSection(invalid, 'abyss-timeline-invalid', 'Invalid dates');

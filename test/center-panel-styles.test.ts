@@ -277,27 +277,23 @@ describe('Panel hierarchy styles', () => {
 
   it('uses compact Project rows with a clean terminal summary and keyboard focus', () => {
     const row = declarationsFor('.abyss-project-row');
-    const rowWithMeta = declarationsFor('.abyss-project-row--has-meta');
-    const summary = declarationsFor('.abyss-project-row-meta');
+    const primary = declarationsFor('.abyss-project-row-line--primary');
+    const secondary = declarationsFor('.abyss-project-row-line--secondary');
     const actions = declarationsFor('.abyss-project-row-actions');
-    const focus = declarationsFor('.abyss-project-row:focus-visible');
+    const focus = declarationsFor('.abyss-project-row:focus-within');
     const nextAction = declarationsFor('.abyss-project-next-action');
 
     expect(row).toContain('display: grid');
     expect(row).toContain('min-width: 0');
-    expect(row).toContain('[status]');
-    expect(row).toContain('[identity]');
-    expect(row).toContain('[actions]');
-    expect(row).not.toContain('[meta]');
-    expect(rowWithMeta).toContain('[meta]');
-    expect(summary).toContain('grid-column: meta');
-    expect(actions).toContain('grid-column: actions');
-    expect(row).not.toContain('24px');
-    expect(summary).toContain('justify-content: flex-end');
+    expect(row).toContain('grid-template-rows: repeat(2, minmax(0, 1fr))');
+    expect(primary).toContain('minmax(0, 1fr)');
+    expect(secondary).toContain('white-space: nowrap');
+    expect(actions).toContain('position: absolute');
     expect(focus).toContain('outline:');
-    expect(nextAction).toContain('width: 24px');
+    expect(nextAction).toContain('min-width: 0');
     expect(nextAction).not.toContain('margin-left');
     expect(css).not.toContain('.abyss-next-action-slot');
+    expect(css).not.toContain('.abyss-project-row-meta');
     expect(css).not.toMatch(/abyss-project-next-action::(?:before|after)/u);
     expect(css).not.toMatch(/abyss-project-row:(?:has|not)[^{]*next-action/u);
   });
@@ -311,19 +307,17 @@ describe('Panel hierarchy styles', () => {
     const group = declarationsFor('.abyss-projects-group-header');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 42rem)');
     const compactRow = declarationsForSource(compact, '.abyss-project-row');
-    const compactRowWithMeta = declarationsForSource(compact, '.abyss-project-row--has-meta');
-    const compactMeta = declarationsForSource(compact, '.abyss-project-row-meta');
+    const compactPrimary = declarationsForSource(compact, '.abyss-project-row-line--primary');
 
     expect(row).toContain('block-size: 52px');
     expect(row).toContain('box-sizing: border-box');
     expect(group).toContain('block-size: 52px');
     expect(group).toContain('box-sizing: border-box');
     expect(group).not.toContain('margin');
-    expect(compactRow).toContain('[actions]');
-    expect(compactRow).not.toContain('[meta]');
-    expect(compactRowWithMeta).toContain('[meta]');
-    expect(compactMeta).not.toContain('grid-row');
-    expect(compactMeta).toContain('max-inline-size: 55%');
+    expect(compactRow).not.toContain('block-size');
+    expect(compactPrimary).toContain('minmax(0, 1fr)');
+    expect(css).not.toContain('.abyss-project-row--has-meta');
+    expect(css).not.toContain('.abyss-project-row-meta');
   });
 
   it('keeps non-item block geometry outside the bounded portfolio coordinates', () => {
@@ -335,6 +329,7 @@ describe('Panel hierarchy styles', () => {
     expect(scroll).not.toContain('padding-block');
     expect(window).toContain('padding-inline: 12px');
     expect(window).not.toContain('padding-block');
-    expect(inputHost).toContain('padding-inline: 12px');
+    expect(inputHost).toContain('position: absolute');
+    expect(inputHost).toContain('inset-block-start:');
   });
 });

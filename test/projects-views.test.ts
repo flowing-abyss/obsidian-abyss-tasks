@@ -183,7 +183,7 @@ describe('renderProjectsList', () => {
     expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
   });
 
-  it('shows the portfolio Timeline route only when a real dated renderer is available', async () => {
+  it('keeps Timeline in the portfolio switcher and disables it only without a renderer', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const onPortfolioLayoutChanged = vi.fn();
     const available = freshContainer();
@@ -205,8 +205,12 @@ describe('renderProjectsList', () => {
     renderProjectsList(unavailable, [workspace()], {
       ...ctx,
       settings: structuredClone(DEFAULT_SETTINGS),
+      timelineAvailable: false,
     });
-    expect(unavailable.querySelector('[data-project-portfolio-layout="timeline"]')).toBeNull();
+    expect(
+      unavailable.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="timeline"]')
+        ?.disabled,
+    ).toBe(true);
   });
 
   it('keeps the shared toolbar available while the lifecycle Board is active', () => {
@@ -285,6 +289,52 @@ describe('renderProjectsList', () => {
     }
   });
 
+  it('reveals and focuses a created Project beyond the first bounded Board window in its narrow column', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const targetStatus = settings.projects.statuses.find(({ id }) => id !== ACTIVE_ID)!;
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = [ACTIVE_ID, targetStatus.id];
+    const targetPath = 'Projects/Z-created.md';
+    const snapshots = Array.from({ length: 120 }, (_, index) =>
+      workspace(
+        proj({
+          path: index === 119 ? targetPath : `Projects/P${String(index).padStart(3, '0')}.md`,
+          name: index === 119 ? 'Z created' : `P${String(index).padStart(3, '0')}`,
+          statusId: targetStatus.id,
+        }),
+      ),
+    );
+    const session = new ProjectWorkspaceSession();
+    session.portfolioCapture.createdPath = targetPath;
+    const el = attachedContainer();
+
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots,
+      captureSession: session.portfolioCapture,
+      session: session.portfolioBoard,
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+    });
+    await Promise.resolve();
+
+    expect(
+      el.querySelector<HTMLElement>('[data-board-column-tab][aria-selected="true"]')?.dataset[
+        'boardColumnTab'
+      ],
+    ).toBe(targetStatus.id);
+    const target = el.querySelector<HTMLElement>(`[data-project-path="${targetPath}"]`)!;
+    expect(target).not.toBeNull();
+    expect(target.classList.contains('is-just-created')).toBe(true);
+    expect(activeDocument.activeElement).toBe(
+      target.querySelector<HTMLElement>('[data-project-identity-control]'),
+    );
+    expect(session.portfolioCapture.createdPath).toBeNull();
+    el.remove();
+  });
+
   it('constrains a long Project title to its Board identity control', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
@@ -329,7 +379,7 @@ describe('renderProjectsList', () => {
     }
   });
 
-  it('contains dense Board metadata paint within its Project card', () => {
+  it('contains dense Board evidence in the same two-line Project card without metadata overflow', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
     const style = activeDocument.head.createEl('style');
@@ -357,8 +407,14 @@ describe('renderProjectsList', () => {
         onUndoStatus: vi.fn(),
       });
 
-      const metadata = el.querySelector<HTMLElement>('.abyss-project-row-meta')!;
-      expect(['hidden', 'clip']).toContain(getComputedStyle(metadata).overflowX);
+      const row = el.querySelector<HTMLElement>('.abyss-project-row')!;
+      const lines = row.querySelectorAll<HTMLElement>('.abyss-project-row-line');
+      expect(lines).toHaveLength(2);
+      expect(Array.from(lines).every((line) => getComputedStyle(line).overflow === 'hidden')).toBe(
+        true,
+      );
+      expect(row.querySelector('.abyss-project-row-meta')).toBeNull();
+      expect(row.textContent).not.toMatch(/\bTasks\b|\bWork Notes\b/u);
     } finally {
       style.remove();
       el.remove();
@@ -502,7 +558,7 @@ describe('renderProjectsList', () => {
     expect(onSetStatus).not.toHaveBeenCalled();
   });
 
-  it('renders joined Task, Work Note, overdue, and diagnostic summary data', () => {
+  it('keeps joined rollups available as compact progress without redundant metric labels', () => {
     const project = proj({
       stats: { total: 3, done: 1, cancelled: 0, inProgress: 1, open: 1, progress: 1 / 3 },
     });
@@ -523,14 +579,18 @@ describe('renderProjectsList', () => {
       { ...ctx, state: new AppState() },
     );
 
-    expect(el.querySelector('.abyss-project-task-progress')?.textContent).toContain('Tasks');
-    expect(el.querySelector('.abyss-project-work-notes')?.textContent).toBe('Work Notes 2');
-    expect(el.querySelector('.abyss-project-overdue')?.textContent).toBe('3');
-    expect(el.querySelector('.abyss-project-diagnostics')?.textContent).toBe('1');
+    expect(el.querySelector('.abyss-project-task-progress')?.textContent).toBe('1/3');
+    expect(el.querySelector('.abyss-project-work-note-count')?.getAttribute('aria-label')).toBe(
+      '2 Work Notes',
+    );
+    expect(el.querySelector('.abyss-project-work-note-count')?.textContent).toBe('2');
+    expect(el.querySelector('.abyss-project-diagnostic-count')).not.toBeNull();
+    expect(el.querySelector('.abyss-project-row-meta')).toBeNull();
+    expect(el.textContent).not.toMatch(/\bTasks\b|\bWork Notes\b/u);
     expect(el.textContent).not.toMatch(/\bActions?\b|Action progress/u);
   });
 
-  it('includes milestones in the portfolio Work Notes count for a milestone-only Project', () => {
+  it('includes milestone-only Work Notes and invalid dependency evidence in the two-line identity', () => {
     const el = freshContainer();
     const milestone = {
       ...workNote('Work Notes/Release.md', ACTIVE_ID, '2026-08-29'),
@@ -543,16 +603,19 @@ describe('renderProjectsList', () => {
           workNotes: [],
           milestones: [milestone],
           workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+          dependencies: { blocked: 0, invalid: 2, diagnostics: [] },
         }),
       ],
       { ...ctx, state: new AppState() },
     );
 
-    expect(el.querySelector('.abyss-project-work-notes')?.textContent).toBe('Work Notes 1');
+    expect(el.querySelector('.abyss-project-work-note-count')?.textContent).toBe('1');
+    expect(el.querySelector('.abyss-project-diagnostic-count')?.textContent).toBe('2');
+    expect(el.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
     cleanup();
   });
 
-  it('opens the joined Next Action in the Task inspector from an icon-only control', () => {
+  it('opens the joined Next Action from its visible second-line title', () => {
     const state = new AppState();
     const next = task({ title: 'Do this', tags: ['#task/next_action'] });
     const el = freshContainer();
@@ -575,14 +638,47 @@ describe('renderProjectsList', () => {
     );
     const control = el.querySelector<HTMLButtonElement>('[aria-label="Open Next Action"]')!;
 
-    expect(control.textContent?.trim()).toBe('');
+    expect(control.textContent?.trim()).toBe('Do this');
     expect(control.getAttribute('title')).toBeTruthy();
     expect(el.querySelector('.abyss-next-action-slot')).toBeNull();
     control.click();
     expect(state.get('taskStack')).toEqual([next]);
   });
 
-  it('reserves no Next Action geometry when no joined Task is marked', () => {
+  it('renders the deterministic actionable Next Action selected by health', () => {
+    const completed = task({
+      title: 'Completed tag must not win',
+      tags: ['#task/next_action'],
+      status: 'done',
+    });
+    const actionable = task({
+      title: 'Actionable candidate',
+      tags: ['#task/next_action'],
+      status: 'open',
+      planning: { due: '2026-08-29' },
+    });
+    const el = freshContainer();
+    renderProjectsList(
+      el,
+      [
+        workspace(proj({}), {
+          tasks: [completed, actionable].map((candidate) => ({
+            task: candidate,
+            projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' as const },
+            owner: { type: 'project' as const, path: 'Projects/A.md' },
+          })),
+        }),
+      ],
+      { ...ctx, state: new AppState(), today: () => '2026-08-28' },
+    );
+
+    expect(el.querySelector('.abyss-project-next-action-title')?.textContent).toBe(
+      'Actionable candidate',
+    );
+  });
+
+  it('keeps the two-line shell and overlaid actions stable with or without a Next Action', () => {
     const style = activeDocument.head.createEl('style');
     style.textContent = shippedStyles;
     const overview = freshContainer();
@@ -634,18 +730,15 @@ describe('renderProjectsList', () => {
       const setRow = overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!;
       const unsetActions = unsetRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
       const setActions = setRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
-      const setMeta = setRow.querySelector<HTMLElement>('.abyss-project-row-meta')!;
-      expect(getComputedStyle(unsetRow).gridTemplateColumns).not.toContain('[meta]');
-      expect(getComputedStyle(setRow).gridTemplateColumns).toContain('[meta]');
-      expect(getComputedStyle(unsetActions).gridColumn).toBe('actions');
-      expect(getComputedStyle(setActions).gridColumn).toBe('actions');
-      expect(getComputedStyle(setMeta).gridColumn).toBe('meta');
+      expect(unsetRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
+      expect(setRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
+      expect(unsetRow.querySelector('.abyss-project-row-meta')).toBeNull();
+      expect(setRow.querySelector('.abyss-project-row-meta')).toBeNull();
+      expect(getComputedStyle(unsetActions).position).toBe('absolute');
+      expect(getComputedStyle(setActions).position).toBe('absolute');
       expect(unsetActions.getBoundingClientRect()).toEqual(setActions.getBoundingClientRect());
       expect(unsetRow.lastElementChild).toBe(unsetActions);
       expect(setRow.lastElementChild).toBe(setActions);
-      expect(Array.from(setRow.children).indexOf(setMeta)).toBeLessThan(
-        Array.from(setRow.children).indexOf(setActions),
-      );
       expect(
         geometryContract(compact.querySelector<HTMLElement>('.abyss-project-dashboard-stats')!),
       ).toEqual(
@@ -742,7 +835,8 @@ describe('renderProjectsList', () => {
     el.querySelector<HTMLButtonElement>('.abyss-projects-new')!.click();
     const input = el.querySelector<HTMLElement>('.abyss-projects-new-input')!;
     expect(scroll.contains(input)).toBe(false);
-    expect(input.parentElement?.classList.contains('abyss-projects-new-input-host')).toBe(true);
+    expect(input.closest('.abyss-projects-new-input-host')).not.toBeNull();
+    expect(input.closest('.abyss-projects-toolbar')).not.toBeNull();
     scroll.dispatchEvent(new Event('scroll'));
     expect(
       Array.from(
@@ -920,7 +1014,7 @@ describe('renderProjectsList', () => {
       resizeCallback?.([], {} as ResizeObserver);
 
       expect(observe).toHaveBeenCalledWith(scroll);
-      expect(disconnect).toHaveBeenCalledOnce();
+      expect(disconnect).toHaveBeenCalledTimes(2);
       expect(el.querySelector<HTMLElement>('.abyss-project-row')?.dataset['boundedKey']).toBe(
         'project:Projects/P00.md',
       );
@@ -1705,6 +1799,104 @@ describe('ProjectsPanel dispatch', () => {
       expect(activeDocument.activeElement).toBe(replacement);
       expect(settings.projects.view.portfolioLayout).toBe(layout);
       expect(el.querySelector<HTMLElement>(scrollSelector)?.scrollTop).toBe(91);
+    } finally {
+      panel.destroy();
+      el.remove();
+    }
+  });
+
+  it.each(['overview', 'board', 'timeline'] as const)(
+    'returns overflow-filter focus to Show after a %s remount',
+    (layout) => {
+      let invokeFirstItem: (() => void) | undefined;
+      vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+        const item = {
+          setTitle: () => item,
+          setChecked: () => item,
+          onClick: (handler: () => void) => {
+            invokeFirstItem ??= handler;
+            return item;
+          },
+        };
+        callback(item as never);
+        return this;
+      });
+      vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+        return this;
+      });
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.projects.view.portfolioLayout = layout;
+      const project = proj({
+        frontmatter: { start: '2026-08-26', end: '2026-08-30' },
+        range: parseProjectRange('2026-08-26', '2026-08-30'),
+      });
+      const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+        snapshots: [workspace(project)],
+        projectCommands: {
+          observeRange: vi.fn().mockReturnValue({
+            path: project.path,
+            start: '2026-08-26',
+            end: '2026-08-30',
+          }),
+          setRange: vi.fn(),
+        } as never,
+      });
+      const el = attachedContainer();
+      panel.mount(el);
+      try {
+        const summary = el.querySelector<HTMLButtonElement>('.abyss-project-status-summary')!;
+        summary.hidden = false;
+        summary.focus();
+        summary.click();
+        expect(summary.getAttribute('aria-expanded')).toBe('true');
+
+        invokeFirstItem?.();
+
+        const replacement = el.querySelector<HTMLButtonElement>('.abyss-project-status-summary')!;
+        expect(replacement).not.toBe(summary);
+        expect(activeDocument.activeElement).toBe(replacement);
+        expect(replacement.getAttribute('aria-expanded')).toBe('false');
+      } finally {
+        panel.destroy();
+        el.remove();
+      }
+    },
+  );
+
+  it('reveals and focuses a created undated Project beyond the first Timeline diagnostic window', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const targetPath = 'Projects/Z-created.md';
+    const snapshots = Array.from({ length: 40 }, (_, index) =>
+      workspace(
+        proj({
+          path: index === 39 ? targetPath : `Projects/P${String(index).padStart(2, '0')}.md`,
+          name: index === 39 ? 'Z created' : `P${String(index).padStart(2, '0')}`,
+        }),
+      ),
+    );
+    const session = new ProjectWorkspaceSession();
+    session.portfolioCapture.createdPath = targetPath;
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots,
+      workspaceSession: session,
+      projectCommands: {
+        observeRange: vi.fn((project: Project) => ({ path: project.path })),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = attachedContainer();
+    panel.mount(el);
+    try {
+      const identity = el.querySelector<HTMLElement>(
+        `[data-timeline-key="project:${targetPath}"] [data-project-identity-control]`,
+      )!;
+      expect(identity).not.toBeNull();
+      expect(identity.closest('.abyss-timeline-undated-row')?.classList).toContain(
+        'is-just-created',
+      );
+      expect(activeDocument.activeElement).toBe(identity);
+      expect(session.portfolioCapture.createdPath).toBeNull();
     } finally {
       panel.destroy();
       el.remove();
