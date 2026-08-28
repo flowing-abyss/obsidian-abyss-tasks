@@ -2,6 +2,13 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import type {
+  WorkNoteCompatibilityDisableResult,
+  WorkNoteCompatibilityPreset,
+  WorkNoteCompatibilityPreview,
+  WorkNoteCompatibilityValidationResult,
+  WorkNoteValidatedApplyResult,
+} from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { CalendarSettingsTab } from '../src/settings/SettingsTab';
 import { SHORTCUT_ACTION_IDS } from '../src/settings/shortcuts';
@@ -22,8 +29,8 @@ interface StubPlugin {
   app: App;
   settings: CalendarSettings;
   saveSettings: ReturnType<typeof vi.fn>;
-  previewWorkNoteCompatibility: ReturnType<typeof vi.fn>;
-  acceptWorkNoteCompatibility: ReturnType<typeof vi.fn>;
+  validateWorkNoteCompatibility: ReturnType<typeof vi.fn>;
+  applyValidatedWorkNoteCompatibility: ReturnType<typeof vi.fn>;
   disableWorkNoteCompatibility: ReturnType<typeof vi.fn>;
 }
 
@@ -78,8 +85,8 @@ function makeTab(
   opts: {
     expand?: boolean;
     saveSettings?: StubPlugin['saveSettings'];
-    previewWorkNoteCompatibility?: StubPlugin['previewWorkNoteCompatibility'];
-    acceptWorkNoteCompatibility?: StubPlugin['acceptWorkNoteCompatibility'];
+    validateWorkNoteCompatibility?: StubPlugin['validateWorkNoteCompatibility'];
+    applyValidatedWorkNoteCompatibility?: StubPlugin['applyValidatedWorkNoteCompatibility'];
     disableWorkNoteCompatibility?: StubPlugin['disableWorkNoteCompatibility'];
   } = {},
 ): {
@@ -95,18 +102,18 @@ function makeTab(
   (app as unknown as Record<string, unknown>).internalPlugins = { getPluginById: () => null };
   const settings = { ...structuredClone(DEFAULT_SETTINGS), ...settingsOverrides };
   const saveSettings = opts.saveSettings ?? vi.fn().mockResolvedValue(undefined);
-  const previewWorkNoteCompatibility =
-    opts.previewWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
-  const acceptWorkNoteCompatibility =
-    opts.acceptWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
+  const validateWorkNoteCompatibility =
+    opts.validateWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
+  const applyValidatedWorkNoteCompatibility =
+    opts.applyValidatedWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
   const disableWorkNoteCompatibility =
     opts.disableWorkNoteCompatibility ?? vi.fn().mockResolvedValue(undefined);
   const plugin: StubPlugin = {
     app,
     settings,
     saveSettings,
-    previewWorkNoteCompatibility,
-    acceptWorkNoteCompatibility,
+    validateWorkNoteCompatibility,
+    applyValidatedWorkNoteCompatibility,
     disableWorkNoteCompatibility,
   };
   const captured: CapturedComp[] = [];
@@ -816,77 +823,59 @@ describe('sourceNoteDisplay setting', () => {
 });
 
 describe('CalendarSettingsTab collapsible cards + default status', () => {
-  it('renders an aggregate-only disabled Work Note preview without saving or mutation controls', async () => {
-    const previewWorkNoteCompatibility = vi.fn().mockResolvedValue({
-      preset: { enabled: false, accepted: false },
-      notes: { scanned: 37, eligible: 12, excluded: 3 },
-      kinds: { ordinary: 10, milestone: 2, ambiguous: 1, missing: 2 },
-      statuses: { mapped: 9, unknown: 2, missing: 1, nonScalar: 0 },
-      links: {
-        brokenProject: 1,
-        ambiguousProject: 1,
-        brokenRelation: 2,
-        ambiguousRelation: 0,
-        invalidProjectEntry: 0,
-        invalidRelationEntry: 1,
-      },
-      cardinality: { missingProject: 1, multipleProjects: 1, multipleMilestones: 0 },
-      duplicateBasenames: { project: 1, relation: 0 },
-      diagnostics: { 'broken-project': 1, 'unknown-status': 2 },
-      capabilities: { update: false, create: false },
-    });
-    const { tab, plugin, captured } = makeTab({}, { previewWorkNoteCompatibility });
-    const before = structuredClone(plugin.settings.projects.workNoteCompatibility);
-    const body = openSection(tab, 5);
-    const previewButton = Array.from(body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent === 'Preview work notes',
-    );
-
-    expect(previewButton).toBeDefined();
-    const previewComponent = captured.find((entry) => {
-      if (entry.type !== 'button') return false;
-      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
-      return element?.textContent === 'Preview work notes';
-    });
-    previewComponent!.comp.clickHandler!();
-    await vi.waitFor(() => expect(previewWorkNoteCompatibility).toHaveBeenCalledOnce());
-
-    const result = body.querySelector<HTMLElement>('.abyss-work-note-preview');
-    expect(result?.textContent).toContain('12 eligible');
-    expect(result?.textContent).toContain('3 excluded');
-    expect(result?.textContent).toContain('10 ordinary');
-    expect(result?.textContent).toContain('2 milestones');
-    expect(result?.textContent).toContain('2 unknown statuses');
-    expect(result?.textContent).toContain('1 duplicate project basename');
-    expect(result?.dataset['presetEnabled']).toBe('false');
-    expect(result?.dataset['accepted']).toBe('false');
-    expect(result?.dataset['capabilityUpdate']).toBe('false');
-    expect(result?.dataset['capabilityCreate']).toBe('false');
-    expect(plugin.saveSettings).not.toHaveBeenCalled();
-    expect(plugin.settings.projects.workNoteCompatibility).toEqual(before);
-    for (const mutationLabel of [
-      'Accept',
-      'Enable',
-      'Create Work Note',
-      'Set status',
-      'Set date',
-      'Set relation',
-    ]) {
-      expect(
-        Array.from(body.querySelectorAll('button')).some(
-          (button) => button.textContent === mutationLabel,
-        ),
-      ).toBe(false);
-    }
+  const workNotePreset = (
+    overrides: Partial<WorkNoteCompatibilityPreset> = {},
+  ): WorkNoteCompatibilityPreset => ({
+    ...structuredClone(DEFAULT_SETTINGS.projects.workNoteCompatibility),
+    revision: 7,
+    enabled: false,
+    membershipQuery: 'Work Notes/',
+    ordinaryKindQuery: '#work-note/task',
+    milestoneKindQuery: '#work-note/milestone',
+    folder: 'Work Notes',
+    fields: {
+      ...DEFAULT_SETTINGS.projects.workNoteCompatibility.fields,
+      project: 'project',
+    },
+    rawStatusByStatusId: { 'status-1': 'active' },
+    ...overrides,
   });
 
-  it('offers one explicit audited enable action and reports accepted capabilities', async () => {
-    const preview = {
-      acceptanceToken: 'work-note-preview-test',
-      preset: { enabled: false, accepted: false },
-      notes: { scanned: 12, eligible: 10, excluded: 2 },
-      kinds: { ordinary: 9, milestone: 1, ambiguous: 0, missing: 0 },
-      statuses: { mapped: 10, unknown: 0, missing: 0, nonScalar: 0 },
+  const preview = (capabilities = { update: true, create: false }) => ({
+    preset: { enabled: true, accepted: false },
+    notes: { scanned: 37, eligible: 12, excluded: 25 },
+    kinds: { ordinary: 10, milestone: 2, ambiguous: 1, missing: 0 },
+    statuses: { mapped: 9, unknown: 2, missing: 1, nonScalar: 0 },
+    links: {
+      brokenProject: 1,
+      ambiguousProject: 0,
+      brokenRelation: 0,
+      ambiguousRelation: 0,
+      invalidProjectEntry: 0,
+      invalidRelationEntry: 0,
+    },
+    cardinality: { missingProject: 0, multipleProjects: 0, multipleMilestones: 0 },
+    duplicateBasenames: { project: 0, relation: 0 },
+    diagnostics: { 'ambiguous-kind': 1, 'unknown-status': 2 },
+    capabilities,
+  });
+
+  const audited = (
+    token: object = {},
+    capabilities = { update: true, create: false },
+  ): WorkNoteCompatibilityValidationResult => ({
+    type: 'audited',
+    token: token as Extract<WorkNoteCompatibilityValidationResult, { type: 'audited' }>['token'],
+    presetFingerprint: 'work-note-preset:test',
+    preview: preview(capabilities),
+  });
+
+  it('summarizes every blocking audit family instead of silently omitting it', () => {
+    const { tab } = makeTab();
+    const clean: WorkNoteCompatibilityPreview = {
+      ...preview(),
+      kinds: { ordinary: 12, milestone: 0, ambiguous: 0, missing: 0 },
+      statuses: { mapped: 12, unknown: 0, missing: 0, nonScalar: 0 },
       links: {
         brokenProject: 0,
         ambiguousProject: 0,
@@ -898,40 +887,474 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
       cardinality: { missingProject: 0, multipleProjects: 0, multipleMilestones: 0 },
       duplicateBasenames: { project: 0, relation: 0 },
       diagnostics: {},
-      capabilities: { update: false, create: false },
-    } as const;
-    const accepted = {
-      ...preview,
-      preset: { enabled: true, accepted: true },
-      capabilities: { update: true, create: true },
-    } as const;
-    const previewWorkNoteCompatibility = vi.fn().mockResolvedValue(preview);
-    const acceptWorkNoteCompatibility = vi
+    };
+    const summarize = (
+      tab as unknown as {
+        strongestWorkNoteWarning: (candidate: WorkNoteCompatibilityPreview) => string | undefined;
+      }
+    ).strongestWorkNoteWarning.bind(tab);
+    const cases: readonly [WorkNoteCompatibilityPreview, string][] = [
+      [{ ...clean, statuses: { ...clean.statuses, missing: 1 } }, 'Some notes have no status.'],
+      [
+        { ...clean, statuses: { ...clean.statuses, nonScalar: 1 } },
+        'Some statuses are not scalar values.',
+      ],
+      [
+        { ...clean, cardinality: { ...clean.cardinality, missingProject: 1 } },
+        'Some notes have no Project link.',
+      ],
+      [
+        { ...clean, links: { ...clean.links, brokenRelation: 1 } },
+        'Some related-note links are broken.',
+      ],
+      [
+        { ...clean, links: { ...clean.links, ambiguousRelation: 1 } },
+        'Some related-note links are ambiguous.',
+      ],
+      [
+        { ...clean, links: { ...clean.links, invalidProjectEntry: 1 } },
+        'Some Project links use unsupported values.',
+      ],
+      [
+        { ...clean, links: { ...clean.links, invalidRelationEntry: 1 } },
+        'Some related-note links use unsupported values.',
+      ],
+      [
+        { ...clean, duplicateBasenames: { ...clean.duplicateBasenames, project: 1 } },
+        'Some Project names resolve to more than one note.',
+      ],
+      [
+        { ...clean, duplicateBasenames: { ...clean.duplicateBasenames, relation: 1 } },
+        'Some related-note names resolve to more than one note.',
+      ],
+      [
+        { ...clean, cardinality: { ...clean.cardinality, multipleProjects: 1 } },
+        'Some notes link to more than one Project.',
+      ],
+      [
+        { ...clean, cardinality: { ...clean.cardinality, multipleMilestones: 1 } },
+        'Some notes link to more than one milestone.',
+      ],
+      [
+        { ...clean, diagnostics: { 'non-scalar-description': 1 } },
+        'Review the remaining audit issue in Advanced.',
+      ],
+    ];
+    for (const [candidate, expected] of cases) expect(summarize(candidate)).toBe(expected);
+  });
+
+  const projectBody = (tab: CalendarSettingsTab): HTMLElement =>
+    tab.containerEl
+      .querySelectorAll<HTMLElement>('.abyss-settings-section')[5]!
+      .querySelector<HTMLElement>('.abyss-settings-section-body')!;
+
+  const workNoteSetup = (body: HTMLElement): HTMLElement =>
+    body.matches('.abyss-work-note-setup')
+      ? body
+      : body.querySelector<HTMLElement>('.abyss-work-note-setup')!;
+
+  const button = (body: HTMLElement, label: string): HTMLButtonElement | undefined =>
+    Array.from(body.querySelectorAll<HTMLButtonElement>('button')).find(
+      (candidate) => candidate.textContent?.trim() === label,
+    );
+
+  it('keeps Work Note edits in a section-local draft across collapse and rerender', () => {
+    const applied = workNotePreset();
+    const { tab, plugin } = makeTab({
+      projects: {
+        ...structuredClone(DEFAULT_SETTINGS.projects),
+        workNoteCompatibility: applied,
+      },
+    });
+    let body = openSection(tab, 5);
+    button(workNoteSetup(body), 'Re-enable')!.click();
+    body = workNoteSetup(projectBody(tab));
+    const membership = findInput(body, 'Membership query')!;
+    membership.value = '#work-note AND "Research Notes/"';
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+
+    expect(plugin.settings.projects.workNoteCompatibility).toEqual(applied);
+    expect(plugin.saveSettings).not.toHaveBeenCalled();
+    tab.containerEl
+      .querySelectorAll<HTMLButtonElement>('.abyss-settings-section-header')[5]!
+      .click();
+    tab.containerEl
+      .querySelectorAll<HTMLButtonElement>('.abyss-settings-section-header')[5]!
+      .click();
+    expect(findInput(workNoteSetup(projectBody(tab)), 'Membership query')?.value).toBe(
+      '#work-note AND "Research Notes/"',
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    tab.display();
+    expect(findInput(workNoteSetup(projectBody(tab)), 'Membership query')?.value).toBe(
+      '#work-note AND "Research Notes/"',
+    );
+    button(workNoteSetup(projectBody(tab)), 'Reset changes')!.click();
+    expect(workNoteSetup(projectBody(tab)).textContent).toContain('Work Notes are off');
+  });
+
+  it('documents the complete membership language without a compatibility prose wall', () => {
+    const { tab } = makeTab({
+      projects: {
+        ...structuredClone(DEFAULT_SETTINGS.projects),
+        workNoteCompatibility: workNotePreset({ enabled: true }),
+      },
+    });
+    const body = openSection(tab, 5);
+    const setup = body.querySelector<HTMLElement>('.abyss-work-note-setup')!;
+
+    expect(setup.textContent).toContain('folder');
+    expect(setup.textContent).toContain('#tag');
+    expect(setup.textContent).toContain('key=value');
+    expect(setup.textContent).toContain('AND | OR | NOT');
+    expect(setup.textContent).toContain('parentheses');
+    expect(setup.textContent).toContain('quotes');
+    expect(setup.textContent).toContain('escaping');
+    expect(setup.textContent).not.toContain('compatibility');
+    expect(setup.textContent).not.toContain('Preview work notes');
+    expect(body.querySelector('.abyss-work-note-preview')).toBeNull();
+  });
+
+  it('focuses the exact compiler offset and ignores stale validation responses', async () => {
+    const first = deferred<WorkNoteCompatibilityValidationResult>();
+    const second = deferred<WorkNoteCompatibilityValidationResult>();
+    const validateWorkNoteCompatibility = vi
       .fn()
-      .mockResolvedValue({ type: 'ok', preset: {}, preview: accepted });
-    const { tab, captured } = makeTab(
-      {},
-      { previewWorkNoteCompatibility, acceptWorkNoteCompatibility },
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility },
+    );
+    document.body.appendChild(tab.containerEl);
+    let body = openSection(tab, 5);
+    button(body, 'Validate')!.click();
+    expect(button(projectBody(tab), 'Validate')?.disabled).toBe(true);
+
+    const membership = findInput(workNoteSetup(projectBody(tab)), 'Membership query')!;
+    const originalMembership = membership.value;
+    membership.value = '#temporary';
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+    membership.value = originalMembership;
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(button(projectBody(tab), 'Validate')?.disabled).toBe(false);
+    membership.value = '#tag AND )';
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(button(projectBody(tab), 'Validate')?.disabled).toBe(false);
+    button(projectBody(tab), 'Validate')!.click();
+    second.resolve({
+      type: 'invalid-draft',
+      reason: 'syntax-invalid',
+      diagnostics: [{ source: 'membershipQuery', code: 'expected-term', offset: 9 }],
+    });
+    await vi.waitFor(() =>
+      expect(projectBody(tab).querySelector('[data-work-note-query-error]')).not.toBeNull(),
+    );
+    body = projectBody(tab);
+    expect(body.querySelectorAll('[data-work-note-query-error]')).toHaveLength(1);
+    expect(body.textContent?.match(/Expected a query term/g)).toHaveLength(1);
+    const queryError = body.querySelector<HTMLElement>('[data-work-note-query-error]')!;
+    expect(queryError.parentElement).not.toBe(queryError.closest('.setting-item'));
+    const focusedMembership = findInput(workNoteSetup(projectBody(tab)), 'Membership query')!;
+    expect(queryError.id).toBeTruthy();
+    expect(focusedMembership.getAttribute('aria-describedby')).toBe(queryError.id);
+    expect(focusedMembership.disabled).toBe(false);
+    expect(focusedMembership.isConnected).toBe(true);
+    await vi.waitFor(() => expect(document.activeElement).toBe(focusedMembership));
+    expect(findInput(workNoteSetup(body), 'Membership query')?.selectionStart).toBe(9);
+
+    first.resolve(audited({ stale: true }));
+    await Promise.resolve();
+    expect(button(projectBody(tab), 'Apply configuration')).toBeUndefined();
+    expect(projectBody(tab).textContent).toContain('Expected a query term');
+    tab.containerEl.remove();
+  });
+
+  it('shows a compact audit, reveals Creation, and requires explicit exact Apply', async () => {
+    const token = {};
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(
+      audited(token, {
+        update: true,
+        create: false,
+      }),
+    );
+    const applied = workNotePreset({
+      revision: 8,
+      enabled: true,
+      acceptedAudit: {
+        presetFingerprint: 'work-note-preset:accepted',
+        acceptedRevision: 8,
+        acceptedAt: '2026-08-28T00:00:00.000Z',
+        capabilities: { update: true, create: false },
+      },
+    });
+    const applyResult = deferred<WorkNoteValidatedApplyResult>();
+    const applyValidatedWorkNoteCompatibility = vi.fn().mockReturnValue(applyResult.promise);
+    const { tab, plugin } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility, applyValidatedWorkNoteCompatibility },
+    );
+    let body = openSection(tab, 5);
+    expect(body.querySelector('[data-work-note-creation]')).toBeNull();
+    button(body, 'Validate')!.click();
+    await vi.waitFor(() => expect(validateWorkNoteCompatibility).toHaveBeenCalledOnce());
+
+    body = projectBody(tab);
+    const result = body.querySelector<HTMLElement>('.abyss-work-note-validation-result')!;
+    expect(result.textContent).toContain('12 matched');
+    expect(result.textContent).toContain('9 mapped');
+    expect(result.textContent).toContain('25 excluded');
+    expect(result.textContent).toContain('1 ambiguous');
+    expect(result.textContent).toContain('Updates available');
+    expect(result.textContent).toContain('Creation unavailable');
+    expect(body.querySelector('[data-work-note-creation]')).not.toBeNull();
+    expect(plugin.settings.projects.workNoteCompatibility.enabled).toBe(true);
+
+    button(body, 'Apply configuration')!.click();
+    button(projectBody(tab), 'Apply configuration')?.click();
+    await vi.waitFor(() => expect(applyValidatedWorkNoteCompatibility).toHaveBeenCalledOnce());
+    expect(applyValidatedWorkNoteCompatibility).toHaveBeenCalledWith(token);
+    // Persisting settings may rebuild the settings tab before the transaction resolves.
+    // The resolved baseline must update the newly connected Work Notes root, not a stale node.
+    // eslint-disable-next-line @typescript-eslint/no-deprecated
+    tab.display();
+    applyResult.resolve({ type: 'applied', preset: applied, preview: preview() });
+    await vi.waitFor(() => expect(projectBody(tab).textContent).toContain('Configuration applied'));
+    const appliedSetup = workNoteSetup(projectBody(tab));
+    expect(appliedSetup.dataset['dirty']).toBe('false');
+    expect(button(appliedSetup, 'Reset changes')?.hidden).toBe(true);
+  });
+
+  it('keeps a failed Apply draft and forces validation again', async () => {
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(audited());
+    const applyValidatedWorkNoteCompatibility = vi.fn().mockResolvedValue({
+      type: 'revalidation-required',
+      reason: 'save-failed',
+    } satisfies WorkNoteValidatedApplyResult);
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility, applyValidatedWorkNoteCompatibility },
+    );
+    let body = openSection(tab, 5);
+    const membership = findInput(workNoteSetup(body), 'Membership query')!;
+    membership.value = '#work-note';
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+    button(body, 'Validate')!.click();
+    await vi.waitFor(() => expect(button(projectBody(tab), 'Apply configuration')).toBeDefined());
+    button(projectBody(tab), 'Apply configuration')!.click();
+    await vi.waitFor(() => expect(projectBody(tab).textContent).toContain('Validate again'));
+
+    body = projectBody(tab);
+    expect(findInput(workNoteSetup(body), 'Membership query')?.value).toBe('#work-note');
+    expect(button(body, 'Apply configuration')).toBeUndefined();
+    expect(button(body, 'Validate')).toBeDefined();
+  });
+
+  it('invalidates an audited token when the Project relation property changes', async () => {
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(audited());
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility },
+    );
+    const setup = workNoteSetup(openSection(tab, 5));
+    button(setup, 'Validate')!.click();
+    await vi.waitFor(() => expect(button(setup, 'Apply configuration')).toBeDefined());
+
+    const relation = findInput(setup, 'Project relation property')!;
+    relation.value = 'belongs_to';
+    relation.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(button(setup, 'Apply configuration')).toBeUndefined();
+    button(setup, 'Validate')!.click();
+    await vi.waitFor(() => expect(validateWorkNoteCompatibility).toHaveBeenCalledTimes(2));
+    expect(validateWorkNoteCompatibility.mock.calls[1]![0]).toMatchObject({
+      fields: { project: 'belongs_to' },
+    });
+  });
+
+  it('disables immediately, rolls back failure UI, and requires fresh validation to re-enable', async () => {
+    const firstDisable = deferred<WorkNoteCompatibilityDisableResult>();
+    const disableWorkNoteCompatibility = vi
+      .fn()
+      .mockReturnValueOnce(firstDisable.promise)
+      .mockResolvedValueOnce({ type: 'disabled', preset: workNotePreset() });
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { disableWorkNoteCompatibility },
+    );
+    let body = openSection(tab, 5);
+    button(body, 'Disable')!.click();
+    button(projectBody(tab), 'Disable')?.click();
+    expect(disableWorkNoteCompatibility).toHaveBeenCalledOnce();
+    firstDisable.resolve({ type: 'save-failed' });
+    await vi.waitFor(() => expect(projectBody(tab).textContent).toContain('Could not disable'));
+    expect(button(projectBody(tab), 'Disable')).toBeDefined();
+
+    button(projectBody(tab), 'Disable')!.click();
+    await vi.waitFor(() => expect(projectBody(tab).textContent).toContain('Work Notes are off'));
+    body = projectBody(tab);
+    expect(body.textContent?.match(/Work Notes are off/g)).toHaveLength(1);
+    expect(button(body, 'Apply configuration')).toBeUndefined();
+    button(workNoteSetup(body), 'Re-enable')!.click();
+    expect(button(projectBody(tab), 'Re-enable')).toBeUndefined();
+    expect(projectBody(tab).textContent).toContain('Validate and apply to re-enable');
+    expect(button(projectBody(tab), 'Validate')).toBeDefined();
+    expect(button(projectBody(tab), 'Apply configuration')).toBeUndefined();
+  });
+
+  it.each([
+    ['folder-only', 'Work Notes/'],
+    ['tag-only', '#work-note'],
+    ['folder and tag', 'Work Notes/ AND #work-note'],
+  ])('sends the %s Membership draft through the exact validation API', async (_name, query) => {
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(audited());
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility },
     );
     const body = openSection(tab, 5);
-    const previewComponent = captured.find((entry) => {
-      if (entry.type !== 'button') return false;
-      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
-      return element?.textContent === 'Preview work notes';
+    const membership = findInput(workNoteSetup(body), 'Membership query')!;
+    membership.value = query;
+    membership.dispatchEvent(new Event('input', { bubbles: true }));
+    button(body, 'Validate')!.click();
+    await vi.waitFor(() => expect(validateWorkNoteCompatibility).toHaveBeenCalledOnce());
+    expect(validateWorkNoteCompatibility.mock.calls[0]![0]).toMatchObject({
+      enabled: true,
+      membershipQuery: query,
+      fields: { project: 'project' },
     });
-    previewComponent!.comp.clickHandler!();
-    await vi.waitFor(() => expect(previewWorkNoteCompatibility).toHaveBeenCalledOnce());
+  });
 
-    const enable = body.querySelector<HTMLButtonElement>('[data-work-note-accept]')!;
-    expect(enable.textContent).toBe('Enable audited work notes');
-    enable.click();
+  it('keeps sequential Creation edits in one exact candidate', async () => {
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(audited());
+    const configured = workNotePreset({
+      enabled: true,
+      creation: {
+        folder: 'Work Notes',
+        templatePath: 'Templates/Old.md',
+        defaultKind: 'ordinary',
+        defaultStatusId: 'status-1',
+        kindMarkers: {
+          ordinary: { kind: 'frontmatter-tag', value: '#work-note/task' },
+          milestone: { kind: 'frontmatter-tag', value: '#work-note/milestone' },
+        },
+      },
+      acceptedAudit: {
+        presetFingerprint: 'accepted',
+        acceptedRevision: 7,
+        acceptedAt: '2026-08-28T00:00:00.000Z',
+        capabilities: { update: true, create: true },
+      },
+    });
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: configured,
+        },
+      },
+      { validateWorkNoteCompatibility },
+    );
+    const setup = workNoteSetup(openSection(tab, 5));
+    const folder = findInput(setup, 'Creation folder')!;
+    folder.value = 'Research/Work Notes';
+    folder.dispatchEvent(new Event('input', { bubbles: true }));
+    const template = findInput(setup, 'Template path')!;
+    template.value = 'Templates/New.md';
+    template.dispatchEvent(new Event('input', { bubbles: true }));
+    button(setup, 'Validate')!.click();
+    await vi.waitFor(() => expect(validateWorkNoteCompatibility).toHaveBeenCalledOnce());
+
+    expect(validateWorkNoteCompatibility.mock.calls[0]![0]).toMatchObject({
+      creation: {
+        folder: 'Research/Work Notes',
+        templatePath: 'Templates/New.md',
+      },
+    });
+  });
+
+  it('keeps Creation progressive and Advanced native, collapsed, complete, and accessible', async () => {
+    const validateWorkNoteCompatibility = vi.fn().mockResolvedValue(audited());
+    const { tab } = makeTab(
+      {
+        projects: {
+          ...structuredClone(DEFAULT_SETTINGS.projects),
+          workNoteCompatibility: workNotePreset({ enabled: true }),
+        },
+      },
+      { validateWorkNoteCompatibility },
+    );
+    let body = openSection(tab, 5);
+    const advanced = body.querySelector<HTMLDetailsElement>('.abyss-work-note-advanced')!;
+    expect(advanced.tagName).toBe('DETAILS');
+    expect(advanced.open).toBe(false);
+    expect(body.querySelector('[data-work-note-creation]')).toBeNull();
+    advanced.open = true;
+    advanced.dispatchEvent(new Event('toggle'));
+    expect(advanced.textContent).toContain('Source boundary');
+    expect(advanced.textContent).toContain('Ordinary kind query');
+    expect(advanced.textContent).toContain('Milestone kind query');
+    expect(advanced.textContent).toContain('Status mapping');
+    expect(advanced.textContent).toContain('Blocked by property');
+
+    button(body, 'Validate')!.click();
     await vi.waitFor(() =>
-      expect(acceptWorkNoteCompatibility).toHaveBeenCalledWith('work-note-preview-test'),
+      expect(projectBody(tab).querySelector('[data-work-note-creation]')).not.toBeNull(),
     );
-    expect(body.querySelector('.abyss-work-note-preview')?.textContent).toContain(
-      'Updates and creation enabled',
+    body = projectBody(tab);
+    const setup = workNoteSetup(body);
+    expect(findInput(setup, 'Creation folder')).not.toBeNull();
+    expect(findInput(setup, 'Template path')).not.toBeNull();
+    expect(findDropdown(setup, 'Default kind')).not.toBeNull();
+    expect(findDropdown(setup, 'Default status')).not.toBeNull();
+    expect(findDropdown(setup, 'Kind marker')).not.toBeNull();
+    expect(body.querySelectorAll('button button, button a, a button')).toHaveLength(0);
+    for (const input of setup.querySelectorAll<HTMLInputElement>('input:not([type="checkbox"])')) {
+      expect(input.getAttribute('aria-label')).toBeTruthy();
+    }
+  });
+
+  it('uses the native settings geometry and reserves a stable compact validation slot', () => {
+    expect(declarationsFor('.abyss-settings-section-body-inner')).toContain('padding');
+    expect(declarationsFor('.abyss-work-note-validation-slot')).toContain('min-block-size');
+    expect(declarationsFor('.abyss-work-note-validation-slot')).toContain('72px');
+    expect(css).toMatch(
+      /@media \(max-width: 640px\)[\s\S]*?\.abyss-work-note-validation-slot\s*\{[^}]*min-block-size:\s*126px/u,
     );
-    expect(body.querySelectorAll('[data-work-note-capability]')).toHaveLength(2);
+    expect(css).toMatch(/\.abyss-work-note-query-error\s*\{[^}]*display:\s*block/u);
+    expect(declarationsFor('.abyss-work-note-reset[hidden]')).toContain('display: none');
+    expect(declarationsFor('.abyss-work-note-setup')).not.toContain('#');
+    expect(declarationsFor('.abyss-work-note-setup')).toContain('var(');
   });
 
   it('statuses render as collapsed cards (title only) by default', () => {

@@ -1,4 +1,4 @@
-import { Notice, Plugin } from 'obsidian';
+import { Plugin } from 'obsidian';
 import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { DependencyIndex } from './projects/dependencies/DependencyIndex';
@@ -9,6 +9,7 @@ import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordina
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
 import type {
   WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityDisableResult,
   WorkNoteCompatibilityPreset,
   WorkNoteCompatibilityPreview,
   WorkNoteCompatibilityToken,
@@ -177,23 +178,6 @@ export default class TaskCalendarPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
-      id: 'preview-work-note-compatibility',
-      name: 'Preview work note compatibility',
-      callback: async () => {
-        try {
-          const preview = await this.previewWorkNoteCompatibility();
-          new Notice(
-            `Work Notes: ${String(preview.notes.eligible)} eligible, ${String(
-              preview.notes.excluded,
-            )} excluded. Preview complete; no settings or notes were changed.`,
-          );
-        } catch {
-          new Notice('Work note compatibility preview unavailable.');
-        }
-      },
-    });
-
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
 
     this.app.workspace.onLayoutReady(() => {
@@ -281,11 +265,8 @@ export default class TaskCalendarPlugin extends Plugin {
     });
   }
 
-  async disableWorkNoteCompatibility(): Promise<void> {
-    const result = await this.workNoteIndex.disableCompatibility();
-    if (result.type === 'save-failed' || result.type === 'persistence-unavailable') {
-      throw new Error('Could not persist Work Note compatibility state');
-    }
+  async disableWorkNoteCompatibility(): Promise<WorkNoteCompatibilityDisableResult> {
+    return this.workNoteIndex.disableCompatibility();
   }
 
   private async persistWorkNoteCompatibility(preset: WorkNoteCompatibilityPreset): Promise<void> {

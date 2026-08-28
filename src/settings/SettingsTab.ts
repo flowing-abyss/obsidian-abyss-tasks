@@ -8,9 +8,15 @@ import {
   setIcon,
   Setting,
 } from 'obsidian';
+import { computeWorkNoteStructuralFingerprint } from '../projects/work-notes/compatibility';
 import type {
-  WorkNoteCompatibilityAcceptanceResult,
+  WorkNoteCompatibilityDisableResult,
+  WorkNoteCompatibilityPreset,
   WorkNoteCompatibilityPreview,
+  WorkNoteCompatibilityToken,
+  WorkNoteCompatibilityValidationResult,
+  WorkNoteQueryDiagnostic,
+  WorkNoteValidatedApplyResult,
 } from '../projects/work-notes/types';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import { StatusRegistry } from '../status/StatusRegistry';
@@ -34,13 +40,33 @@ interface TaskCalendarPlugin extends Plugin {
   tagManager: TagManager;
   rebuildTaskStatusSemantics(): void;
   saveSettings(): Promise<void>;
-  previewWorkNoteCompatibility(): Promise<WorkNoteCompatibilityPreview>;
-  acceptWorkNoteCompatibility(token: string): Promise<WorkNoteCompatibilityAcceptanceResult>;
-  disableWorkNoteCompatibility(): Promise<void>;
+  validateWorkNoteCompatibility(
+    candidate: WorkNoteCompatibilityPreset,
+  ): Promise<WorkNoteCompatibilityValidationResult>;
+  applyValidatedWorkNoteCompatibility(
+    token: WorkNoteCompatibilityToken,
+  ): Promise<WorkNoteValidatedApplyResult>;
+  disableWorkNoteCompatibility(): Promise<WorkNoteCompatibilityDisableResult>;
 }
 
-function counted(count: number, singular: string, plural = `${singular}s`): string {
-  return `${String(count)} ${count === 1 ? singular : plural}`;
+type AuditedWorkNoteValidation = Extract<
+  WorkNoteCompatibilityValidationResult,
+  { readonly type: 'audited' }
+>;
+
+interface WorkNoteSetupState {
+  applied: WorkNoteCompatibilityPreset;
+  draft: WorkNoteCompatibilityPreset;
+  validation?: AuditedWorkNoteValidation;
+  validationSignature?: string;
+  diagnostics: readonly WorkNoteQueryDiagnostic[];
+  creationRevealed: boolean;
+  advancedOpen: boolean;
+  latestValidationId: number;
+  pendingValidation?: { readonly id: number; readonly signature: string };
+  applyPending: boolean;
+  disablePending: boolean;
+  message?: { readonly kind: 'status' | 'error'; readonly text: string };
 }
 
 let nextSettingsTabScope = 0;
@@ -116,6 +142,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   private shortcutSaveRetryEl: HTMLButtonElement | undefined;
   private readonly openSections = new Set<string>();
   private readonly sectionScope = ++nextSettingsTabScope;
+  private workNoteSetupState: WorkNoteSetupState | undefined = undefined;
 
   constructor(
     app: App,
@@ -909,29 +936,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
         );
     }
 
-    const previewResult = containerEl.createDiv({
-      cls: 'abyss-work-note-preview',
-      attr: { 'aria-live': 'polite' },
-    });
-    new Setting(containerEl)
-      .setName('Work note compatibility')
-      .setDesc('Inspect aggregate compatibility without enabling or saving a preset.')
-      .addButton((button) =>
-        button.setButtonText('Preview work notes').onClick(async () => {
-          button.setDisabled(true);
-          previewResult.replaceChildren();
-          previewResult.createDiv({ text: 'Reading metadata…' });
-          try {
-            const preview = await this.plugin.previewWorkNoteCompatibility();
-            this.renderWorkNotePreview(previewResult, preview);
-          } catch {
-            previewResult.replaceChildren();
-            previewResult.createDiv({ text: 'Preview unavailable.' });
-          } finally {
-            button.setDisabled(false);
-          }
-        }),
-      );
+    // eslint-disable-next-line obsidianmd/ui/sentence-case
+    new Setting(containerEl).setName('Work Notes').setHeading();
+    const workNoteSetup = containerEl.createDiv({ cls: 'abyss-work-note-setup' });
+    this.renderWorkNoteSetup(workNoteSetup);
 
     new Setting(containerEl).setName('Statuses').setHeading();
     this.renderCardList(containerEl, projects.statuses, {
@@ -988,118 +996,799 @@ export class CalendarSettingsTab extends PluginSettingTab {
     }
   }
 
-  private renderWorkNotePreview(
-    containerEl: HTMLElement,
-    preview: WorkNoteCompatibilityPreview,
-  ): void {
+  private renderWorkNoteSetup(containerEl: HTMLElement): void {
+    const state = this.ensureWorkNoteSetupState();
     containerEl.replaceChildren();
-    containerEl.dataset['presetEnabled'] = String(preview.preset.enabled);
-    containerEl.dataset['accepted'] = String(preview.preset.accepted);
-    containerEl.dataset['capabilityUpdate'] = String(preview.capabilities.update);
-    containerEl.dataset['capabilityCreate'] = String(preview.capabilities.create);
-    const rows = [
-      [
-        counted(preview.notes.scanned, 'note'),
-        counted(preview.notes.eligible, 'eligible', 'eligible'),
-        counted(preview.notes.excluded, 'excluded', 'excluded'),
-      ],
-      [
-        counted(preview.kinds.ordinary, 'ordinary', 'ordinary'),
-        counted(preview.kinds.milestone, 'milestone'),
-        counted(preview.kinds.ambiguous, 'ambiguous kind'),
-        counted(preview.kinds.missing, 'missing kind'),
-      ],
-      [
-        counted(preview.statuses.mapped, 'mapped status', 'mapped statuses'),
-        counted(preview.statuses.unknown, 'unknown status', 'unknown statuses'),
-        counted(preview.statuses.missing, 'missing status', 'missing statuses'),
-        counted(preview.statuses.nonScalar, 'non-scalar status', 'non-scalar statuses'),
-      ],
-      [
-        counted(preview.links.brokenProject, 'broken project link'),
-        counted(preview.links.brokenRelation, 'broken relation'),
-        counted(preview.links.invalidProjectEntry, 'invalid project entry'),
-        counted(preview.links.invalidRelationEntry, 'invalid relation entry'),
-      ],
-      [
-        counted(preview.cardinality.missingProject, 'missing project'),
-        counted(preview.cardinality.multipleProjects, 'multiple-project diagnostic'),
-        counted(preview.cardinality.multipleMilestones, 'multiple-milestone diagnostic'),
-        counted(preview.duplicateBasenames.project, 'duplicate project basename'),
-        counted(preview.duplicateBasenames.relation, 'duplicate relation basename'),
-      ],
-    ];
-    for (const row of rows) {
-      containerEl.createDiv({ cls: 'abyss-work-note-preview-row', text: row.join(' · ') });
-    }
-    const capability = containerEl.createDiv({ cls: 'abyss-work-note-preview-capabilities' });
-    capability.createSpan({
-      attr: { 'data-work-note-capability': 'update' },
-      text: `Updates ${preview.capabilities.update ? 'enabled' : 'unavailable'}`,
-    });
-    capability.createSpan({
-      attr: { 'data-work-note-capability': 'create' },
-      text: `Creation ${preview.capabilities.create ? 'enabled' : 'unavailable'}`,
-    });
-    if (preview.preset.enabled && preview.preset.accepted) {
-      containerEl.createDiv({
-        cls: 'abyss-work-note-preview-guard',
-        text:
-          preview.capabilities.update && preview.capabilities.create
-            ? 'Updates and creation enabled by the accepted compatibility audit.'
-            : 'Work Notes enabled with only the audited capabilities shown above.',
-      });
-      const disable = containerEl.createEl('button', {
-        text: 'Disable work notes',
+    containerEl.dataset['dirty'] = String(this.workNoteDraftIsDirty(state));
+    containerEl.dataset['appliedEnabled'] = String(state.applied.enabled);
+
+    if (state.applied.enabled) {
+      const status = new Setting(containerEl)
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
+        .setName('Work Notes')
+        .setDesc('Enabled. Changes below stay local until you validate and apply them.');
+      const disable = status.controlEl.createEl('button', {
+        text: 'Disable',
+        cls: 'mod-warning',
         attr: { type: 'button', 'data-work-note-disable': '' },
       });
-      disable.addEventListener('click', () => {
-        disable.disabled = true;
-        void this.plugin.disableWorkNoteCompatibility().then(
-          () => {
-            containerEl.replaceChildren();
-            containerEl.createDiv({ text: 'Work Notes disabled.' });
-          },
-          () => {
-            disable.disabled = false;
-            containerEl.createDiv({ text: 'Could not disable Work Notes.' });
-          },
-        );
+      disable.disabled = state.disablePending || state.applyPending;
+      disable.addEventListener('click', () => void this.disableWorkNotes(containerEl));
+    } else if (state.draft.enabled) {
+      new Setting(containerEl)
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
+        .setName('Work Notes')
+        .setDesc('Validate and apply to re-enable the preserved setup.');
+    } else {
+      const status = new Setting(containerEl)
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
+        .setName('Enable Work Notes')
+        .setDesc('Add query-defined project resources without changing inline task syntax.');
+      const enable = status.controlEl.createEl('button', {
+        text: state.applied.membershipQuery.trim() === '' ? 'Set up' : 'Re-enable',
+        attr: { type: 'button', 'data-work-note-enable': '' },
+      });
+      enable.addEventListener('click', () => {
+        this.replaceWorkNoteDraft(containerEl, { ...state.draft, enabled: true }, true);
+      });
+    }
+
+    if (!state.draft.enabled) {
+      containerEl.createDiv({
+        cls: 'abyss-work-note-off',
+        text: 'Work Notes are off. Your saved setup and audit history are preserved.',
+      });
+      this.renderWorkNoteMessage(containerEl, state);
+      this.lockWorkNoteControls(containerEl, state.disablePending || state.applyPending);
+      return;
+    }
+
+    this.renderWorkNotePrimary(containerEl, state);
+    if (state.creationRevealed) this.renderWorkNoteCreation(containerEl, state);
+    this.renderWorkNoteAdvanced(containerEl, state);
+    this.lockWorkNoteControls(containerEl, state.disablePending || state.applyPending);
+  }
+
+  private ensureWorkNoteSetupState(): WorkNoteSetupState {
+    if (this.workNoteSetupState) return this.workNoteSetupState;
+    const applied = structuredClone(this.plugin.settings.projects.workNoteCompatibility);
+    this.workNoteSetupState = {
+      applied,
+      draft: structuredClone(applied),
+      diagnostics: [],
+      creationRevealed: applied.enabled && applied.acceptedAudit !== undefined,
+      advancedOpen: false,
+      latestValidationId: 0,
+      applyPending: false,
+      disablePending: false,
+    };
+    return this.workNoteSetupState;
+  }
+
+  private workNoteDraftSignature(preset: WorkNoteCompatibilityPreset): string {
+    return computeWorkNoteStructuralFingerprint(preset, { preserveObjectOrder: true });
+  }
+
+  private workNoteDraftIsDirty(state: WorkNoteSetupState): boolean {
+    return this.workNoteDraftSignature(state.draft) !== this.workNoteDraftSignature(state.applied);
+  }
+
+  private invalidateWorkNoteValidation(state: WorkNoteSetupState): void {
+    state.latestValidationId += 1;
+    state.pendingValidation = undefined;
+    state.validation = undefined;
+    state.validationSignature = undefined;
+    state.diagnostics = [];
+    state.message = undefined;
+  }
+
+  private replaceWorkNoteDraft(
+    containerEl: HTMLElement,
+    draft: WorkNoteCompatibilityPreset,
+    rerender: boolean,
+  ): void {
+    const state = this.ensureWorkNoteSetupState();
+    state.draft = draft;
+    this.invalidateWorkNoteValidation(state);
+    if (rerender) this.renderWorkNoteSetup(containerEl);
+    else this.syncWorkNoteDraftState(containerEl, state);
+  }
+
+  private currentWorkNoteSetupContainer(fallback: HTMLElement): HTMLElement {
+    return this.containerEl.querySelector<HTMLElement>('.abyss-work-note-setup') ?? fallback;
+  }
+
+  private syncWorkNoteDraftState(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    containerEl.dataset['dirty'] = String(this.workNoteDraftIsDirty(state));
+    const signature = this.workNoteDraftSignature(state.draft);
+    const validate = containerEl.querySelector<HTMLButtonElement>('[data-work-note-validate]');
+    if (validate) validate.disabled = state.pendingValidation?.signature === signature;
+    const reset = containerEl.querySelector<HTMLButtonElement>('[data-work-note-reset]');
+    if (reset) reset.hidden = !this.workNoteDraftIsDirty(state);
+    for (const input of containerEl.querySelectorAll<HTMLInputElement>(
+      '[data-work-note-query-source]',
+    )) {
+      input.removeAttribute('aria-invalid');
+      input.removeAttribute('aria-describedby');
+    }
+    for (const error of containerEl.querySelectorAll('[data-work-note-query-error]'))
+      error.remove();
+    const slot = containerEl.querySelector<HTMLElement>('.abyss-work-note-validation-slot');
+    if (slot) this.renderWorkNoteValidationSlot(slot, state);
+  }
+
+  private renderWorkNotePrimary(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    const membership = new Setting(containerEl)
+      .setName('Membership query')
+      .setDesc(
+        // eslint-disable-next-line obsidianmd/ui/sentence-case
+        'Examples: folder/, #tag, key=value, AND | OR | NOT, parentheses, quotes, and escaping.',
+      )
+      .addText((control) => {
+        control
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
+          .setPlaceholder('Work Notes/ AND #work-note')
+          .setValue(state.draft.membershipQuery);
+        control.inputEl.addEventListener('input', () => {
+          const membershipQuery = control.inputEl.value;
+          this.replaceWorkNoteDraft(containerEl, { ...state.draft, membershipQuery }, false);
+        });
+        control.inputEl.setAttribute('aria-label', 'Membership query');
+        control.inputEl.dataset['workNoteQuerySource'] = 'membershipQuery';
+      });
+    this.renderWorkNoteQueryDiagnostic(membership, 'membershipQuery', state);
+
+    new Setting(containerEl)
+      .setName('Project relation property')
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
+      .setDesc('Frontmatter property that links a Work Note to its Project.')
+      .addText((control) => {
+        control
+          // eslint-disable-next-line obsidianmd/ui/sentence-case
+          .setPlaceholder('project')
+          .setValue(state.draft.fields.project);
+        control.inputEl.addEventListener('input', () => {
+          const project = control.inputEl.value;
+          this.replaceWorkNoteDraft(
+            containerEl,
+            { ...state.draft, fields: { ...state.draft.fields, project } },
+            false,
+          );
+        });
+        control.inputEl.setAttribute('aria-label', 'Project relation property');
+      });
+
+    const action = new Setting(containerEl)
+      .setName('Configuration')
+      .setDesc('Validate the exact draft before applying it.');
+    const signature = this.workNoteDraftSignature(state.draft);
+    const validate = action.controlEl.createEl('button', {
+      text: 'Validate',
+      cls: 'mod-cta',
+      attr: { type: 'button', 'data-work-note-validate': '' },
+    });
+    validate.disabled = state.pendingValidation?.signature === signature;
+    validate.addEventListener('click', () => void this.validateWorkNoteDraft(containerEl));
+    const reset = action.controlEl.createEl('button', {
+      text: 'Reset changes',
+      cls: 'abyss-work-note-reset',
+      attr: { type: 'button', 'data-work-note-reset': '' },
+    });
+    reset.disabled = state.applyPending || state.disablePending;
+    reset.hidden = !this.workNoteDraftIsDirty(state);
+    reset.addEventListener('click', () => {
+      const applied = structuredClone(this.plugin.settings.projects.workNoteCompatibility);
+      this.workNoteSetupState = {
+        applied,
+        draft: structuredClone(applied),
+        diagnostics: [],
+        creationRevealed: applied.enabled && applied.acceptedAudit !== undefined,
+        advancedOpen: false,
+        latestValidationId: state.latestValidationId + 1,
+        applyPending: false,
+        disablePending: false,
+      };
+      this.renderWorkNoteSetup(containerEl);
+    });
+
+    const validation = containerEl.createDiv({
+      cls: 'abyss-work-note-validation-slot',
+      attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
+    });
+    this.renderWorkNoteValidationSlot(validation, state);
+  }
+
+  private renderWorkNoteValidationSlot(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    containerEl.replaceChildren();
+    if (state.message) {
+      containerEl.createSpan({
+        cls: `abyss-work-note-message is-${state.message.kind}`,
+        text: state.message.text,
       });
       return;
     }
+    const diagnostic = state.diagnostics[0];
+    if (diagnostic) return;
+    const validation = state.validation;
+    if (!validation) {
+      containerEl.createSpan({
+        cls: 'abyss-work-note-validation-hint',
+        text: state.pendingValidation ? 'Checking this draft…' : 'Validate to review this draft.',
+      });
+      return;
+    }
+    const { preview } = validation;
+    const ambiguous =
+      preview.kinds.ambiguous +
+      preview.links.ambiguousProject +
+      preview.links.ambiguousRelation +
+      preview.cardinality.multipleProjects +
+      preview.cardinality.multipleMilestones;
+    const result = containerEl.createDiv({ cls: 'abyss-work-note-validation-result' });
+    result.createSpan({
+      cls: 'abyss-work-note-validation-counts',
+      text: `${String(preview.notes.eligible)} matched · ${String(
+        preview.statuses.mapped,
+      )} mapped · ${String(preview.notes.excluded)} excluded · ${String(ambiguous)} ambiguous`,
+    });
+    const capability = result.createSpan({ cls: 'abyss-work-note-validation-capabilities' });
+    capability.createSpan({
+      text: `Updates ${preview.capabilities.update ? 'available' : 'unavailable'}`,
+    });
+    capability.createSpan({
+      text: `Creation ${preview.capabilities.create ? 'available' : 'unavailable'}`,
+    });
+    const warning = this.strongestWorkNoteWarning(preview);
+    if (warning) result.createSpan({ cls: 'abyss-work-note-validation-warning', text: warning });
+    const apply = result.createEl('button', {
+      text: 'Apply configuration',
+      cls: 'mod-cta',
+      attr: { type: 'button', 'data-work-note-apply': '' },
+    });
+    apply.disabled = state.applyPending || state.disablePending;
+    apply.addEventListener('click', () => void this.applyWorkNoteDraft(containerEl));
+  }
+
+  private strongestWorkNoteWarning(preview: WorkNoteCompatibilityPreview): string | undefined {
+    const candidates: readonly [number, string][] = [
+      [preview.kinds.ambiguous, 'Some notes match more than one kind.'],
+      [preview.links.ambiguousProject, 'Some Project links are ambiguous.'],
+      [preview.links.invalidProjectEntry, 'Some Project links use unsupported values.'],
+      [preview.cardinality.multipleProjects, 'Some notes link to more than one Project.'],
+      [preview.cardinality.multipleMilestones, 'Some notes link to more than one milestone.'],
+      [preview.duplicateBasenames.project, 'Some Project names resolve to more than one note.'],
+      [
+        preview.duplicateBasenames.relation,
+        'Some related-note names resolve to more than one note.',
+      ],
+      [preview.links.ambiguousRelation, 'Some related-note links are ambiguous.'],
+      [preview.statuses.unknown, 'Some statuses are not mapped.'],
+      [preview.statuses.nonScalar, 'Some statuses are not scalar values.'],
+      [preview.statuses.missing, 'Some notes have no status.'],
+      [preview.links.brokenProject, 'Some Project links are broken.'],
+      [preview.links.brokenRelation, 'Some related-note links are broken.'],
+      [preview.links.invalidRelationEntry, 'Some related-note links use unsupported values.'],
+      [preview.cardinality.missingProject, 'Some notes have no Project link.'],
+      [preview.kinds.missing, 'Some notes have no recognized kind.'],
+    ];
+    const strongest = candidates.find(([count]) => count > 0)?.[1];
+    if (strongest) return strongest;
+    return Object.values(preview.diagnostics).some((count) => (count ?? 0) > 0)
+      ? 'Review the remaining audit issue in Advanced.'
+      : undefined;
+  }
+
+  private describeWorkNoteQueryDiagnostic(diagnostic: WorkNoteQueryDiagnostic): string {
+    const message: Record<WorkNoteQueryDiagnostic['code'], string> = {
+      'empty-required-query': 'Enter a query before validating.',
+      'expected-term': 'Expected a query term.',
+      'expected-property-value': 'Expected a property value.',
+      'expected-closing-parenthesis': 'Expected a closing parenthesis.',
+      'unclosed-parenthesis': 'Close the open parenthesis.',
+      'unterminated-quote': 'Close the quoted value.',
+      'unsupported-term': 'Use a folder, tag, or property expression.',
+      'unexpected-token': 'Remove the unexpected query token.',
+    };
+    return `${message[diagnostic.code]} Position ${String(diagnostic.offset + 1)}.`;
+  }
+
+  private renderWorkNoteQueryDiagnostic(
+    setting: Setting,
+    source: WorkNoteQueryDiagnostic['source'],
+    state: WorkNoteSetupState,
+  ): void {
+    const diagnostic = state.diagnostics.find((candidate) => candidate.source === source);
+    if (!diagnostic) return;
+    setting.settingEl.classList.add('abyss-work-note-query-setting');
+    const input = setting.settingEl.querySelector('input');
+    const errorId = `abyss-work-note-query-error-${source}`;
+    input?.setAttribute('aria-invalid', 'true');
+    input?.setAttribute('aria-describedby', errorId);
+    const error = setting.infoEl.createDiv({
+      cls: 'abyss-work-note-query-error',
+      text: this.describeWorkNoteQueryDiagnostic(diagnostic),
+      attr: { 'data-work-note-query-error': '', role: 'alert' },
+    });
+    error.id = errorId;
+  }
+
+  private focusWorkNoteDiagnostic(
+    containerEl: HTMLElement,
+    diagnostic: WorkNoteQueryDiagnostic,
+  ): void {
+    const input = containerEl.querySelector<HTMLInputElement>(
+      `[data-work-note-query-source="${diagnostic.source}"]`,
+    );
+    if (!input) return;
+    const start = Math.min(diagnostic.offset, input.value.length);
+    const end = Math.min(input.value.length, start + 1);
+    queueMicrotask(() => {
+      input.focus({ preventScroll: true });
+      input.setSelectionRange(start, end);
+    });
+  }
+
+  private async validateWorkNoteDraft(containerEl: HTMLElement): Promise<void> {
+    const state = this.ensureWorkNoteSetupState();
+    const signature = this.workNoteDraftSignature(state.draft);
+    if (state.pendingValidation?.signature === signature) return;
+    const id = state.latestValidationId + 1;
+    state.latestValidationId = id;
+    state.pendingValidation = { id, signature };
+    state.validation = undefined;
+    state.validationSignature = undefined;
+    state.diagnostics = [];
+    state.message = { kind: 'status', text: 'Checking this draft…' };
+    this.renderWorkNoteSetup(containerEl);
+    const candidate = structuredClone(state.draft);
+    let result: WorkNoteCompatibilityValidationResult;
+    try {
+      result = await this.plugin.validateWorkNoteCompatibility(candidate);
+    } catch {
+      if (state.latestValidationId !== id) return;
+      state.pendingValidation = undefined;
+      state.message = { kind: 'error', text: 'Validation unavailable. Try again.' };
+      this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+      return;
+    }
+    if (state.latestValidationId !== id || this.workNoteDraftSignature(state.draft) !== signature) {
+      if (state.pendingValidation?.id === id) state.pendingValidation = undefined;
+      return;
+    }
+    state.pendingValidation = undefined;
+    state.message = undefined;
+    if (result.type === 'invalid-draft') {
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.diagnostics = result.diagnostics;
+      if (result.diagnostics.some(({ source }) => source !== 'membershipQuery')) {
+        state.advancedOpen = true;
+      }
+      const currentContainer = this.currentWorkNoteSetupContainer(containerEl);
+      this.renderWorkNoteSetup(currentContainer);
+      const diagnostic = result.diagnostics[0];
+      if (diagnostic) this.focusWorkNoteDiagnostic(currentContainer, diagnostic);
+      return;
+    }
+    state.validation = result;
+    state.validationSignature = signature;
+    state.diagnostics = [];
+    state.creationRevealed = true;
+    this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+  }
+
+  private async applyWorkNoteDraft(containerEl: HTMLElement): Promise<void> {
+    const state = this.ensureWorkNoteSetupState();
+    if (state.applyPending || state.disablePending || !state.validation) return;
+    if (this.workNoteDraftSignature(state.draft) !== state.validationSignature) return;
+    const validation = state.validation;
+    state.applyPending = true;
+    state.message = { kind: 'status', text: 'Applying configuration…' };
+    this.renderWorkNoteSetup(containerEl);
+    let result: WorkNoteValidatedApplyResult;
+    try {
+      result = await this.plugin.applyValidatedWorkNoteCompatibility(validation.token);
+    } catch {
+      result = { type: 'revalidation-required', reason: 'save-failed' };
+    }
+    if (result.type === 'revalidation-required') {
+      state.applyPending = false;
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.latestValidationId += 1;
+      state.message = {
+        kind: 'error',
+        text:
+          result.reason === 'save-failed'
+            ? 'Could not save this configuration. Validate again.'
+            : 'The audited draft changed. Validate again.',
+      };
+      this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+      return;
+    }
+    const applied = structuredClone(result.preset);
+    this.workNoteSetupState = {
+      applied,
+      draft: structuredClone(applied),
+      diagnostics: [],
+      creationRevealed: true,
+      advancedOpen: state.advancedOpen,
+      latestValidationId: state.latestValidationId + 1,
+      applyPending: false,
+      disablePending: false,
+      message: {
+        kind: 'status',
+        text:
+          result.type === 'applied'
+            ? 'Configuration applied.'
+            : 'Configuration is already applied.',
+      },
+    };
+    this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+  }
+
+  private async disableWorkNotes(containerEl: HTMLElement): Promise<void> {
+    const state = this.ensureWorkNoteSetupState();
+    if (state.disablePending || state.applyPending || !state.applied.enabled) return;
+    state.disablePending = true;
+    state.message = { kind: 'status', text: 'Disabling Work Notes…' };
+    this.renderWorkNoteSetup(containerEl);
+    let result: WorkNoteCompatibilityDisableResult;
+    try {
+      result = await this.plugin.disableWorkNoteCompatibility();
+    } catch {
+      result = { type: 'save-failed' };
+    }
+    if (result.type === 'disabled' || result.type === 'unchanged') {
+      const applied = structuredClone(result.preset);
+      this.workNoteSetupState = {
+        applied,
+        draft: structuredClone(applied),
+        diagnostics: [],
+        creationRevealed: false,
+        advancedOpen: false,
+        latestValidationId: state.latestValidationId + 1,
+        applyPending: false,
+        disablePending: false,
+      };
+      this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+      return;
+    }
+    state.disablePending = false;
+    state.message = { kind: 'error', text: 'Could not disable Work Notes. Try again.' };
+    this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+  }
+
+  private renderWorkNoteMessage(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    if (!state.message) return;
     containerEl.createDiv({
-      cls: 'abyss-work-note-preview-guard',
-      text: 'Read-only preview. Commands remain unavailable until this exact audit is accepted.',
+      cls: `abyss-work-note-message is-${state.message.kind}`,
+      text: state.message.text,
+      attr: { 'aria-live': 'polite' },
     });
-    if (preview.notes.eligible === 0 || !preview.acceptanceToken) return;
-    const acceptanceToken = preview.acceptanceToken;
-    const accept = containerEl.createEl('button', {
-      text: 'Enable audited work notes',
-      attr: { type: 'button', 'data-work-note-accept': '' },
+  }
+
+  private defaultWorkNoteCreation(
+    state: WorkNoteSetupState,
+  ): NonNullable<WorkNoteCompatibilityPreset['creation']> {
+    const defaultStatusId =
+      this.plugin.settings.projects.defaultStatusId ||
+      this.plugin.settings.projects.statuses[0]?.id ||
+      '';
+    return {
+      folder: state.draft.folder,
+      templatePath: '',
+      defaultKind: 'ordinary',
+      defaultStatusId,
+      kindMarkers: {
+        ordinary: { kind: 'frontmatter-tag', value: '#work-note/task' },
+        milestone: { kind: 'frontmatter-tag', value: '#work-note/milestone' },
+      },
+    };
+  }
+
+  private renderWorkNoteCreation(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    const section = containerEl.createDiv({
+      cls: 'abyss-work-note-level abyss-work-note-creation',
+      attr: { 'data-work-note-creation': '' },
     });
-    accept.addEventListener('click', () => {
-      accept.disabled = true;
-      void this.plugin.acceptWorkNoteCompatibility(acceptanceToken).then(
-        (accepted) => {
-          if (accepted.type === 'ok') {
-            this.renderWorkNotePreview(containerEl, accepted.preview);
-            return;
-          }
-          containerEl.replaceChildren();
-          containerEl.createDiv({
-            text:
-              accepted.type === 'stale-preview'
-                ? 'Work note audit changed. Preview again before enabling.'
-                : 'Audit acceptance unavailable.',
-          });
-        },
-        () => {
-          accept.disabled = false;
-          containerEl.createDiv({ text: 'Audit acceptance unavailable.' });
-        },
+    new Setting(section).setName('Creation').setHeading();
+    const configured = state.draft.creation !== undefined;
+    const creation = state.draft.creation ?? this.defaultWorkNoteCreation(state);
+    const currentCreation = (): NonNullable<WorkNoteCompatibilityPreset['creation']> =>
+      state.draft.creation ?? creation;
+    new Setting(section)
+      // eslint-disable-next-line obsidianmd/ui/sentence-case
+      .setName('Create new Work Notes')
+      .setDesc('Enable creation only after this exact contract is validated and applied.')
+      .addToggle((control) =>
+        control.setValue(configured).onChange((enabled) => {
+          this.replaceWorkNoteDraft(
+            containerEl,
+            { ...state.draft, creation: enabled ? creation : undefined },
+            true,
+          );
+        }),
       );
+
+    const text = (
+      name: string,
+      description: string,
+      value: string,
+      placeholder: string,
+      update: (
+        current: NonNullable<WorkNoteCompatibilityPreset['creation']>,
+        value: string,
+      ) => NonNullable<WorkNoteCompatibilityPreset['creation']>,
+    ): void => {
+      new Setting(section)
+        .setName(name)
+        .setDesc(description)
+        .addText((control) => {
+          control.setValue(value).setPlaceholder(placeholder).setDisabled(!configured);
+          control.inputEl.addEventListener('input', () => {
+            if (!configured) return;
+            this.replaceWorkNoteDraft(
+              containerEl,
+              {
+                ...state.draft,
+                creation: update(currentCreation(), control.inputEl.value),
+              },
+              false,
+            );
+          });
+          control.inputEl.setAttribute('aria-label', name);
+        });
+    };
+    text(
+      'Creation folder',
+      'Folder for newly created Work Notes.',
+      creation.folder,
+      'Work Notes',
+      (current, folder) => ({ ...current, folder }),
+    );
+    text(
+      'Template path',
+      'Optional template note.',
+      creation.templatePath ?? '',
+      'Templates/Work Note.md',
+      (current, templatePath) => ({ ...current, templatePath }),
+    );
+
+    new Setting(section).setName('Default kind').addDropdown((control) =>
+      control
+        .addOptions({ ordinary: 'Ordinary', milestone: 'Milestone' })
+        .setValue(creation.defaultKind)
+        .setDisabled(!configured)
+        .onChange((defaultKind) => {
+          if (!configured) return;
+          this.replaceWorkNoteDraft(
+            containerEl,
+            {
+              ...state.draft,
+              creation: {
+                ...currentCreation(),
+                defaultKind: defaultKind as 'ordinary' | 'milestone',
+              },
+            },
+            false,
+          );
+        }),
+    );
+    new Setting(section).setName('Default status').addDropdown((control) => {
+      for (const status of this.plugin.settings.projects.statuses) {
+        control.addOption(status.id, status.label);
+      }
+      control
+        .setValue(creation.defaultStatusId)
+        .setDisabled(!configured)
+        .onChange((defaultStatusId) => {
+          if (!configured) return;
+          this.replaceWorkNoteDraft(
+            containerEl,
+            { ...state.draft, creation: { ...currentCreation(), defaultStatusId } },
+            false,
+          );
+        });
     });
+    const markerKind = creation.kindMarkers.ordinary.kind;
+    new Setting(section).setName('Kind marker').addDropdown((control) =>
+      control
+        .addOptions({ 'frontmatter-tag': 'Frontmatter tag', property: 'Property' })
+        .setValue(markerKind)
+        .setDisabled(!configured)
+        .onChange((kind) => {
+          if (!configured) return;
+          const current = currentCreation();
+          const ordinaryValue = current.kindMarkers.ordinary.value;
+          const milestoneValue = current.kindMarkers.milestone.value;
+          const kindMarkers =
+            kind === 'property'
+              ? {
+                  ordinary: { kind: 'property' as const, property: 'kind', value: ordinaryValue },
+                  milestone: {
+                    kind: 'property' as const,
+                    property: 'kind',
+                    value: milestoneValue,
+                  },
+                }
+              : {
+                  ordinary: { kind: 'frontmatter-tag' as const, value: ordinaryValue },
+                  milestone: { kind: 'frontmatter-tag' as const, value: milestoneValue },
+                };
+          this.replaceWorkNoteDraft(
+            containerEl,
+            { ...state.draft, creation: { ...current, kindMarkers } },
+            true,
+          );
+        }),
+    );
+    if (markerKind === 'property') {
+      const property =
+        creation.kindMarkers.ordinary.kind === 'property'
+          ? creation.kindMarkers.ordinary.property
+          : 'kind';
+      text(
+        'Kind property',
+        'Property that stores ordinary or milestone markers.',
+        property,
+        'kind',
+        (current, nextProperty) => ({
+          ...current,
+          kindMarkers: {
+            ordinary: {
+              kind: 'property',
+              property: nextProperty,
+              value: current.kindMarkers.ordinary.value,
+            },
+            milestone: {
+              kind: 'property',
+              property: nextProperty,
+              value: current.kindMarkers.milestone.value,
+            },
+          },
+        }),
+      );
+    }
+    text(
+      'Ordinary marker',
+      'Marker written for an ordinary Work Note.',
+      creation.kindMarkers.ordinary.value,
+      '#work-note/task',
+      (current, value) => ({
+        ...current,
+        kindMarkers: {
+          ...current.kindMarkers,
+          ordinary: { ...current.kindMarkers.ordinary, value },
+        },
+      }),
+    );
+    text(
+      'Milestone marker',
+      'Marker written for a milestone Work Note.',
+      creation.kindMarkers.milestone.value,
+      '#work-note/milestone',
+      (current, value) => ({
+        ...current,
+        kindMarkers: {
+          ...current.kindMarkers,
+          milestone: { ...current.kindMarkers.milestone, value },
+        },
+      }),
+    );
+  }
+
+  private renderWorkNoteAdvanced(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    const details = containerEl.createEl('details', { cls: 'abyss-work-note-advanced' });
+    details.open = state.advancedOpen;
+    details.createEl('summary', { text: 'Advanced and diagnostics' });
+    details.addEventListener('toggle', () => {
+      state.advancedOpen = details.open;
+    });
+    const body = details.createDiv({ cls: 'abyss-work-note-advanced-body' });
+    const text = (
+      name: string,
+      value: string,
+      placeholder: string,
+      update: (value: string) => WorkNoteCompatibilityPreset,
+      querySource?: WorkNoteQueryDiagnostic['source'],
+    ): void => {
+      const setting = new Setting(body).setName(name).addText((control) => {
+        control.setValue(value).setPlaceholder(placeholder);
+        control.inputEl.addEventListener('input', () =>
+          this.replaceWorkNoteDraft(containerEl, update(control.inputEl.value), false),
+        );
+        control.inputEl.setAttribute('aria-label', name);
+        if (querySource) control.inputEl.dataset['workNoteQuerySource'] = querySource;
+      });
+      if (querySource) this.renderWorkNoteQueryDiagnostic(setting, querySource, state);
+    };
+    text('Source boundary', state.draft.folder, 'Work Notes', (folder) => ({
+      ...state.draft,
+      folder,
+    }));
+    text(
+      'Ordinary kind query',
+      state.draft.ordinaryKindQuery,
+      '#work-note/task',
+      (ordinaryKindQuery) => ({ ...state.draft, ordinaryKindQuery }),
+      'ordinaryKindQuery',
+    );
+    text(
+      'Milestone kind query',
+      state.draft.milestoneKindQuery,
+      '#work-note/milestone',
+      (milestoneKindQuery) => ({ ...state.draft, milestoneKindQuery }),
+      'milestoneKindQuery',
+    );
+
+    new Setting(body).setName('Field mapping').setHeading();
+    const fields: readonly [keyof WorkNoteCompatibilityPreset['fields'], string][] = [
+      ['status', 'Status property'],
+      ['priority', 'Priority property'],
+      ['description', 'Description property'],
+      ['start', 'Start property'],
+      ['end', 'End property'],
+      ['created', 'Created property'],
+      ['updated', 'Updated property'],
+      ['id', 'ID property'],
+      ['milestone', 'Milestone property'],
+      ['blockedBy', 'Blocked by property'],
+      ['related', 'Related property'],
+    ];
+    for (const [field, label] of fields) {
+      text(label, state.draft.fields[field], label.replace(' property', ''), (value) => ({
+        ...state.draft,
+        fields: { ...state.draft.fields, [field]: value },
+      }));
+    }
+
+    new Setting(body).setName('Status mapping').setHeading();
+    for (const status of this.plugin.settings.projects.statuses) {
+      text(
+        status.label,
+        state.draft.rawStatusByStatusId[status.id] ?? '',
+        status.label,
+        (value) => ({
+          ...state.draft,
+          rawStatusByStatusId: { ...state.draft.rawStatusByStatusId, [status.id]: value },
+        }),
+      );
+    }
+    if (state.validation) this.renderWorkNoteAuditDetails(body, state.validation.preview);
+  }
+
+  private renderWorkNoteAuditDetails(
+    containerEl: HTMLElement,
+    preview: WorkNoteCompatibilityPreview,
+  ): void {
+    new Setting(containerEl).setName('Audit details').setHeading();
+    const details = containerEl.createDiv({ cls: 'abyss-work-note-audit-details' });
+    details.createDiv({
+      text: `${String(preview.notes.scanned)} scanned · ${String(
+        preview.kinds.ordinary,
+      )} ordinary · ${String(preview.kinds.milestone)} milestones`,
+    });
+    const diagnostics = Object.entries(preview.diagnostics)
+      .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && entry[1] > 0)
+      .sort(([left], [right]) => left.localeCompare(right));
+    if (diagnostics.length === 0) {
+      details.createDiv({ text: 'No diagnostics.' });
+      return;
+    }
+    details.createDiv({
+      text: diagnostics.map(([name, count]) => `${name} ${String(count)}`).join(' · '),
+    });
+  }
+
+  private lockWorkNoteControls(containerEl: HTMLElement, locked: boolean): void {
+    if (!locked) return;
+    containerEl.setAttribute('aria-busy', 'true');
+    for (const control of containerEl.querySelectorAll<
+      HTMLInputElement | HTMLSelectElement | HTMLButtonElement
+    >('input, select, button')) {
+      control.disabled = true;
+    }
   }
 
   private renderStatusCard(card: HTMLElement, idx: number): void {

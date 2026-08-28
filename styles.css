@@ -7449,36 +7449,134 @@ body.abyss-modal-open .popover.hover-popover {
   }
 }
 
-/* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
-.abyss-work-note-preview {
-  margin: 6px 0 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: var(--background-secondary);
+/* Work Notes settings stay inside the native Projects section language. */
+.abyss-work-note-setup {
+  display: grid;
+  min-width: 0;
+  gap: 0;
+  color: var(--text-normal);
+}
+
+.abyss-work-note-off,
+.abyss-work-note-validation-slot,
+.abyss-work-note-audit-details {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
-.abyss-work-note-preview:empty {
-  display: none;
+
+.abyss-work-note-off {
+  padding: 8px 0 10px;
 }
-.abyss-work-note-preview-row + .abyss-work-note-preview-row {
-  margin-top: 3px;
-}
-.abyss-work-note-preview-guard {
-  margin-top: 7px;
-  color: var(--text-faint);
-}
-.abyss-work-note-preview-capabilities {
+
+.abyss-work-note-validation-slot {
   display: flex;
+  align-items: center;
+  min-block-size: 72px;
+  min-width: 0;
+  margin: 2px 0 8px;
+}
+
+.abyss-work-note-reset[hidden] {
+  display: none !important;
+}
+
+.abyss-work-note-validation-result {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 12px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.abyss-work-note-validation-counts,
+.abyss-work-note-validation-warning {
+  min-width: 0;
+}
+
+.abyss-work-note-validation-capabilities {
+  display: inline-flex;
   flex-wrap: wrap;
   gap: 4px 10px;
-  margin-top: 7px;
+  color: var(--text-normal);
 }
-.abyss-work-note-preview [data-work-note-accept],
-.abyss-work-note-preview [data-work-note-disable] {
-  margin-top: 8px;
+
+.abyss-work-note-validation-result > button {
+  margin-inline-start: auto;
 }
+
+.abyss-work-note-validation-warning,
+.abyss-work-note-message.is-error,
+.abyss-work-note-query-error {
+  color: var(--text-error);
+}
+
+.abyss-work-note-query-error {
+  display: block;
+  width: auto;
+  margin-top: 4px;
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-work-note-level {
+  margin: 4px 0 8px;
+  padding: 4px 10px 6px;
+  border-inline-start: 2px solid var(--background-modifier-border);
+}
+
+.abyss-work-note-advanced {
+  margin: 4px 0 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.abyss-work-note-advanced > summary {
+  padding: 10px 0;
+  color: var(--text-muted);
+  font-weight: var(--font-medium);
+  cursor: pointer;
+}
+
+.abyss-work-note-advanced > summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.abyss-work-note-advanced-body {
+  padding: 0 0 6px 10px;
+  border-inline-start: 2px solid var(--background-modifier-border);
+}
+
+.abyss-work-note-audit-details {
+  display: grid;
+  gap: 3px;
+  padding: 4px 0 8px;
+}
+
+@media (max-width: 640px) {
+  .abyss-work-note-validation-slot {
+    min-block-size: 126px;
+  }
+
+  .abyss-work-note-validation-result {
+    align-items: stretch;
+  }
+
+  .abyss-work-note-validation-result > button {
+    width: 100%;
+    margin-inline-start: 0;
+  }
+
+  .abyss-work-note-level,
+  .abyss-work-note-advanced-body {
+    padding-inline-start: 6px;
+  }
+}
+
+/* ── Settings: collapsible drag-to-reorder cards (statuses + tag groups) ────── */
 
 /* Cards share the filled-row look of native setting items for a consistent feel;
    grip + chevron are the only added affordances. */
