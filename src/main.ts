@@ -88,15 +88,16 @@ export default class TaskCalendarPlugin extends Plugin {
       this.settings,
       new DailyNoteResolver(this.app, this.settings),
     );
+    const clock = systemClock(
+      () => Date.now(),
+      (epochMs) => -new Date(epochMs).getTimezoneOffset(),
+      (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
+    );
     this.tasks = new TaskApplicationService(
       this.taskIndex,
       repository,
       this.statusCatalog,
-      systemClock(
-        () => Date.now(),
-        (epochMs) => -new Date(epochMs).getTimezoneOffset(),
-        (epochMs) => localDate(window.moment(epochMs).format('YYYY-MM-DD')),
-      ),
+      clock,
       destinationProvider,
       () => ({
         taskLifecycle: this.settings.taskLifecycle,
@@ -110,6 +111,7 @@ export default class TaskCalendarPlugin extends Plugin {
     this.projectCommands = new ProjectCommandService(
       this.app,
       () => this.settings.projects.statuses,
+      clock,
     );
     this.workNoteIndex = new WorkNoteIndex(
       this.app,

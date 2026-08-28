@@ -5,6 +5,7 @@ import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import { parseProjectDate } from '../src/projects/projectDates';
 import type { ProjectDateValue } from '../src/projects/types';
 import type { ProjectStatus } from '../src/settings/types';
+import { clockFrom } from '../src/tasks/domain/clock';
 import { createAppWithFiles, flushMicrotasks, useRealMoment } from './helpers';
 
 useRealMoment();
@@ -94,6 +95,102 @@ describe('ProjectCommandService', () => {
     });
   });
 
+  it('observes each editable Project metadata field without coercion', async () => {
+    const app = await createAppWithFiles({ 'Projects/A.md': '# A\n' });
+    const service = new ProjectCommandService(app, () => statuses, clockFrom(0, 0));
+
+    expect(
+      service.observeMetadata({
+        path: 'Projects/A.md',
+        frontmatter: {
+          priority: ['B'],
+          description: 3,
+          comments: ['old'],
+          start: '2026-08-20',
+          end: null,
+        },
+        observed: {
+          priority: ['B'],
+          description: 3,
+          comments: ['old'],
+          start: '2026-08-20',
+          end: null,
+        },
+      }),
+    ).toEqual({
+      path: 'Projects/A.md',
+      priority: ['B'],
+      description: 3,
+      comments: ['old'],
+      start: '2026-08-20',
+      end: null,
+    });
+  });
+
+  it('updates only its observed priority field while preserving external fields and note body', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md':
+        '---\npriority: C\ndescription: original\nunknown:\n  nested: keep\n---\n\nProject body\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses, clockFrom(0, 0));
+    const file = fileAt(app, 'Projects/A.md');
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['description'] = 'external';
+    });
+
+    expect(await service.setPriority({ path: 'Projects/A.md', value: 'C' }, 'A')).toEqual({
+      type: 'ok',
+      priority: 'A',
+    });
+    const content = await app.vault.read(file);
+    expect(content).toContain('priority: A');
+    expect(content).toContain('description: external');
+    expect(content).toContain('nested: keep');
+    expect(content).toContain('Project body');
+  });
+
+  it('independently compares start, end, and description observations', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\nstart: 2026-08-20\nend: 2026-08-26\ndescription: before\n---\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses, clockFrom(0, 0));
+    const file = fileAt(app, 'Projects/A.md');
+    await app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['end'] = '2026-08-28';
+    });
+
+    expect(
+      await service.setRange(
+        { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26' },
+        { start: parseProjectDate('2026-08-21')! },
+      ),
+    ).toMatchObject({ type: 'ok', range: { start: { raw: '2026-08-21' } } });
+    expect(
+      await service.setDescription({ path: 'Projects/A.md', value: 'before' }, 'after'),
+    ).toEqual({ type: 'ok', description: 'after' });
+    expect(
+      await service.setDescription({ path: 'Projects/A.md', value: 'before' }, 'lost'),
+    ).toEqual({ type: 'conflict', current: 'after' });
+    const content = await app.vault.read(file);
+    expect(content).toContain('start: 2026-08-21');
+    expect(content).toContain('end: 2026-08-28');
+  });
+
+  it('refuses to overwrite a read-only non-scalar description', async () => {
+    const app = await createAppWithFiles({
+      'Projects/A.md': '---\ndescription:\n  nested: keep\n---\n\nBody\n',
+    });
+    const service = new ProjectCommandService(app, () => statuses, clockFrom(0, 0));
+    const file = fileAt(app, 'Projects/A.md');
+    const writes = vi.spyOn(app.vault, 'modify');
+
+    expect(
+      await service.setDescription({ path: file.path, value: { nested: 'keep' } }, 'replacement'),
+    ).toEqual({ type: 'unsupported', field: 'description' });
+    expect(writes).not.toHaveBeenCalled();
+    expect(await app.vault.read(file)).toContain('nested: keep');
+  });
+
   it('sets one observed range field without changing the other endpoint precision', async () => {
     const app = await createAppWithFiles({
       'Projects/A.md':
@@ -169,7 +266,7 @@ describe('ProjectCommandService', () => {
 
     const result = await service.setRange(
       { path: 'Projects/A.md', start: '2026-08-20', end: '2026-08-26' },
-      { start: parseProjectDate('2026-08-21')! },
+      { end: parseProjectDate('2026-08-29')! },
     );
 
     expect(result).toMatchObject({

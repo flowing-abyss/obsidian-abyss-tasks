@@ -1,5 +1,10 @@
 import { TFile, type App } from 'obsidian';
 import type { ProjectStatus } from '../settings/types';
+import type { Clock } from '../tasks/domain/clock';
+import {
+  formatNewCommentTimestamp,
+  parseCommentTimestampBody,
+} from '../tasks/domain/commentTimestamp';
 import {
   canonicalLifecycleTags,
   frontmatterTagValues,
@@ -9,7 +14,14 @@ import {
   type ProjectLifecycleObservation,
 } from './lifecycle';
 import { parseProjectDate, parseProjectRange } from './projectDates';
-import type { Project, ProjectDateValue, ProjectRange } from './types';
+import type {
+  Project,
+  ProjectComment,
+  ProjectDateValue,
+  ProjectMetadataObservation,
+  ProjectPriority,
+  ProjectRange,
+} from './types';
 
 export type ProjectPropertyCommandResult =
   | { type: 'ok'; previousStatusId: string | null; nextStatusId: string }
@@ -35,6 +47,28 @@ export type ProjectRangeCommandResult =
   | { type: 'invalid'; issue: NonNullable<ProjectRange['issue']> | 'path' }
   | { type: 'io-error' };
 
+export interface ProjectFieldObservation {
+  readonly path: string;
+  readonly value: unknown;
+}
+
+export interface ProjectMetadataCommandObservation extends ProjectMetadataObservation {
+  readonly path: string;
+}
+
+export type ProjectMetadataCommandResult =
+  | {
+      readonly type: 'ok';
+      readonly priority?: ProjectPriority | null;
+      readonly description?: string | null;
+      readonly comment?: ProjectComment;
+    }
+  | { readonly type: 'unchanged' }
+  | { readonly type: 'conflict'; readonly current: unknown }
+  | { readonly type: 'unsupported'; readonly field: 'comments' | 'description' }
+  | { readonly type: 'invalid'; readonly field: 'priority' | 'description' | 'comments' | 'path' }
+  | { readonly type: 'io-error' };
+
 class AbortProjectCommand extends Error {
   constructor(readonly result: ProjectPropertyCommandResult) {
     super('Project command transaction aborted');
@@ -44,6 +78,12 @@ class AbortProjectCommand extends Error {
 class AbortProjectRangeCommand extends Error {
   constructor(readonly result: ProjectRangeCommandResult) {
     super('Project range command transaction aborted');
+  }
+}
+
+class AbortProjectMetadataCommand extends Error {
+  constructor(readonly result: ProjectMetadataCommandResult) {
+    super('Project metadata command transaction aborted');
   }
 }
 
@@ -58,6 +98,28 @@ function sameRawValue(left: unknown, right: unknown): boolean {
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isProjectPriority(value: string): value is ProjectPriority {
+  return /^[A-F]$/u.test(value);
+}
+
+function isStringList(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+
+function isAppendableCommentList(value: unknown): value is readonly string[] {
+  return value === undefined || isStringList(value);
+}
+
+function projectedComment(raw: string): ProjectComment {
+  const parsed = parseCommentTimestampBody(raw);
+  if (parsed.kind === 'timestamp') {
+    return { kind: 'timestamp', raw, timestamp: parsed.timestamp, text: parsed.text };
+  }
+  return parsed.kind === 'undated'
+    ? { kind: 'undated', raw, text: parsed.text }
+    : { kind: 'malformed', raw };
 }
 
 function hasOwnedCanonicalMarker(observed: ProjectLifecycleObservation): boolean {
@@ -132,7 +194,30 @@ export class ProjectCommandService {
   constructor(
     private readonly app: App,
     private readonly statuses: () => readonly ProjectStatus[],
+    private readonly clock?: Clock,
   ) {}
+
+  observeMetadata(
+    project: Pick<Project, 'path' | 'frontmatter' | 'observed'>,
+  ): ProjectMetadataCommandObservation {
+    const observed = project.observed ?? {
+      priority: project.frontmatter['priority'],
+      description: project.frontmatter['description'],
+      comments: project.frontmatter['comments'],
+      start: project.frontmatter['start'],
+      end: project.frontmatter['end'],
+    };
+    return { path: project.path, ...observed };
+  }
+
+  observeComments(
+    project: Pick<Project, 'path' | 'frontmatter' | 'observed'>,
+  ): ProjectFieldObservation {
+    return {
+      path: project.path,
+      value: project.observed?.comments ?? project.frontmatter['comments'],
+    };
+  }
 
   observeRange(project: Pick<Project, 'path' | 'frontmatter'>): ProjectRangeObservation {
     return {
@@ -150,24 +235,36 @@ export class ProjectCommandService {
     if (!(file instanceof TFile)) return { type: 'invalid', issue: 'path' };
     const patchIssue = this.invalidRangePatchIssue(patch);
     if (patchIssue) return { type: 'invalid', issue: patchIssue };
-
-    const nextStart = patch.start === undefined ? observed.start : (patch.start?.raw ?? undefined);
-    const nextEnd = patch.end === undefined ? observed.end : (patch.end?.raw ?? undefined);
-    const nextRange = parseProjectRange(nextStart, nextEnd);
-    if (nextRange.issue) return { type: 'invalid', issue: nextRange.issue };
+    const plannedRange = parseProjectRange(
+      patch.start === undefined ? observed.start : (patch.start?.raw ?? undefined),
+      patch.end === undefined ? observed.end : (patch.end?.raw ?? undefined),
+    );
+    if (plannedRange.issue) return { type: 'invalid', issue: plannedRange.issue };
 
     try {
+      let nextRange: ProjectRange | undefined;
       await this.app.fileManager.processFrontMatter(
         file,
         (frontmatter: Record<string, unknown>) => {
-          if (
-            !sameRawValue(frontmatter['start'], observed.start) ||
-            !sameRawValue(frontmatter['end'], observed.end)
-          ) {
+          if (patch.start !== undefined && !sameRawValue(frontmatter['start'], observed.start)) {
             throw new AbortProjectRangeCommand({
               type: 'conflict',
               current: parseProjectRange(frontmatter['start'], frontmatter['end']),
             });
+          }
+          if (patch.end !== undefined && !sameRawValue(frontmatter['end'], observed.end)) {
+            throw new AbortProjectRangeCommand({
+              type: 'conflict',
+              current: parseProjectRange(frontmatter['start'], frontmatter['end']),
+            });
+          }
+          const nextStart =
+            patch.start === undefined ? frontmatter['start'] : (patch.start?.raw ?? undefined);
+          const nextEnd =
+            patch.end === undefined ? frontmatter['end'] : (patch.end?.raw ?? undefined);
+          nextRange = parseProjectRange(nextStart, nextEnd);
+          if (nextRange.issue) {
+            throw new AbortProjectRangeCommand({ type: 'invalid', issue: nextRange.issue });
           }
           if (patch.start === null) delete frontmatter['start'];
           else if (patch.start !== undefined) frontmatter['start'] = patch.start.raw;
@@ -175,7 +272,7 @@ export class ProjectCommandService {
           else if (patch.end !== undefined) frontmatter['end'] = patch.end.raw;
         },
       );
-      return { type: 'ok', range: nextRange };
+      return { type: 'ok', range: nextRange! };
     } catch (error) {
       if (error instanceof AbortProjectRangeCommand) return error.result;
       return { type: 'io-error' };
@@ -199,6 +296,95 @@ export class ProjectCommandService {
       parsed.instantMs === value.instantMs &&
       parsed.offsetMinutes === value.offsetMinutes
     );
+  }
+
+  async setPriority(
+    observed: ProjectFieldObservation,
+    priority: ProjectPriority | null,
+  ): Promise<ProjectMetadataCommandResult> {
+    if (priority !== null && !isProjectPriority(priority))
+      return { type: 'invalid', field: 'priority' };
+    return this.setScalar(observed, 'priority', priority, (value) => ({
+      type: 'ok',
+      priority: value as ProjectPriority | null,
+    }));
+  }
+
+  async setDescription(
+    observed: ProjectFieldObservation,
+    description: string | null,
+  ): Promise<ProjectMetadataCommandResult> {
+    if (observed.value !== undefined && typeof observed.value !== 'string') {
+      return { type: 'unsupported', field: 'description' };
+    }
+    if (description !== null && description.includes('\r'))
+      return { type: 'invalid', field: 'description' };
+    return this.setScalar(observed, 'description', description, (value) => ({
+      type: 'ok',
+      description: value,
+    }));
+  }
+
+  async appendComment(
+    observed: ProjectFieldObservation,
+    body: string,
+  ): Promise<ProjectMetadataCommandResult> {
+    if (!isAppendableCommentList(observed.value)) return { type: 'unsupported', field: 'comments' };
+    const normalizedBody = body.replace(/\r\n/gu, '\n');
+    if (normalizedBody.includes('\r') || !this.clock) return { type: 'invalid', field: 'comments' };
+    const file = this.app.vault.getAbstractFileByPath(observed.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    const raw = `${formatNewCommentTimestamp(this.clock.read())}: ${normalizedBody}`;
+    try {
+      await this.app.fileManager.processFrontMatter(
+        file,
+        (frontmatter: Record<string, unknown>) => {
+          const current = frontmatter['comments'];
+          if (!isAppendableCommentList(current)) {
+            throw new AbortProjectMetadataCommand({ type: 'unsupported', field: 'comments' });
+          }
+          if (!sameRawValue(current, observed.value)) {
+            throw new AbortProjectMetadataCommand({ type: 'conflict', current });
+          }
+          frontmatter['comments'] = [...(current ?? []), raw];
+        },
+      );
+      return { type: 'ok', comment: projectedComment(raw) };
+    } catch (error) {
+      if (error instanceof AbortProjectMetadataCommand) return error.result;
+      return { type: 'io-error' };
+    }
+  }
+
+  private async setScalar(
+    observed: ProjectFieldObservation,
+    field: 'priority' | 'description',
+    value: string | null,
+    success: (
+      value: string | null,
+    ) => Extract<ProjectMetadataCommandResult, { readonly type: 'ok' }>,
+  ): Promise<ProjectMetadataCommandResult> {
+    const file = this.app.vault.getAbstractFileByPath(observed.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    try {
+      await this.app.fileManager.processFrontMatter(
+        file,
+        (frontmatter: Record<string, unknown>) => {
+          const current = frontmatter[field];
+          if (!sameRawValue(current, observed.value)) {
+            throw new AbortProjectMetadataCommand({ type: 'conflict', current });
+          }
+          if (sameRawValue(current, value))
+            throw new AbortProjectMetadataCommand({ type: 'unchanged' });
+          if (value === null) delete frontmatter[field];
+          else frontmatter[field] = value;
+        },
+      );
+      return success(value);
+    } catch (error) {
+      if (error instanceof AbortProjectMetadataCommand) return error.result;
+      return { type: 'io-error' };
+    }
   }
 
   setStatus(

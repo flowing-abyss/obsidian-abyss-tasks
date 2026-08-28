@@ -7,9 +7,17 @@ import {
 } from '../query/compileQuery';
 import type { CalendarSettings } from '../settings/types';
 import type { TaskIndexEvent, TaskIndexSettledEvent, TaskQueryApi, TaskSnapshot } from '../tasks';
+import { parseCommentTimestampBody } from '../tasks/domain/commentTimestamp';
 import { parseProjectRange } from './projectDates';
 import { resolveStatus } from './status';
-import type { Project, TaskRollup } from './types';
+import type {
+  Project,
+  ProjectComment,
+  ProjectMetadataDiagnostic,
+  ProjectMetadataObservation,
+  ProjectPriority,
+  TaskRollup,
+} from './types';
 
 export interface ProjectStoreEvent {
   readonly changedPaths: readonly string[];
@@ -68,6 +76,62 @@ function wasMarkdown(path: string): boolean {
 function metadataMayContainTasks(data: string, cache: CachedMetadata): boolean {
   if (cache.listItems?.some((item) => item.task !== undefined)) return true;
   return data.split('\n').some((line) => /^[\s>]*- \[.\]/u.test(line));
+}
+
+function projectPriority(value: unknown): ProjectPriority | null {
+  return typeof value === 'string' && /^[A-F]$/u.test(value) ? (value as ProjectPriority) : null;
+}
+
+function projectComment(value: string): ProjectComment {
+  const parsed = parseCommentTimestampBody(value);
+  if (parsed.kind === 'timestamp') {
+    return { kind: 'timestamp', raw: value, timestamp: parsed.timestamp, text: parsed.text };
+  }
+  return parsed.kind === 'undated'
+    ? { kind: 'undated', raw: value, text: parsed.text }
+    : { kind: 'malformed', raw: value };
+}
+
+function projectMetadata(frontmatter: Readonly<Record<string, unknown>>): {
+  readonly observed: ProjectMetadataObservation;
+  readonly priority: ProjectPriority | null;
+  readonly description: string | null;
+  readonly comments: readonly ProjectComment[];
+  readonly metadataDiagnostics: readonly ProjectMetadataDiagnostic[];
+} {
+  const observed = {
+    priority: frontmatter['priority'],
+    description: frontmatter['description'],
+    comments: frontmatter['comments'],
+    start: frontmatter['start'],
+    end: frontmatter['end'],
+  };
+  const metadataDiagnostics: ProjectMetadataDiagnostic[] = [];
+  const priority = projectPriority(observed.priority);
+  if (observed.priority !== undefined && priority === null) {
+    metadataDiagnostics.push({ field: 'priority', issue: 'unsupported' });
+  }
+  const description = typeof observed.description === 'string' ? observed.description : null;
+  if (observed.description !== undefined && description === null) {
+    metadataDiagnostics.push({ field: 'description', issue: 'unsupported' });
+  }
+  if (observed.comments === undefined) {
+    return { observed, priority, description, comments: [], metadataDiagnostics };
+  }
+  if (
+    !Array.isArray(observed.comments) ||
+    !observed.comments.every((value) => typeof value === 'string')
+  ) {
+    metadataDiagnostics.push({ field: 'comments', issue: 'unsupported' });
+    return { observed, priority, description, comments: [], metadataDiagnostics };
+  }
+  const comments = observed.comments.map(projectComment);
+  for (const [index, comment] of comments.entries()) {
+    if (comment.kind === 'malformed') {
+      metadataDiagnostics.push({ field: 'comments', issue: 'malformed', index });
+    }
+  }
+  return { observed, priority, description, comments, metadataDiagnostics };
 }
 
 /**
@@ -275,6 +339,11 @@ export class ProjectStore {
         statusId: project.statusId,
         rawStatus: project.rawStatus,
         range: project.range,
+        priority: project.priority,
+        description: project.description,
+        comments: project.comments,
+        observed: project.observed,
+        metadataDiagnostics: project.metadataDiagnostics,
         stats: project.stats,
       })),
     );
@@ -342,6 +411,7 @@ export class ProjectStore {
       return null;
     }
     const { statusId, rawStatus } = resolveStatus(this.settings.projects.statuses, tags, fm);
+    const metadata = projectMetadata(fm);
     return {
       path,
       name: basename(path),
@@ -350,6 +420,7 @@ export class ProjectStore {
       statusId,
       rawStatus,
       range: parseProjectRange(fm['start'], fm['end']),
+      ...metadata,
       stats: computeTaskRollup(tasks),
     };
   }

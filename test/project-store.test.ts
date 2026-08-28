@@ -223,6 +223,79 @@ describe('ProjectStore enumeration', () => {
     ps.destroy();
   });
 
+  it('projects supported Project metadata while retaining raw unsupported values', () => {
+    const { app } = makeApp([
+      {
+        path: 'Projects/A.md',
+        tags: [],
+        fm: {
+          status: 'active',
+          priority: 'B',
+          description: 'Ship safely',
+          comments: ['2026-08-11: legacy'],
+        },
+      },
+      {
+        path: 'Projects/B.md',
+        tags: [],
+        fm: { status: 'active', priority: ['A'], description: { nested: true }, comments: 'keep' },
+      },
+    ]);
+    const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+
+    ps.initialize();
+
+    expect(ps.get('Projects/A.md')).toMatchObject({
+      priority: 'B',
+      description: 'Ship safely',
+      comments: [{ kind: 'timestamp', text: 'legacy', timestamp: { precision: 'day' } }],
+      observed: {
+        priority: 'B',
+        description: 'Ship safely',
+        comments: ['2026-08-11: legacy'],
+      },
+    });
+    expect(ps.get('Projects/B.md')).toMatchObject({
+      priority: null,
+      description: null,
+      comments: [],
+      observed: { priority: ['A'], description: { nested: true }, comments: 'keep' },
+      metadataDiagnostics: [
+        { field: 'priority', issue: 'unsupported' },
+        { field: 'description', issue: 'unsupported' },
+        { field: 'comments', issue: 'unsupported' },
+      ],
+    });
+    ps.destroy();
+  });
+
+  it.each(['A', 'B', 'C', 'D', 'E', 'F'])(
+    'projects priority %s without normalization',
+    (priority) => {
+      const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { priority } }]);
+      const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+
+      ps.initialize();
+
+      expect(ps.get('Projects/A.md')).toMatchObject({ priority, observed: { priority } });
+      ps.destroy();
+    },
+  );
+
+  it('represents an absent Project priority as null without a diagnostic', () => {
+    const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: {} }]);
+    const ps = new ProjectStore(app, storeWith([]), { ...DEFAULT_SETTINGS });
+
+    ps.initialize();
+
+    expect(ps.get('Projects/A.md')).toMatchObject({
+      priority: null,
+      observed: { priority: undefined },
+      metadataDiagnostics: [],
+    });
+    ps.destroy();
+  });
+
   it('computes stats from tasks in the note', () => {
     const { app } = makeApp([{ path: 'Projects/A.md', tags: [], fm: { status: 'active' } }]);
     const tasks = [
