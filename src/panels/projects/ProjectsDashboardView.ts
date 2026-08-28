@@ -1,6 +1,10 @@
 import { Menu, setIcon } from 'obsidian';
 import { selectProjectTasks } from '../../projects/selectProjectTasks';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import {
+  deriveInspectorSelection,
+  inspectorSelectionKey,
+} from '../../ui/inspector/InspectorSelection';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
@@ -51,12 +55,43 @@ export function renderProjectDashboard(
     allWorkNotes;
   const workNotesAvailable =
     ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
+  const sameSelection = (
+    left: ReturnType<typeof deriveInspectorSelection> | null,
+    right: ReturnType<typeof deriveInspectorSelection>,
+  ): boolean => {
+    if (left?.type !== right.type) return false;
+    if (left.type === 'project' && right.type === 'project') return left.path === right.path;
+    if (left.type === 'work-note' && right.type === 'work-note') {
+      return left.path === right.path && left.projectPath === right.projectPath;
+    }
+    return (
+      left.type === 'task' &&
+      right.type === 'task' &&
+      left.task.filePath === right.task.filePath &&
+      left.task.line === right.task.line &&
+      left.task.revision === right.task.revision
+    );
+  };
 
   const statuses = ctx.settings.projects.statuses;
   const status = project.statusId ? statuses.find((s) => s.id === project.statusId) : undefined;
 
   const header = container.createDiv({ cls: 'abyss-project-dashboard-header' });
-  header.createEl('h2', { cls: 'abyss-project-dashboard-title', text: project.name });
+  const inspect = header.createEl('button', {
+    cls: 'abyss-project-dashboard-title',
+    text: project.name,
+    attr: { type: 'button', 'aria-label': `Open project details for ${project.name}` },
+  });
+  const projectInspectorSelection = { type: 'project' as const, path: project.path };
+  inspect.dataset['inspectorOriginKey'] = inspectorSelectionKey(projectInspectorSelection);
+  inspect.addEventListener('click', () =>
+    ctx.state.batch(() => {
+      if (session.scope === 'tasks') session.tasks.setInspector(null);
+      else session.scopeSession('work-notes').selection.inspectorKey = null;
+      ctx.state.set('inspectorSelection', projectInspectorSelection);
+      ctx.state.set('inspectorOrigin', { selection: projectInspectorSelection, element: inspect });
+    }),
+  );
 
   const pill = header.createEl('button', {
     cls: 'abyss-status-pill',
@@ -145,6 +180,56 @@ export function renderProjectDashboard(
   let syncTimelineButton = (): void => undefined;
   let child: ProjectChildRenderHandle | null = null;
   let destroyed = false;
+  let arbitrationVersion = 0;
+
+  const publishEffectiveInspector = (): void => {
+    const version = ++arbitrationVersion;
+    queueMicrotask(() => {
+      if (destroyed || version !== arbitrationVersion) return;
+      const rememberedTask = session.tasks.inspectorRef();
+      const visibleTask = rememberedTask
+        ? selectedTasks.find(
+            ({ task }) =>
+              task.ref.filePath === rememberedTask.filePath &&
+              task.ref.line === rememberedTask.line &&
+              task.ref.revision === rememberedTask.revision,
+          )
+        : undefined;
+      const rememberedWorkNotePath = session.scopeSession('work-notes').selection.inspectorKey;
+      const visibleWorkNote = rememberedWorkNotePath
+        ? selectedWorkNotes.find(({ path }) => path === rememberedWorkNotePath)
+        : undefined;
+      const effective = deriveInspectorSelection({
+        project: { type: 'project', path: project.path },
+        activeScope: session.scope,
+        ...(visibleTask && { task: { type: 'task', task: visibleTask.task.ref } as const }),
+        ...(visibleWorkNote && {
+          workNote: {
+            type: 'work-note' as const,
+            path: visibleWorkNote.path,
+            projectPath: project.path,
+          },
+        }),
+      });
+      const key = inspectorSelectionKey(effective);
+      const effectiveOrigin =
+        Array.from(container.querySelectorAll<HTMLElement>('[data-inspector-origin-key]')).find(
+          (candidate) => candidate.dataset['inspectorOriginKey'] === key,
+        ) ?? inspect;
+      const currentOrigin = ctx.state.get('inspectorOrigin');
+      if (
+        !sameSelection(ctx.state.get('inspectorSelection'), effective) ||
+        !currentOrigin ||
+        !sameSelection(currentOrigin.selection, effective) ||
+        currentOrigin.element !== effectiveOrigin
+      ) {
+        ctx.state.batch(() => {
+          ctx.state.set('inspectorSelection', effective);
+          ctx.state.set('inspectorOrigin', { selection: effective, element: effectiveOrigin });
+        });
+      }
+    });
+  };
 
   const renderWorkspace = (): void => {
     if (destroyed) return;
@@ -187,6 +272,7 @@ export function renderProjectDashboard(
     } else {
       child = ctx.renderTasks(content, project.path, selectedTasks, taskViewState);
     }
+    publishEffectiveInspector();
   };
 
   const scopeButton = (value: ProjectWorkspaceScope, label: string, selectable = true): void => {
@@ -289,6 +375,7 @@ export function renderProjectDashboard(
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
+      arbitrationVersion += 1;
       child?.destroy();
       child = null;
       container.empty();

@@ -188,6 +188,13 @@ export default tseslint.config(
       'no-restricted-imports': [
         'error',
         {
+          paths: [
+            {
+              name: '../../tasks',
+              importNames: ['Clock', 'systemClock', 'systemCommentTimeContext'],
+              message: 'Project inspector time must be injected by composition.',
+            },
+          ],
           patterns: [
             {
               regex: '^(?:\\.\\.?/)+tasks/(?:application|domain|infrastructure)(?:/|$)',

@@ -206,6 +206,7 @@ describe('ProjectTaskCollectionSession', () => {
     expect(session.restoreEffect()).toEqual({
       focus: actions[1]!.task.ref,
       scrollTo: actions[1]!.task.ref,
+      inspect: actions[1]!.task.ref,
     });
     session.setInspector(actions[0]!.task.ref);
     expect(session.inspectorRef()).toEqual(actions[0]!.task.ref);

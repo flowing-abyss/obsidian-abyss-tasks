@@ -143,6 +143,23 @@ function sourceFirst<T>(source: readonly T[], destination: readonly T[]): T[] {
   return result;
 }
 
+function rebaseValue(
+  value: string | null,
+  sourcePath: string,
+  destinationPath: string,
+): string | null {
+  return value === sourcePath ? destinationPath : value;
+}
+
+function rebaseViewport(
+  target: LogicalViewportSession,
+  sourcePath: string,
+  destinationPath: string,
+): void {
+  target.firstKey = rebaseValue(target.firstKey, sourcePath, destinationPath);
+  target.focusedKey = rebaseValue(target.focusedKey, sourcePath, destinationPath);
+}
+
 function reconcileSafeArrays<TViewState>(
   source: ProjectWorkspaceScopeSession<TViewState>,
   destination: ProjectWorkspaceScopeSession<TViewState>,
@@ -309,6 +326,39 @@ export class ProjectWorkspaceSession {
     this.sessions.set(destinationPath, source);
     if (this.projectPath === sourcePath) this.projectPath = destinationPath;
     this.evictCleanSessions();
+  }
+
+  renamePath(sourcePath: string, destinationPath: string): void {
+    if (sourcePath === destinationPath) return;
+    this.renameProject(sourcePath, destinationPath);
+    for (const entry of this.sessions.values()) {
+      const selection = entry.workNotesScope.selection;
+      selection.selectedKeys = selection.selectedKeys.map((path) =>
+        path === sourcePath ? destinationPath : path,
+      );
+      selection.focusedKey = rebaseValue(selection.focusedKey, sourcePath, destinationPath);
+      selection.inspectorKey = rebaseValue(selection.inspectorKey, sourcePath, destinationPath);
+      entry.workNotes.inspectorPath = rebaseValue(
+        entry.workNotes.inspectorPath,
+        sourcePath,
+        destinationPath,
+      );
+      entry.workNotes.pendingCreatedPath = rebaseValue(
+        entry.workNotes.pendingCreatedPath,
+        sourcePath,
+        destinationPath,
+      );
+      rebaseViewport(entry.workNotes.list, sourcePath, destinationPath);
+      rebaseViewport(entry.timelines.workNotes, sourcePath, destinationPath);
+      entry.workNotes.board.focusedKey = rebaseValue(
+        entry.workNotes.board.focusedKey,
+        sourcePath,
+        destinationPath,
+      );
+      for (const viewport of Object.values(entry.workNotes.board.columns)) {
+        rebaseViewport(viewport, sourcePath, destinationPath);
+      }
+    }
   }
 
   private current(): ProjectWorkspaceEntry {

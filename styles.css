@@ -7535,3 +7535,115 @@ body.is-phone.is-mobile .abyss-creation-feedback {
     env(safe-area-inset-bottom, 0px) + var(--size-4-16, 4rem) + var(--size-4-12, 3rem)
   );
 }
+
+/* One right-side inspector host shared by Projects, Tasks, and Work Notes. */
+.abyss-inspector-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 100%;
+  padding: var(--size-4-3, 12px);
+  overflow-y: auto;
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.abyss-inspector-shell[data-inspector-layout='drawer'] {
+  position: absolute;
+  z-index: var(--layer-popover);
+  inset: 0;
+  box-shadow: var(--shadow-l);
+}
+
+.abyss-inspector-shell-close {
+  display: block;
+  margin-inline-start: auto;
+}
+
+.abyss-inspector-shell-close-notice:empty {
+  display: none;
+}
+
+.abyss-inspector-shell-close-notice {
+  margin-block-end: var(--size-4-2, 8px);
+  color: var(--text-warning);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-inspector-header {
+  display: flex;
+  gap: var(--size-4-2, 8px);
+  align-items: center;
+  margin-block: var(--size-4-2, 8px) var(--size-4-3, 12px);
+}
+
+.abyss-project-inspector-header h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-project-inspector-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--size-4-2, 8px);
+}
+
+.abyss-project-inspector-fields input,
+.abyss-project-inspector-fields select,
+.abyss-project-inspector-fields textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.abyss-project-inspector-fields textarea {
+  min-height: 7rem;
+  resize: vertical;
+}
+
+.abyss-project-inspector-result {
+  min-height: 1em;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-project-inspector-result[data-result-type='conflict'],
+.abyss-project-inspector-result[data-result-type='invalid'],
+.abyss-project-inspector-result[data-result-type='io-error'],
+.abyss-project-inspector-result[data-result-type='unsupported'] {
+  color: var(--text-error);
+}
+
+.abyss-project-inspector-comments,
+.abyss-project-inspector-progress,
+.abyss-project-inspector-health,
+.abyss-project-inspector-diagnostic,
+.abyss-inspector-draft-recovery {
+  margin-block-start: var(--size-4-3, 12px);
+  padding-block-start: var(--size-4-2, 8px);
+  border-block-start: 1px solid var(--background-modifier-border);
+}
+
+.abyss-project-inspector-comment,
+.abyss-project-inspector-progress,
+.abyss-project-inspector-health,
+.abyss-project-inspector-diagnostic,
+.abyss-inspector-draft-recovery {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-inspector-draft-recovery-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: var(--size-4-1, 4px);
+  margin-block-start: var(--size-4-2, 8px);
+}
+
+.abyss-inspector-draft-recovery-row textarea {
+  grid-column: 1 / -1;
+  min-height: 5rem;
+  resize: vertical;
+}

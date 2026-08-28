@@ -667,10 +667,9 @@ describe('Projects Tasks/List scale integration RED', () => {
     }
   });
 
-  it('tears down the real Task owner before Work Notes and removes the old Work Note document listener on return', () => {
+  it('tears down the real Task owner before Work Notes without installing a local inspector listener', () => {
     const geometry = installMeasuredProjectScrollGeometry();
     const addListener = vi.spyOn(activeDocument, 'addEventListener');
-    const removeListener = vi.spyOn(activeDocument, 'removeEventListener');
     const { panel, root } = mountScaleProject({ forceOpen: true, withWorkNote: true });
     const outside = root.ownerDocument.createElement('button');
     root.ownerDocument.body.append(outside);
@@ -685,7 +684,7 @@ describe('Projects Tasks/List scale integration RED', () => {
       const workNotePointerListener = addListener.mock.calls
         .slice(pointerAddsBefore)
         .find(([type]) => type === 'pointerdown')?.[1];
-      expect(workNotePointerListener).toBeDefined();
+      expect(workNotePointerListener).toBeUndefined();
       root.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!.click();
       const workspace = (
         panel as unknown as {
@@ -697,11 +696,7 @@ describe('Projects Tasks/List scale integration RED', () => {
       expect(workspace.workNotes.inspectorPath).toBe('Work Notes/Scale note.md');
 
       click(root.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!);
-      workspace.workNotes.inspectorPath = 'Work Notes/Sentinel.md';
-      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-
-      expect(workspace.workNotes.inspectorPath).toBe('Work Notes/Sentinel.md');
-      expect(removeListener).toHaveBeenCalledWith('pointerdown', workNotePointerListener, true);
+      expect(workspace.workNotes.inspectorPath).toBe('Work Notes/Scale note.md');
     } finally {
       outside.remove();
       panel.destroy();

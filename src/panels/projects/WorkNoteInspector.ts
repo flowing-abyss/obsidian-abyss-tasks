@@ -5,6 +5,7 @@ import type {
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import type { InspectorDraftRegistry, InspectorDraftResult } from '../../ui/projectDraftContinuity';
 import { workNoteStatusMenuModel } from './boardProjection';
 import {
   createWorkNoteResultPresenter,
@@ -21,6 +22,8 @@ export interface WorkNoteInspectorOptions {
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
   readonly onClose?: () => void;
+  readonly draftRegistry?: InspectorDraftRegistry;
+  readonly onDraftSettled?: () => void;
 }
 
 function basename(path: string): string {
@@ -42,6 +45,15 @@ function metadataRow(host: HTMLElement, label: string, value: string): void {
   row.createSpan({ cls: 'abyss-work-note-inspector-value', text: value });
 }
 
+function draftResultText(result: InspectorDraftResult | undefined): string {
+  if (result === 'ok') return 'Status updated.';
+  if (result === 'unchanged') return 'Status is unchanged.';
+  if (result === 'conflict') return 'Status changed outside calendar. Draft kept.';
+  if (result === 'invalid') return 'Status is invalid. Draft kept.';
+  if (result === 'io-error') return 'Could not update status. Draft kept.';
+  return '';
+}
+
 function renderStatusMenu(
   event: MouseEvent,
   note: WorkNoteSnapshot,
@@ -57,7 +69,35 @@ function renderStatusMenu(
         .setIcon(action.icon)
         .setChecked(action.checked)
         .setDisabled(action.disabled)
-        .onClick(() => presenter.run(() => options.onSetStatus(note, action.columnKey), status)),
+        .onClick(() => {
+          const identity = {
+            type: 'work-note' as const,
+            path: note.path,
+            projectPath: note.projectPath,
+          };
+          const pendingEntry = options.draftRegistry?.markPending(
+            identity,
+            'status',
+            action.columnKey,
+            note.statusId ?? '',
+            status.ownerDocument.activeElement === status,
+          );
+          return presenter
+            .run(() => options.onSetStatus(note, action.columnKey), status)
+            .then((result) => {
+              let draftResult: InspectorDraftResult;
+              if (result.type === 'ok' || result.type === 'unchanged') draftResult = result.type;
+              else if (result.type === 'conflict' || result.type === 'compatibility-conflict') {
+                draftResult = 'conflict';
+              } else if (result.type === 'invalid') draftResult = 'invalid';
+              else draftResult = 'io-error';
+              if (pendingEntry) {
+                options.draftRegistry?.settlePending(pendingEntry, draftResult, action.columnKey);
+              }
+              options.onDraftSettled?.();
+              return result;
+            });
+        }),
     );
   }
   showMenuAtMouseEventWithFocus(menu, event);
@@ -113,7 +153,42 @@ export function renderWorkNoteInspector(
           : 'Change work note status',
     },
   });
-  status.disabled = options.commandsEnabled === false;
+  const identity = {
+    type: 'work-note' as const,
+    path: note.path,
+    projectPath: note.projectPath,
+  };
+  const statusDraft = options.draftRegistry?.reconcile(identity, 'status', note.statusId ?? '');
+  status.disabled = options.commandsEnabled === false || statusDraft?.pending === true;
+  if (statusDraft?.pending) status.dataset['resultType'] = 'pending';
+  else if (statusDraft?.result) status.dataset['resultType'] = statusDraft.result;
+  const draftFeedback = container.createDiv({
+    cls: 'abyss-work-note-draft-result',
+    attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
+  });
+  if (statusDraft?.pending) draftFeedback.setText('Saving status…');
+  else draftFeedback.setText(draftResultText(statusDraft?.result));
+  if (statusDraft?.hadFocus) {
+    queueMicrotask(() => {
+      if (status.isConnected) status.focus({ preventScroll: true });
+    });
+  }
+  status.addEventListener('focus', () => {
+    const current = options.draftRegistry?.get(identity, 'status');
+    options.draftRegistry?.capture(identity, 'status', {
+      ...current,
+      value: current?.value ?? note.statusId ?? '',
+      baseline: current?.baseline ?? note.statusId ?? '',
+      selectionStart: 0,
+      selectionEnd: 0,
+      hadFocus: true,
+    });
+  });
+  status.addEventListener('blur', () => {
+    const current = options.draftRegistry?.get(identity, 'status');
+    if (!current) return;
+    options.draftRegistry?.capture(identity, 'status', { ...current, hadFocus: false });
+  });
   status.addEventListener('click', (event) => {
     if (status.disabled) return;
     renderStatusMenu(event, note, status, options, presenter);

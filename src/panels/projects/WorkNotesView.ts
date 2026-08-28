@@ -7,13 +7,13 @@ import type {
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
 import type { WorkNotesViewState } from '../../settings/types';
+import { inspectorSelectionKey } from '../../ui/inspector/InspectorSelection';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { workNoteStatusMenuModel } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
 import { renderWorkNotesBoard, type BoardViewHandle } from './ProjectsBoardView';
 import type { LogicalViewportSession, WorkNotesSession } from './ProjectWorkspaceSession';
 import { logicalViewportFirst } from './ProjectWorkspaceSession';
-import { renderWorkNoteInspector } from './WorkNoteInspector';
 import {
   createWorkNoteResultPresenter,
   type WorkNoteResultPresenter,
@@ -45,6 +45,8 @@ export interface WorkNotesViewOptions {
   readonly isNarrow?: boolean;
   readonly coarsePointer?: boolean;
   readonly milestoneRollups?: ReadonlyMap<string, MilestoneRollup>;
+  /** Selection is rendered by the one right inspector host, never locally. */
+  readonly onSelect?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
 }
 
 export interface WorkNotesViewHandle {
@@ -132,7 +134,7 @@ function renderRow(
   note: WorkNoteSnapshot,
   options: WorkNotesViewOptions,
   presenter: WorkNoteResultPresenter,
-  select: () => void,
+  select: (origin: HTMLElement) => void,
 ): HTMLElement {
   const row = host.createDiv({
     cls: 'abyss-work-note-row',
@@ -155,7 +157,7 @@ function renderRow(
       type: 'button',
       'data-work-note-identity-control': '',
       'aria-label': [
-        options.layout === 'board' ? 'Open work note' : 'Work note details',
+        'Work note details',
         basename(note.path),
         note.kind === 'milestone' ? 'Milestone' : 'Ordinary',
         statusText(note, options.statuses),
@@ -164,6 +166,11 @@ function renderRow(
         .filter((part): part is string => part !== undefined)
         .join(', '),
     },
+  });
+  identity.dataset['inspectorOriginKey'] = inspectorSelectionKey({
+    type: 'work-note',
+    path: note.path,
+    projectPath: note.projectPath,
   });
   identity.createSpan({ cls: 'abyss-work-note-title', text: basename(note.path) });
   const meta = identity.createSpan({ cls: 'abyss-work-note-meta' });
@@ -210,8 +217,7 @@ function renderRow(
     });
   }
   identity.addEventListener('click', () => {
-    if (options.layout === 'list') select();
-    else options.openNote(note.path);
+    select(identity);
   });
   return row;
 }
@@ -227,13 +233,11 @@ function renderList(
     container.createDiv({ cls: 'abyss-projects-empty', text: 'No Work Notes' });
     return { destroy: () => container.empty() };
   }
-  const split = container.createDiv({ cls: 'abyss-work-notes-split' });
-  const scroll = split.createDiv({ cls: 'abyss-work-notes-scroll' });
+  const scroll = container.createDiv({ cls: 'abyss-work-notes-scroll' });
   const rows = scroll.createDiv({
     cls: 'abyss-work-note-rows',
     attr: { tabindex: '-1', role: 'list', 'aria-label': 'Work Notes' },
   });
-  const inspector = split.createDiv({ cls: 'abyss-work-note-inspector-host' });
   const bounded = new BoundedWindow(
     notes.map(({ path }) => path),
     WORK_NOTE_OVERSCAN,
@@ -260,41 +264,12 @@ function renderList(
         ? Math.ceil(scroll.clientHeight / WORK_NOTE_ROW_EXTENT)
         : WORK_NOTE_FALLBACK_VISIBLE_ROWS,
   });
-  let inspectorReturnTarget: HTMLElement | null = null;
-  const closeInspector = (restoreFocus = true): void => {
-    inspector.empty();
-    inspector.removeAttribute('role');
-    inspector.removeAttribute('aria-label');
-    inspector.removeAttribute('aria-modal');
-    const target = inspectorReturnTarget;
-    inspectorReturnTarget = null;
-    if (options.session) options.session.inspectorPath = null;
-    if (restoreFocus && target?.isConnected) target.focus({ preventScroll: true });
-  };
   const select = (note: WorkNoteSnapshot, target: HTMLElement): void => {
-    inspectorReturnTarget = target;
-    if (options.session) options.session.inspectorPath = note.path;
-    if (options.isNarrow === true) inspector.setAttribute('role', 'dialog');
-    else inspector.setAttribute('role', 'region');
-    if (options.isNarrow === true) inspector.setAttribute('aria-modal', 'true');
-    else inspector.removeAttribute('aria-modal');
-    /* eslint-disable-next-line obsidianmd/ui/sentence-case -- Work Note is a named product concept. */
-    inspector.setAttribute('aria-label', 'Work Note details');
-    inspector.dataset['narrowDrawer'] = String(options.isNarrow === true);
-    inspector.dataset['coarsePointer'] = String(options.coarsePointer === true);
-    renderWorkNoteInspector(inspector, note, {
-      statuses: options.statuses,
-      commandsEnabled: options.commandsEnabled,
-      resultPresenter: presenter,
-      onSetStatus: options.onSetStatus,
-      openNote: options.openNote,
-      onClose: () => closeInspector(true),
-    });
-    if (options.isNarrow === true) {
-      inspector
-        .querySelector<HTMLElement>('[aria-label="Close Work Note details"]')
-        ?.focus({ preventScroll: true });
+    if (options.session) {
+      options.session.inspectorPath = note.path;
+      options.session.selection.inspectorKey = note.path;
     }
+    options.onSelect?.(note, target);
   };
   const renderWindow = (restoreFocus = false): void => {
     if (destroyed) return;
@@ -361,56 +336,7 @@ function renderList(
   scroll.addEventListener('scroll', onScroll);
   rows.addEventListener('focusin', onFocusIn);
   rows.addEventListener('focusout', onFocusOut);
-  const onInspectorKeydown = (event: KeyboardEvent): void => {
-    if (inspector.childElementCount === 0) return;
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeInspector(true);
-      return;
-    }
-    if (event.key !== 'Tab' || options.isNarrow !== true) return;
-    const controls = Array.from(
-      inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
-    );
-    if (controls.length === 0) return;
-    const activeIndex = controls.indexOf(inspector.ownerDocument.activeElement as HTMLElement);
-    const wrapsForward = !event.shiftKey && activeIndex === controls.length - 1;
-    const wrapsBackward = event.shiftKey && activeIndex <= 0;
-    if (!wrapsForward && !wrapsBackward) return;
-    event.preventDefault();
-    controls[wrapsBackward ? controls.length - 1 : 0]?.focus({ preventScroll: true });
-  };
-  const onOutsidePointer = (event: PointerEvent): void => {
-    if (inspector.childElementCount === 0 || inspector.contains(event.target as Node)) return;
-    if (inspectorReturnTarget?.contains(event.target as Node)) return;
-    closeInspector(false);
-  };
-  inspector.addEventListener('keydown', onInspectorKeydown);
-  inspector.ownerDocument.addEventListener('pointerdown', onOutsidePointer, true);
   renderWindow(session?.restoreFocus === true);
-  const retainedInspectorPath = options.session?.inspectorPath;
-  if (retainedInspectorPath) {
-    const retainedNote = notes.find(({ path }) => path === retainedInspectorPath);
-    if (retainedNote) {
-      const mountedIdentity = (): HTMLElement | undefined =>
-        Array.from(rows.querySelectorAll<HTMLElement>('[data-work-note-identity-control]')).find(
-          (identity) =>
-            identity.closest('.abyss-work-note-row')?.getAttribute('data-work-note-path') ===
-            retainedInspectorPath,
-        );
-      let retainedTarget = mountedIdentity();
-      if (!retainedTarget) {
-        bounded.focus(retainedInspectorPath);
-        const first = bounded.viewportForFocus(viewport());
-        scroll.scrollTop = first * WORK_NOTE_ROW_EXTENT;
-        renderWindow(false);
-        retainedTarget = mountedIdentity();
-      }
-      if (retainedTarget) select(retainedNote, retainedTarget);
-    } else {
-      if (options.session) options.session.inspectorPath = null;
-    }
-  }
   if (
     pendingCreatedPath &&
     (activeDocument.activeElement as HTMLElement | null)
@@ -426,8 +352,6 @@ function renderList(
       scroll.removeEventListener('scroll', onScroll);
       rows.removeEventListener('focusin', onFocusIn);
       rows.removeEventListener('focusout', onFocusOut);
-      inspector.removeEventListener('keydown', onInspectorKeydown);
-      inspector.ownerDocument.removeEventListener('pointerdown', onOutsidePointer, true);
       container.empty();
     },
   };
@@ -444,7 +368,10 @@ function renderWorkNoteBoard(
     statuses: options.statuses,
     onMoveStatus: (note, statusId) => Promise.resolve(options.onSetStatus(note, statusId)),
     renderItem: (host, note) =>
-      renderRow(host, note, options, presenter, () => options.openNote(note.path)),
+      renderRow(host, note, options, presenter, (origin) => {
+        if (options.session) options.session.selection.inspectorKey = note.path;
+        options.onSelect?.(note, origin);
+      }),
     executeMutation: (command, initiator) => presenter.run(command, initiator),
     session: options.session?.board,
     commandsEnabled: options.commandsEnabled,

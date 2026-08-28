@@ -156,6 +156,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.projectWorkspace,
           this.workNoteCommands,
           this.dependencyPolicy,
+          clock,
         ),
     );
 

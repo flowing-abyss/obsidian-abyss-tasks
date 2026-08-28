@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderWorkNoteInspector } from '../src/panels/projects/WorkNoteInspector';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { freshContainer } from './helpers';
+import { InspectorDraftRegistry } from '../src/ui/projectDraftContinuity';
+import { deferred, freshContainer } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -120,5 +121,65 @@ describe('renderWorkNoteInspector', () => {
     } finally {
       root.remove();
     }
+  });
+
+  it('keeps a remounted pending status disabled and republishes its settled conflict', async () => {
+    const root = freshContainer();
+    const registry = new InspectorDraftRegistry();
+    const conflict = deferred<{ type: 'conflict'; field: 'status' }>();
+    let click: (() => unknown) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      const item = {
+        setTitle() {
+          return this;
+        },
+        setIcon() {
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        setDisabled() {
+          return this;
+        },
+        onClick(callback: () => unknown) {
+          click = callback;
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    const render = (): void =>
+      renderWorkNoteInspector(root, snapshot, {
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        onSetStatus: () => conflict.promise,
+        openNote: vi.fn(),
+        draftRegistry: registry,
+        onDraftSettled: render,
+      });
+    render();
+    root.querySelector<HTMLButtonElement>('.abyss-work-note-status')!.click();
+    const pending = click?.();
+    render();
+
+    expect(root.querySelector<HTMLButtonElement>('.abyss-work-note-status')?.disabled).toBe(true);
+    expect(root.querySelector('.abyss-work-note-draft-result')?.textContent).toContain('Saving');
+
+    conflict.resolve({ type: 'conflict', field: 'status' });
+    await pending;
+    await vi.waitFor(() =>
+      expect(root.querySelector('.abyss-work-note-draft-result')?.textContent).toContain(
+        'changed outside calendar',
+      ),
+    );
+    expect(root.querySelector<HTMLButtonElement>('.abyss-work-note-status')?.disabled).toBe(false);
+    const settled = root.querySelector<HTMLButtonElement>('.abyss-work-note-status')!;
+    settled.focus();
+    settled.blur();
+    render();
+    expect(root.querySelector('.abyss-work-note-draft-result')?.textContent).toContain(
+      'changed outside calendar',
+    );
   });
 });

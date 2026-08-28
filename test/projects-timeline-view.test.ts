@@ -98,7 +98,7 @@ describe('shared Timeline view', () => {
 
   it('opens a Work Note from its native title button when date mutation is disabled', () => {
     const container = freshContainer();
-    const openNote = vi.fn();
+    const onSelect = vi.fn();
     const note: WorkNoteSnapshot = {
       path: 'Work Notes/Read only.md',
       presetRevision: 1,
@@ -123,9 +123,9 @@ describe('shared Timeline view', () => {
       notes: [note],
       commandsEnabled: false,
       commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
-      openNote,
+      onSelect,
     } as Parameters<typeof renderWorkNotesTimeline>[1] & {
-      openNote(path: string): void;
+      onSelect(note: WorkNoteSnapshot, origin: HTMLElement): void;
     };
     renderWorkNotesTimeline(container, options);
 
@@ -136,12 +136,46 @@ describe('shared Timeline view', () => {
     expect(identity.type).toBe('button');
     expect(identity.textContent).toContain('Read only');
     expect(container.querySelectorAll('[data-work-note-identity-control]')).toHaveLength(1);
-    expect(container.querySelectorAll('[aria-label^="Open work note"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[aria-label^="Work note details"]')).toHaveLength(1);
 
     identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
 
-    expect(openNote).toHaveBeenCalledOnce();
-    expect(openNote).toHaveBeenCalledWith('Work Notes/Read only.md');
+    expect(onSelect).toHaveBeenCalledWith(note, identity);
+  });
+
+  it('falls back to opening a Work Note when no common-host selection adapter is supplied', () => {
+    const container = freshContainer();
+    const openNote = vi.fn();
+    const note: WorkNoteSnapshot = {
+      path: 'Work Notes/Legacy.md',
+      presetRevision: 1,
+      presetFingerprint: 'fingerprint',
+      kind: 'ordinary',
+      projectPath: 'Projects/Launch.md',
+      statusId: null,
+      rawStatus: null,
+      writableStatusShape: false,
+      range: {
+        start: {
+          raw: '2026-08-27',
+          precision: 'date',
+          instantMs: Date.UTC(2026, 7, 27),
+        },
+      },
+      blockedByPaths: [],
+      relatedPaths: [],
+      diagnostics: [],
+    };
+    renderWorkNotesTimeline(container, {
+      notes: [note],
+      commandsEnabled: false,
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      openNote,
+    });
+
+    container.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!.click();
+
+    expect(openNote).toHaveBeenCalledWith(note.path);
   });
 
   it('keeps the shared noninteractive identity fallback out of the tab order without a dead opener', () => {

@@ -16,6 +16,10 @@ import type {
   WorkNotesViewState,
 } from '../../settings/types';
 import {
+  deriveInspectorSelection,
+  inspectorSelectionKey,
+} from '../../ui/inspector/InspectorSelection';
+import {
   ProjectWorkspaceSession,
   type UseProjectWorkspaceDefaultIntent,
 } from './ProjectWorkspaceSession';
@@ -221,6 +225,19 @@ export class ProjectsPanel {
       isNarrow,
       coarsePointer,
       milestoneRollups,
+      onSelect: (note, origin) => {
+        const selection = deriveInspectorSelection({
+          project: { type: 'project', path: note.projectPath },
+          activeScope: 'work-notes',
+          workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
+        });
+        origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+        this.state.batch(() => {
+          this.state.set('taskStack', []);
+          this.state.set('inspectorSelection', selection);
+          this.state.set('inspectorOrigin', { selection, element: origin });
+        });
+      },
     });
     let destroyed = false;
     const ResizeObserverCtor = host.ownerDocument.defaultView?.ResizeObserver;
@@ -246,6 +263,19 @@ export class ProjectsPanel {
             isNarrow,
             coarsePointer,
             milestoneRollups,
+            onSelect: (note, origin) => {
+              const selection = deriveInspectorSelection({
+                project: { type: 'project', path: note.projectPath },
+                activeScope: 'work-notes',
+                workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
+              });
+              origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+              this.state.batch(() => {
+                this.state.set('taskStack', []);
+                this.state.set('inspectorSelection', selection);
+                this.state.set('inspectorOrigin', { selection, element: origin });
+              });
+            },
           });
         })
       : null;
@@ -271,6 +301,20 @@ export class ProjectsPanel {
       commandsEnabled: this.workNoteCommands.capabilities().update,
       session: this.workspaceSession.timelines.workNotes,
       openNote: (path) => this.openNote(path),
+      onSelect: (note, origin) => {
+        this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
+        const selection = deriveInspectorSelection({
+          project: { type: 'project', path: note.projectPath },
+          activeScope: 'work-notes',
+          workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
+        });
+        origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+        this.state.batch(() => {
+          this.state.set('taskStack', []);
+          this.state.set('inspectorSelection', selection);
+          this.state.set('inspectorOrigin', { selection, element: origin });
+        });
+      },
     });
   }
 

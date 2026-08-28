@@ -39,6 +39,8 @@ import {
   whenPasteSettled,
 } from '../ui/attachmentDrop';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
+import type { InspectorSelection } from '../ui/inspector/InspectorSelection';
+import { deriveInspectorSelection } from '../ui/inspector/InspectorSelection';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import {
@@ -155,6 +157,8 @@ export class RightPanel {
   private readonly completionConfirmationAbortController = new AbortController();
   private el!: HTMLElement;
   private off?: () => void;
+  private inspectorOff?: () => void;
+  private inspectorCleanup?: () => void;
   private draggingSub: SubtaskSnapshot | null = null;
   private md = new Component();
   private onSuccessfulMutation?: (ref?: TaskRef) => void;
@@ -176,6 +180,8 @@ export class RightPanel {
   private detachedFocusTimer: number | undefined;
   private dependencyOff?: () => void;
   private dependencyEditorSequence = 0;
+  private renderedTaskStack: readonly TaskLike[] = [];
+  private hiddenTaskDraft?: { readonly ref: TaskRef; readonly bundle: RightPanelDraftBundle };
 
   constructor(
     private state: AppState,
@@ -190,6 +196,10 @@ export class RightPanel {
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
     private readonly dependencyProjection?: DependencyProjectionPort,
     private readonly dependencyCandidates?: DependencyCandidateProvider,
+    private readonly inspectorRenderer?: (
+      host: HTMLElement,
+      selection: InspectorSelection,
+    ) => (() => void) | undefined,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -197,6 +207,7 @@ export class RightPanel {
   mount(container: HTMLElement): void {
     this.el = container;
     this.off = this.state.on('taskStack', () => this.render());
+    this.inspectorOff = this.state.on('inspectorSelection', () => this.render());
     this.dependencyOff = this.dependencyProjection?.subscribe((event) => {
       const root = this.state.get('taskStack')[0];
       if (
@@ -216,16 +227,32 @@ export class RightPanel {
   destroy(): void {
     this.completionConfirmationAbortController.abort();
     this.off?.();
+    this.inspectorOff?.();
     this.dependencyOff?.();
+    this.inspectorCleanup?.();
+    this.inspectorCleanup = undefined;
     if (this.detachedFocusTimer !== undefined) window.clearTimeout(this.detachedFocusTimer);
     this.clearAnchoredSurfaces();
     this.el?.empty();
     this.md.unload();
   }
 
-  captureDraftState(): RightPanelDraftBundle | undefined {
-    if (!this.el) return undefined;
+  /** Project/Work Note projections changed without a task-index event. */
+  refresh(): void {
+    const inspector = this.state.get('inspectorSelection');
     const stack = this.state.get('taskStack');
+    const root = stack[0];
+    const draft = inspector?.type === 'task' ? this.captureDraftStateForStack(stack) : undefined;
+    this.render();
+    if (draft && root && 'source' in root) this.restoreDraftState(draft, root);
+  }
+
+  captureDraftState(): RightPanelDraftBundle | undefined {
+    return this.captureDraftStateForStack(this.state.get('taskStack'));
+  }
+
+  private captureDraftStateForStack(stack: readonly TaskLike[]): RightPanelDraftBundle | undefined {
+    if (!this.el) return undefined;
     const task = stack[stack.length - 1];
     const target = task ? this.planningTarget(task) : undefined;
     const active = this.el.ownerDocument.activeElement;
@@ -630,19 +657,66 @@ export class RightPanel {
   }
 
   private render(): void {
+    const inspector = this.state.get('inspectorSelection');
+    if (
+      this.renderedTaskStack.length > 0 &&
+      this.state.get('mode') === 'projects' &&
+      inspector?.type !== 'task'
+    ) {
+      const root = this.renderedTaskStack[0];
+      const bundle = this.captureDraftStateForStack(this.renderedTaskStack);
+      if (root && bundle) this.hiddenTaskDraft = { ref: rootTaskRef(root), bundle };
+    }
+    this.inspectorCleanup?.();
+    this.inspectorCleanup = undefined;
     this.md.unload();
     this.md = new Component();
     this.md.load();
     this.clearAnchoredSurfaces();
     this.el.empty();
     const stack = this.state.get('taskStack');
+    const activeInspector =
+      inspector?.type === 'work-note'
+        ? deriveInspectorSelection({
+            project: { type: 'project', path: inspector.projectPath },
+            activeScope: 'work-notes',
+            workNote: inspector,
+          })
+        : inspector;
+    if (
+      this.state.get('mode') === 'projects' &&
+      activeInspector &&
+      activeInspector.type !== 'task'
+    ) {
+      const rendered = this.inspectorRenderer?.(this.el, activeInspector);
+      if (rendered) {
+        this.inspectorCleanup = rendered;
+        this.renderedTaskStack = [];
+        return;
+      }
+    }
     if (stack.length === 0) {
+      this.renderedTaskStack = [];
       this.renderEmpty();
       this.renderDetachedDraftTray();
       return;
     }
     const task = stack[stack.length - 1]!;
     this.renderTask(task, stack, this.commentTimeContext?.());
+    this.renderedTaskStack = [...stack];
+    const root = stack[0];
+    if (
+      root &&
+      this.hiddenTaskDraft &&
+      rootTaskRef(root).filePath === this.hiddenTaskDraft.ref.filePath &&
+      rootTaskRef(root).line === this.hiddenTaskDraft.ref.line
+    ) {
+      const draft = this.hiddenTaskDraft;
+      if ('source' in root) this.restoreDraftState(draft.bundle, root);
+      queueMicrotask(() => {
+        if (this.hiddenTaskDraft === draft) this.hiddenTaskDraft = undefined;
+      });
+    }
     this.renderDetachedDraftTray();
   }
 

@@ -325,9 +325,13 @@ export class ProjectTaskCollectionSession {
   }
 
   restoreEffect(): ProjectTaskCollectionEffect | null {
-    if (!this.restoreFocus || this.focusKey === null) return null;
-    const target = this.refForKey(this.focusKey);
-    return target ? { focus: target, scrollTo: target } : null;
+    const focus = this.restoreFocus ? this.refForKey(this.focusKey) : null;
+    const inspect = this.refForKey(this.inspectorKey);
+    if (!focus && !inspect) return null;
+    return {
+      ...(focus ? { focus, scrollTo: focus } : {}),
+      ...(inspect ? { inspect } : {}),
+    };
   }
 
   intentionalBlur(): void {

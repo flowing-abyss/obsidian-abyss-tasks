@@ -4,10 +4,17 @@ import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
 import { RailPanel } from '../panels/RailPanel';
 import { RightPanel } from '../panels/RightPanel';
+import {
+  renderInspectorDraftRecovery,
+  renderProjectInspector,
+} from '../panels/projects/ProjectInspector';
+import { renderWorkNoteInspector } from '../panels/projects/WorkNoteInspector';
 import { ProjectCommandService } from '../projects/ProjectCommandService';
+import { projectHealthProjection } from '../projects/ProjectHealthProjection';
 import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
+import { inspectProjectLifecycleFrontmatter } from '../projects/lifecycle';
 import type { ProjectWorkspaceSnapshot } from '../projects/types';
 import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
@@ -29,9 +36,16 @@ import type {
   TaskResolution,
 } from '../tasks';
 import { CreationPresentationController } from '../ui/creation/CreationPresentationController';
+import {
+  inspectorSelectionKey,
+  rebaseInspectorSelectionPath,
+  type InspectorFocusOrigin,
+} from '../ui/inspector/InspectorSelection';
+import { mountInspectorShell } from '../ui/inspector/InspectorShell';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
+import { InspectorDraftRegistry } from '../ui/projectDraftContinuity';
 import {
   CaptureTargetResolver,
   type CaptureContext,
@@ -101,6 +115,13 @@ function commandRootRef(command: TaskCommand): TaskRef | undefined {
   return command.ref;
 }
 
+function projectHealthReason(snapshot: ProjectWorkspaceSnapshot, today: string): string {
+  const health = projectHealthProjection(snapshot, { today });
+  const reason = health.reason.type.replace(/-/gu, ' ');
+  const date = health.date ? ` · ${health.date.value}` : '';
+  return `${health.severity.replace('-', ' ')} · ${reason}${date}`;
+}
+
 function positiveRenderedArea(element: HTMLElement): DOMRect | null {
   const bounds = element.getBoundingClientRect();
   if (
@@ -143,6 +164,7 @@ export class PanelView extends ItemView {
   private queryUnsub?: () => void;
   private modeUnsub?: () => void;
   private selectionUnsub?: () => void;
+  private inspectorSelectionUnsub?: () => void;
   private selectedListRenameUnsub?: () => void;
   private projectStore?: ProjectStore;
   private projectStoreUnsub?: () => void;
@@ -161,6 +183,20 @@ export class PanelView extends ItemView {
   private compactLeftCollapsed = false;
   private compactRightCollapsed = false;
   private pendingCompactPane: PendingCompactPane | undefined = undefined;
+  private modeInspectorClearVersion = 0;
+  private readonly inspectorDrafts = new InspectorDraftRegistry();
+
+  private inspectorReturnTarget(origin: InspectorFocusOrigin | null): HTMLElement | null {
+    if (origin?.element?.isConnected) return origin.element;
+    if (!origin) return null;
+    const key = inspectorSelectionKey(origin.selection);
+    return (
+      Array.from(this.contentEl.querySelectorAll<HTMLElement>('[data-inspector-origin-key]')).find(
+        (element) => element.dataset['inspectorOriginKey'] === key,
+      ) ?? null
+    );
+  }
+
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -176,6 +212,9 @@ export class PanelView extends ItemView {
     private readonly projectWorkspace?: ProjectWorkspaceCoordinator,
     private readonly workNoteCommands?: WorkNoteCommandService,
     private readonly dependencyProjection?: DependencyProjectionPort,
+    private readonly projectClock?: NonNullable<
+      ConstructorParameters<typeof ProjectCommandService>[2]
+    >,
   ) {
     super(leaf);
   }
@@ -300,7 +339,7 @@ export class PanelView extends ItemView {
     this.projectStore = projectStore;
     const projectCommands =
       this.projectCommands ??
-      new ProjectCommandService(this.app, () => this.settings.projects.statuses);
+      new ProjectCommandService(this.app, () => this.settings.projects.statuses, this.projectClock);
     const projectManager = new ProjectManager(
       this.app,
       this.settings,
@@ -380,6 +419,155 @@ export class PanelView extends ItemView {
             ),
         };
       },
+      (host, selection) => {
+        const onDraftSettled = (): void => {
+          queueMicrotask(() => this.right.refresh());
+        };
+        const snapshots = this.projectWorkspace?.list() ?? [];
+        const narrow = Platform.isMobile || this.compactRightCollapsed;
+        const origin = this.state.get('inspectorOrigin');
+        const returnFocus = (): HTMLElement | null => this.inspectorReturnTarget(origin);
+        const preserveAndCloseShell =
+          (shell: ReturnType<typeof mountInspectorShell>): (() => void) =>
+          () => {
+            const active = shell.element.ownerDocument.activeElement;
+            if (active && shell.element.contains(active)) {
+              active.dispatchEvent(new Event('select'));
+            }
+            shell.close(false);
+          };
+        const closeInspector = (next: typeof selection | null): void => {
+          if (next?.type === 'project') this.center.closeProjectChildInspector(selection);
+          this.state.batch(() => {
+            this.state.set('inspectorSelection', next);
+            this.state.set('inspectorOrigin', null);
+          });
+        };
+        const openNote = (path: string): void => {
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+        };
+        if (selection.type === 'project') {
+          const snapshot = snapshots.find(({ project }) => project.path === selection.path);
+          if (!snapshot) {
+            const identity = { type: 'project' as const, path: selection.path };
+            this.inspectorDrafts.detach(identity);
+            const projectRecovery = () =>
+              this.inspectorDrafts
+                .detached()
+                .filter(
+                  (draft) =>
+                    (draft.identity.type === 'project' && draft.identity.path === selection.path) ||
+                    (draft.identity.type === 'work-note' &&
+                      draft.identity.projectPath === selection.path),
+                );
+            const recovery = projectRecovery();
+            if (recovery.length === 0) return () => undefined;
+            const shell = mountInspectorShell(host, {
+              label: 'Project draft recovery',
+              narrow,
+              returnFocus,
+              onRequestClose: () => closeInspector(null),
+              isDirty: () => projectRecovery().length > 0,
+              render: (content) =>
+                renderInspectorDraftRecovery(content, recovery, (draft) =>
+                  this.inspectorDrafts.discardEntry(draft),
+                ),
+            });
+            return preserveAndCloseShell(shell);
+          }
+          const setStatus = (statusId: string) => {
+            const lifecycle = inspectProjectLifecycleFrontmatter(
+              this.settings.projects.statuses,
+              snapshot.project.frontmatter,
+            ).lifecycle;
+            return projectCommands.setStatus(
+              { path: snapshot.project.path, ...lifecycle },
+              statusId,
+            );
+          };
+          const shell = mountInspectorShell(host, {
+            label: 'Project details',
+            narrow,
+            returnFocus,
+            onRequestClose: () => closeInspector(null),
+            isDirty: () =>
+              this.inspectorDrafts.hasDirty({ type: 'project', path: snapshot.project.path }),
+            render: (content) =>
+              renderProjectInspector(content, {
+                project: snapshot.project,
+                taskRollup: snapshot.taskRollup,
+                ...(this.projectClock
+                  ? {
+                      healthReason: projectHealthReason(
+                        snapshot,
+                        this.projectClock.read().localDate,
+                      ),
+                    }
+                  : {}),
+                openNote,
+                commands: projectCommands,
+                statuses: this.settings.projects.statuses,
+                commentTimeContext: this.commentTimeContext,
+                draftRegistry: this.inspectorDrafts,
+                onDraftSettled,
+                onSetStatus: setStatus,
+              }),
+          });
+          return preserveAndCloseShell(shell);
+        }
+        if (selection.type !== 'work-note' || !this.workNoteCommands) return undefined;
+        const note = snapshots
+          .flatMap((snapshot) => [...snapshot.workNotes, ...snapshot.milestones])
+          .find((candidate) => candidate.path === selection.path);
+        if (!note) {
+          this.inspectorDrafts.detach({
+            type: 'work-note',
+            path: selection.path,
+            projectPath: selection.projectPath,
+          });
+          queueMicrotask(() => {
+            if (this.state.get('inspectorSelection') !== selection) return;
+            const fallback = {
+              type: 'project',
+              path: selection.projectPath,
+            } as const;
+            this.state.batch(() => {
+              this.state.set('inspectorSelection', fallback);
+              this.state.set('inspectorOrigin', { selection: fallback, element: null });
+            });
+          });
+          return () => undefined;
+        }
+        const setStatus = (current: typeof note, statusId: string) => {
+          const observed = this.workNoteCommands!.observe(current);
+          return observed
+            ? this.workNoteCommands!.setStatus(observed, statusId)
+            : Promise.resolve({ type: 'invalid' as const, field: 'path' as const });
+        };
+        const shell = mountInspectorShell(host, {
+          label: 'Work Note details',
+          narrow,
+          returnFocus,
+          onRequestClose: () => closeInspector({ type: 'project', path: note.projectPath }),
+          isDirty: () =>
+            this.inspectorDrafts.hasDirty({
+              type: 'work-note',
+              path: note.path,
+              projectPath: note.projectPath,
+            }),
+          render: (content) =>
+            renderWorkNoteInspector(content, note, {
+              statuses: this.workNoteCommands!.statuses(),
+              commandsEnabled: this.workNoteCommands!.capabilities().update,
+              onSetStatus: setStatus,
+              openNote,
+              draftRegistry: this.inspectorDrafts,
+              onDraftSettled,
+            }),
+        });
+        return preserveAndCloseShell(shell);
+      },
     );
 
     // Keep panels fresh when the project set / stats change. Only the left
@@ -392,7 +580,10 @@ export class PanelView extends ItemView {
         this.center.setProjectSnapshots(snapshots);
       }
       this.left.refresh();
-      if (this.state.get('mode') === 'projects') this.center.refresh();
+      if (this.state.get('mode') === 'projects') {
+        this.center.refresh();
+        this.right.refresh();
+      }
     };
     this.projectStoreUnsub = this.projectWorkspace
       ? this.projectWorkspace.onUpdate((snapshots) => refreshProjectSurfaces(snapshots))
@@ -418,6 +609,25 @@ export class PanelView extends ItemView {
     this.registerEvent(
       this.app.vault.on('rename', (file, oldPath) => {
         if (!(file instanceof TFile)) return;
+        this.inspectorDrafts.renamePath(oldPath, file.path);
+        this.center.renameProjectWorkspacePath(oldPath, file.path);
+        const inspector = this.state.get('inspectorSelection');
+        const origin = this.state.get('inspectorOrigin');
+        if (inspector) {
+          const rebased = rebaseInspectorSelectionPath(inspector, oldPath, file.path);
+          const rebasedOrigin = origin
+            ? {
+                selection: rebaseInspectorSelectionPath(origin.selection, oldPath, file.path),
+                element: origin.element,
+              }
+            : null;
+          if (rebased !== inspector || rebasedOrigin?.selection !== origin?.selection) {
+            this.state.batch(() => {
+              this.state.set('inspectorSelection', rebased);
+              this.state.set('inspectorOrigin', rebasedOrigin);
+            });
+          }
+        }
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === oldPath) {
           this.panelNavigation.rebaseListIdentity({ type: 'project', path: file.path });
@@ -430,6 +640,32 @@ export class PanelView extends ItemView {
     );
     this.registerEvent(
       this.app.vault.on('delete', (file) => {
+        this.inspectorDrafts.detachPath(file.path);
+        const inspector = this.state.get('inspectorSelection');
+        if (inspector?.type === 'project' && inspector.path === file.path) {
+          const identity = { type: 'project' as const, path: inspector.path };
+          this.inspectorDrafts.detach(identity);
+          if (!this.inspectorDrafts.hasDirty(identity)) {
+            this.state.batch(() => {
+              this.state.set('inspectorSelection', null);
+              this.state.set('inspectorOrigin', null);
+            });
+          }
+        } else if (inspector?.type === 'work-note' && inspector.path === file.path) {
+          this.inspectorDrafts.detach({
+            type: 'work-note',
+            path: inspector.path,
+            projectPath: inspector.projectPath,
+          });
+          const fallback = {
+            type: 'project',
+            path: inspector.projectPath,
+          } as const;
+          this.state.batch(() => {
+            this.state.set('inspectorSelection', fallback);
+            this.state.set('inspectorOrigin', { selection: fallback, element: null });
+          });
+        }
         const sel = this.state.get('selectedList');
         if (typeof sel === 'object' && sel.type === 'project' && sel.path === file.path) {
           this.panelNavigation.rebaseListIdentity('today');
@@ -477,6 +713,23 @@ export class PanelView extends ItemView {
     // Update layout class whenever mode changes
     this.modeUnsub = this.state.on('mode', (mode) => {
       layout.className = `abyss-layout abyss-layout--${mode}`;
+      const clearVersion = ++this.modeInspectorClearVersion;
+      if (mode !== 'projects') {
+        queueMicrotask(() => {
+          if (
+            clearVersion !== this.modeInspectorClearVersion ||
+            this.state.get('mode') === 'projects'
+          ) {
+            return;
+          }
+          const inspector = this.state.get('inspectorSelection');
+          if (!inspector || inspector.type === 'task') return;
+          this.state.batch(() => {
+            this.state.set('inspectorSelection', null);
+            this.state.set('inspectorOrigin', null);
+          });
+        });
+      }
       if (mode !== 'tasks' && mode !== 'projects') {
         this.pendingCompactPane = undefined;
         this.closeCompactPane(false);
@@ -512,6 +765,13 @@ export class PanelView extends ItemView {
       const ref = stack[0] ? rootTaskRef(stack[0]) : undefined;
       if (!ref || !this.sameRef(ref, this.ownedWriteRef)) this.ownedWriteRef = undefined;
     });
+    this.inspectorSelectionUnsub = this.state.on('inspectorSelection', (selection) => {
+      if (selection && this.state.get('mode') === 'projects' && this.compactRightCollapsed) {
+        this.openCompactPane('right', false);
+      } else if (!selection && this.compactPaneOpen === 'right') {
+        this.closeCompactPane(false);
+      }
+    });
 
     this.queryUnsub = this.queries.subscribe((event) => {
       this.left.refresh();
@@ -537,6 +797,7 @@ export class PanelView extends ItemView {
 
   // eslint-disable-next-line @typescript-eslint/require-await
   async onClose(): Promise<void> {
+    this.modeInspectorClearVersion += 1;
     this.compactPaneCleanup?.();
     this.compactPaneCleanup = undefined;
     this.compactPaneRefresh = undefined;
@@ -552,6 +813,7 @@ export class PanelView extends ItemView {
     this.quickCapture = undefined;
     this.modeUnsub?.();
     this.selectionUnsub?.();
+    this.inspectorSelectionUnsub?.();
     this.selectedListRenameUnsub?.();
     this.queryUnsub?.();
     this.projectStoreUnsub?.();
@@ -631,6 +893,9 @@ export class PanelView extends ItemView {
       }
       const path = event.composedPath();
       const activePane = pane === 'left' ? elements.left : elements.right;
+      if (pane === 'right' && activePane.querySelector('.abyss-inspector-shell')) {
+        return;
+      }
       if (
         path.includes(activePane) ||
         path.includes(elements.leftButton) ||
@@ -734,6 +999,7 @@ export class PanelView extends ItemView {
       'is-compact-collapsed',
       this.compactRightCollapsed,
     );
+    if (wasRightCollapsed !== this.compactRightCollapsed) this.right?.refresh();
 
     const pendingPane = this.pendingCompactPane;
     if (pendingPane && !this.isCompactPaneCollapsed(pendingPane.pane)) {
@@ -746,7 +1012,8 @@ export class PanelView extends ItemView {
       !wasRightCollapsed &&
       this.compactRightCollapsed &&
       (this.state.get('mode') === 'tasks' || this.state.get('mode') === 'projects') &&
-      this.state.get('taskStack').length > 0
+      (this.state.get('taskStack').length > 0 ||
+        (this.state.get('mode') === 'projects' && this.state.get('inspectorSelection') !== null))
     ) {
       this.openCompactPane('right', false);
     }

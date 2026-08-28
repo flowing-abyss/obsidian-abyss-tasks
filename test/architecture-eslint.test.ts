@@ -88,6 +88,21 @@ describe('task architecture ESLint boundaries', () => {
     expect(architectureDiagnostics(items)).toEqual([expected]);
   });
 
+  it('requires Project inspector clocks to be injected instead of imported from the task barrel', async () => {
+    const items = await diagnostics(
+      'src/panels/projects/ProjectInspector.ts',
+      "import { systemClock } from '../../tasks'; void systemClock;",
+    );
+    expectParseSafe(items);
+    expect(architectureDiagnostics(items)).toEqual([
+      {
+        ruleId: 'no-restricted-imports',
+        message:
+          "'systemClock' import from '../../tasks' is restricted. Project inspector time must be injected by composition.",
+      },
+    ]);
+  });
+
   it.each([
     [
       'src/tasks/domain/validation.ts',

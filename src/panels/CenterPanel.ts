@@ -50,6 +50,7 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
+import { inspectorSelectionKey, type InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
@@ -451,7 +452,7 @@ export class CenterPanel {
       });
     }
     this.updateSelectionVisuals();
-    this.applyProjectTaskEffect(session.consumeEffect());
+    this.applyProjectTaskEffect(session.consumeEffect() ?? session.restoreEffect());
     return true;
   }
 
@@ -656,6 +657,26 @@ export class CenterPanel {
       return;
     }
     this.render();
+  }
+
+  /** Clears the scope-local child remembered by the common inspector close action. */
+  closeProjectChildInspector(selection: InspectorSelection): void {
+    if (selection.type === 'task') {
+      this.projectWorkspaceSession.tasks.setInspector(null);
+      return;
+    }
+    if (selection.type !== 'work-note') return;
+    const session = this.projectWorkspaceSession.scopeSession('work-notes');
+    if (session.selection.inspectorKey === selection.path) {
+      session.selection.inspectorKey = null;
+    }
+    if (this.projectWorkspaceSession.workNotes.inspectorPath === selection.path) {
+      this.projectWorkspaceSession.workNotes.inspectorPath = null;
+    }
+  }
+
+  renameProjectWorkspacePath(sourcePath: string, destinationPath: string): void {
+    this.projectWorkspaceSession.renamePath(sourcePath, destinationPath);
   }
 
   setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
@@ -1045,7 +1066,18 @@ export class CenterPanel {
       const action = effect.inspect
         ? this.projectWorkspaceSession.tasks.actionForRef(effect.inspect)
         : undefined;
-      this.state.set('taskStack', action ? [action.task] : []);
+      const selection = action ? ({ type: 'task', task: action.task.ref } as const) : null;
+      const origin = selection
+        ? (Array.from(this.el.querySelectorAll<HTMLElement>('[data-inspector-origin-key]')).find(
+            (candidate) =>
+              candidate.dataset['inspectorOriginKey'] === inspectorSelectionKey(selection),
+          ) ?? null)
+        : null;
+      this.state.batch(() => {
+        this.state.set('taskStack', action ? [action.task] : []);
+        this.state.set('inspectorSelection', selection);
+        this.state.set('inspectorOrigin', selection ? { selection, element: origin } : null);
+      });
     }
     if (effect.notice) {
       const live = this.selectionLiveRegion();
@@ -1106,7 +1138,7 @@ export class CenterPanel {
     this.renderCaptureHost(bar, { type: 'project', path });
     this.completeTaskCardRender();
     this.updateSelectionVisuals();
-    this.applyProjectTaskEffect(session.consumeEffect());
+    this.applyProjectTaskEffect(session.consumeEffect() ?? session.restoreEffect());
     return {
       destroy: () => {
         board?.destroy();
@@ -1167,7 +1199,7 @@ export class CenterPanel {
     });
     this.completeTaskCardRender();
     this.updateSelectionVisuals();
-    this.applyProjectTaskEffect(session.consumeEffect());
+    this.applyProjectTaskEffect(session.consumeEffect() ?? session.restoreEffect());
     return {
       destroy: () => {
         timeline.destroy();
@@ -2364,6 +2396,7 @@ export class CenterPanel {
       attr: { tabindex: '-1' },
     });
     applyTaskPresentationIdentity(card, task.ref);
+    card.dataset['inspectorOriginKey'] = inspectorSelectionKey({ type: 'task', task: task.ref });
     card.dataset['filePath'] = task.source.filePath;
     card.dataset['line'] = String(task.source.line);
     this.registerProjectTaskFocus(card, task, context.projectTaskCollection === true);

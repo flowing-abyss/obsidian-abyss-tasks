@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
 import { RightPanel } from '../src/panels/RightPanel';
+import type { ProjectTaskCollectionSession } from '../src/panels/projects/ProjectTaskCollectionSession';
 import type { ProjectPropertyCommandResult } from '../src/projects/ProjectCommandService';
 import type { Project, ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
@@ -2595,6 +2596,87 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       }
     },
   );
+
+  it.each(['list', 'board', 'timeline'] as const)(
+    'restores the remembered Task inspector and stack after a Work Note scope visit in %s',
+    (layout) => {
+      const current = task({
+        title: 'Remembered project task',
+        planning: layout === 'timeline' ? { due: localDate('2026-08-28') } : {},
+        source: { filePath: 'Projects/A.md', line: 1 },
+      });
+      const action: ProjectAction = {
+        task: current,
+        projectPath: 'Projects/A.md',
+        dependency: { type: 'allowed' },
+        owner: { type: 'project', path: 'Projects/A.md' },
+      };
+      const state = new AppState();
+      const panel = makeStaticPanel(state, [current]);
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      try {
+        panel.mount(container);
+        const session = (
+          panel as unknown as {
+            projectWorkspaceSession: { tasks: ProjectTaskCollectionSession };
+          }
+        ).projectWorkspaceSession.tasks;
+        session.reconcile([action]);
+        session.activate(current.ref);
+        session.consumeEffect();
+        state.batch(() => {
+          state.set('taskStack', []);
+          state.set('inspectorSelection', {
+            type: 'work-note',
+            path: 'Work Notes/Visit.md',
+            projectPath: 'Projects/A.md',
+          });
+        });
+        const host = container.createDiv();
+
+        if (layout === 'list') call(panel, 'renderProjectTasks', host, 'Projects/A.md', [action]);
+        else if (layout === 'board') {
+          call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [action]);
+        } else {
+          call(panel, 'renderProjectTaskTimeline', host, 'Projects/A.md', [action]);
+        }
+
+        expect(state.get('taskStack')).toEqual([current]);
+        expect(state.get('inspectorSelection')).toEqual({ type: 'task', task: current.ref });
+      } finally {
+        panel.destroy();
+        container.remove();
+      }
+    },
+  );
+
+  it('clears the scope-local Work Note memory when the common inspector closes', () => {
+    const panel = makeStaticPanel(new AppState(), []);
+    const session = (
+      panel as unknown as {
+        projectWorkspaceSession: {
+          openProject(path: string): void;
+          scopeSession(scope: 'work-notes'): {
+            selection: { inspectorKey: string | null };
+          };
+          workNotes: { inspectorPath: string | null };
+        };
+      }
+    ).projectWorkspaceSession;
+    session.openProject('Projects/A.md');
+    session.scopeSession('work-notes').selection.inspectorKey = 'Work Notes/A.md';
+    session.workNotes.inspectorPath = 'Work Notes/A.md';
+
+    panel.closeProjectChildInspector({
+      type: 'work-note',
+      path: 'Work Notes/A.md',
+      projectPath: 'Projects/A.md',
+    });
+
+    expect(session.scopeSession('work-notes').selection.inspectorKey).toBeNull();
+    expect(session.workNotes.inspectorPath).toBeNull();
+  });
 
   it('retains Board Undo across the production Project-store refresh subscriber replacing ProjectsPanel', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);

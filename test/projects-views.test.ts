@@ -954,6 +954,113 @@ describe('renderProjectDashboard', () => {
     expect(state.get('projectsPanel')).toEqual({ view: 'list' });
   });
 
+  it('reconciles a stale selection to the open Project but retains a child of that Project', async () => {
+    const state = new AppState();
+    state.set('inspectorSelection', { type: 'project', path: 'Projects/Stale.md' });
+    const el = freshContainer();
+    renderProjectDashboard(el, workspace(), {
+      state,
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(),
+    });
+    await Promise.resolve();
+    expect(state.get('inspectorSelection')).toEqual({ type: 'project', path: 'Projects/A.md' });
+    expect(state.get('inspectorOrigin')).toEqual({
+      selection: { type: 'project', path: 'Projects/A.md' },
+      element: el.querySelector('.abyss-project-dashboard-title'),
+    });
+
+    state.set('inspectorSelection', {
+      type: 'work-note',
+      path: 'Notes/A.md',
+      projectPath: 'Projects/A.md',
+    });
+    const sameProject = freshContainer();
+    renderProjectDashboard(sameProject, workspace(), {
+      state,
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(),
+    });
+    await Promise.resolve();
+    expect(state.get('inspectorSelection')).toEqual({ type: 'project', path: 'Projects/A.md' });
+    expect(state.get('inspectorOrigin')).toEqual({
+      selection: { type: 'project', path: 'Projects/A.md' },
+      element: sameProject.querySelector('.abyss-project-dashboard-title'),
+    });
+  });
+
+  it('arbitrates the real dashboard host by active scope and restores remembered visible children', async () => {
+    const state = new AppState();
+    const session = new ProjectWorkspaceSession();
+    const selectedTask = task({
+      source: { filePath: 'Projects/A.md', line: 4 },
+      ref: { filePath: 'Projects/A.md', line: 4, revision: 'selected-task' },
+      title: 'Selected task',
+    });
+    const selectedNote = workNote('Work Notes/Selected.md', ACTIVE_ID, '2026-08-27');
+    const snapshot = workspace(proj({}), {
+      tasks: [
+        {
+          task: selectedTask,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ],
+      workNotes: [selectedNote],
+    });
+    session.openProject('Projects/A.md');
+    session.tasks.reconcile(snapshot.tasks);
+    session.tasks.activate(selectedTask.ref);
+    session.tasks.consumeEffect();
+    session.scopeSession('work-notes').selection.inspectorKey = selectedNote.path;
+    session.scope = 'work-notes';
+    const staleTask = task({ title: 'Stale task from another scope' });
+    state.set('taskStack', [staleTask]);
+    state.set('inspectorSelection', { type: 'task', task: staleTask.ref });
+    const el = freshContainer();
+    renderProjectDashboard(el, snapshot, {
+      state,
+      settings: DEFAULT_SETTINGS,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      workspaceSession: session,
+      renderTasks: vi.fn(),
+      renderWorkNotes: vi.fn(),
+    });
+    await Promise.resolve();
+    expect(state.get('inspectorSelection')).toEqual({
+      type: 'work-note',
+      path: selectedNote.path,
+      projectPath: 'Projects/A.md',
+    });
+    expect(state.get('inspectorOrigin')?.selection).toEqual({
+      type: 'work-note',
+      path: selectedNote.path,
+      projectPath: 'Projects/A.md',
+    });
+
+    el.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!.click();
+    await Promise.resolve();
+    expect(state.get('inspectorSelection')).toEqual({ type: 'task', task: selectedTask.ref });
+    expect(state.get('inspectorOrigin')?.selection).toEqual({
+      type: 'task',
+      task: selectedTask.ref,
+    });
+
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    await Promise.resolve();
+    expect(state.get('inspectorSelection')).toEqual({
+      type: 'work-note',
+      path: selectedNote.path,
+      projectPath: 'Projects/A.md',
+    });
+  });
+
   it('shows "not found" when the project is missing', () => {
     const el = freshContainer();
     renderProjectDashboard(el, undefined, {
@@ -2000,7 +2107,7 @@ describe('ProjectsPanel dispatch', () => {
     current.destroy();
   });
 
-  it('updates open Work Note drawer semantics at the real owner breakpoint and cleans its observer', () => {
+  it('emits Work Note selection to the common host and cleans its observer', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const note = workNote('Work Notes/A.md', ACTIVE_ID, '2026-08-28');
@@ -2064,9 +2171,7 @@ describe('ProjectsPanel dispatch', () => {
       const ownerRecord = records.find(({ targets }) => targets.has(owner));
       expect(ownerRecord).toBeDefined();
       el.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!.click();
-      let inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
-      expect(inspector.getAttribute('role')).toBe('region');
-      expect(inspector.hasAttribute('aria-modal')).toBe(false);
+      expect(el.querySelector('.abyss-work-note-inspector-host')).toBeNull();
       expect(session.workNotes.inspectorPath).toBe(note.path);
 
       ownerWidth = 600;
@@ -2079,24 +2184,8 @@ describe('ProjectsPanel dispatch', () => {
         ],
         {} as ResizeObserver,
       );
-      inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
-      expect(inspector.getAttribute('role')).toBe('dialog');
-      expect(inspector.getAttribute('aria-modal')).toBe('true');
-      expect(inspector.contains(activeDocument.activeElement)).toBe(true);
+      expect(el.querySelector('.abyss-work-note-inspector-host')).toBeNull();
       expect(session.workNotes.inspectorPath).toBe(note.path);
-      const narrowControls = Array.from(
-        inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
-      );
-      const narrowLast = narrowControls[narrowControls.length - 1]!;
-      narrowLast.focus();
-      const trappedTab = new KeyboardEvent('keydown', {
-        key: 'Tab',
-        bubbles: true,
-        cancelable: true,
-      });
-      narrowLast.dispatchEvent(trappedTab);
-      expect(trappedTab.defaultPrevented).toBe(true);
-      expect(activeDocument.activeElement).toBe(narrowControls[0]);
 
       ownerWidth = 900;
       ownerRecord!.callback(
@@ -2108,29 +2197,8 @@ describe('ProjectsPanel dispatch', () => {
         ],
         {} as ResizeObserver,
       );
-      inspector = el.querySelector<HTMLElement>('.abyss-work-note-inspector-host')!;
-      expect(inspector.getAttribute('role')).toBe('region');
-      expect(inspector.hasAttribute('aria-modal')).toBe(false);
+      expect(el.querySelector('.abyss-work-note-inspector-host')).toBeNull();
       expect(session.workNotes.inspectorPath).toBe(note.path);
-      const wideControls = Array.from(
-        inspector.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled)'),
-      );
-      const wideControl = wideControls[wideControls.length - 1]!;
-      wideControl.focus();
-      const releasedTab = new KeyboardEvent('keydown', {
-        key: 'Tab',
-        bubbles: true,
-        cancelable: true,
-      });
-      wideControl.dispatchEvent(releasedTab);
-      expect(releasedTab.defaultPrevented).toBe(false);
-      expect(activeDocument.activeElement).not.toBe(wideControls[0]);
-      const returnTarget = el.querySelector<HTMLElement>(
-        `.abyss-work-note-row[data-work-note-path="${note.path}"] [data-work-note-identity-control]`,
-      )!;
-      inspector.querySelector<HTMLButtonElement>('[aria-label="Close Work Note details"]')!.click();
-      expect(activeDocument.activeElement).toBe(returnTarget);
-      expect(session.workNotes.inspectorPath).toBeNull();
 
       el.querySelector<HTMLButtonElement>('[data-project-scope="tasks"]')!.click();
       expect(ownerRecord!.disconnect).toHaveBeenCalledOnce();
@@ -2225,22 +2293,18 @@ describe('ProjectsPanel dispatch', () => {
     }
   });
 
-  it('opens a read-only Work Note Timeline identity through the real dashboard adapter', () => {
+  it('selects and remembers a read-only Work Note Timeline identity through the real dashboard adapter', async () => {
     const project = proj({});
     const note = {
       ...workNote('Work Notes/Read only.md', ACTIVE_ID, '2026-08-27'),
       range: parseProjectRange('2026-08-27', undefined),
     };
     const state = new AppState();
+    const workspaceSession = new ProjectWorkspaceSession();
     state.set('projectsPanel', { view: 'dashboard', path: project.path });
-    const file = Object.assign(Object.create(TFile.prototype) as object, {
-      path: note.path,
-      extension: 'md',
-    }) as TFile;
-    const openFile = vi.fn().mockResolvedValue(undefined);
     const app = {
-      vault: { getAbstractFileByPath: (path: string) => (path === note.path ? file : null) },
-      workspace: { getLeaf: () => ({ openFile }) },
+      vault: { getAbstractFileByPath: () => null },
+      workspace: { getLeaf: () => ({ openFile: vi.fn() }) },
     } as never;
     const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, app, {
       snapshots: [workspace(project, { workNotes: [note] })],
@@ -2250,6 +2314,7 @@ describe('ProjectsPanel dispatch', () => {
         observeRange: vi.fn(),
         setRange: vi.fn(),
       } as never,
+      workspaceSession,
     });
     const el = attachedContainer();
     panel.mount(el);
@@ -2259,8 +2324,20 @@ describe('ProjectsPanel dispatch', () => {
       const identity = el.querySelector<HTMLButtonElement>('[data-work-note-identity-control]')!;
       expect(identity.tagName).toBe('BUTTON');
       identity.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 0 }));
-      expect(openFile).toHaveBeenCalledOnce();
-      expect(openFile).toHaveBeenCalledWith(file);
+      expect(state.get('taskStack')).toEqual([]);
+      expect(state.get('inspectorSelection')).toEqual({
+        type: 'work-note',
+        path: note.path,
+        projectPath: project.path,
+      });
+      expect(state.get('inspectorOrigin')?.element).toBe(identity);
+      el.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+      await Promise.resolve();
+      expect(state.get('inspectorSelection')).toEqual({
+        type: 'work-note',
+        path: note.path,
+        projectPath: project.path,
+      });
     } finally {
       panel.destroy();
       el.remove();

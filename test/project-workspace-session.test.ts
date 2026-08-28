@@ -154,4 +154,49 @@ describe('ProjectWorkspaceSessionRegistry', () => {
       workNotes: { captureDraft: 'Recover this' },
     });
   });
+
+  it('rebases Project and Work Note scope-local identities on rename', () => {
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.openProject('Projects/Before.md');
+    const workNotes = registry.scopeSession('work-notes');
+    workNotes.selection.selectedKeys = ['Work Notes/Before.md'];
+    workNotes.selection.focusedKey = 'Work Notes/Before.md';
+    workNotes.selection.inspectorKey = 'Work Notes/Before.md';
+    workNotes.viewport.firstKey = 'Work Notes/Before.md';
+    registry.workNotes.inspectorPath = 'Work Notes/Before.md';
+    registry.workNotes.pendingCreatedPath = 'Work Notes/Before.md';
+    registry.timelines.workNotes.firstKey = 'Work Notes/Before.md';
+    registry.workNotes.board.focusedKey = 'Work Notes/Before.md';
+    registry.workNotes.board.columns['active'] = {
+      firstKey: 'Work Notes/Before.md',
+      firstIndex: 0,
+      focusedKey: 'Work Notes/Before.md',
+      restoreFocus: true,
+    };
+
+    registry.renamePath('Projects/Before.md', 'Projects/After.md');
+    expect(registry.hasProject('Projects/Before.md')).toBe(false);
+    registry.openProject('Projects/After.md');
+    registry.renamePath('Work Notes/Before.md', 'Work Notes/After.md');
+
+    expect(registry.scopeSession('work-notes')).toMatchObject({
+      selection: {
+        selectedKeys: ['Work Notes/After.md'],
+        focusedKey: 'Work Notes/After.md',
+        inspectorKey: 'Work Notes/After.md',
+      },
+      viewport: { firstKey: 'Work Notes/After.md' },
+    });
+    expect(registry.workNotes).toMatchObject({
+      inspectorPath: 'Work Notes/After.md',
+      pendingCreatedPath: 'Work Notes/After.md',
+      board: {
+        focusedKey: 'Work Notes/After.md',
+        columns: {
+          active: { firstKey: 'Work Notes/After.md', focusedKey: 'Work Notes/After.md' },
+        },
+      },
+    });
+    expect(registry.timelines.workNotes.firstKey).toBe('Work Notes/After.md');
+  });
 });

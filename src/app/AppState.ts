@@ -1,6 +1,7 @@
 import { getListViewDefaults } from '../settings/defaults';
 import type { ListViewState } from '../settings/types';
 import type { TaskSnapshot } from '../tasks';
+import type { InspectorFocusOrigin, InspectorSelection } from '../ui/inspector/InspectorSelection';
 import type { TaskSelectionNode } from '../ui/taskSelection';
 
 export type ViewMode = 'tasks' | 'calendar' | 'search' | 'projects';
@@ -26,6 +27,9 @@ export interface AppStateData {
   draggingProject: string | null;
   centerListViewState: ListViewState;
   projectsPanel: ProjectsPanelState;
+  inspectorSelection: InspectorSelection | null;
+  /** Ephemeral trigger used only to restore focus when a narrow inspector closes. */
+  inspectorOrigin: InspectorFocusOrigin | null;
 }
 
 type Listener<T> = (value: T, prev: T) => void;
@@ -70,6 +74,8 @@ export class AppState {
     draggingProject: null,
     centerListViewState: getListViewDefaults('today'),
     projectsPanel: { view: 'list' },
+    inspectorSelection: null,
+    inspectorOrigin: null,
   };
 
   private listeners = new Map<keyof AppStateData, Set<Listener<unknown>>>();

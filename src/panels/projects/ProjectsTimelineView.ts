@@ -8,6 +8,7 @@ import type { Project, ProjectAction, ProjectDateValue } from '../../projects/ty
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import { taskReconciliationKey, type TaskCommandResult, type TaskSnapshot } from '../../tasks';
+import { inspectorSelectionKey } from '../../ui/inspector/InspectorSelection';
 import { BoundedWindow } from './BoundedWindow';
 import type { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
 import { logicalViewportFirst, type LogicalViewportSession } from './ProjectWorkspaceSession';
@@ -69,6 +70,7 @@ export interface WorkNotesTimelineOptions {
   readonly isNarrow?: boolean;
   readonly onMutation?: (note: WorkNoteSnapshot, result: WorkNoteCommandResult) => void;
   readonly openNote?: (path: string) => void;
+  readonly onSelect?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
 }
 
 export interface TasksTimelineOptions {
@@ -595,7 +597,7 @@ export function renderWorkNotesTimeline(
     entries: prepared.map(({ entry }) => entry),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
-    ...(options.openNote
+    ...(options.openNote || options.onSelect
       ? {
           renderIdentity: (host, entry) => {
             const button = host.createEl('button', {
@@ -604,10 +606,18 @@ export function renderWorkNotesTimeline(
               attr: {
                 type: 'button',
                 'data-work-note-identity-control': '',
-                'aria-label': `Open work note ${entry.label}`,
+                'aria-label': `Work note details ${entry.label}`,
               },
             });
-            button.addEventListener('click', () => options.openNote?.(entry.value.path));
+            button.dataset['inspectorOriginKey'] = inspectorSelectionKey({
+              type: 'work-note',
+              path: entry.value.path,
+              projectPath: entry.value.projectPath,
+            });
+            button.addEventListener('click', () => {
+              if (options.onSelect) options.onSelect(entry.value, button);
+              else options.openNote?.(entry.value.path);
+            });
             if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
           },
         }

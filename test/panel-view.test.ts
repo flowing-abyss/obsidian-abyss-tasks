@@ -1268,6 +1268,69 @@ describe('PanelView', () => {
       );
     });
 
+    it('clears a Project inspector after leaving Projects without mutating during delivery', async () => {
+      const state = (view as unknown as { state: AppState }).state;
+      state.set('mode', 'projects');
+      state.set('inspectorSelection', { type: 'project', path: 'Projects/A.md' });
+
+      expect(() => state.set('mode', 'tasks')).not.toThrow();
+      await flushMicrotasks();
+
+      expect(state.get('inspectorSelection')).toBeNull();
+      expect(state.get('inspectorOrigin')).toBeNull();
+    });
+
+    it('switches the production Project inspector between region and dirty narrow dialog ownership', () => {
+      const internals = view as unknown as {
+        state: AppState;
+        inspectorDrafts: {
+          capture(
+            identity: { type: 'project'; path: string },
+            field: 'description',
+            capture: {
+              value: string;
+              baseline: string;
+              selectionStart: number;
+              selectionEnd: number;
+              hadFocus: boolean;
+            },
+          ): void;
+        };
+        updateCompactPaneAvailability(width: number, ownerWindow: Window | null): void;
+      };
+      const identity = { type: 'project' as const, path: 'Projects/Missing.md' };
+      internals.inspectorDrafts.capture(identity, 'description', {
+        value: 'Recover me',
+        baseline: 'Published',
+        selectionStart: 3,
+        selectionEnd: 3,
+        hadFocus: false,
+      });
+      internals.state.set('mode', 'projects');
+      internals.state.set('inspectorSelection', identity);
+
+      expect(view.contentEl.querySelector('.abyss-inspector-shell')?.getAttribute('role')).toBe(
+        'region',
+      );
+      internals.updateCompactPaneAvailability(600, view.contentEl.ownerDocument.defaultView);
+      const right = view.contentEl.querySelector<HTMLElement>('.abyss-right')!;
+      const dialog = right.querySelector<HTMLElement>('.abyss-inspector-shell')!;
+      expect(dialog.getAttribute('role')).toBe('dialog');
+      expect(dialog.getAttribute('aria-modal')).toBe('true');
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+
+      view.contentEl.ownerDocument.body.dispatchEvent(
+        new Event('pointerdown', { bubbles: true, cancelable: true }),
+      );
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      expect(right.querySelector('.abyss-inspector-shell')).not.toBeNull();
+      expect(internals.state.get('inspectorSelection')).toEqual(identity);
+
+      internals.updateCompactPaneAvailability(1200, view.contentEl.ownerDocument.defaultView);
+      expect(right.querySelector('.abyss-inspector-shell')?.getAttribute('role')).toBe('region');
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+    });
+
     it('routes Center creation results to the stable host without a Notice', async () => {
       const created = task({ source: { filePath: 'capture.md', line: 0 } });
       const result: TaskCommandResult = {
