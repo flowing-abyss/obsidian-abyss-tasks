@@ -1,7 +1,11 @@
 import type { AppState } from '../../app/AppState';
 import type { ProjectAction } from '../../projects/types';
 import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
-import type { CalendarSettings, WorkNotesViewState } from '../../settings/types';
+import type {
+  CalendarSettings,
+  ProjectTasksViewState,
+  WorkNotesViewState,
+} from '../../settings/types';
 import type {
   ProjectWorkspaceSession,
   UseProjectWorkspaceDefaultIntent,
@@ -39,18 +43,21 @@ export interface ProjectsDashboardContext {
     host: HTMLElement,
     path: string,
     tasks: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   /** Renders the same task cards through the shared status-board shell. */
   renderTaskBoard?: (
     host: HTMLElement,
     path: string,
     tasks: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   /** Renders dated Project Tasks through the shared Timeline shell. */
   renderTaskTimeline?: (
     host: HTMLElement,
     path: string,
     tasks: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   /** Renders rich supporting notes without projecting them into checkbox Tasks. */
   renderWorkNotes?: (
@@ -74,6 +81,7 @@ export interface ProjectsDashboardContext {
   selectWorkNotes?: (
     notes: readonly WorkNoteSnapshot[],
     viewState: WorkNotesViewState,
+    textQuery: string,
   ) => readonly WorkNoteSnapshot[];
   /** Owner callback for the explicit one-way session-to-preference promotion. */
   onUseWorkspaceDefault?: (intent: UseProjectWorkspaceDefaultIntent) => void;

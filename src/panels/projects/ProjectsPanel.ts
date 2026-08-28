@@ -34,16 +34,19 @@ export interface ProjectsPanelOptions {
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   renderTaskBoard?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   renderTaskTimeline?: (
     host: HTMLElement,
     path: string,
     tasks: ProjectWorkspaceSnapshot['tasks'],
+    viewState: ProjectTasksViewState,
   ) => ProjectChildRenderHandle;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
@@ -207,7 +210,6 @@ export class ProjectsPanel {
       notes,
       statuses: this.workNoteCommands.statuses(),
       layout,
-      viewState: this.settings.projects.view.workNotes,
       commandsEnabled: capabilities.update,
       createEnabled: capabilities.create,
       projectPath,
@@ -233,7 +235,6 @@ export class ProjectsPanel {
             notes,
             statuses: this.workNoteCommands!.statuses(),
             layout,
-            viewState: this.settings.projects.view.workNotes,
             commandsEnabled: capabilities.update,
             createEnabled: capabilities.create,
             projectPath,
@@ -339,18 +340,19 @@ export class ProjectsPanel {
         renderTasks: this.renderTasks,
         ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
         ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
+        onUseWorkspaceDefault: (intent) => void this.useWorkspaceDefault(intent),
         ...(this.workNoteCommands && snapshot
           ? {
               workNotesAvailable:
                 snapshot.workNotes.length + snapshot.milestones.length > 0 ||
                 this.workNoteCommands.capabilities().create,
-              selectWorkNotes: (notes, viewState) =>
+              selectWorkNotes: (notes, viewState, textQuery) =>
                 selectWorkNotes({
                   notes,
                   statuses: this.workNoteCommands!.statuses(),
                   viewState,
+                  textQuery,
                 }),
-              onUseWorkspaceDefault: (intent) => void this.useWorkspaceDefault(intent),
               renderWorkNotes: (host, path, notes) =>
                 this.renderWorkNotes(host, path, notes, 'list', snapshot.milestoneRollups),
               renderWorkNoteBoard: (host, path, notes) =>

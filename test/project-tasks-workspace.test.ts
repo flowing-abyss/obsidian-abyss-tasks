@@ -134,6 +134,39 @@ describe('Project Tasks workspace', () => {
     >().toEqualTypeOf<ProjectChildRenderHandle>();
   });
 
+  it('delivers the effective Task view state to List and Board child renderers', () => {
+    const container = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    const override = {
+      ...settings.projects.view.tasks,
+      groupBy: 'priority' as const,
+      statusGroups: ['done' as const],
+    };
+    session.scopeSession('tasks').viewOverride = override;
+    const renderTasks = vi.fn<NonNullable<ProjectsDashboardContext['renderTasks']>>(() => ({
+      destroy: () => undefined,
+    }));
+    const renderTaskBoard = vi.fn<NonNullable<ProjectsDashboardContext['renderTaskBoard']>>(() => ({
+      destroy: () => undefined,
+    }));
+
+    renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      workspaceSession: session,
+      renderTasks,
+      renderTaskBoard,
+    });
+    container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+
+    expect(renderTasks.mock.calls[0]?.[3]).toBe(override);
+    expect(renderTaskBoard.mock.calls[0]?.[3]).toBe(override);
+  });
+
   it('destroys each child renderer before replacement and destroys the active child with the dashboard', () => {
     const container = freshContainer();
     activeDocument.body.append(container);

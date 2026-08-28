@@ -28,6 +28,7 @@ export interface WorkNotesViewOptions {
   readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly layout: 'list' | 'board';
   readonly viewState?: WorkNotesViewState;
+  readonly textQuery?: string;
   readonly commandsEnabled?: boolean;
   readonly createEnabled?: boolean;
   readonly projectPath?: string;
@@ -71,7 +72,7 @@ function statusText(note: WorkNoteSnapshot, statuses: readonly WorkNoteStatusDef
 }
 
 export function selectWorkNotes(
-  options: Pick<WorkNotesViewOptions, 'notes' | 'statuses' | 'viewState'>,
+  options: Pick<WorkNotesViewOptions, 'notes' | 'statuses' | 'textQuery' | 'viewState'>,
 ): readonly WorkNoteSnapshot[] {
   if (!options.viewState) return [...options.notes];
   const allowed = options.viewState?.statusIds;
@@ -83,9 +84,13 @@ export function selectWorkNotes(
           ({ statusId }) => statusId === null || effectiveAllowed.includes(statusId),
         )
       : [...options.notes];
+  const query = options.textQuery?.trim().toLocaleLowerCase();
+  const textFiltered = query
+    ? filtered.filter((note) => basename(note.path).toLocaleLowerCase().includes(query))
+    : filtered;
   const field = options.viewState?.sortBy.field ?? 'updated';
   const direction = options.viewState?.sortBy.dir === 'asc' ? 1 : -1;
-  return [...filtered].sort((left, right) => {
+  return [...textFiltered].sort((left, right) => {
     const value = (note: WorkNoteSnapshot): string => {
       if (field === 'title') return basename(note.path);
       if (field === 'status') return statusText(note, options.statuses);

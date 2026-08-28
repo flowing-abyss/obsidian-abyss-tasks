@@ -37,18 +37,18 @@ export function renderProjectDashboard(
   session.openProject(project.path);
   const taskScope = session.scopeSession('tasks');
   const workNotesScope = session.scopeSession('work-notes');
+  const taskViewState = taskScope.effectiveView(ctx.settings.projects.view.tasks);
+  const workNotesViewState = workNotesScope.effectiveView(ctx.settings.projects.view.workNotes);
   const selectedTasks = selectProjectTasks({
     actions: snapshot.tasks,
-    viewState: taskScope.effectiveView(ctx.settings.projects.view.tasks),
+    viewState: taskViewState,
     settings: ctx.settings,
     ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
   });
   const allWorkNotes = [...snapshot.workNotes, ...snapshot.milestones];
   const selectedWorkNotes =
-    ctx.selectWorkNotes?.(
-      allWorkNotes,
-      workNotesScope.effectiveView(ctx.settings.projects.view.workNotes),
-    ) ?? allWorkNotes;
+    ctx.selectWorkNotes?.(allWorkNotes, workNotesViewState, workNotesScope.textQuery) ??
+    allWorkNotes;
   const workNotesAvailable =
     ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
 
@@ -181,11 +181,11 @@ export function renderProjectDashboard(
         child = ctx.renderWorkNotes?.(content, project.path, selectedWorkNotes) ?? null;
       }
     } else if (layout === 'timeline' && ctx.renderTaskTimeline) {
-      child = ctx.renderTaskTimeline(content, project.path, selectedTasks);
+      child = ctx.renderTaskTimeline(content, project.path, selectedTasks, taskViewState);
     } else if (layout === 'board' && ctx.renderTaskBoard) {
-      child = ctx.renderTaskBoard(content, project.path, selectedTasks);
+      child = ctx.renderTaskBoard(content, project.path, selectedTasks, taskViewState);
     } else {
-      child = ctx.renderTasks(content, project.path, selectedTasks);
+      child = ctx.renderTasks(content, project.path, selectedTasks, taskViewState);
     }
   };
 

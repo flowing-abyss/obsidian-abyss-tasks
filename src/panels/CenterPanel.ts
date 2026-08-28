@@ -19,6 +19,7 @@ import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
   ListViewState,
+  ProjectTasksViewState,
   PropertyFilter,
   ResolvedConfig,
 } from '../settings/types';
@@ -739,6 +740,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
@@ -746,7 +748,7 @@ export class CenterPanel {
     if (actions.length === 0) {
       scroll.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
-      this.mountProjectTaskCollection(scroll, path, actions);
+      this.mountProjectTaskCollection(scroll, path, actions, viewState);
     }
 
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -760,7 +762,10 @@ export class CenterPanel {
     };
   }
 
-  private projectTaskRows(actions: readonly ProjectAction[]): {
+  private projectTaskRows(
+    actions: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
+  ): {
     readonly rows: readonly ProjectTaskVirtualRow[];
     readonly orderedActions: readonly ProjectAction[];
   } {
@@ -773,7 +778,7 @@ export class CenterPanel {
       if (!action) throw new Error(`Missing ProjectAction for ${key}`);
       return { kind: 'task', key, action };
     };
-    const groupBy = this.settings.projects.view.tasks.groupBy;
+    const groupBy = viewState.groupBy;
     if (groupBy === 'none') {
       return {
         rows: actions.map(({ task }) => taskRow(task)),
@@ -826,8 +831,9 @@ export class CenterPanel {
     owner: HTMLElement,
     projectPath: string,
     actions: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ): void {
-    const { rows, orderedActions } = this.projectTaskRows(actions);
+    const { rows, orderedActions } = this.projectTaskRows(actions, viewState);
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
     session.reconcile(orderedActions);
@@ -1056,6 +1062,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
+    viewState: ProjectTasksViewState,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
@@ -1066,7 +1073,7 @@ export class CenterPanel {
       host.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
     } else {
       const statuses = this.statusRegistry.all();
-      const allowedTypes = this.settings.projects.view.tasks.statusGroups;
+      const allowedTypes = viewState.statusGroups;
       const visibleStatusIds = new Set(
         statuses
           .filter(
@@ -1141,6 +1148,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
+    _viewState: ProjectTasksViewState,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
@@ -1299,10 +1307,12 @@ export class CenterPanel {
           this.settings,
           this.app,
           {
-            renderTasks: (host, path, tasks) => this.renderProjectTasks(host, path, tasks),
-            renderTaskBoard: (host, path, tasks) => this.renderProjectTaskBoard(host, path, tasks),
-            renderTaskTimeline: (host, path, tasks) =>
-              this.renderProjectTaskTimeline(host, path, tasks),
+            renderTasks: (host, path, tasks, viewState) =>
+              this.renderProjectTasks(host, path, tasks, viewState),
+            renderTaskBoard: (host, path, tasks, viewState) =>
+              this.renderProjectTaskBoard(host, path, tasks, viewState),
+            renderTaskTimeline: (host, path, tasks, viewState) =>
+              this.renderProjectTaskTimeline(host, path, tasks, viewState),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,
             pendingBoardUndo: this.pendingProjectBoardUndo,

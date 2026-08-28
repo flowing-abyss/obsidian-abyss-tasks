@@ -1386,6 +1386,121 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const stubMgr = { setStatus: vi.fn().mockResolvedValue(undefined) } as never;
 
+  it('promotes a Task-only session override when Use as default is clicked', async () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    session.scopeSession('tasks').viewOverride = {
+      ...settings.projects.view.tasks,
+      groupBy: 'priority',
+    };
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace()],
+      workspaceSession: session,
+      onSaveSettings,
+    });
+    const el = freshContainer();
+
+    panel.mount(el);
+    el.querySelector<HTMLButtonElement>('[data-project-use-as-default]')!.click();
+    await Promise.resolve();
+
+    expect(settings.projects.view.tasks.groupBy).toBe('priority');
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    panel.destroy();
+  });
+
+  it('uses the Work Note session query, status filter, and sort identically in List, Board, and Timeline', () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.workNotes = {
+      ...settings.projects.view.workNotes,
+      statusIds: ['done'],
+      sortBy: { field: 'updated', dir: 'desc' },
+    };
+    const notes = [
+      workNote('Work Notes/Alpha.md', ACTIVE_ID, '2026-08-30'),
+      workNote('Work Notes/Beta.md', ACTIVE_ID, '2026-08-28'),
+      workNote('Work Notes/Done.md', 'done', '2026-08-29'),
+    ];
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    session.scopeSession('work-notes').textQuery = 'Beta';
+    session.scopeSession('work-notes').viewOverride = {
+      ...settings.projects.view.workNotes,
+      statusIds: [ACTIVE_ID],
+      sortBy: { field: 'title', dir: 'asc' },
+    };
+    const timelinePaths: string[][] = [];
+    const commands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => [
+        { id: ACTIVE_ID, label: 'Active' },
+        { id: 'done', label: 'Done' },
+      ],
+      observe: (note: WorkNoteSnapshot) => note,
+      setStatus: vi.fn(),
+      create: vi.fn(),
+    } as never;
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [
+        workspace(proj({}), {
+          workNotes: notes,
+          workNoteRollup: { active: 2, completed: 1, dropped: 0 },
+        }),
+      ],
+      workNoteCommands: commands,
+      workspaceSession: session,
+      renderTaskTimeline: () => ({ destroy: () => undefined }),
+      renderTasks: () => ({ destroy: () => undefined }),
+      onAnnounce: vi.fn(),
+    });
+    const el = freshContainer();
+    const originalRenderWorkNoteTimeline = (
+      panel as unknown as {
+        renderWorkNoteTimeline: (
+          host: HTMLElement,
+          notes: readonly WorkNoteSnapshot[],
+        ) => ProjectChildRenderHandle;
+      }
+    ).renderWorkNoteTimeline;
+    (
+      panel as unknown as {
+        renderWorkNoteTimeline: (
+          host: HTMLElement,
+          notes: readonly WorkNoteSnapshot[],
+        ) => ProjectChildRenderHandle;
+      }
+    ).renderWorkNoteTimeline = (host, selected) => {
+      timelinePaths.push(selected.map(({ path }) => path));
+      host.createDiv({ text: 'Timeline' });
+      return { destroy: () => host.empty() };
+    };
+
+    panel.mount(el);
+    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    const listPaths = Array.from(el.querySelectorAll<HTMLElement>('[data-work-note-path]')).map(
+      ({ dataset }) => dataset['workNotePath'],
+    );
+    el.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    const boardPaths = Array.from(el.querySelectorAll<HTMLElement>('[data-work-note-path]')).map(
+      ({ dataset }) => dataset['workNotePath'],
+    );
+    el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+
+    expect(listPaths).toEqual(['Work Notes/Beta.md']);
+    expect(boardPaths).toEqual(['Work Notes/Beta.md']);
+    expect(timelinePaths).toEqual([['Work Notes/Beta.md']]);
+    (
+      panel as unknown as { renderWorkNoteTimeline: typeof originalRenderWorkNoteTimeline }
+    ).renderWorkNoteTimeline = originalRenderWorkNoteTimeline;
+    panel.destroy();
+  });
+
   it('keeps portfolio layout focus on the corresponding current control across sync remounts', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'overview';
