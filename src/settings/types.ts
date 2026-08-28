@@ -1,3 +1,7 @@
+import type {
+  ProjectBoardPreference,
+  ProjectTimelinePreferences,
+} from '../panels/projects/projectViewPreferences';
 import type { ProjectLifecycleBehavior } from '../projects/lifecycle';
 import type { WorkNoteCompatibilityPreset } from '../projects/work-notes/types';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
@@ -82,6 +86,8 @@ export interface ProjectsViewSettings {
   portfolioLayout: ProjectsPortfolioLayout;
   visibleStatusIds: string[];
   includeUnmapped: boolean;
+  board: ProjectBoardPreference;
+  timeline: ProjectTimelinePreferences;
   tasks: ProjectTasksViewState;
   workNotes: WorkNotesViewState;
 }

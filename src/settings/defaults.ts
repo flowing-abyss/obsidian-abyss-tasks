@@ -1,3 +1,7 @@
+import {
+  buildProjectBoardPreference,
+  buildProjectTimelinePreferences,
+} from '../panels/projects/projectViewPreferences';
 import { buildDisabledWorkNotePreset } from '../projects/work-notes/compatibility';
 import { ACTIVE_STATUS_GROUPS } from '../status/statusConstants';
 import { defaultShortcuts } from './shortcuts';
@@ -15,6 +19,8 @@ export function buildDefaultProjectsView(statusIds: readonly string[]): Projects
     portfolioLayout: 'overview',
     visibleStatusIds: [...statusIds],
     includeUnmapped: true,
+    board: buildProjectBoardPreference(statusIds),
+    timeline: buildProjectTimelinePreferences(),
     tasks: {
       groupBy: 'none',
       sortBy: { field: 'date', dir: 'asc' },

@@ -1,3 +1,7 @@
+import {
+  migrateProjectBoardPreference,
+  migrateProjectTimelinePreferences,
+} from '../panels/projects/projectViewPreferences';
 import { inferLifecycleBehavior } from '../projects/lifecycle';
 import {
   buildDisabledWorkNotePreset,
@@ -133,6 +137,8 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
   if (typeof view['includeUnmapped'] !== 'boolean') {
     view['includeUnmapped'] = defaults.includeUnmapped;
   }
+  view['board'] = migrateProjectBoardPreference(view['board'], ids);
+  view['timeline'] = migrateProjectTimelinePreferences(view['timeline']);
 
   const tasks = record(view['tasks']);
   if (!tasks) {

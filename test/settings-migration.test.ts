@@ -4,6 +4,66 @@ import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
 
 describe('migrateSettings', () => {
+  it('adds versioned Project board and scope-specific timeline preferences', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    const projects = raw['projects'] as {
+      statuses: Array<{ id: string }>;
+      view: Record<string, unknown>;
+    };
+    expect(projects.view['board']).toEqual({
+      version: 1,
+      statusIds: projects.statuses.map(({ id }) => id),
+      dormantStatusIds: [],
+    });
+    expect(projects.view['timeline']).toEqual({
+      version: 1,
+      portfolio: { scale: 'quarter', identityWidth: 240 },
+      project: { scale: 'week', identityWidth: 240 },
+    });
+  });
+
+  it('reconciles Project board IDs and clamps invalid timeline preferences', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [
+          { id: 'active', label: 'Active', behavior: 'regular' },
+          { id: 'planned', label: 'Planned', behavior: 'regular' },
+          { id: 'done', label: 'Done', behavior: 'completed' },
+        ],
+        defaultStatusId: 'active',
+        view: {
+          board: {
+            version: 1,
+            statusIds: ['planned', 'retired', 'planned', 'active'],
+            dormantStatusIds: ['legacy', 'retired'],
+          },
+          timeline: {
+            version: 1,
+            portfolio: { scale: 'week', identityWidth: 999 },
+            project: { scale: 'quarter', identityWidth: 10 },
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['board']).toEqual({
+      version: 1,
+      statusIds: ['planned', 'active', 'done'],
+      dormantStatusIds: ['retired', 'legacy'],
+    });
+    expect(view['timeline']).toEqual({
+      version: 1,
+      portfolio: { scale: 'quarter', identityWidth: 360 },
+      project: { scale: 'week', identityWidth: 160 },
+    });
+  });
+
   it('creates a complete shortcut collection when legacy settings have none', () => {
     const raw: Record<string, unknown> = {};
 
