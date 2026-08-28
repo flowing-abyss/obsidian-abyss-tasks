@@ -21,7 +21,8 @@ describe('migrateSettings', () => {
     expect(projects.view['timeline']).toEqual({
       version: 1,
       portfolio: { scale: 'quarter', identityWidth: 240 },
-      project: { scale: 'week', identityWidth: 240 },
+      tasks: { scale: 'week', identityWidth: 240 },
+      workNotes: { dateRange: 'month', identityWidth: 240 },
     });
   });
 
@@ -42,8 +43,9 @@ describe('migrateSettings', () => {
           },
           timeline: {
             version: 1,
-            portfolio: { scale: 'week', identityWidth: 999 },
-            project: { scale: 'quarter', identityWidth: 10 },
+            portfolio: { scale: 'day', identityWidth: 999 },
+            tasks: { scale: 'quarter', identityWidth: 10 },
+            workNotes: { dateRange: 'century', identityWidth: 999 },
           },
         },
       },
@@ -60,7 +62,8 @@ describe('migrateSettings', () => {
     expect(view['timeline']).toEqual({
       version: 1,
       portfolio: { scale: 'quarter', identityWidth: 360 },
-      project: { scale: 'week', identityWidth: 160 },
+      tasks: { scale: 'week', identityWidth: 160 },
+      workNotes: { dateRange: 'month', identityWidth: 360 },
     });
   });
 

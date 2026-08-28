@@ -2,8 +2,9 @@ export const PROJECT_IDENTITY_WIDTH_MIN = 160;
 export const PROJECT_IDENTITY_WIDTH_MAX = 360;
 export const DEFAULT_PROJECT_IDENTITY_WIDTH = 240;
 
-export type PortfolioTimelineScale = 'month' | 'quarter' | 'year';
-export type ProjectTimelineScale = 'week' | 'month';
+export type PortfolioTimelineScale = 'week' | 'month' | 'quarter' | 'year';
+export type TaskTimelineScale = 'day' | 'week' | 'month';
+export type WorkNotesDateRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
 
 export interface ProjectBoardPreference {
   readonly version: 1;
@@ -17,8 +18,12 @@ export interface ProjectTimelinePreferences {
     readonly scale: PortfolioTimelineScale;
     readonly identityWidth: number;
   };
-  readonly project: {
-    readonly scale: ProjectTimelineScale;
+  readonly tasks: {
+    readonly scale: TaskTimelineScale;
+    readonly identityWidth: number;
+  };
+  readonly workNotes: {
+    readonly dateRange: WorkNotesDateRange;
     readonly identityWidth: number;
   };
 }
@@ -50,7 +55,8 @@ export function buildProjectTimelinePreferences(): ProjectTimelinePreferences {
   return {
     version: 1,
     portfolio: { scale: 'quarter', identityWidth: DEFAULT_PROJECT_IDENTITY_WIDTH },
-    project: { scale: 'week', identityWidth: DEFAULT_PROJECT_IDENTITY_WIDTH },
+    tasks: { scale: 'week', identityWidth: DEFAULT_PROJECT_IDENTITY_WIDTH },
+    workNotes: { dateRange: 'month', identityWidth: DEFAULT_PROJECT_IDENTITY_WIDTH },
   };
 }
 
@@ -77,10 +83,11 @@ export function resetProjectBoardStatusOrder(
   preference: ProjectBoardPreference,
   configuredStatusIds: readonly string[],
 ): ProjectBoardPreference {
+  const reconciled = reconcileProjectBoardPreference(preference, configuredStatusIds);
   return {
     version: 1,
     statusIds: unique(configuredStatusIds),
-    dormantStatusIds: unique(preference.dormantStatusIds),
+    dormantStatusIds: reconciled.dormantStatusIds,
   };
 }
 
@@ -101,11 +108,21 @@ export function migrateProjectBoardPreference(
 }
 
 function isPortfolioTimelineScale(value: unknown): value is PortfolioTimelineScale {
-  return value === 'month' || value === 'quarter' || value === 'year';
+  return value === 'week' || value === 'month' || value === 'quarter' || value === 'year';
 }
 
-function isProjectTimelineScale(value: unknown): value is ProjectTimelineScale {
-  return value === 'week' || value === 'month';
+function isTaskTimelineScale(value: unknown): value is TaskTimelineScale {
+  return value === 'day' || value === 'week' || value === 'month';
+}
+
+function isWorkNotesDateRange(value: unknown): value is WorkNotesDateRange {
+  return (
+    value === 'day' ||
+    value === 'week' ||
+    value === 'month' ||
+    value === 'quarter' ||
+    value === 'year'
+  );
 }
 
 /** Migrates independently-scoped timeline preferences without accepting another scope's scale. */
@@ -113,7 +130,8 @@ export function migrateProjectTimelinePreferences(value: unknown): ProjectTimeli
   const defaults = buildProjectTimelinePreferences();
   const candidate = record(value);
   const portfolio = record(candidate?.['portfolio']);
-  const project = record(candidate?.['project']);
+  const tasks = record(candidate?.['tasks']);
+  const workNotes = record(candidate?.['workNotes']);
   return {
     version: 1,
     portfolio: {
@@ -122,9 +140,15 @@ export function migrateProjectTimelinePreferences(value: unknown): ProjectTimeli
         : defaults.portfolio.scale,
       identityWidth: clampProjectIdentityWidth(portfolio?.['identityWidth']),
     },
-    project: {
-      scale: isProjectTimelineScale(project?.['scale']) ? project['scale'] : defaults.project.scale,
-      identityWidth: clampProjectIdentityWidth(project?.['identityWidth']),
+    tasks: {
+      scale: isTaskTimelineScale(tasks?.['scale']) ? tasks['scale'] : defaults.tasks.scale,
+      identityWidth: clampProjectIdentityWidth(tasks?.['identityWidth']),
+    },
+    workNotes: {
+      dateRange: isWorkNotesDateRange(workNotes?.['dateRange'])
+        ? workNotes['dateRange']
+        : defaults.workNotes.dateRange,
+      identityWidth: clampProjectIdentityWidth(workNotes?.['identityWidth']),
     },
   };
 }
