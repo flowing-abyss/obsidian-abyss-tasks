@@ -1,3 +1,5 @@
+// eslint-disable-next-line import/no-nodejs-modules -- UI regression loads the shipped stylesheet.
+import { readFileSync } from 'node:fs';
 import { Menu, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
@@ -17,6 +19,8 @@ import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { flushMicrotasks, freshContainer } from './helpers';
+
+const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
 
 interface CapturedMenuItem {
   title: string;
@@ -211,6 +215,93 @@ describe('renderWorkNotesView', () => {
       'Work note 001',
     );
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
+  it('keeps a long Work Note title and ordinary metadata separated inside the bounded identity', () => {
+    const style = activeDocument.head.createEl('style');
+    // Obsidian presents buttons as horizontal flex controls. The plugin must establish the
+    // identity's own flow; otherwise the title and metadata groups paint as one merged label.
+    style.textContent = `button { display: inline-flex; align-items: center; }\n${shippedStyles}`;
+    const root = freshContainer();
+    activeDocument.body.appendChild(root);
+    try {
+      renderWorkNotesView(root, {
+        notes: [
+          note(1, {
+            path: 'Work Notes/A deliberately long ordinary Work Note title.md',
+            kind: 'ordinary',
+            projectPath: 'Projects/A deliberately long regular Project label.md',
+            priority: 'High',
+          }),
+        ],
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        layout: 'list',
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+      });
+
+      const identity = root.querySelector<HTMLElement>('.abyss-work-note-identity')!;
+      const title = identity.querySelector<HTMLElement>('.abyss-work-note-title')!;
+      const meta = identity.querySelector<HTMLElement>('.abyss-work-note-meta')!;
+      const kind = meta.querySelector<HTMLElement>('.abyss-work-note-kind')!;
+      const project = meta.querySelector<HTMLElement>('.abyss-work-note-project')!;
+      const priority = meta.querySelector<HTMLElement>('.abyss-work-note-priority')!;
+      const row = identity.closest<HTMLElement>('.abyss-work-note-row')!;
+      const identityStyle = getComputedStyle(identity);
+      const titleStyle = getComputedStyle(title);
+      const metaStyle = getComputedStyle(meta);
+      let flowOwner = title.parentElement;
+      while (flowOwner && !flowOwner.contains(meta)) flowOwner = flowOwner.parentElement;
+      const flowStyle = getComputedStyle(flowOwner!);
+      const positiveSpace = (...values: string[]): boolean =>
+        values.some((value) => {
+          const pixels = Number.parseFloat(value);
+          return Number.isFinite(pixels)
+            ? pixels > 0
+            : value !== '' && value !== 'normal' && value !== '0';
+        });
+      const paintContained = (computed: CSSStyleDeclaration): boolean =>
+        [computed.overflowX, computed.overflow].some((value) => ['hidden', 'clip'].includes(value));
+      const flexLike = flowStyle.display === 'flex' || flowStyle.display === 'inline-flex';
+      const gridLike = flowStyle.display === 'grid' || flowStyle.display === 'inline-grid';
+      const horizontalGrid =
+        flowStyle.gridAutoFlow.startsWith('column') ||
+        flowStyle.gridTemplateColumns.split(' ').filter(Boolean).length > 1;
+      const siblingSpace = positiveSpace(
+        flowStyle.columnGap,
+        flowStyle.gap,
+        titleStyle.marginInlineEnd,
+        metaStyle.marginInlineStart,
+      );
+      const separateFlow = flexLike
+        ? flowStyle.flexDirection.startsWith('column') || siblingSpace
+        : gridLike
+          ? !horizontalGrid || siblingSpace
+          : titleStyle.display === 'block';
+
+      expect(title.compareDocumentPosition(meta) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+      expect(flowOwner).not.toBeNull();
+      expect(identity.contains(flowOwner)).toBe(true);
+      expect(kind.textContent).toBe('Ordinary');
+      expect(project.textContent).toBe('A deliberately long regular Project label');
+      expect(priority.textContent).toBe('High');
+      expect(identityStyle.minWidth).toBe('0px');
+      expect(paintContained(getComputedStyle(row))).toBe(true);
+      expect(paintContained(titleStyle)).toBe(true);
+      expect(titleStyle.textOverflow).toBe('ellipsis');
+      expect(metaStyle.minWidth).toBe('0px');
+      expect(paintContained(metaStyle)).toBe(true);
+      expect(metaStyle.whiteSpace).toBe('nowrap');
+      for (const element of [kind, project, priority]) {
+        const computed = getComputedStyle(element);
+        expect(paintContained(computed)).toBe(true);
+        expect(computed.textOverflow).toBe('ellipsis');
+      }
+      expect(separateFlow).toBe(true);
+    } finally {
+      style.remove();
+      root.remove();
+    }
   });
 
   it('creates through one guarded inline control without introducing a task checkbox', () => {
