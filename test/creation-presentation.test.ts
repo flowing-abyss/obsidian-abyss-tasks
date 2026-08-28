@@ -184,7 +184,7 @@ describe('task presentation identity', () => {
     expect(forecastElement.hasAttribute('data-abyss-task-ref-key')).toBe(false);
   });
 
-  it('applies the same canonical identity in the shared list and project task-card renderer', () => {
+  it('keeps the legacy three-argument Project task renderer compatible with the shared card identity', () => {
     const snapshot = task({ source: { filePath: 'capture.md', line: 8 } });
     const queries: TaskQueryApi = {
       ...queryHarness(exact(snapshot)).queries,

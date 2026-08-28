@@ -740,7 +740,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-    viewState: ProjectTasksViewState,
+    viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const scroll = host.createDiv({ cls: 'abyss-center-scroll abyss-project-tasks-scroll' });
@@ -1062,7 +1062,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-    viewState: ProjectTasksViewState,
+    viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
@@ -1148,7 +1148,7 @@ export class CenterPanel {
     host: HTMLElement,
     path: string,
     actions: readonly ProjectAction[],
-    _viewState: ProjectTasksViewState,
+    _viewState: ProjectTasksViewState = this.settings.projects.view.tasks,
   ): ProjectChildRenderHandle {
     this.destroyProjectTaskList();
     const session = this.projectWorkspaceSession.tasks;
