@@ -1,4 +1,5 @@
 import type { ListSelection } from '../../app/AppState';
+import { PRIORITY_LEVELS } from '../../priority';
 import { DEFAULT_SETTINGS } from '../../settings/defaults';
 import type { CalendarSettings } from '../../settings/types';
 import type {
@@ -70,7 +71,10 @@ function projectCaptureLabel(context: ProjectCaptureContext, statusLabel?: strin
   if (context.statusSymbol !== undefined) {
     parts.push(`Status: ${statusLabel ?? context.statusSymbol}`);
   }
-  if (context.priority !== undefined) parts.push(`Priority: ${context.priority}`);
+  if (context.priority !== undefined) {
+    const priority = PRIORITY_LEVELS.find(({ value }) => value === context.priority);
+    parts.push(`Priority: ${priority?.label ?? context.priority}`);
+  }
   return parts.join(' · ');
 }
 

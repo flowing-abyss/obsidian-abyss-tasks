@@ -3274,7 +3274,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         type: 'explicit',
         destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
       });
-      expect.soft(destination.textContent).toBe('Project: A · Status: In progress · Priority: A');
+      expect
+        .soft(destination.textContent)
+        .toBe('Project: A · Status: In progress · Priority: Highest');
       expect(input.getAttribute('aria-describedby')).toBe(destination.id);
 
       setCaptureDraft(input, 'inherit focused defaults');
