@@ -2415,6 +2415,87 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('routes both visible blocked Project Timeline completion paths through canonical commands', async () => {
+    const current = task({
+      title: 'Blocked timeline task',
+      dependency: { dependsOn: ['prep'] },
+      planning: { due: localDate('2026-08-28') },
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const originalStatus = current.status;
+    const blocked: TaskCommandResult = {
+      type: 'blocked',
+      operation: 'completion',
+      dependency: { type: 'blocked', prerequisites: [] },
+    };
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue(blocked);
+    const panel = makeStaticPanel(
+      new AppState(),
+      [current],
+      DEFAULT_SETTINGS,
+      {} as App,
+      undefined,
+      { queries: queryApiForSnapshots(() => [current]), execute },
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    activeDocument.querySelector('.abyss-task-command-live-region')?.remove();
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(panel, 'renderProjectTaskTimeline', host, 'Projects/A.md', [
+        {
+          task: current,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'blocked', prerequisites: [] },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ]);
+      const marker = host.querySelector<HTMLElement>('.abyss-status-marker')!;
+      expect(marker.getAttribute('aria-disabled')).toBe('true');
+
+      marker.click();
+      await flushMicrotasks();
+      expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toBe(
+        'Complete the prerequisite tasks first.',
+      );
+
+      marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      const done = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'done')!;
+      const doneItem = Array.from(
+        activeDocument.querySelectorAll<HTMLElement>(
+          '.abyss-status-popover [role="menuitemradio"]',
+        ),
+      ).find((item) => item.textContent?.includes(done.name))!;
+      doneItem.click();
+      await flushMicrotasks();
+      expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toBe(
+        'Complete the prerequisite tasks first.',
+      );
+
+      expect(execute.mock.calls).toEqual([
+        [
+          {
+            type: 'toggle-completion',
+            target: { type: 'task', ref: current.ref },
+          },
+        ],
+        [
+          {
+            type: 'set-status',
+            target: { type: 'task', ref: current.ref },
+            symbol: done.symbol,
+          },
+        ],
+      ]);
+      expect(marker.getAttribute('aria-checked')).toBe('false');
+      expect(current.status).toBe(originalStatus);
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('opens exactly one status menu when a Project Board card receives contextmenu', () => {
     const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
     const state = new AppState();

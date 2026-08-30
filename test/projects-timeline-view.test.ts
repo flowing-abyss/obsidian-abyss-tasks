@@ -11,11 +11,12 @@ import {
   TIMELINE_MARKER_DOM_CAP,
   type TimelineEntry,
 } from '../src/panels/projects/ProjectsTimelineView';
+import { ProjectTaskCollectionSession } from '../src/panels/projects/ProjectTaskCollectionSession';
 import type { LogicalViewportSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { TimelineItem } from '../src/panels/projects/timelineProjection';
 import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import { parseProjectRange } from '../src/projects/projectDates';
-import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
+import type { Project, ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { createAppWithFiles, deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
@@ -295,6 +296,58 @@ describe('shared Timeline view', () => {
     expect(setRange).toHaveBeenCalledWith(observed, {
       start: expect.objectContaining({ raw: '2026-08-30T09:15:00+07:00' }),
     });
+  });
+
+  it('plans an updated-only Portfolio milestone by creating configured start only', async () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Launch.md',
+      name: 'Launch',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const milestone = workNote('Work Notes/Updated milestone.md', {
+      kind: 'milestone',
+      updated: '2026-08-29T18:00:00+07:00',
+    });
+    const observed = {
+      path: milestone.path,
+      presetRevision: milestone.presetRevision,
+      presetFingerprint: milestone.presetFingerprint,
+      projectPath: milestone.projectPath,
+      kind: milestone.kind,
+      fields: { Updated: milestone.updated },
+    };
+    const setRange = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    renderProjectsTimeline(container, {
+      projects: [project],
+      snapshots: [workspaceSnapshot(project, { milestones: [milestone] })],
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      milestoneCommands: {
+        observeRange: () => ({
+          observed,
+          updated: parseProjectRange(milestone.updated, undefined).start,
+        }),
+        setRange,
+      } as never,
+    });
+
+    const planning = container.querySelector<HTMLInputElement>(
+      '[data-timeline-key="work-note:Work Notes/Updated milestone.md"] [data-timeline-schedule]',
+    )!;
+    planning.value = '2026-08-31';
+    planning.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(setRange).toHaveBeenCalledWith(observed, {
+      start: expect.objectContaining({ raw: '2026-08-31' }),
+    });
+    expect(setRange.mock.calls[0]?.[1]).not.toHaveProperty('updated');
+    expect(observed.fields.Updated).toBe('2026-08-29T18:00:00+07:00');
   });
 
   it('keeps a fully undated Project actionable and creates only its owned start field', async () => {
@@ -2180,6 +2233,8 @@ describe('shared Timeline view', () => {
   });
 
   it('reveals the transitive blocker corridor only while its Task has focus', () => {
+    const style = activeDocument.head.createEl('style');
+    style.textContent = shippedStyles;
     const container = freshContainer();
     activeDocument.body.append(container);
     const prep = task({
@@ -2233,12 +2288,29 @@ describe('shared Timeline view', () => {
         container.querySelector<HTMLElement>('[data-timeline-key="task:Projects/A.md:3"]')?.dataset
           .taskDependencyEmphasis,
       ).toBe('subject');
+      const subject = container.querySelector<HTMLElement>(
+        '[data-timeline-key="task:Projects/A.md:3"]',
+      )!;
+      expect(subject.getAttribute('aria-current')).toBe('true');
+      expect(subject.getAttribute('aria-description')).toBe(
+        'Focused blocked task. Blocked by 2 prerequisites.',
+      );
+      expect(
+        getComputedStyle(subject.querySelector<HTMLElement>('.abyss-timeline-identity')!).boxShadow,
+      ).toContain('inset 3px 0');
       expect(
         Array.from(
           container.querySelectorAll<HTMLElement>('[data-task-dependency-emphasis="prerequisite"]'),
           (row) => row.dataset.timelineKey,
         ),
       ).toEqual(['task:Projects/A.md:1', 'task:Projects/A.md:2']);
+      for (const prerequisite of container.querySelectorAll<HTMLElement>(
+        '[data-task-dependency-emphasis="prerequisite"]',
+      )) {
+        expect(prerequisite.getAttribute('aria-description')).toBe(
+          'Prerequisite for focused blocked task Ship.',
+        );
+      }
       expect(
         container
           .querySelector('[data-timeline-key="task:Projects/A.md:4"]')
@@ -2247,6 +2319,202 @@ describe('shared Timeline view', () => {
 
       container.querySelector<HTMLButtonElement>('[data-task-identity="Unrelated"]')!.focus();
       expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+      expect(container.querySelector('[aria-current]')).toBeNull();
+      expect(container.querySelector('[aria-description]')).toBeNull();
+    } finally {
+      container.remove();
+      style.remove();
+    }
+  });
+
+  it('reapplies the retained canonical dependency corridor after virtual row churn', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const snapshots = Array.from({ length: 70 }, (_, index) =>
+      task({
+        title: `Task ${String(index)}`,
+        planning: { due: '2026-08-29' as never },
+        source: { filePath: 'Projects/Virtual.md', line: index },
+      }),
+    );
+    const subject = snapshots[0]!;
+    const prerequisite = snapshots[55]!;
+    const actions: ProjectAction[] = snapshots.map((snapshot) => ({
+      task: snapshot,
+      projectPath: 'Projects/Virtual.md',
+      dependency:
+        snapshot === subject
+          ? { type: 'blocked', prerequisites: [prerequisite.ref] }
+          : { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/Virtual.md' },
+    }));
+    const collection = new ProjectTaskCollectionSession(actions);
+    collection.focusOnly(subject.ref);
+    try {
+      const handle = renderTasksTimeline(container, {
+        actions,
+        collectionSession: collection,
+        renderTask: (host, action) =>
+          host.createEl('button', {
+            text: action.task.title,
+            attr: { type: 'button', 'data-task-identity': action.task.title },
+          }),
+        onSetDate: () => ({ type: 'invalid', issues: [] }),
+        onSetRange: () => ({ type: 'invalid', issues: [] }),
+      });
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      Object.defineProperties(scroll, {
+        clientHeight: { configurable: true, value: 4 * 72 },
+        clientWidth: { configurable: true, value: 900 },
+      });
+
+      expect(
+        container
+          .querySelector('[data-timeline-key="task:Projects/Virtual.md:0"]')
+          ?.getAttribute('aria-description'),
+      ).toBe('Focused blocked task. Blocked by 1 prerequisite.');
+
+      scroll.scrollTop = 53 * 72;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      expect(
+        container.querySelector('[data-timeline-key="task:Projects/Virtual.md:0"]'),
+      ).toBeNull();
+      const mountedPrerequisite = container.querySelector<HTMLElement>(
+        '[data-timeline-key="task:Projects/Virtual.md:55"]',
+      )!;
+      expect(mountedPrerequisite.dataset.taskDependencyEmphasis).toBe('prerequisite');
+      expect(mountedPrerequisite.getAttribute('aria-description')).toBe(
+        'Prerequisite for focused blocked task Task 0.',
+      );
+
+      container.querySelector<HTMLElement>('.abyss-timeline-rows')!.focus();
+      expect(mountedPrerequisite.dataset.taskDependencyEmphasis).toBe('prerequisite');
+
+      mountedPrerequisite.querySelector<HTMLButtonElement>('[data-task-identity]')!.focus();
+      expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+      expect(container.querySelector('[aria-description]')).toBeNull();
+
+      handle.destroy();
+      expect(container.childElementCount).toBe(0);
+    } finally {
+      container.remove();
+    }
+  });
+
+  it('does not resurrect an intentionally blurred corridor after a production rerender', async () => {
+    const container = freshContainer();
+    const outside = activeDocument.body.createEl('button', { text: 'Outside timeline' });
+    activeDocument.body.append(container);
+    const prerequisite = task({
+      title: 'Prepare',
+      planning: { due: '2026-08-28' as never },
+      source: { filePath: 'Projects/Blur.md', line: 1 },
+    });
+    const subject = task({
+      title: 'Ship',
+      planning: { due: '2026-08-29' as never },
+      source: { filePath: 'Projects/Blur.md', line: 2 },
+    });
+    const actions: ProjectAction[] = [
+      {
+        task: prerequisite,
+        projectPath: 'Projects/Blur.md',
+        dependency: { type: 'allowed' },
+        owner: { type: 'project', path: 'Projects/Blur.md' },
+      },
+      {
+        task: subject,
+        projectPath: 'Projects/Blur.md',
+        dependency: { type: 'blocked', prerequisites: [prerequisite.ref] },
+        owner: { type: 'project', path: 'Projects/Blur.md' },
+      },
+    ];
+    const collection = new ProjectTaskCollectionSession(actions);
+    collection.focusOnly(subject.ref);
+    const render = () =>
+      renderTasksTimeline(container, {
+        actions,
+        collectionSession: collection,
+        renderTask: (host, action) =>
+          host.createEl('button', {
+            text: action.task.title,
+            attr: { type: 'button', 'data-task-identity': action.task.title },
+          }),
+        onSetDate: () => ({ type: 'invalid', issues: [] }),
+        onSetRange: () => ({ type: 'invalid', issues: [] }),
+      });
+    try {
+      const first = render();
+      expect(container.querySelector('[data-task-dependency-emphasis="subject"]')).not.toBeNull();
+
+      outside.focus();
+      await flushMicrotasks();
+      expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+
+      first.destroy();
+      const second = render();
+      expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+      expect(container.querySelector('[aria-description]')).toBeNull();
+      second.destroy();
+    } finally {
+      container.remove();
+      outside.remove();
+    }
+  });
+
+  it('reapplies retained corridor semantics when a virtual Planning prerequisite mounts', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const snapshots = Array.from({ length: 70 }, (_, index) =>
+      task({
+        title: `Planning task ${String(index)}`,
+        source: { filePath: 'Projects/Planning.md', line: index },
+      }),
+    );
+    const subject = snapshots[0]!;
+    const prerequisite = snapshots[55]!;
+    const actions: ProjectAction[] = snapshots.map((snapshot) => ({
+      task: snapshot,
+      projectPath: 'Projects/Planning.md',
+      dependency:
+        snapshot === subject
+          ? { type: 'blocked', prerequisites: [prerequisite.ref] }
+          : { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/Planning.md' },
+    }));
+    const collection = new ProjectTaskCollectionSession(actions);
+    collection.focusOnly(subject.ref);
+    try {
+      const handle = renderTasksTimeline(container, {
+        actions,
+        collectionSession: collection,
+        renderTask: (host, action) =>
+          host.createEl('button', {
+            text: action.task.title,
+            attr: { type: 'button', 'data-task-identity': action.task.title },
+          }),
+        onSetDate: () => ({ type: 'invalid', issues: [] }),
+        onSetRange: () => ({ type: 'invalid', issues: [] }),
+      });
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-diagnostic-scroll')!;
+      Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 4 * 32 });
+
+      scroll.scrollTop = 53 * 32;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      expect(
+        container.querySelector('[data-timeline-key="task:Projects/Planning.md:0"]'),
+      ).toBeNull();
+      const mountedPrerequisite = container.querySelector<HTMLElement>(
+        '[data-timeline-key="task:Projects/Planning.md:55"]',
+      )!;
+      expect(mountedPrerequisite.dataset.taskDependencyEmphasis).toBe('prerequisite');
+      expect(mountedPrerequisite.getAttribute('aria-description')).toBe(
+        'Prerequisite for focused blocked task Planning task 0.',
+      );
+
+      handle.destroy();
     } finally {
       container.remove();
     }

@@ -110,6 +110,7 @@ export interface TimelineViewOptions<T> {
   readonly shouldRestoreItemFocus?: () => boolean;
   readonly onItemFocus?: (entry: TimelineEntry<T>) => void;
   readonly onItemBlur?: () => void;
+  readonly onRowsRendered?: () => void;
   readonly isNarrow?: boolean;
   readonly renderIdentity?: (host: HTMLElement, entry: TimelineEntry<T>) => void;
   readonly scope?: TimelineScope;
@@ -962,6 +963,7 @@ export function renderTimeline<T>(
       if (restoreFocus || seedFirst !== undefined) {
         scroll.scrollTop = result.first * rowExtent;
       }
+      options.onRowsRendered?.();
     };
 
     const visiblePlotWidth = (): number => {
@@ -1579,6 +1581,7 @@ export function renderTimeline<T>(
           return timelineRowFocusTarget(row, identity, isAgenda);
         },
       });
+      options.onRowsRendered?.();
     };
     const onScroll = (): void => renderWindow(false);
     scroll.addEventListener('scroll', onScroll);
@@ -1764,7 +1767,7 @@ export function renderProjectsTimeline(
     canSetDate: (entry, role) =>
       entry.value.kind === 'project'
         ? role === 'start' || role === 'end'
-        : options.milestoneCommands !== undefined && role === 'milestone',
+        : options.milestoneCommands !== undefined && (role === 'milestone' || role === 'start'),
     canSetRange: (entry) => entry.value.kind === 'project',
     onSetDate: async (entry, role, date) => {
       if (entry.value.kind === 'project') {
@@ -1781,7 +1784,7 @@ export function renderProjectsTimeline(
       }
       const commands = options.milestoneCommands;
       const observation = milestoneObservations.get(entry.item.key);
-      if (!commands || !observation || role !== 'milestone') {
+      if (!commands || !observation || (role !== 'milestone' && role !== 'start')) {
         return { type: 'invalid', field: 'path' };
       }
       const field = 'start';
@@ -1941,7 +1944,8 @@ export function renderTasksTimeline(
   const actionByRef = new Map(
     options.actions.map((action) => [taskReconciliationKey(action.task.ref), action] as const),
   );
-  let emphasizedKey = focusedItemKey();
+  const initiallyFocusedRef = collection?.shouldRestoreFocus() ? collection.focusedRef() : null;
+  let emphasizedRefKey = initiallyFocusedRef ? taskReconciliationKey(initiallyFocusedRef) : null;
   const dependencyCorridor = (entry: TimelineEntry<ProjectAction>): ReadonlySet<string> => {
     const corridor = new Set<string>();
     const visited = new Set<string>();
@@ -1966,18 +1970,37 @@ export function renderTasksTimeline(
       '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
     )) {
       delete row.dataset['taskDependencyEmphasis'];
+      row.removeAttribute('aria-current');
+      row.removeAttribute('aria-description');
     }
-    if (!emphasizedKey) return;
+    if (!emphasizedRefKey) return;
+    const action = actionByRef.get(emphasizedRefKey);
+    const emphasizedKey = keyByRef.get(emphasizedRefKey);
+    if (!action || !emphasizedKey) return;
     const entry = entryByKey.get(emphasizedKey);
     if (!entry) return;
     const corridor = dependencyCorridor(entry);
     if (corridor.size === 0) return;
+    const prerequisiteCount = corridor.size;
+    const prerequisiteNoun = prerequisiteCount === 1 ? 'prerequisite' : 'prerequisites';
     for (const row of container.querySelectorAll<HTMLElement>(
       '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
     )) {
       const key = row.dataset['timelineKey'];
-      if (key === emphasizedKey) row.dataset['taskDependencyEmphasis'] = 'subject';
-      else if (key && corridor.has(key)) row.dataset['taskDependencyEmphasis'] = 'prerequisite';
+      if (key === emphasizedKey) {
+        row.dataset['taskDependencyEmphasis'] = 'subject';
+        row.setAttribute('aria-current', 'true');
+        row.setAttribute(
+          'aria-description',
+          `Focused blocked task. Blocked by ${String(prerequisiteCount)} ${prerequisiteNoun}.`,
+        );
+      } else if (key && corridor.has(key)) {
+        row.dataset['taskDependencyEmphasis'] = 'prerequisite';
+        row.setAttribute(
+          'aria-description',
+          `Prerequisite for focused blocked task ${action.task.title}.`,
+        );
+      }
     }
   };
   const handle = renderTimeline(container, {
@@ -2001,11 +2024,19 @@ export function renderTasksTimeline(
       ? {
           focusedItemKey,
           shouldRestoreItemFocus: () => collection.shouldRestoreFocus(),
-          onItemFocus: (entry: TimelineEntry<ProjectAction>) =>
-            collection.focusOnly(entry.value.task.ref),
-          onItemBlur: () => collection.intentionalBlur(),
         }
       : {}),
+    onItemFocus: (entry: TimelineEntry<ProjectAction>) => {
+      emphasizedRefKey = taskReconciliationKey(entry.value.task.ref);
+      collection?.focusOnly(entry.value.task.ref);
+      applyDependencyEmphasis();
+    },
+    onItemBlur: () => {
+      collection?.intentionalBlur();
+      emphasizedRefKey = null;
+      applyDependencyEmphasis();
+    },
+    onRowsRendered: applyDependencyEmphasis,
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
     ...(options.renderTask
       ? {
@@ -2025,13 +2056,16 @@ export function renderTasksTimeline(
     const row = target?.closest<HTMLElement>(
       '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
     );
-    emphasizedKey = row?.dataset['timelineKey'] ?? null;
+    if (!row) return;
+    const entry = entryByKey.get(row.dataset['timelineKey'] ?? '');
+    if (!entry) return;
+    emphasizedRefKey = taskReconciliationKey(entry.value.task.ref);
     applyDependencyEmphasis();
   };
   const onFocusOut = (): void => {
     queueMicrotask(() => {
       if (container.contains(container.ownerDocument.activeElement)) return;
-      emphasizedKey = null;
+      emphasizedRefKey = null;
       applyDependencyEmphasis();
     });
   };

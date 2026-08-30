@@ -7086,6 +7086,9 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-timeline-row[data-task-dependency-emphasis='subject'] {
   box-shadow: inset 3px 0 var(--interactive-accent);
 }
+.abyss-timeline-row[data-task-dependency-emphasis='subject'] > .abyss-timeline-identity {
+  box-shadow: inset 3px 0 var(--interactive-accent);
+}
 .abyss-timeline-row[data-task-dependency-emphasis='prerequisite'],
 .abyss-timeline-diagnostic-row[data-task-dependency-emphasis='prerequisite'] {
   background: var(--background-secondary);
