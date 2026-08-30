@@ -234,20 +234,11 @@ export function renderProjectsToolbar(
     const chips = Array.from(
       filters.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
     );
-    let retainedActive = 0;
     let hiddenCount = 0;
     statusSummaryButton.hidden = !overflowing;
-    let remainingWidth = Math.max(0, filters.clientWidth - statusSummaryButton.offsetWidth - 6);
     for (const chip of chips) {
-      const active = chip.classList.contains('is-active');
-      const width = chip.offsetWidth;
-      const fits = width + (retainedActive > 0 ? 6 : 0) <= remainingWidth;
-      const hidden = compact || (overflowing && (!active || retainedActive >= 2 || !fits));
+      const hidden = overflowing;
       chip.toggleClass('is-overflow-hidden', hidden);
-      if (active && !hidden) {
-        retainedActive += 1;
-        remainingWidth -= width + (retainedActive > 1 ? 6 : 0);
-      }
       if (hidden) hiddenCount += 1;
     }
     statusSummaryButton.textContent = overflowing ? `Show ${String(hiddenCount)}` : 'Show';

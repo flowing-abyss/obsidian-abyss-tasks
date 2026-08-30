@@ -57,7 +57,7 @@ describe('renderProjectsToolbar', () => {
     expect(timeline.disabled).toBe(true);
   });
 
-  it('replaces overflowing inactive chips with one native Show summary without a filter scroller', () => {
+  it('replaces every chip with one native Show summary during ordinary overflow', () => {
     const callbacks: ResizeObserverCallback[] = [];
     const PreviousResizeObserver = globalThis.ResizeObserver;
     class TestResizeObserver {
@@ -84,8 +84,13 @@ describe('renderProjectsToolbar', () => {
       callbacks[0]?.([], {} as ResizeObserver);
 
       expect(filters.classList.contains('is-overflowing')).toBe(true);
+      expect(
+        filters.querySelectorAll('.abyss-project-status-filter:not(.is-overflow-hidden)'),
+      ).toHaveLength(0);
       expect(result.statusSummaryButton.hidden).toBe(false);
-      expect(result.statusSummaryButton.textContent).toMatch(/^Show(?: \d+)?$/u);
+      expect(result.statusSummaryButton.textContent).toBe(
+        `Show ${String(context().settings.projects.statuses.length + 1)}`,
+      );
       expect(root.querySelectorAll('.abyss-project-status-summary')).toHaveLength(1);
       result.statusSummaryButton.click();
       expect(Menu.prototype.addItem).toHaveBeenCalled();
