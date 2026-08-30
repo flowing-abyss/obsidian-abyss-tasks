@@ -14,7 +14,7 @@ import type { LogicalViewportSession } from '../src/panels/projects/ProjectWorks
 import type { TimelineItem } from '../src/panels/projects/timelineProjection';
 import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import { parseProjectRange } from '../src/projects/projectDates';
-import type { Project } from '../src/projects/types';
+import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { createAppWithFiles, deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
@@ -53,6 +53,46 @@ function range(id: string): TimelineEntry<Fixture> {
       endMs: Date.UTC(2026, 7, 29),
     },
     dateByRole: { start: '2026-08-27', end: '2026-08-29' },
+  };
+}
+
+function workNote(path: string, overrides: Partial<WorkNoteSnapshot> = {}): WorkNoteSnapshot {
+  return {
+    path,
+    presetRevision: 1,
+    presetFingerprint: 'fingerprint',
+    kind: 'ordinary',
+    projectPath: 'Projects/Launch.md',
+    statusId: null,
+    rawStatus: null,
+    writableStatusShape: true,
+    range: {},
+    blockedByPaths: [],
+    relatedPaths: [],
+    diagnostics: [],
+    ...overrides,
+  };
+}
+
+function workspaceSnapshot(
+  project: Project,
+  input: {
+    readonly workNotes?: readonly WorkNoteSnapshot[];
+    readonly milestones?: readonly WorkNoteSnapshot[];
+  } = {},
+): ProjectWorkspaceSnapshot {
+  return {
+    project,
+    tasks: [],
+    workNotes: input.workNotes ?? [],
+    milestones: input.milestones ?? [],
+    taskRollup: project.stats,
+    workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+    milestoneRollups: new Map(),
+    workNoteRelations: [],
+    overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
+    diagnostics: [],
   };
 }
 
@@ -113,6 +153,147 @@ describe('shared Timeline view', () => {
       view: 'dashboard',
       path: 'Projects/Launch.md',
     });
+  });
+
+  it('renders a quiet Project identity rail with priority and compact health but no path or endpoint labels', () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Launch.md',
+      name: 'Launch',
+      frontmatter: { start: '2026-08-27', end: '2026-08-29', priority: 'A' },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      priority: 'A',
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    renderProjectsTimeline(container, {
+      projects: [project],
+      snapshots: [workspaceSnapshot(project)],
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      today: '2026-08-27',
+      openProject: vi.fn(),
+    });
+
+    const identity = container.querySelector<HTMLElement>('.abyss-project-timeline-identity')!;
+    expect(identity.querySelector('.abyss-project-health')).not.toBeNull();
+    expect(identity.querySelector('[data-priority="A"]')?.textContent).toBe('A');
+    expect(identity.textContent).toContain('Launch');
+    expect(identity.textContent).not.toContain('Projects/Launch.md');
+    expect(container.textContent).not.toMatch(/\bStart\b|\bEnd\b/u);
+  });
+
+  it('renders joined milestones as typed portfolio rows and routes selection to the Work Note action', () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Launch.md',
+      name: 'Launch',
+      frontmatter: { start: '2026-08-27' },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', undefined),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const ordinary = workNote('Work Notes/Ordinary.md', {
+      range: parseProjectRange('2026-08-28', undefined),
+    });
+    const milestone = workNote('Work Notes/Launch milestone.md', {
+      kind: 'milestone',
+      updated: '2026-08-29',
+    });
+    const onSelectMilestone = vi.fn();
+    renderProjectsTimeline(container, {
+      projects: [project],
+      snapshots: [workspaceSnapshot(project, { workNotes: [ordinary], milestones: [milestone] })],
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      onSelectMilestone,
+    });
+
+    expect(container.textContent).not.toContain('Ordinary');
+    const control = container.querySelector<HTMLButtonElement>(
+      '[data-project-milestone-identity-control]',
+    )!;
+    expect(control.textContent).toContain('Launch milestone');
+    expect(control.closest('[data-timeline-key]')?.getAttribute('data-timeline-key')).toBe(
+      'work-note:Work Notes/Launch milestone.md',
+    );
+    control.click();
+    expect(onSelectMilestone).toHaveBeenCalledWith(milestone, control);
+  });
+
+  it('keeps a fully undated Project actionable and creates only its owned start field', async () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Undated.md',
+      name: 'Undated',
+      frontmatter: { unrelated: 'keep' },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const setRange = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', range: parseProjectRange('2026-08-30', undefined) });
+    renderProjectsTimeline(container, {
+      projects: [project],
+      commands: { observeRange: () => ({ path: project.path }), setRange } as never,
+    });
+
+    const planning = container.querySelector<HTMLDetailsElement>(
+      '[data-timeline-tray="planning"]',
+    )!;
+    expect(planning.open).toBe(true);
+    const schedule = planning.querySelector<HTMLInputElement>('[data-timeline-schedule]')!;
+    schedule.value = '2026-08-30';
+    schedule.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(setRange).toHaveBeenCalledWith(
+      { path: project.path },
+      { start: expect.objectContaining({ raw: '2026-08-30' }) },
+    );
+  });
+
+  it('shows an exact reversed-range repair preview and mutates only after confirmation', async () => {
+    const app = await createAppWithFiles({
+      'Projects/Reversed.md': '---\nstart: 2026-08-30\nend: 2026-08-20\n---\n# Reversed\n',
+    });
+    const project: Project = {
+      path: 'Projects/Reversed.md',
+      name: 'Reversed',
+      frontmatter: { start: '2026-08-30', end: '2026-08-20' },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-30', '2026-08-20'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const writes = vi.spyOn(app.vault, 'modify');
+    const container = freshContainer();
+    renderProjectsTimeline(container, {
+      projects: [project],
+      commands: new ProjectCommandService(app, () => []),
+    });
+
+    const invalid = container.querySelector<HTMLDetailsElement>('[data-timeline-tray="invalid"]')!;
+    invalid.open = true;
+    expect(invalid.textContent).toContain('reversed');
+    expect(invalid.querySelector('[data-timeline-repair-preview]')?.textContent).toContain(
+      '2026-08-20 – 2026-08-30',
+    );
+    expect(writes).not.toHaveBeenCalled();
+
+    invalid.querySelector<HTMLButtonElement>('[data-timeline-repair-confirm]')!.click();
+    await flushMicrotasks();
+    const file = app.vault.getMarkdownFiles().find(({ path }) => path === project.path)!;
+    const markdown = await app.vault.read(file);
+    expect(markdown).toContain('start: 2026-08-20');
+    expect(markdown).toContain('end: 2026-08-30');
+    expect(writes).toHaveBeenCalledOnce();
   });
 
   it('opens a Work Note from its native title button when date mutation is disabled', () => {
@@ -1117,10 +1298,10 @@ describe('shared Timeline view', () => {
         '[data-bounded-window-edge="start"]',
       )!;
 
-      expect(getComputedStyle(row).blockSize).toBe('104px');
+      expect(getComputedStyle(row).blockSize).toBe('144px');
       expect(getComputedStyle(row).overflow).not.toBe('hidden');
-      expect(scroll.scrollTop).toBe(120 * 104);
-      expect(Number.parseInt(startSpacer.style.blockSize, 10) % 104).toBe(0);
+      expect(scroll.scrollTop).toBe(120 * 144);
+      expect(Number.parseInt(startSpacer.style.blockSize, 10) % 144).toBe(0);
       for (const control of row.querySelectorAll<HTMLElement>('button, input, summary')) {
         expect(Number.parseFloat(getComputedStyle(control).minBlockSize)).toBeGreaterThanOrEqual(
           44,
@@ -1152,7 +1333,7 @@ describe('shared Timeline view', () => {
     expect(scrollers).toHaveLength(2);
     for (const scroll of scrollers) {
       Object.defineProperty(scroll, 'clientHeight', { configurable: true, value: 160 });
-      scroll.scrollTop = 150 * 32;
+      scroll.scrollTop = 150 * 88;
       scroll.dispatchEvent(new Event('scroll'));
     }
     expect(container.textContent).toContain('Undated 150');
@@ -1364,6 +1545,54 @@ describe('shared Timeline view', () => {
     expect(markdown).toContain('start: 2026-08-28');
     expect(markdown).toContain('end: 2026-08-30');
     expect(writes).toHaveBeenCalledOnce();
+  });
+
+  it('preserves Project datetime precision and offsets during a whole-range move', async () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Atom.md',
+      name: 'Atom',
+      frontmatter: {
+        start: '2026-08-11T09:30:00+07:00',
+        end: '2026-09-15T17:00:00+07:00',
+      },
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-11T09:30:00+07:00', '2026-09-15T17:00:00+07:00'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const observed = {
+      path: project.path,
+      start: project.frontmatter['start'],
+      end: project.frontmatter['end'],
+    };
+    const setRange = vi.fn().mockResolvedValue({ type: 'ok', range: project.range });
+    renderProjectsTimeline(container, {
+      projects: [project],
+      commands: {
+        observeRange: () => observed,
+        setRange,
+      } as never,
+    });
+
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(setRange).toHaveBeenCalledWith(observed, {
+      start: expect.objectContaining({
+        raw: '2026-08-12T09:30:00+07:00',
+        precision: 'datetime',
+        offsetMinutes: 420,
+      }),
+      end: expect.objectContaining({
+        raw: '2026-09-16T17:00:00+07:00',
+        precision: 'datetime',
+        offsetMinutes: 420,
+      }),
+    });
   });
 
   it('rejects a stale Work Note whole-range move without applying either endpoint', async () => {

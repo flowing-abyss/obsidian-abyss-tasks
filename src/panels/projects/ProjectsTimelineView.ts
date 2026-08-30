@@ -2,9 +2,16 @@ import { Platform } from 'obsidian';
 import type {
   ProjectCommandService,
   ProjectRangeCommandResult,
+  ProjectRangePatch,
 } from '../../projects/ProjectCommandService';
+import { projectHealthProjection } from '../../projects/ProjectHealthProjection';
 import { parseProjectDate, projectDateOnLocalDate } from '../../projects/projectDates';
-import type { Project, ProjectAction, ProjectDateValue } from '../../projects/types';
+import type {
+  Project,
+  ProjectAction,
+  ProjectDateValue,
+  ProjectWorkspaceSnapshot,
+} from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import { taskReconciliationKey, type TaskCommandResult, type TaskSnapshot } from '../../tasks';
@@ -40,18 +47,25 @@ import {
   type TimelineScope,
   type WorkNoteTimelineScale,
 } from './timelinePreferences';
-import type { TimelineItem, TimelinePointRole, TimelineProjection } from './timelineProjection';
+import type {
+  PortfolioTimelineValue,
+  TimelineItem,
+  TimelinePointRole,
+  TimelineProjection,
+} from './timelineProjection';
 import {
+  portfolioTimelineEntries,
   projectTimelineEntry,
   taskTimelineEntry,
   workNoteTimelineEntry,
 } from './timelineProjection';
 
 const TIMELINE_ROW_EXTENT = 72;
-const TIMELINE_AGENDA_ROW_EXTENT = 104;
+const TIMELINE_AGENDA_ROW_EXTENT = 144;
 const TIMELINE_FALLBACK_VISIBLE_ROWS = 12;
 const TIMELINE_OVERSCAN = 5;
 const TIMELINE_DIAGNOSTIC_ROW_EXTENT = 32;
+const TIMELINE_AGENDA_DIAGNOSTIC_ROW_EXTENT = 88;
 const TIMELINE_DIAGNOSTIC_VISIBLE_ROWS = 7;
 /** Hard DOM ceiling for the live horizontal civil-date marker window at every scope and scale. */
 export const TIMELINE_MARKER_DOM_CAP = 120;
@@ -60,6 +74,10 @@ export type TimelineEntry<T> = TimelineProjection<T>;
 
 interface TimelineMutationResult {
   readonly type: string;
+}
+
+export interface TimelineRepairProposal {
+  readonly preview: string;
 }
 
 export interface TimelineViewOptions<T> {
@@ -74,6 +92,13 @@ export interface TimelineViewOptions<T> {
     entry: TimelineEntry<T>,
     start: string,
     end: string,
+    initiator: HTMLElement,
+  ) => Promise<TimelineMutationResult> | TimelineMutationResult;
+  readonly canSetDate?: (entry: TimelineEntry<T>, role: TimelinePointRole) => boolean;
+  readonly canSetRange?: (entry: TimelineEntry<T>) => boolean;
+  readonly repairProposal?: (entry: TimelineEntry<T>) => TimelineRepairProposal | undefined;
+  readonly onConfirmRepair?: (
+    entry: TimelineEntry<T>,
     initiator: HTMLElement,
   ) => Promise<TimelineMutationResult> | TimelineMutationResult;
   readonly dateWindow?: { readonly from: string; readonly to: string };
@@ -134,11 +159,16 @@ export function renderContainerResponsiveTimeline(
 
 export interface ProjectsTimelineOptions {
   readonly projects: readonly Project[];
+  readonly snapshots?: readonly ProjectWorkspaceSnapshot[];
   readonly commands: ProjectCommandService;
+  readonly milestoneCommands?: WorkNoteCommandService;
   readonly session?: LogicalViewportSession;
   readonly isNarrow?: boolean;
   readonly onMutation?: (project: Project, result: ProjectRangeCommandResult) => void;
+  readonly onMilestoneMutation?: (note: WorkNoteSnapshot, result: WorkNoteCommandResult) => void;
   readonly openProject?: (path: string) => void;
+  readonly onSelectMilestone?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
+  readonly today?: string;
   readonly scale?: PortfolioTimelineScale;
   readonly identityWidth?: number;
   readonly onPresentationChange?: (presentation: {
@@ -344,6 +374,20 @@ function coarseTimelineTarget(actionName: string): string | undefined {
   return undefined;
 }
 
+function coarseTimelineRole(item: TimelineItem, actionName: string): TimelinePointRole {
+  if (actionName.startsWith('start-')) return 'start';
+  if (actionName.startsWith('end-')) return 'end';
+  return item.kind === 'point' ? item.role : 'start';
+}
+
+function bindTimelineRepair<T>(
+  confirm: HTMLButtonElement,
+  entry: TimelineEntry<T>,
+  repair: (entry: TimelineEntry<T>, initiator: HTMLElement) => Promise<boolean>,
+): void {
+  confirm.addEventListener('click', () => void repair(entry, confirm));
+}
+
 /** Semantically neutral bounded Timeline shell shared by Project, Work Note, and Task adapters. */
 export function renderTimeline<T>(
   container: HTMLElement,
@@ -436,6 +480,10 @@ export function renderTimeline<T>(
   let autoscrollDirection: -1 | 0 | 1 = 0;
   let autoscrollSpeed = 0;
   const scheduleEntryByInput = new WeakMap<HTMLInputElement, TimelineEntry<T>>();
+  const canSetDate = (entry: TimelineEntry<T>, role: TimelinePointRole): boolean =>
+    options.onSetDate !== undefined && options.canSetDate?.(entry, role) !== false;
+  const canSetRange = (entry: TimelineEntry<T>): boolean =>
+    options.onSetRange !== undefined && options.canSetRange?.(entry) !== false;
 
   const commit = async (
     entry: TimelineEntry<T>,
@@ -485,11 +533,34 @@ export function renderTimeline<T>(
     return false;
   };
 
+  const confirmRepair = async (
+    entry: TimelineEntry<T>,
+    initiator: HTMLElement,
+  ): Promise<boolean> => {
+    if (!options.onConfirmRepair) return false;
+    try {
+      const result = await Promise.resolve(options.onConfirmRepair(entry, initiator));
+      if (successful(result)) {
+        feedback.empty();
+        delete feedback.dataset['resultType'];
+        return true;
+      }
+      feedback.dataset['resultType'] = result.type;
+      feedback.setText('Timeline repair was not applied.');
+    } catch {
+      feedback.dataset['resultType'] = 'io-error';
+      feedback.setText('Timeline repair could not be applied.');
+    }
+    if (initiator.isConnected) initiator.focus({ preventScroll: true });
+    return false;
+  };
+
   const onScheduleChange = (event: Event): void => {
     if (!(event.target instanceof HTMLInputElement) || !event.target.value) return;
     const entry = scheduleEntryByInput.get(event.target);
     if (!entry) return;
-    void commit(entry, options.undatedRole ?? 'scheduled', event.target.value, event.target);
+    const role = options.undatedRole ?? 'scheduled';
+    if (canSetDate(entry, role)) void commit(entry, role, event.target.value, event.target);
   };
   root.addEventListener('change', onScheduleChange);
   cleanups.push(() => root.removeEventListener('change', onScheduleChange));
@@ -648,7 +719,7 @@ export function renderTimeline<T>(
           ...(!isAgenda ? { tabindex: '-1' } : {}),
         },
       });
-      picker.disabled = options.onSetDate === undefined;
+      picker.disabled = !canSetDate(entry, role);
       return picker;
     };
 
@@ -680,8 +751,11 @@ export function renderTimeline<T>(
           text: label,
           attr: { type: 'button', 'data-timeline-coarse-action': action },
         });
-        if (action.startsWith('range-')) button.disabled = options.onSetRange === undefined;
-        else button.disabled = options.onSetDate === undefined;
+        if (action.startsWith('range-')) button.disabled = !canSetRange(entry);
+        else {
+          const role = coarseTimelineRole(entry.item, action);
+          button.disabled = !canSetDate(entry, role);
+        }
       }
     };
 
@@ -713,9 +787,9 @@ export function renderTimeline<T>(
             title: `${entry.dateByRole.start ?? ''} – ${entry.dateByRole.end ?? ''}`,
           },
         });
-        move.disabled = options.onSetRange === undefined;
+        move.disabled = !canSetRange(entry);
         move.setAttribute('aria-disabled', String(move.disabled));
-        if (options.onSetRange) registerTarget(move, targetFor(entry, 'range-move'));
+        if (!move.disabled) registerTarget(move, targetFor(entry, 'range-move'));
         for (const [kind, role] of [
           ['start-edge', 'start'],
           ['end-edge', 'end'],
@@ -731,8 +805,8 @@ export function renderTimeline<T>(
               title: `${entry.dateByRole.start ?? ''} – ${entry.dateByRole.end ?? ''}`,
             },
           });
-          edge.disabled = options.onSetDate === undefined;
-          registerTarget(edge, targetFor(entry, kind));
+          edge.disabled = !canSetDate(entry, role);
+          if (!edge.disabled) registerTarget(edge, targetFor(entry, kind));
         }
       } else if (entry.item.kind === 'point' && geometry.kind !== 'range') {
         const targetKind = entry.item.role === 'milestone' ? 'milestone-move' : 'point-move';
@@ -754,8 +828,8 @@ export function renderTimeline<T>(
         point.style.insetInlineStart = `${String(geometry.centerX)}px`;
         point.style.inlineSize = `${String(geometry.size)}px`;
         point.style.blockSize = `${String(geometry.size)}px`;
-        point.disabled = options.onSetDate === undefined;
-        registerTarget(point, targetFor(entry, targetKind));
+        point.disabled = !canSetDate(entry, entry.item.role);
+        if (!point.disabled) registerTarget(point, targetFor(entry, targetKind));
       }
 
       const roles = pointRoles(entry.item);
@@ -1172,7 +1246,7 @@ export function renderTimeline<T>(
       if (!picker?.value) return;
       const entry = entryByKey.get(picker.dataset['timelineKey'] ?? '');
       const role = picker.dataset['timelineDatePicker'] as TimelinePointRole | undefined;
-      if (entry && role) void commit(entry, role, picker.value, picker);
+      if (entry && role && canSetDate(entry, role)) void commit(entry, role, picker.value, picker);
     };
     const onClick = (event: MouseEvent): void => {
       const element = event.target instanceof HTMLElement ? event.target : null;
@@ -1309,22 +1383,25 @@ export function renderTimeline<T>(
       TIMELINE_OVERSCAN,
     );
     const keys = entries.map(({ item }) => item.key);
+    const diagnosticRowExtent = isAgenda
+      ? TIMELINE_AGENDA_DIAGNOSTIC_ROW_EXTENT
+      : TIMELINE_DIAGNOSTIC_ROW_EXTENT;
     const focusedKey = options.focusedItemKey?.() ?? options.session?.focusedKey;
     if (focusedKey && keys.includes(focusedKey)) bounded.focus(focusedKey);
     const viewport = (): { first: number; visible: number } => ({
-      first: Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_DIAGNOSTIC_ROW_EXTENT),
+      first: Math.floor(Math.max(0, scroll.scrollTop) / diagnosticRowExtent),
       visible:
         scroll.clientHeight > 0
-          ? Math.ceil(scroll.clientHeight / TIMELINE_DIAGNOSTIC_ROW_EXTENT)
+          ? Math.ceil(scroll.clientHeight / diagnosticRowExtent)
           : TIMELINE_DIAGNOSTIC_VISIBLE_ROWS,
     });
     if (focusedKey && keys.includes(focusedKey)) {
-      scroll.scrollTop = bounded.viewportForFocus(viewport()) * TIMELINE_DIAGNOSTIC_ROW_EXTENT;
+      scroll.scrollTop = bounded.viewportForFocus(viewport()) * diagnosticRowExtent;
     }
     const renderWindow = (restoreFocus = false): void => {
       bounded.render(rows, {
         ...viewport(),
-        itemExtent: TIMELINE_DIAGNOSTIC_ROW_EXTENT,
+        itemExtent: diagnosticRowExtent,
         restoreFocus,
         render: (host, _key, logicalIndex) => {
           const entry = entries[logicalIndex]!;
@@ -1336,7 +1413,25 @@ export function renderTimeline<T>(
           renderEntryIdentity(identity, entry, options.renderIdentity);
           if (entry.item.kind === 'invalid') {
             row.createSpan({ cls: 'abyss-timeline-diagnostic-reason', text: entry.item.reason });
-          } else if (options.onSetDate) {
+            const proposal = options.repairProposal?.(entry);
+            if (proposal && options.onConfirmRepair) {
+              row.createSpan({
+                cls: 'abyss-timeline-repair-preview',
+                text: proposal.preview,
+                attr: { 'data-timeline-repair-preview': '' },
+              });
+              const confirm = row.createEl('button', {
+                cls: 'abyss-timeline-repair-confirm abyss-timeline-touch-target',
+                text: 'Apply repair',
+                attr: {
+                  type: 'button',
+                  'data-timeline-repair-confirm': '',
+                  'aria-label': `Apply timeline repair for ${entry.label}`,
+                },
+              });
+              bindTimelineRepair(confirm, entry, confirmRepair);
+            }
+          } else if (canSetDate(entry, options.undatedRole ?? 'scheduled')) {
             const schedule = row.createEl('input', {
               cls: 'abyss-timeline-touch-target',
               attr: {
@@ -1382,7 +1477,45 @@ export function renderTimeline<T>(
 }
 
 function movedProjectDate(current: ProjectDateValue | undefined, date: string) {
-  return current ? projectDateOnLocalDate(current, date) : parseProjectDate(date);
+  return current ? projectDateOnLocalDate(current, date.slice(0, 10)) : parseProjectDate(date);
+}
+
+interface ProjectRepair extends TimelineRepairProposal {
+  readonly patch: ProjectRangePatch;
+}
+
+function projectRepair(project: Project, today: string): ProjectRepair | undefined {
+  const issue = project.range.issue;
+  if (!issue) return undefined;
+  let patch: ProjectRangePatch;
+  if (issue === 'reversed' && project.range.start && project.range.end) {
+    patch = { start: project.range.end, end: project.range.start };
+  } else if (issue === 'invalid-start') {
+    const start = project.range.end ?? parseProjectDate(today);
+    if (!start) return undefined;
+    patch = { start };
+  } else if (issue === 'invalid-end') {
+    const end = project.range.start ?? parseProjectDate(today);
+    if (!end) return undefined;
+    patch = { end };
+  } else {
+    return undefined;
+  }
+  const start = patch.start === undefined ? project.range.start : (patch.start ?? undefined);
+  const end = patch.end === undefined ? project.range.end : (patch.end ?? undefined);
+  return {
+    patch,
+    preview: start && end ? `${start.raw} – ${end.raw}` : (start?.raw ?? end?.raw ?? today),
+  };
+}
+
+function localToday(): string {
+  const now = new Date();
+  return [
+    String(now.getFullYear()).padStart(4, '0'),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 /** Project projection/command adapter for the shared Timeline shell. */
@@ -1390,10 +1523,39 @@ export function renderProjectsTimeline(
   container: HTMLElement,
   options: ProjectsTimelineOptions,
 ): TimelineViewHandle {
-  return renderTimeline<Project>(container, {
-    entries: options.projects.map(projectTimelineEntry),
+  const entries: readonly TimelineEntry<PortfolioTimelineValue>[] = options.snapshots
+    ? portfolioTimelineEntries(options.snapshots)
+    : options.projects.map((project) => ({
+        ...projectTimelineEntry(project),
+        value: { kind: 'project' as const, project },
+      }));
+  const projectObservations = new Map(
+    entries.flatMap((entry) =>
+      entry.value.kind === 'project'
+        ? [[entry.item.key, options.commands.observeRange(entry.value.project)] as const]
+        : [],
+    ),
+  );
+  const milestoneObservations = new Map(
+    entries.flatMap((entry) => {
+      if (entry.value.kind !== 'milestone' || !options.milestoneCommands) return [];
+      return [[entry.item.key, options.milestoneCommands.observeRange(entry.value.note)] as const];
+    }),
+  );
+  const today = options.today ?? localToday();
+  const repairs = new Map(
+    entries.flatMap((entry) => {
+      if (entry.value.kind !== 'project') return [];
+      const repair = projectRepair(entry.value.project, today);
+      return repair ? [[entry.item.key, repair] as const] : [];
+    }),
+  );
+
+  return renderTimeline<PortfolioTimelineValue>(container, {
+    entries,
     scope: 'portfolio',
     undatedRole: 'start',
+    today,
     ...(options.scale && { scale: options.scale }),
     ...(options.identityWidth !== undefined && { identityWidth: options.identityWidth }),
     ...(options.onPresentationChange && {
@@ -1408,9 +1570,37 @@ export function renderProjectsTimeline(
     }),
     ...(options.session && { session: options.session }),
     ...(options.isNarrow !== undefined && { isNarrow: options.isNarrow }),
-    ...(options.openProject
+    ...(options.openProject || options.onSelectMilestone
       ? {
           renderIdentity: (host, entry) => {
+            if (entry.value.kind === 'milestone') {
+              const milestone = entry.value;
+              host.addClass('abyss-project-milestone-timeline-identity');
+              const button = host.createEl('button', {
+                cls: 'abyss-timeline-title abyss-work-note-identity',
+                text: entry.label,
+                attr: {
+                  type: 'button',
+                  'data-project-milestone-identity-control': '',
+                  'aria-label': `Milestone details ${entry.label}`,
+                },
+              });
+              button.dataset['inspectorOriginKey'] = inspectorSelectionKey({
+                type: 'work-note',
+                path: milestone.note.path,
+                projectPath: milestone.projectPath,
+              });
+              button.addEventListener('click', () =>
+                options.onSelectMilestone?.(milestone.note, button),
+              );
+              host.createSpan({
+                cls: 'abyss-timeline-detail abyss-project-milestone-owner',
+                text: `Milestone · ${milestone.projectName}`,
+              });
+              return;
+            }
+            const { project, snapshot } = entry.value;
+            host.addClass('abyss-project-timeline-identity');
             const button = host.createEl('button', {
               cls: 'abyss-timeline-title abyss-project-identity-control',
               text: entry.label,
@@ -1420,31 +1610,103 @@ export function renderProjectsTimeline(
                 'aria-label': `Open project ${entry.label}`,
               },
             });
-            button.addEventListener('click', () => options.openProject?.(entry.value.path));
-            if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
+            button.addEventListener('click', () => options.openProject?.(project.path));
+            if (project.priority && project.priority !== 'D') {
+              host.createSpan({
+                cls: 'abyss-project-priority',
+                text: project.priority,
+                attr: {
+                  'data-priority': project.priority,
+                  'aria-label': `Priority ${project.priority}`,
+                },
+              });
+            }
+            const severity = snapshot
+              ? projectHealthProjection(snapshot, { today }).severity
+              : 'unknown';
+            host.createSpan({
+              cls: `abyss-project-health abyss-project-health--${severity}`,
+              attr: {
+                role: 'img',
+                title: `Project health: ${severity}`,
+                'aria-label': `Project health: ${severity}`,
+              },
+            });
           },
         }
       : {}),
+    canSetDate: (entry, role) =>
+      entry.value.kind === 'project'
+        ? role === 'start' || role === 'end'
+        : options.milestoneCommands !== undefined &&
+          (role === 'start' || role === 'end' || role === 'milestone'),
+    canSetRange: (entry) =>
+      entry.value.kind === 'project' || options.milestoneCommands !== undefined,
     onSetDate: async (entry, role, date) => {
-      if (role !== 'start' && role !== 'end') return { type: 'invalid', issue: 'invalid-start' };
-      const value = movedProjectDate(entry.value.range[role], date);
-      if (!value) return { type: 'invalid', issue: `invalid-${role}` };
-      const result = await options.commands.setRange(options.commands.observeRange(entry.value), {
-        [role]: value,
-      });
-      options.onMutation?.(entry.value, result);
+      if (entry.value.kind === 'project') {
+        if (role !== 'start' && role !== 'end') {
+          return { type: 'invalid', issue: 'invalid-start' };
+        }
+        const value = movedProjectDate(entry.value.project.range[role], date);
+        if (!value) return { type: 'invalid', issue: `invalid-${role}` };
+        const observation = projectObservations.get(entry.item.key);
+        if (!observation) return { type: 'invalid', issue: 'path' };
+        const result = await options.commands.setRange(observation, { [role]: value });
+        options.onMutation?.(entry.value.project, result);
+        return result;
+      }
+      const commands = options.milestoneCommands;
+      const observation = milestoneObservations.get(entry.item.key);
+      const field = role === 'milestone' ? 'end' : role;
+      if (!commands || !observation || (field !== 'start' && field !== 'end')) {
+        return { type: 'invalid', field: 'path' };
+      }
+      const current = role === 'milestone' ? observation.updated : observation[field];
+      const value = movedProjectDate(current, date);
+      if (!value) return { type: 'invalid', field };
+      const result = await commands.setRange(observation.observed, { [field]: value });
+      options.onMilestoneMutation?.(entry.value.note, result);
       return result;
     },
     onSetRange: async (entry, start, end) => {
-      const nextStart = movedProjectDate(entry.value.range.start, start);
-      const nextEnd = movedProjectDate(entry.value.range.end, end);
-      if (!nextStart) return { type: 'invalid', issue: 'invalid-start' };
-      if (!nextEnd) return { type: 'invalid', issue: 'invalid-end' };
-      const result = await options.commands.setRange(options.commands.observeRange(entry.value), {
+      if (entry.value.kind === 'project') {
+        const nextStart = movedProjectDate(entry.value.project.range.start, start);
+        const nextEnd = movedProjectDate(entry.value.project.range.end, end);
+        if (!nextStart) return { type: 'invalid', issue: 'invalid-start' };
+        if (!nextEnd) return { type: 'invalid', issue: 'invalid-end' };
+        const observation = projectObservations.get(entry.item.key);
+        if (!observation) return { type: 'invalid', issue: 'path' };
+        const result = await options.commands.setRange(observation, {
+          start: nextStart,
+          end: nextEnd,
+        });
+        options.onMutation?.(entry.value.project, result);
+        return result;
+      }
+      const commands = options.milestoneCommands;
+      const observation = milestoneObservations.get(entry.item.key);
+      if (!commands || !observation?.start || !observation.end) {
+        return { type: 'invalid', field: 'path' };
+      }
+      const nextStart = movedProjectDate(observation.start, start);
+      const nextEnd = movedProjectDate(observation.end, end);
+      if (!nextStart) return { type: 'invalid', field: 'start' };
+      if (!nextEnd) return { type: 'invalid', field: 'end' };
+      const result = await commands.setRange(observation.observed, {
         start: nextStart,
         end: nextEnd,
       });
-      options.onMutation?.(entry.value, result);
+      options.onMilestoneMutation?.(entry.value.note, result);
+      return result;
+    },
+    repairProposal: (entry) => repairs.get(entry.item.key),
+    onConfirmRepair: async (entry) => {
+      if (entry.value.kind !== 'project') return { type: 'invalid', issue: 'path' };
+      const repair = repairs.get(entry.item.key);
+      const observation = projectObservations.get(entry.item.key);
+      if (!repair || !observation) return { type: 'invalid', issue: 'path' };
+      const result = await options.commands.setRange(observation, repair.patch);
+      options.onMutation?.(entry.value.project, result);
       return result;
     },
   });

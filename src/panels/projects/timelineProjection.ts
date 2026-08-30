@@ -1,5 +1,5 @@
 import { parseProjectDate } from '../../projects/projectDates';
-import type { Project } from '../../projects/types';
+import type { Project, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type { TaskSnapshot } from '../../tasks';
 
@@ -29,6 +29,19 @@ export interface TimelineProjection<T> {
   readonly dateByRole: Readonly<Partial<Record<TimelinePointRole, string>>>;
 }
 
+export type PortfolioTimelineValue =
+  | {
+      readonly kind: 'project';
+      readonly project: Project;
+      readonly snapshot?: ProjectWorkspaceSnapshot;
+    }
+  | {
+      readonly kind: 'milestone';
+      readonly note: WorkNoteSnapshot;
+      readonly projectPath: string;
+      readonly projectName: string;
+    };
+
 function projectKey(project: Project): string {
   return `project:${project.path}`;
 }
@@ -51,13 +64,39 @@ export function projectTimelineEntry(project: Project): TimelineProjection<Proje
   return {
     value: project,
     label: project.name,
-    detail: project.path,
     item: projectTimelineItem(project),
     dateByRole: {
       ...(project.range.start && { start: project.range.start.raw }),
       ...(project.range.end && { end: project.range.end.raw }),
     },
   };
+}
+
+/** Projects plus their joined typed milestones; ordinary Work Notes and Tasks never enter it. */
+export function portfolioTimelineEntries(
+  snapshots: readonly ProjectWorkspaceSnapshot[],
+): readonly TimelineProjection<PortfolioTimelineValue>[] {
+  return snapshots.flatMap((snapshot) => {
+    const projectEntry = projectTimelineEntry(snapshot.project);
+    const project: TimelineProjection<PortfolioTimelineValue> = {
+      ...projectEntry,
+      value: { kind: 'project', project: snapshot.project, snapshot },
+    };
+    const milestones = snapshot.milestones.map((note) => {
+      const entry = workNoteTimelineEntry(note);
+      return {
+        ...entry,
+        value: {
+          kind: 'milestone' as const,
+          note,
+          projectPath: snapshot.project.path,
+          projectName: snapshot.project.name,
+        },
+        detail: `Milestone · ${snapshot.project.name}`,
+      } satisfies TimelineProjection<PortfolioTimelineValue>;
+    });
+    return [project, ...milestones];
+  });
 }
 
 export function workNoteTimelineItem(note: WorkNoteSnapshot): TimelineItem {

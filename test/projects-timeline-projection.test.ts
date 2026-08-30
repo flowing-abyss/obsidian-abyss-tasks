@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  portfolioTimelineEntries,
   projectTimelineEntry,
   projectTimelineItem,
   projectTimelineItems,
@@ -51,6 +52,28 @@ function workNote(over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnapshot {
     relatedPaths: [],
     diagnostics: [],
     ...over,
+  };
+}
+
+function workspaceSnapshot(
+  projectValue: ProjectWorkspaceSnapshot['project'],
+  input: {
+    readonly workNotes?: readonly WorkNoteSnapshot[];
+    readonly milestones?: readonly WorkNoteSnapshot[];
+  } = {},
+): ProjectWorkspaceSnapshot {
+  return {
+    project: projectValue,
+    tasks: [],
+    workNotes: input.workNotes ?? [],
+    milestones: input.milestones ?? [],
+    taskRollup: projectValue.stats,
+    workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+    milestoneRollups: new Map(),
+    workNoteRelations: [],
+    overdue: { tasks: 0, workNotes: 0 },
+    dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
+    diagnostics: [],
   };
 }
 
@@ -134,5 +157,35 @@ describe('Timeline projections', () => {
       scheduled: '2026-09-02',
       due: '2026-09-03',
     });
+  });
+
+  it('projects only Projects and their typed milestones from joined portfolio snapshots', () => {
+    const projectValue = project(parseProjectRange('2026-08-20', '2026-08-24'));
+    const ordinary = workNote({
+      path: 'Work Notes/Ordinary.md',
+      range: parseProjectRange('2026-08-21', undefined),
+    });
+    const milestone = workNote({
+      path: 'Work Notes/Launch milestone.md',
+      kind: 'milestone',
+      updated: '2026-08-23',
+    });
+    const entries = portfolioTimelineEntries([
+      workspaceSnapshot(projectValue, { workNotes: [ordinary], milestones: [milestone] }),
+    ]);
+
+    expect(entries.map(({ item }) => item.key)).toEqual([
+      'project:Projects/A.md',
+      'work-note:Work Notes/Launch milestone.md',
+    ]);
+    expect(entries.map(({ value }) => value.kind)).toEqual(['project', 'milestone']);
+    expect(entries[0]).not.toHaveProperty('detail');
+    expect(entries[1]).toMatchObject({
+      label: 'Launch milestone',
+      detail: 'Milestone · A',
+      value: { kind: 'milestone', projectPath: 'Projects/A.md', note: milestone },
+    });
+    expect(entries.some(({ item }) => item.key.startsWith('task:'))).toBe(false);
+    expect(entries.some(({ item }) => item.key.includes('Ordinary'))).toBe(false);
   });
 });

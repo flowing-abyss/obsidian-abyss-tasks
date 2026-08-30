@@ -7112,8 +7112,44 @@ body.abyss-modal-open .popover.hover-popover {
   border: 0;
   background: transparent;
 }
+.abyss-project-timeline-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.abyss-project-timeline-identity .abyss-project-identity-control,
+.abyss-project-milestone-timeline-identity .abyss-work-note-identity {
+  min-width: 0;
+  min-block-size: 0;
+  height: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  font: inherit;
+  text-align: start;
+}
+.abyss-project-timeline-identity .abyss-project-identity-control {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-project-milestone-timeline-identity {
+  display: grid;
+  grid-template-rows: auto auto;
+  align-self: stretch;
+  block-size: auto;
+  align-content: center;
+}
+.abyss-project-milestone-owner {
+  color: var(--text-faint);
+}
 .abyss-timeline-plot {
   position: relative;
+  grid-column: 2;
+  grid-row: 1;
   inline-size: var(--abyss-timeline-plot-width);
   block-size: 30px;
   isolation: isolate;
@@ -7261,6 +7297,14 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
+.abyss-timeline-diagnostic-row .abyss-timeline-identity {
+  position: static;
+  flex: 1 1 auto;
+  inline-size: auto;
+  padding: 0;
+  border-inline-end: 0;
+  background: transparent;
+}
 .abyss-timeline-diagnostic-scroll {
   min-block-size: 0;
   overflow-x: hidden;
@@ -7280,6 +7324,28 @@ body.abyss-modal-open .popover.hover-popover {
   margin-inline-start: auto;
   color: var(--text-error);
 }
+.abyss-timeline-repair-preview {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.abyss-timeline-repair-confirm {
+  flex: 0 0 auto;
+  min-block-size: 28px;
+  padding: 3px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-normal);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-repair-confirm:hover,
+.abyss-timeline-repair-confirm:focus-visible {
+  border-color: var(--interactive-accent);
+}
 .abyss-timeline.is-agenda .abyss-timeline-axis,
 .abyss-timeline.is-agenda .abyss-timeline-plot {
   display: none;
@@ -7295,22 +7361,33 @@ body.abyss-modal-open .popover.hover-popover {
   max-inline-size: 100%;
 }
 .abyss-timeline.is-agenda .abyss-timeline-row {
-  block-size: 104px;
+  block-size: 144px;
   min-block-size: 0;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   padding-block: 4px;
   overflow: visible;
 }
 .abyss-timeline.is-agenda .abyss-timeline-identity {
   position: static;
-  inline-size: auto;
+  grid-column: 1;
+  grid-row: 1;
+  align-self: stretch;
+  inline-size: 100%;
+  block-size: auto;
+  padding-block: 4px;
   border-inline-end: 0;
 }
 .abyss-timeline.is-agenda .abyss-timeline-date-controls {
+  position: static;
   display: grid;
-  inline-size: min(100%, 17rem);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-column: 1;
+  grid-row: 2;
+  box-sizing: border-box;
+  inline-size: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
   grid-auto-flow: row;
+  padding-inline: 12px;
   gap: 2px 4px;
 }
 .abyss-timeline.is-agenda .abyss-timeline-touch-target {
@@ -7327,6 +7404,30 @@ body.abyss-modal-open .popover.hover-popover {
   block-size: 44px;
   min-width: 0;
   opacity: 1;
+}
+.abyss-timeline.is-agenda .abyss-timeline-diagnostic-row {
+  block-size: 88px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 4px 8px;
+  padding-block: 6px;
+}
+.abyss-timeline.is-agenda .abyss-timeline-diagnostic-row > .abyss-timeline-identity {
+  grid-column: 1;
+  grid-row: 1;
+}
+.abyss-timeline.is-agenda .abyss-timeline-diagnostic-reason {
+  grid-column: 2;
+  grid-row: 1;
+}
+.abyss-timeline.is-agenda .abyss-timeline-repair-preview {
+  grid-column: 1;
+  grid-row: 2;
+}
+.abyss-timeline.is-agenda .abyss-timeline-repair-confirm {
+  grid-column: 2;
+  grid-row: 2;
 }
 /* Shared lifecycle/status board: quiet shell, existing cards carry the detail. */
 .abyss-board {

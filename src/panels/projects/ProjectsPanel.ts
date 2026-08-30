@@ -560,7 +560,11 @@ export class ProjectsPanel {
       const handle = renderContainerResponsiveTimeline(timelineHost, (isNarrow) =>
         renderProjectsTimeline(timelineHost, {
           projects: timelineSnapshots.map(({ project }) => project),
+          snapshots: timelineSnapshots,
           commands: projectCommands,
+          ...(this.workNoteCommands?.capabilities().update === true
+            ? { milestoneCommands: this.workNoteCommands }
+            : {}),
           session: this.workspaceSession.portfolioTimeline,
           isNarrow,
           scale: this.settings.projects.view.timeline.portfolio.scale,
@@ -576,7 +580,24 @@ export class ProjectsPanel {
             void this.onSaveSettings();
           },
           openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
+          onSelectMilestone: (note, origin) => {
+            this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
+            const selection = deriveInspectorSelection({
+              project: { type: 'project', path: note.projectPath },
+              activeScope: 'work-notes',
+              workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
+            });
+            origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+            this.state.batch(() => {
+              this.state.set('taskStack', []);
+              this.state.set('inspectorSelection', selection);
+              this.state.set('inspectorOrigin', { selection, element: origin });
+            });
+          },
           onMutation: (_project, result) => {
+            if (result.type === 'ok') this.projectStore.refresh();
+          },
+          onMilestoneMutation: (_note, result) => {
             if (result.type === 'ok') this.projectStore.refresh();
           },
         }),

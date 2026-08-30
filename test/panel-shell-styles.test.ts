@@ -533,8 +533,33 @@ describe('Projects hardening styles', () => {
       /max-block-size:\s*min\(/u,
     );
     const agenda = declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-row');
-    expect(agenda).toContain('grid-template-columns: minmax(0, 1fr) auto');
+    expect(agenda).toContain('block-size: 144px');
+    expect(agenda).toContain('grid-template-columns: minmax(0, 1fr)');
+    expect(agenda).toContain('grid-template-rows: minmax(0, 1fr) auto');
     expect(agenda).toContain('overflow: visible');
+    const agendaIdentity = declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-identity');
+    expect(agendaIdentity).toContain('grid-column: 1');
+    expect(agendaIdentity).toContain('grid-row: 1');
+    expect(agendaIdentity).toContain('inline-size: 100%');
+    const agendaControls = declarationsFor(
+      '.abyss-timeline.is-agenda .abyss-timeline-date-controls',
+    );
+    expect(agendaControls).toContain('position: static');
+    expect(agendaControls).toContain('grid-column: 1');
+    expect(agendaControls).toContain('grid-row: 2');
+    expect(agendaControls).toContain('grid-template-columns: repeat(2, minmax(0, 1fr)) auto');
+    const agendaDiagnostic = declarationsFor(
+      '.abyss-timeline.is-agenda .abyss-timeline-diagnostic-row',
+    );
+    expect(agendaDiagnostic).toContain('block-size: 88px');
+    expect(agendaDiagnostic).toContain('grid-template-columns: minmax(0, 1fr) auto');
+    expect(agendaDiagnostic).toContain('grid-template-rows: auto auto');
+    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-repair-preview')).toContain(
+      'grid-column: 1',
+    );
+    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-repair-confirm')).toContain(
+      'grid-column: 2',
+    );
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-plot')).toContain(
       'display: none',
     );
@@ -543,6 +568,33 @@ describe('Projects hardening styles', () => {
     );
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-canvas')).toContain(
       'max-inline-size: 100%',
+    );
+  });
+
+  it('keeps the portfolio identity rail compact and the repair action inside its bounded tray', () => {
+    const identity = declarationsFor('.abyss-project-timeline-identity');
+    expect(identity).toContain('display: grid');
+    expect(identity).toContain('grid-template-columns: minmax(0, 1fr) auto auto');
+    expect(identity).toContain('align-items: center');
+    expect(identity).not.toContain('text-align: center');
+    const identityButtons = declarationsFor(
+      '.abyss-project-timeline-identity .abyss-project-identity-control, .abyss-project-milestone-timeline-identity .abyss-work-note-identity',
+    );
+    expect(identityButtons).toContain('min-block-size: 0');
+    expect(identityButtons).toContain('height: auto');
+    const milestoneIdentity = declarationsFor('.abyss-project-milestone-timeline-identity');
+    expect(milestoneIdentity).toContain('grid-template-rows: auto auto');
+    expect(milestoneIdentity).toContain('align-self: stretch');
+    expect(milestoneIdentity).toContain('block-size: auto');
+    const plot = declarationsFor('.abyss-timeline-plot');
+    expect(plot).toContain('grid-column: 2');
+    expect(plot).toContain('grid-row: 1');
+
+    const preview = declarationsFor('.abyss-timeline-repair-preview');
+    expect(preview).toContain('color: var(--text-muted)');
+    expect(preview).toContain('font-family: var(--font-monospace)');
+    expect(declarationsFor('.abyss-timeline-repair-confirm')).toContain(
+      'border: 1px solid var(--background-modifier-border)',
     );
   });
 });
