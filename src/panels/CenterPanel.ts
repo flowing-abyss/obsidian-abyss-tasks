@@ -125,13 +125,13 @@ import type {
   ProjectTaskCollectionSession,
 } from './projects/ProjectTaskCollectionSession';
 import { ProjectWorkspaceSession } from './projects/ProjectWorkspaceSession';
-import { renderBoard } from './projects/ProjectsBoardView';
+import { renderProjectTasksBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
 import { renderTasksTimeline } from './projects/ProjectsTimelineView';
+import { buildBoardPreference } from './projects/boardPreferences';
 import {
   createProjectActionBoardMutation,
   createTaskBoardMutation,
-  projectActionBoardColumns,
   type BoardMutation,
 } from './projects/boardProjection';
 import type { TimelinePointRole } from './projects/timelineProjection';
@@ -183,7 +183,7 @@ type CalendarCapturePlacement =
 
 type BarCapturePlacement =
   | { readonly type: 'list'; readonly selectionKey: string }
-  | { readonly type: 'project'; readonly path: string };
+  | { readonly type: 'project'; readonly path: string; readonly statusSymbol?: string };
 
 type PanelCapturePlacement = BarCapturePlacement | CalendarCapturePlacement;
 
@@ -686,18 +686,36 @@ export class CenterPanel {
     this.projectSnapshots = snapshots;
   }
 
-  projectCaptureContext(projectPath: string): CaptureContext {
+  projectCaptureContext(projectPath: string, requestedStatusSymbol?: string): CaptureContext {
     const focusedRef = this.projectWorkspaceSession.tasks.focusedRef();
     const focused = focusedRef
       ? this.projectWorkspaceSession.tasks.actionForRef(focusedRef)
       : undefined;
-    const task = focused?.projectPath === projectPath ? focused.task : undefined;
+    const task =
+      this.projectWorkspaceSession.scope === 'tasks' && focused?.projectPath === projectPath
+        ? focused.task
+        : undefined;
+    const selectedBoardStatus =
+      this.projectWorkspaceSession.scope === 'tasks' &&
+      this.projectWorkspaceSession.layout === 'board'
+        ? this.statusRegistry
+            .all()
+            .find(({ id }) => id === this.projectWorkspaceSession.taskBoard.selectedColumnKey)
+            ?.symbol
+        : undefined;
+    const statusSymbol = requestedStatusSymbol ?? selectedBoardStatus ?? task?.statusSymbol;
+    const priority = requestedStatusSymbol === undefined ? task?.priority : undefined;
     return {
       type: 'project-workspace',
       projectPath,
       destinationPath: projectPath,
-      ...(task && { statusSymbol: task.statusSymbol, priority: task.priority }),
+      ...(statusSymbol !== undefined && { statusSymbol }),
+      ...(priority !== undefined && { priority }),
     };
+  }
+
+  private neutralProjectCaptureContext(projectPath: string): CaptureContext {
+    return { type: 'project-workspace', projectPath, destinationPath: projectPath };
   }
 
   private reconcilePendingProjectBoardUndo(): void {
@@ -1120,9 +1138,7 @@ export class CenterPanel {
     session.setResolver((ref) => this.queries.resolve(ref));
     session.reconcile(actions, allActions);
     let board: ProjectChildRenderHandle | null = null;
-    if (actions.length === 0) {
-      host.createDiv({ cls: 'abyss-center-empty', text: 'No tasks yet' });
-    } else {
+    {
       const statuses = this.statusRegistry.all();
       const allowedTypes = viewState.statusGroups;
       const visibleStatusIds = new Set(
@@ -1133,26 +1149,52 @@ export class CenterPanel {
           .map(({ id }) => id),
       );
       const boardHost = host.createDiv();
-      board = renderBoard(boardHost, {
-        columns: projectActionBoardColumns(statuses, actions),
+      const taskBoardSession = this.projectWorkspaceSession.taskBoard;
+      const preference = taskBoardSession.preference ?? {
+        ...buildBoardPreference(statuses.map(({ id }) => id)),
+        terminalDefaultsApplied: true,
+      };
+      const openColumnCapture = (statusSymbol: string): void => {
+        const placement: BarCapturePlacement = { type: 'project', path, statusSymbol };
+        this.openCapture(placement, this.projectCaptureContext(path, statusSymbol));
+      };
+      board = renderProjectTasksBoard(boardHost, {
+        actions,
+        statuses,
         visibleColumnKeys: visibleStatusIds,
-        mutation: this.projectActionBoardMutation(),
-        itemKey: ({ task }) => taskPresentationKey(task.ref),
-        manageStatusMenu: false,
+        onMoveStatus: (task, symbol) => this.setTaskStatus(task, symbol),
+        session: taskBoardSession,
+        columnPreference: preference,
+        onColumnPreferenceChange: (next) => {
+          taskBoardSession.preference = next;
+        },
         focusedItemKey: () => {
           const focused = session.focusedRef();
           return focused ? taskPresentationKey(focused) : null;
         },
         shouldRestoreItemFocus: () => session.shouldRestoreFocus(),
-        onItemFocus: ({ task }) => session.focusOnly(task.ref),
+        onItemFocus: ({ task }) => {
+          session.focusOnly(task.ref);
+          taskBoardSession.selectedColumnKey =
+            statuses.find(({ symbol }) => symbol === task.statusSymbol)?.id ?? null;
+        },
         onItemBlur: () => session.intentionalBlur(),
+        announce: (message) => {
+          this.selectionLiveRegion().textContent = message;
+        },
         renderItem: (container, action) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
+            manageStatusMenu: false,
             onAddPropertyFilter,
           }),
+        renderColumnAdd: (container, status) => {
+          container.addClass('abyss-add-task-bar');
+          this.renderCaptureHost(container, { type: 'project', path, statusSymbol: status.symbol });
+        },
+        onCollapsedColumnAddRequest: (status) => openColumnCapture(status.symbol),
       });
     }
     const bar = host.createDiv({ cls: 'abyss-add-task-bar' });
@@ -3637,7 +3679,12 @@ export class CenterPanel {
 
   private renderCaptureHost(host: HTMLElement, placement: BarCapturePlacement): void {
     host.dataset['abyssCaptureHost'] = placement.type;
-    if (placement.type === 'project') host.dataset['abyssCapturePath'] = placement.path;
+    if (placement.type === 'project') {
+      host.dataset['abyssCapturePath'] = placement.path;
+      if (placement.statusSymbol !== undefined) {
+        host.dataset['abyssCaptureStatus'] = placement.statusSymbol;
+      }
+    }
     if (placement.type === 'list') {
       host.dataset['abyssCaptureSelection'] = placement.selectionKey;
     }
@@ -3648,10 +3695,15 @@ export class CenterPanel {
     trigger.createEl('span', { cls: 'abyss-add-task-plus', text: '+' });
     trigger.createEl('span', { cls: 'abyss-add-task-label', text: 'Add task' });
     trigger.addEventListener('click', () => {
-      const context: CaptureContext =
-        placement.type === 'project'
-          ? this.projectCaptureContext(placement.path)
-          : { type: 'list', selection: this.state.get('selectedList') };
+      let context: CaptureContext;
+      if (placement.type === 'project') {
+        context =
+          placement.statusSymbol === undefined
+            ? this.neutralProjectCaptureContext(placement.path)
+            : this.projectCaptureContext(placement.path, placement.statusSymbol);
+      } else {
+        context = { type: 'list', selection: this.state.get('selectedList') };
+      }
       this.openCapture(placement, context, trigger);
     });
     const active = this.activeCapture;
@@ -3711,7 +3763,8 @@ export class CenterPanel {
       (candidate) =>
         placement.type === 'project'
           ? candidate.dataset['abyssCaptureHost'] === 'project' &&
-            candidate.dataset['abyssCapturePath'] === placement.path
+            candidate.dataset['abyssCapturePath'] === placement.path &&
+            candidate.dataset['abyssCaptureStatus'] === placement.statusSymbol
           : candidate.dataset['abyssCaptureHost'] === 'list' &&
             candidate.dataset['abyssCaptureSelection'] === placement.selectionKey,
     );
@@ -3883,7 +3936,13 @@ export class CenterPanel {
 
   private sameCapturePlacement(left: PanelCapturePlacement, right: PanelCapturePlacement): boolean {
     if (left.type !== right.type) return false;
-    if (left.type === 'project') return right.type === 'project' && left.path === right.path;
+    if (left.type === 'project') {
+      return (
+        right.type === 'project' &&
+        left.path === right.path &&
+        left.statusSymbol === right.statusSymbol
+      );
+    }
     if (left.type === 'calendar-timed') {
       return (
         right.type === 'calendar-timed' && left.date === right.date && left.time === right.time

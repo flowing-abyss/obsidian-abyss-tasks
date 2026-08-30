@@ -1,7 +1,7 @@
 import moment from 'moment';
 // eslint-disable-next-line import/no-nodejs-modules -- geometry contract loads the shipped CSS.
 import { readFileSync } from 'node:fs';
-import { addIcon, removeIcon, TFile, type App } from 'obsidian';
+import { addIcon, Menu, removeIcon, TFile, type App } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { CenterPanel } from '../src/panels/CenterPanel';
@@ -2415,6 +2415,35 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it('opens exactly one status menu when a Project Board card receives contextmenu', () => {
+    const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
+    const state = new AppState();
+    const panel = makeStaticPanel(state, [current]);
+    const container = freshContainer();
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent');
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [
+        {
+          task: current,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ]);
+
+      host
+        .querySelector<HTMLElement>('.abyss-task-card')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+
+      expect(show).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('keeps a blocked Project Board task in place when dragged to Done through the shared command', async () => {
     const current = task({
       title: 'Blocked project task',
@@ -3398,7 +3427,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
-  it('applies focused Project workspace status and priority through the real capture target', async () => {
+  it('keeps the full-width Project Board Add task neutral even when a task is focused', async () => {
     const focusedTask = task({
       title: 'Focused project task',
       status: 'in-progress',
@@ -3428,16 +3457,12 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         type: 'project-workspace',
         projectPath: 'Projects/A.md',
         destinationPath: 'Projects/A.md',
-        statusSymbol: '/',
-        priority: 'A',
       });
       expect(planCreate).toHaveBeenCalledWith({
         type: 'explicit',
         destination: { filePath: 'Projects/A.md', insertion: { type: 'append' } },
       });
-      expect
-        .soft(destination.textContent)
-        .toBe('Project: A · Status: In progress · Priority: Highest');
+      expect.soft(destination.textContent).toBe('Project: A');
       expect(input.getAttribute('aria-describedby')).toBe(destination.id);
 
       setCaptureDraft(input, 'inherit focused defaults');
@@ -3446,8 +3471,47 @@ describe('CenterPanel projects mode teardown (regression)', () => {
 
       expect(sessionExecute).toHaveBeenCalledWith({
         markdownBody: 'inherit focused defaults',
-        initial: { statusSymbol: '/', priority: { type: 'set', value: 'A' } },
       });
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
+  it('preselects the exact Task status from a Project Board column Add task', async () => {
+    const focusedTask = task({
+      title: 'Project task',
+      priority: 'A',
+      source: { filePath: 'Projects/A.md', line: 0 },
+    });
+    const { panel, container, sessionExecute } = await projectCaptureHarness(
+      undefined,
+      DEFAULT_SETTINGS,
+      focusedTask,
+    );
+    try {
+      container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+      const inProgress = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'in-progress')!;
+      const trigger = container.querySelector<HTMLButtonElement>(
+        `[data-board-column-add="${inProgress.id}"] .abyss-add-task-trigger`,
+      )!;
+      trigger.click();
+      await flushMicrotasks();
+      const input = container.querySelector<HTMLInputElement>(
+        `[data-abyss-capture-status="${inProgress.symbol}"] .abyss-capture-input`,
+      )!;
+
+      expect(input).not.toBeNull();
+      setCaptureDraft(input, 'column status task');
+      pressCaptureKey(input, 'Enter');
+      await flushMicrotasks();
+
+      expect(sessionExecute).toHaveBeenCalledWith({
+        markdownBody: 'column status task',
+        initial: { statusSymbol: inProgress.symbol },
+      });
+      expect(input.value).toBe('');
+      expect(activeDocument.activeElement).toBe(input);
     } finally {
       panel.destroy();
       container.remove();

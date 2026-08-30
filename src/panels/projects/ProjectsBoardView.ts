@@ -1,13 +1,16 @@
 import { Menu, setIcon } from 'obsidian';
 import { validateLifecycleConfiguration } from '../../projects/lifecycle';
 import type { ProjectPropertyCommandResult } from '../../projects/ProjectCommandService';
-import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import type { ProjectAction, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type {
   WorkNoteCommandResult,
   WorkNoteSnapshot,
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
+import type { TaskStatusDef } from '../../settings/types';
+import type { TaskSnapshot } from '../../tasks';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { taskPresentationKey } from '../../ui/taskPresentationIdentity';
 import {
   BoardInteractionController,
   type BoardAnnouncement,
@@ -27,8 +30,10 @@ import {
 } from './boardPreferences';
 import type { BoardColumn, BoardMutation, BoardMutationResult } from './boardProjection';
 import {
+  createProjectActionBoardMutation,
   createProjectBoardMutation,
   createWorkNoteBoardMutation,
+  projectActionBoardColumns,
   projectBoardColumns,
   workNoteBoardColumns,
 } from './boardProjection';
@@ -56,6 +61,8 @@ export interface BoardViewOptions<T> {
   readonly visibleColumnKeys?: ReadonlySet<string>;
   readonly manageStatusMenu?: boolean;
   readonly mutationEnabled?: boolean;
+  /** Presentation preferences can remain editable when entity mutation is read-only. */
+  readonly presentationEnabled?: boolean;
   readonly mutationDisabledTitle?: string;
   readonly onMutation?: (item: T, columnKey: string, result: BoardMutationResult) => void;
   readonly executeMutation?: (
@@ -93,6 +100,8 @@ export interface BoardViewOptions<T> {
   /** Canonical cross-column order used for landing and temporary post-move projection. */
   readonly canonicalItems?: readonly T[];
   readonly announce?: (message: string) => void;
+  readonly renderColumnFooter?: (host: HTMLElement, column: BoardColumn<T>) => void;
+  readonly onCollapsedColumnFooterRequest?: (column: BoardColumn<T>) => void;
 }
 
 export interface BoardViewHandle {
@@ -113,6 +122,27 @@ export interface WorkNotesBoardOptions {
   ) => Promise<WorkNoteCommandResult>;
   readonly session?: WorkNoteBoardSession;
   readonly commandsEnabled?: boolean;
+  readonly announce?: (message: string) => void;
+  readonly columnPreference?: BoardViewPreference;
+  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void;
+}
+
+export interface ProjectTasksBoardOptions {
+  readonly actions: readonly ProjectAction[];
+  readonly statuses: readonly TaskStatusDef[];
+  readonly onMoveStatus: (task: TaskSnapshot, symbol: string) => Promise<BoardMutationResult>;
+  readonly renderItem: (host: HTMLElement, action: ProjectAction) => HTMLElement;
+  readonly renderColumnAdd?: (host: HTMLElement, status: TaskStatusDef) => void;
+  readonly onCollapsedColumnAddRequest?: (status: TaskStatusDef) => void;
+  readonly visibleColumnKeys?: ReadonlySet<string>;
+  readonly session?: WorkNoteBoardSession;
+  readonly columnPreference?: BoardViewPreference;
+  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void;
+  readonly focusedItemKey?: () => string | null;
+  readonly shouldRestoreItemFocus?: () => boolean;
+  readonly onItemFocus?: (action: ProjectAction) => void;
+  readonly onItemBlur?: () => void;
+  readonly announce?: (message: string) => void;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -185,6 +215,7 @@ export function renderBoard<T>(
 ): BoardViewHandle {
   container.addClass('abyss-board');
   const boardId = `abyss-board-${String(++nextBoardId)}`;
+  const presentationEnabled = options.presentationEnabled ?? options.mutationEnabled !== false;
   const overrides = new Map<string, string>();
   const configuredColumnIds =
     options.columnPreferences?.configuredColumnIds ??
@@ -216,16 +247,12 @@ export function renderBoard<T>(
         ]),
       ],
     };
-    if (options.mutationEnabled !== false) {
-      void options.columnPreferences?.onChange(columnPreference);
-    }
+    if (presentationEnabled) void options.columnPreferences?.onChange(columnPreference);
   } else if (
     columnPreference &&
     JSON.stringify(columnPreference) !== JSON.stringify(options.columnPreferences?.value)
   ) {
-    if (options.mutationEnabled !== false) {
-      void options.columnPreferences?.onChange(columnPreference);
-    }
+    if (presentationEnabled) void options.columnPreferences?.onChange(columnPreference);
   }
   const presentationColumns = (): readonly BoardColumn<T>[] => {
     if (!columnPreference) return options.columns;
@@ -322,7 +349,7 @@ export function renderBoard<T>(
   };
 
   const updateColumnPreference = (next: BoardViewPreference): void => {
-    if (options.mutationEnabled === false) return;
+    if (!presentationEnabled) return;
     columnPreference = { ...next, terminalDefaultsApplied: true };
     void options.columnPreferences?.onChange(columnPreference);
     render();
@@ -674,7 +701,13 @@ export function renderBoard<T>(
       commitMove: async (intent) => {
         const item = itemByKey(intent.itemId);
         if (!item) return { type: 'failure', reason: 'Project is no longer available' };
-        const result = await options.mutation.move(item, intent.destination.columnId);
+        const initiator =
+          Array.from(container.querySelectorAll<HTMLElement>('[data-board-item-focus]')).find(
+            ({ dataset }) => dataset['boardItemFocus'] === intent.itemId,
+          ) ?? container;
+        const command = (): Promise<BoardMutationResult> =>
+          options.mutation.move(item, intent.destination.columnId);
+        const result = await (options.executeMutation?.(command, initiator) ?? command());
         if (!successful(result)) {
           return {
             type: result?.type === 'conflict' ? 'conflict' : 'failure',
@@ -836,7 +869,7 @@ export function renderBoard<T>(
         },
       });
       setIcon(reset, 'rotate-ccw');
-      reset.disabled = options.mutationEnabled === false;
+      reset.disabled = !presentationEnabled;
       reset.setAttribute('aria-disabled', String(reset.disabled));
       reset.addEventListener('click', () => {
         if (reset.disabled) return;
@@ -855,7 +888,12 @@ export function renderBoard<T>(
       attr: {
         'data-board-interaction-root': '',
         ...(options.interactionController
-          ? { 'aria-disabled': String(options.mutationEnabled === false) }
+          ? {
+              'data-board-mutation-enabled': String(options.mutationEnabled !== false),
+              ...(!presentationEnabled && options.mutationEnabled === false
+                ? { 'aria-disabled': 'true' }
+                : {}),
+            }
           : {}),
       },
     });
@@ -968,7 +1006,7 @@ export function renderBoard<T>(
           },
         });
         setIcon(collapse, presentationCollapsed ? 'panel-left-open' : 'panel-left-close');
-        collapse.disabled = options.mutationEnabled === false;
+        collapse.disabled = !presentationEnabled;
         collapse.setAttribute('aria-disabled', String(collapse.disabled));
         collapse.addEventListener('click', () => {
           if (collapse.disabled) return;
@@ -989,7 +1027,7 @@ export function renderBoard<T>(
             },
           });
           setIcon(hide, 'eye-off');
-          hide.disabled = options.mutationEnabled === false;
+          hide.disabled = !presentationEnabled;
           hide.setAttribute('aria-disabled', String(hide.disabled));
           hide.addEventListener('click', () => {
             if (hide.disabled) return;
@@ -1005,30 +1043,41 @@ export function renderBoard<T>(
             },
           });
           setIcon(menuButton, 'more-horizontal');
-          menuButton.disabled = options.mutationEnabled === false;
+          menuButton.disabled = !presentationEnabled;
           menuButton.setAttribute('aria-disabled', String(menuButton.disabled));
           menuButton.addEventListener('click', (event) => {
             if (menuButton.disabled) return;
             const menu = new Menu();
+            if (presentationCollapsed && options.onCollapsedColumnFooterRequest) {
+              menu.addItem((item) =>
+                item
+                  .setTitle('Add task')
+                  .setIcon('plus')
+                  .onClick(() => {
+                    selectedColumnKey = column.key;
+                    if (options.session) options.session.selectedColumnKey = column.key;
+                    updateColumnPreference(restoreBoardColumn(columnPreference!, column.key));
+                    options.onCollapsedColumnFooterRequest?.(column);
+                  }),
+              );
+            }
             for (const direction of ['left', 'right'] as const) {
               menu.addItem((item) =>
                 item
                   .setTitle(`Move ${direction}`)
                   .setIcon(direction === 'left' ? 'arrow-left' : 'arrow-right')
-                  .setDisabled(options.mutationEnabled === false)
+                  .setDisabled(!presentationEnabled)
                   .onClick(() =>
-                    options.mutationEnabled === false
-                      ? undefined
-                      : updateColumnPreference({
-                          ...moveBoardColumn(
-                            columnPreference!,
-                            configuredColumnIds,
-                            column.key,
-                            direction,
-                            preferenceRoles,
-                          ),
-                          orderOverride: true,
-                        }),
+                    updateColumnPreference({
+                      ...moveBoardColumn(
+                        columnPreference!,
+                        configuredColumnIds,
+                        column.key,
+                        direction,
+                        preferenceRoles,
+                      ),
+                      orderOverride: true,
+                    }),
                   ),
               );
             }
@@ -1036,11 +1085,9 @@ export function renderBoard<T>(
               item
                 .setTitle('Hide column')
                 .setIcon('eye-off')
-                .setDisabled(options.mutationEnabled === false)
+                .setDisabled(!presentationEnabled)
                 .onClick(() =>
-                  options.mutationEnabled === false
-                    ? undefined
-                    : updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
+                  updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
                 ),
             );
             showMenuAtMouseEventWithFocus(menu, event);
@@ -1055,7 +1102,7 @@ export function renderBoard<T>(
             },
           });
           setIcon(handle, 'grip-vertical');
-          handle.disabled = options.mutationEnabled === false;
+          handle.disabled = !presentationEnabled;
           handle.setAttribute('aria-disabled', String(handle.disabled));
           handle.addEventListener('keydown', (event) => {
             if (handle.disabled) return;
@@ -1289,6 +1336,14 @@ export function renderBoard<T>(
       );
       rememberViewport();
 
+      if (visible && !presentationCollapsed && options.renderColumnFooter) {
+        const footer = scroll.createDiv({
+          cls: 'abyss-board-column-footer',
+          attr: { 'data-board-column-add': column.key },
+        });
+        options.renderColumnFooter(footer, column);
+      }
+
       columnEl.addEventListener('dragover', (event) => {
         if (dragging === null || (!visible && !terminal)) return;
         event.preventDefault();
@@ -1326,7 +1381,7 @@ export function renderBoard<T>(
             'aria-label': `Restore ${column.label}`,
           },
         });
-        restore.disabled = options.mutationEnabled === false;
+        restore.disabled = !presentationEnabled;
         restore.setAttribute('aria-disabled', String(restore.disabled));
         restore.addEventListener('click', () => {
           if (restore.disabled) return;
@@ -1372,7 +1427,22 @@ export function renderWorkNotesBoard(
     renderItem: options.renderItem,
     session: options.session,
     mutationEnabled: options.commandsEnabled,
+    presentationEnabled: true,
     mutationDisabledTitle: 'Requires an accepted compatibility audit with update capability',
+    interactionController: true,
+    manageStatusMenu: true,
+    canonicalItems: options.notes,
+    itemLabel: ({ path }) => path.split('/').pop()?.replace(/\.md$/u, '') ?? path,
+    announce: options.announce,
+    ...(options.columnPreference && {
+      columnPreferences: {
+        value: options.columnPreference,
+        configuredColumnIds: options.statuses.map(({ id }) => id),
+        terminalLeftIds: [],
+        terminalRightIds: [],
+        onChange: (next: BoardViewPreference) => options.onColumnPreferenceChange?.(next),
+      },
+    }),
     executeMutation:
       options.executeMutation === undefined
         ? undefined
@@ -1381,6 +1451,52 @@ export function renderWorkNotesBoard(
               async () => (await command()) as WorkNoteCommandResult,
               initiator,
             ),
+  });
+}
+
+/** Project Task entity port for the shared Task 6 board controller and DOM lifecycle. */
+export function renderProjectTasksBoard(
+  container: HTMLElement,
+  options: ProjectTasksBoardOptions,
+): BoardViewHandle {
+  const mutation = createProjectActionBoardMutation(options.statuses, options.onMoveStatus);
+  const statusById = new Map(options.statuses.map((status) => [status.id, status]));
+  return renderBoard(container, {
+    columns: projectActionBoardColumns(options.statuses, options.actions),
+    visibleColumnKeys: options.visibleColumnKeys,
+    canonicalItems: options.actions,
+    mutation,
+    itemKey: ({ task }) => taskPresentationKey(task.ref),
+    itemLabel: ({ task }) => task.title,
+    renderItem: options.renderItem,
+    session: options.session,
+    focusedItemKey: options.focusedItemKey,
+    shouldRestoreItemFocus: options.shouldRestoreItemFocus,
+    onItemFocus: options.onItemFocus,
+    onItemBlur: options.onItemBlur,
+    interactionController: true,
+    announce: options.announce,
+    ...(options.columnPreference && {
+      columnPreferences: {
+        value: options.columnPreference,
+        configuredColumnIds: options.statuses.map(({ id }) => id),
+        terminalLeftIds: [],
+        terminalRightIds: [],
+        onChange: (next: BoardViewPreference) => options.onColumnPreferenceChange?.(next),
+      },
+    }),
+    ...(options.renderColumnAdd && {
+      renderColumnFooter: (host: HTMLElement, column: BoardColumn<ProjectAction>) => {
+        const status = statusById.get(column.key);
+        if (status) options.renderColumnAdd?.(host, status);
+      },
+    }),
+    ...(options.onCollapsedColumnAddRequest && {
+      onCollapsedColumnFooterRequest: (column: BoardColumn<ProjectAction>) => {
+        const status = statusById.get(column.key);
+        if (status) options.onCollapsedColumnAddRequest?.(status);
+      },
+    }),
   });
 }
 

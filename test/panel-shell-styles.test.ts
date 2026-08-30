@@ -252,6 +252,18 @@ describe('Portfolio Board density contract', () => {
     expect(columns).not.toContain('minmax(0, 1fr)');
   });
 
+  it('keeps persistent Board column and status controls at coarse-safe target size', () => {
+    const columnControls = declarationsFor(
+      '.abyss-board-column-actions > button,\n.abyss-board-reset-order',
+    );
+    const statusMenu = declarationsFor('.abyss-board-status-menu');
+
+    expect(columnControls).toContain('inline-size: 44px');
+    expect(columnControls).toContain('block-size: 44px');
+    expect(statusMenu).toContain('inline-size: 44px');
+    expect(statusMenu).toContain('block-size: 44px');
+  });
+
   it('keeps Project board titles readable instead of breaking words vertically', () => {
     const title = declarationsFor('.abyss-board .abyss-project-name');
     expect(title).toContain('white-space: normal');
@@ -357,8 +369,8 @@ describe('Projects hardening styles', () => {
       declarationsInAtRule('@media (hover: none), (pointer: coarse)', '.abyss-project-row'),
     ).toContain('padding-inline-end: 96px');
     const desktop = declarationsFor('.abyss-board-status-menu');
-    expect(desktop).toContain('block-size: 26px');
-    expect(desktop).toContain('inline-size: 26px');
+    expect(desktop).toContain('block-size: 44px');
+    expect(desktop).toContain('inline-size: 44px');
   });
 
   it('switches multi-column Boards to one-column tabs before cards collapse vertically', () => {

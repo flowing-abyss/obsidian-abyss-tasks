@@ -9,6 +9,7 @@ import type {
 import type { WorkNotesViewState } from '../../settings/types';
 import { inspectorSelectionKey } from '../../ui/inspector/InspectorSelection';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { buildBoardPreference } from './boardPreferences';
 import { workNoteStatusMenuModel } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
 import { renderWorkNotesBoard, type BoardViewHandle } from './ProjectsBoardView';
@@ -233,8 +234,20 @@ function renderRow(
     cls: 'abyss-work-note-kind',
     text: note.kind === 'ordinary' ? 'Ordinary' : 'Milestone',
   });
-  meta.createSpan({ cls: 'abyss-work-note-project', text: basename(note.projectPath) });
+  if (options.layout === 'list') {
+    meta.createSpan({ cls: 'abyss-work-note-project', text: basename(note.projectPath) });
+  }
   if (note.priority) meta.createSpan({ cls: 'abyss-work-note-priority', text: note.priority });
+  if (options.layout === 'board') {
+    const range = [note.range.start?.raw, note.range.end?.raw].filter(Boolean).join(' – ');
+    if (range) meta.createSpan({ cls: 'abyss-work-note-date', text: range });
+    if (note.diagnostics.length > 0) {
+      meta.createSpan({
+        cls: 'abyss-work-note-diagnostic',
+        text: note.diagnostics[0]!.detail ?? note.diagnostics[0]!.type,
+      });
+    }
+  }
   if (milestoneRollup?.progress !== null && milestoneRollup !== undefined) {
     meta.createSpan({
       cls: 'abyss-work-note-rollup',
@@ -445,6 +458,11 @@ function renderWorkNoteBoard(
   options: WorkNotesViewOptions,
   presenter: WorkNoteResultPresenter,
 ): BoardViewHandle {
+  const configuredIds = options.statuses.map(({ id }) => id);
+  const preference = options.session?.board.preference ?? {
+    ...buildBoardPreference(configuredIds),
+    terminalDefaultsApplied: true,
+  };
   return renderWorkNotesBoard(container, {
     notes,
     statuses: options.statuses,
@@ -457,6 +475,11 @@ function renderWorkNoteBoard(
     executeMutation: (command, initiator) => presenter.run(command, initiator),
     session: options.session?.board,
     commandsEnabled: options.commandsEnabled,
+    announce: options.announce,
+    columnPreference: preference,
+    onColumnPreferenceChange: (next) => {
+      if (options.session) options.session.board.preference = next;
+    },
   });
 }
 

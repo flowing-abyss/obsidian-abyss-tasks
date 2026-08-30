@@ -95,6 +95,36 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(registry.scopeSession('tasks').textQuery).toBe('alpha');
   });
 
+  it('keeps Task and Work Note board presentation independent per Project and through rename', () => {
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.openProject('Projects/A.md');
+    registry.taskBoard.preference = {
+      version: 1,
+      columnOrder: ['todo', 'done', 'dormant'],
+      collapsedColumnIds: ['done'],
+      hiddenColumnIds: ['todo'],
+    };
+    registry.workNotes.board.preference = {
+      version: 1,
+      columnOrder: ['active', 'done'],
+      collapsedColumnIds: [],
+      hiddenColumnIds: ['done'],
+    };
+    registry.openProject('Projects/B.md');
+
+    expect(registry.taskBoard.preference).toBeUndefined();
+    expect(registry.workNotes.board.preference).toBeUndefined();
+
+    registry.renameProject('Projects/A.md', 'Projects/Renamed.md');
+    registry.openProject('Projects/Renamed.md');
+    expect(registry.taskBoard.preference).toMatchObject({
+      columnOrder: ['todo', 'done', 'dormant'],
+      collapsedColumnIds: ['done'],
+      hiddenColumnIds: ['todo'],
+    });
+    expect(registry.workNotes.board.preference).toMatchObject({ hiddenColumnIds: ['done'] });
+  });
+
   it('moves a session key without collision', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/Before.md');
@@ -143,6 +173,12 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     registry.openProject('Projects/Source.md');
     registry.openProject('Projects/Destination.md');
     registry.scopeSession('work-notes').captureDraft = 'Recover this';
+    registry.taskBoard.preference = {
+      version: 1,
+      columnOrder: ['todo', 'done'],
+      collapsedColumnIds: ['done'],
+      hiddenColumnIds: [],
+    };
     registry.openProject('Projects/Source.md');
 
     registry.renameProject('Projects/Source.md', 'Projects/Destination.md');
@@ -152,6 +188,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
       sourcePath: 'Projects/Source.md',
       destinationPath: 'Projects/Destination.md',
       workNotes: { captureDraft: 'Recover this' },
+      taskBoardPreference: { collapsedColumnIds: ['done'] },
     });
   });
 

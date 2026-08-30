@@ -7262,13 +7262,16 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-board-column-actions {
   display: flex;
+  max-inline-size: 92px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 2px;
   margin-inline-start: auto;
 }
 .abyss-board-column-actions > button,
 .abyss-board-reset-order {
-  inline-size: 28px;
-  block-size: 28px;
+  inline-size: 44px;
+  block-size: 44px;
   padding: 0;
 }
 .abyss-board-column.is-column-collapsed .abyss-board-column-actions {
@@ -7427,8 +7430,8 @@ body.abyss-modal-open .popover.hover-popover {
   inset-block-end: 6px;
   inset-inline-end: 6px;
   display: inline-flex;
-  block-size: 26px;
-  inline-size: 26px;
+  block-size: 44px;
+  inline-size: 44px;
   align-items: center;
   justify-content: center;
   padding: 0;
@@ -7437,8 +7440,15 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-secondary);
   box-shadow: none;
   color: var(--text-muted);
-  opacity: 0;
+  opacity: 1;
   transition: opacity 0.1s ease;
+}
+.abyss-board-column-footer {
+  padding: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.abyss-board-column-footer .abyss-add-task-bar {
+  min-height: var(--input-height);
 }
 .abyss-board-items > *:hover > .abyss-board-status-menu,
 .abyss-board-status-menu:focus-visible {

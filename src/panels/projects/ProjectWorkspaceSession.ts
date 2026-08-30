@@ -1,5 +1,6 @@
 import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import type { ProjectTasksViewState, WorkNotesViewState } from '../../settings/types';
+import type { BoardViewPreference } from './boardPreferences';
 import { MeasuredWindow } from './BoundedWindow';
 import type { ProjectWorkspaceLayout, ProjectWorkspaceScope } from './ProjectsDashboardView';
 import { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
@@ -35,6 +36,7 @@ export interface WorkNoteBoardSession {
   focusedKey: string | null;
   restoreFocus: boolean;
   readonly columns: Record<string, LogicalViewportSession>;
+  preference?: BoardViewPreference;
 }
 
 export interface WorkNotesSession {
@@ -64,6 +66,8 @@ export interface ProjectWorkspaceRecoveryEntry {
   readonly destinationPath: string;
   readonly tasks: ProjectWorkspaceScopeSession<ProjectTasksViewState>;
   readonly workNotes: ProjectWorkspaceScopeSession<WorkNotesViewState>;
+  readonly taskBoardPreference?: BoardViewPreference;
+  readonly workNoteBoardPreference?: BoardViewPreference;
 }
 
 interface ProjectWorkspaceEntry {
@@ -71,6 +75,7 @@ interface ProjectWorkspaceEntry {
   readonly tasksScope: ProjectWorkspaceScopeSession<ProjectTasksViewState>;
   readonly workNotesScope: ProjectWorkspaceScopeSession<WorkNotesViewState>;
   readonly tasks: ProjectTaskCollectionSession;
+  readonly taskBoard: WorkNoteBoardSession;
   readonly taskListGeometry: MeasuredWindow<string>;
   readonly taskListViewport: { firstRowKey: string | null; firstIndex: number };
   readonly workNotes: WorkNotesSession;
@@ -107,6 +112,12 @@ function workspaceEntry(): ProjectWorkspaceEntry {
     tasksScope: scopeSession<ProjectTasksViewState>(),
     workNotesScope,
     tasks: new ProjectTaskCollectionSession(),
+    taskBoard: {
+      selectedColumnKey: null,
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    },
     taskListGeometry: new MeasuredWindow<string>([], { estimateExtent: 56, overscan: 8 }),
     taskListViewport: { firstRowKey: null, firstIndex: 0 },
     workNotes: {
@@ -255,6 +266,10 @@ export class ProjectWorkspaceSession {
     return this.current().tasks;
   }
 
+  get taskBoard(): WorkNoteBoardSession {
+    return this.current().taskBoard;
+  }
+
   /** Geometry-only companion; it never owns semantic selection or focus. */
   get taskListGeometry(): MeasuredWindow<string> {
     return this.current().taskListGeometry;
@@ -333,6 +348,12 @@ export class ProjectWorkspaceSession {
           destinationPath,
           tasks: copyScope(destination.tasksScope),
           workNotes: copyScope(destination.workNotesScope),
+          ...(destination.taskBoard.preference && {
+            taskBoardPreference: structuredClone(destination.taskBoard.preference),
+          }),
+          ...(destination.workNotes.board.preference && {
+            workNoteBoardPreference: structuredClone(destination.workNotes.board.preference),
+          }),
         });
       }
       reconcileSafeArrays(source.tasksScope, destination.tasksScope);
@@ -385,8 +406,12 @@ export class ProjectWorkspaceSession {
   }
 
   private isDirty(entry: ProjectWorkspaceEntry): boolean {
-    return [entry.tasksScope, entry.workNotesScope].some(
-      (scope) => scope.inspectorDirty || scope.captureDraft !== null,
+    return (
+      entry.taskBoard.preference !== undefined ||
+      entry.workNotes.board.preference !== undefined ||
+      [entry.tasksScope, entry.workNotesScope].some(
+        (scope) => scope.inspectorDirty || scope.captureDraft !== null,
+      )
     );
   }
 

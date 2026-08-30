@@ -5,7 +5,11 @@ import {
   type BoardColumn,
   type BoardMutation,
 } from '../src/panels/projects/boardProjection';
-import { renderBoard, type BoardViewOptions } from '../src/panels/projects/ProjectsBoardView';
+import {
+  renderBoard,
+  renderProjectTasksBoard,
+  type BoardViewOptions,
+} from '../src/panels/projects/ProjectsBoardView';
 import type { WorkNoteBoardSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectAction } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -32,6 +36,68 @@ function column(
 }
 
 describe('shared board view', () => {
+  it('adapts Project Tasks to the shared controller with canonical landing and column footers', async () => {
+    const todo = task({
+      title: 'Earlier task',
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const moving = task({
+      title: 'Moving task',
+      source: { filePath: 'Projects/A.md', line: 2 },
+    });
+    const done = task({
+      title: 'Later task',
+      status: 'done',
+      statusSymbol: 'x',
+      source: { filePath: 'Projects/A.md', line: 3 },
+    });
+    const actions: ProjectAction[] = [todo, moving, done].map((current) => ({
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    }));
+    const move = vi
+      .fn()
+      .mockResolvedValue({ type: 'ok', changed: true, outcome: { type: 'task' } });
+    const add = vi.fn();
+    const el = freshContainer();
+
+    renderProjectTasksBoard(el, {
+      actions,
+      statuses: [
+        { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo', icon: '', core: true },
+        { id: 'done', symbol: 'x', name: 'Done', type: 'done', icon: 'check', core: true },
+      ],
+      onMoveStatus: move,
+      renderItem: (host, action) => host.createEl('button', { text: action.task.title }),
+      renderColumnAdd: (host, status) => {
+        const button = host.createEl('button', { text: 'Add task' });
+        button.addEventListener('click', () => add(status.symbol));
+      },
+    });
+
+    expect(el.querySelectorAll('[data-board-column-add]')).toHaveLength(2);
+    el.querySelector<HTMLButtonElement>('[data-board-column-add="done"] button')!.click();
+    expect(add).toHaveBeenCalledWith('x');
+    const focus = Array.from(el.querySelectorAll<HTMLElement>('[data-board-item-focus]')).find(
+      ({ textContent }) => textContent === 'Moving task',
+    )!;
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(move).toHaveBeenCalledOnce();
+    expect(move).toHaveBeenCalledWith(moving, 'x');
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLElement>('[data-board-column="done"] [data-board-item-surface]'),
+        ({ textContent }) => textContent,
+      ),
+    ).toEqual(['Moving task', 'Later task']);
+  });
+
   it('exposes one roving selected tab/tabpanel and reaches both terminal bookends by keyboard', () => {
     const el = freshContainer();
     el.dataset['boardRovingTest'] = '';

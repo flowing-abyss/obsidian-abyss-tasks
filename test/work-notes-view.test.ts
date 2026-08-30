@@ -918,6 +918,39 @@ describe('renderWorkNotesView', () => {
 });
 
 describe('Work Note board adapter', () => {
+  it('uses the shared keyboard controller and canonical Work Note order', async () => {
+    const root = freshContainer();
+    const statuses = DEFAULT_SETTINGS.projects.statuses;
+    const moving = note(1, { statusId: statuses[0]!.id });
+    const later = note(2, { statusId: statuses[2]!.id });
+    const onSetStatus = vi.fn().mockResolvedValue({ type: 'ok', path: moving.path });
+    renderWorkNotesView(root, {
+      notes: [moving, later],
+      statuses,
+      layout: 'board',
+      onSetStatus,
+      openNote: vi.fn(),
+    });
+    const focus = root.querySelector<HTMLElement>(`[data-board-item-focus="${moving.path}"]`)!;
+
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(onSetStatus).toHaveBeenCalledOnce();
+    expect(onSetStatus).toHaveBeenCalledWith(moving, statuses[2]!.id);
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLElement>(
+          `[data-board-column="${statuses[2]!.id}"] [data-board-item-surface]`,
+        ),
+        ({ dataset }) => dataset['boardItemSurface'],
+      ),
+    ).toEqual([moving.path, later.path]);
+    expect(root.querySelector('.abyss-add-task-trigger')).toBeNull();
+  });
+
   it('keeps read-only Board notes selectable while every mutation affordance is inert', async () => {
     const root = freshContainer();
     const onSelect = vi.fn();
@@ -942,6 +975,10 @@ describe('Work Note board adapter', () => {
     expect(status.title).toMatch(/accepted compatibility audit/iu);
     expect(card.getAttribute('draggable')).toBe('false');
     expect(card.closest('[aria-disabled="true"]')).toBeNull();
+    const collapse = root.querySelector<HTMLButtonElement>('[data-board-collapse-column]')!;
+    expect(collapse.disabled).toBe(false);
+    collapse.click();
+    expect(root.querySelector('[data-board-column].is-column-collapsed')).not.toBeNull();
     card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     card.dispatchEvent(new Event('dragstart', { bubbles: true }));
     root
