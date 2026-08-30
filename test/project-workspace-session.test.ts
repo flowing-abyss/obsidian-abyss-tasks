@@ -268,4 +268,65 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     });
     expect(registry.timelines.workNotes.firstKey).toBe('Work Notes/After.md');
   });
+
+  it('atomically rebases every portfolio Project and Work Note identity on rename', () => {
+    const registry = new ProjectWorkspaceSessionRegistry();
+    const projectBefore = 'Projects/Before.md';
+    const projectAfter = 'Projects/After.md';
+    registry.portfolioBoard.focusedKey = projectBefore;
+    registry.portfolioBoard.columns['active'] = {
+      firstKey: projectBefore,
+      firstIndex: 3,
+      focusedKey: projectBefore,
+      restoreFocus: true,
+    };
+    registry.portfolioTimeline.firstKey = `project:${projectBefore}`;
+    registry.portfolioTimeline.focusedKey = `project:${projectBefore}`;
+    registry.portfolioTimeline.focusedInteraction = {
+      itemKey: `project:${projectBefore}`,
+      role: 'range',
+    };
+    registry.portfolioCapture.createdPath = projectBefore;
+    registry.portfolioCapture.terminalResult = {
+      type: 'file-created',
+      path: projectBefore,
+      indexed: false,
+      status: 'applied',
+    };
+
+    registry.renamePath(projectBefore, projectAfter);
+
+    expect(registry.portfolioBoard).toMatchObject({
+      focusedKey: projectAfter,
+      columns: {
+        active: { firstKey: projectAfter, focusedKey: projectAfter, firstIndex: 3 },
+      },
+    });
+    expect(registry.portfolioTimeline).toMatchObject({
+      firstKey: `project:${projectAfter}`,
+      focusedKey: `project:${projectAfter}`,
+      focusedInteraction: { itemKey: `project:${projectAfter}`, role: 'range' },
+    });
+    expect(registry.portfolioCapture).toMatchObject({
+      createdPath: projectAfter,
+      terminalResult: { path: projectAfter, indexed: false, status: 'applied' },
+    });
+
+    const noteBefore = 'Work Notes/Before.md';
+    const noteAfter = 'Work Notes/After.md';
+    registry.portfolioTimeline.firstKey = `work-note:${noteBefore}`;
+    registry.portfolioTimeline.focusedKey = `work-note:${noteBefore}`;
+    registry.portfolioTimeline.focusedInteraction = {
+      itemKey: `work-note:${noteBefore}`,
+      role: 'start',
+    };
+
+    registry.renamePath(noteBefore, noteAfter);
+
+    expect(registry.portfolioTimeline).toMatchObject({
+      firstKey: `work-note:${noteAfter}`,
+      focusedKey: `work-note:${noteAfter}`,
+      focusedInteraction: { itemKey: `work-note:${noteAfter}`, role: 'start' },
+    });
+  });
 });

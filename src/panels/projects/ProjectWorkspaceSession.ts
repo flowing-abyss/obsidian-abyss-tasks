@@ -213,6 +213,34 @@ function rebaseViewport(
   target.focusedKey = rebaseValue(target.focusedKey, sourcePath, destinationPath);
 }
 
+function rebaseTimelineIdentity(
+  value: string | null,
+  sourcePath: string,
+  destinationPath: string,
+): string | null {
+  for (const prefix of ['project:', 'work-note:'] as const) {
+    if (value === `${prefix}${sourcePath}`) return `${prefix}${destinationPath}`;
+  }
+  return value;
+}
+
+function rebaseTimelineViewport(
+  target: TimelinePresentationSession<TimelineScope>,
+  sourcePath: string,
+  destinationPath: string,
+): void {
+  target.firstKey = rebaseTimelineIdentity(target.firstKey, sourcePath, destinationPath);
+  target.focusedKey = rebaseTimelineIdentity(target.focusedKey, sourcePath, destinationPath);
+  if (target.focusedInteraction) {
+    target.focusedInteraction = {
+      ...target.focusedInteraction,
+      itemKey:
+        rebaseTimelineIdentity(target.focusedInteraction.itemKey, sourcePath, destinationPath) ??
+        target.focusedInteraction.itemKey,
+    };
+  }
+}
+
 function reconcileSafeArrays<TViewState>(
   source: ProjectWorkspaceScopeSession<TViewState>,
   destination: ProjectWorkspaceScopeSession<TViewState>,
@@ -404,6 +432,26 @@ export class ProjectWorkspaceSession {
   renamePath(sourcePath: string, destinationPath: string): void {
     if (sourcePath === destinationPath) return;
     this.renameProject(sourcePath, destinationPath);
+    this.portfolioBoard.focusedKey = rebaseValue(
+      this.portfolioBoard.focusedKey,
+      sourcePath,
+      destinationPath,
+    );
+    for (const viewport of Object.values(this.portfolioBoard.columns)) {
+      rebaseViewport(viewport, sourcePath, destinationPath);
+    }
+    rebaseTimelineViewport(this.portfolioTimeline, sourcePath, destinationPath);
+    this.portfolioCapture.createdPath = rebaseValue(
+      this.portfolioCapture.createdPath,
+      sourcePath,
+      destinationPath,
+    );
+    if (this.portfolioCapture.terminalResult?.path === sourcePath) {
+      this.portfolioCapture.terminalResult = {
+        ...this.portfolioCapture.terminalResult,
+        path: destinationPath,
+      };
+    }
     for (const entry of this.sessions.values()) {
       const selection = entry.workNotesScope.selection;
       selection.selectedKeys = selection.selectedKeys.map((path) =>

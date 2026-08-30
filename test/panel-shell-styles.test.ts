@@ -510,9 +510,9 @@ describe('Projects hardening styles', () => {
       const add = toolbar.querySelector<HTMLElement>('[data-portfolio-zone="add"]')!;
       expect(getComputedStyle(controls).display).toBe('grid');
       expect(getComputedStyle(filters).gridColumn).toBe('1 / -1');
-      expect(getComputedStyle(filters).gridRow).toBe('2');
-      expect(getComputedStyle(layout).gridRow).toBe('1');
-      expect(getComputedStyle(add).gridRow).toBe('1');
+      expect(getComputedStyle(filters).gridRow).toBe('1');
+      expect(getComputedStyle(layout).gridRow).toBe('2');
+      expect(getComputedStyle(add).gridRow).toBe('2');
       const visibleControls = Array.from(toolbar.querySelectorAll<HTMLButtonElement>('button'));
       expect(visibleControls).toHaveLength(6);
       for (const control of visibleControls) {
@@ -523,6 +523,120 @@ describe('Projects hardening styles', () => {
     } finally {
       toolbar.remove();
       style.remove();
+    }
+  });
+
+  it('gives every visible Project workspace and Work Note action a 44px coarse target', () => {
+    const style = activeDocument.createElement('style');
+    style.textContent = [css, boundedBlock(css, '@media (hover: none), (pointer: coarse)')].join(
+      '\n',
+    );
+    const workspace = activeDocument.createElement('section');
+    workspace.className = 'abyss-panel-view';
+    workspace.innerHTML = `
+      <div class="abyss-project-scope-controls">
+        <button data-project-scope="tasks">Tasks</button>
+        <button data-project-scope="work-notes">Work Notes</button>
+        <button data-project-use-as-default>Use as default</button>
+      </div>
+      <div class="abyss-collection-controls">
+        <div class="abyss-project-layout-controls">
+          <button data-project-layout="list">List</button>
+          <button data-project-layout="board">Board</button>
+          <button data-project-layout="timeline">Timeline</button>
+        </div>
+        <button class="abyss-collection-action">Filter</button>
+        <button class="abyss-view-state-btn">Show</button>
+        <input class="abyss-collection-search" aria-label="Filter Work Notes">
+      </div>
+      <div class="abyss-work-notes-toolbar">
+        <button class="abyss-work-note-create" aria-label="Create Work Note"></button>
+        <input class="abyss-work-note-create-input" aria-label="Work note title">
+      </div>
+      <div class="abyss-work-note-row">
+        <button class="abyss-work-note-identity" data-work-note-identity-control>Note</button>
+        <button class="abyss-work-note-status">Active</button>
+        <button class="abyss-work-note-open" aria-label="Open work note"></button>
+      </div>
+      <div class="abyss-work-note-inspector-header">
+        <button class="abyss-work-note-open" aria-label="Open work note"></button>
+        <button class="abyss-work-note-inspector-close" aria-label="Close Work Note details"></button>
+      </div>
+      <button class="abyss-project-inspector-open" aria-label="Open project note"></button>`;
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(workspace);
+    try {
+      const controls = Array.from(
+        workspace.querySelectorAll<HTMLElement>(
+          [
+            '.abyss-project-scope-controls > button',
+            '.abyss-collection-controls :is(button, input, select, summary)',
+            '.abyss-work-note-create',
+            '.abyss-work-note-create-input',
+            '.abyss-work-note-identity',
+            '.abyss-work-note-open',
+            '.abyss-work-note-status',
+            '.abyss-work-note-inspector-close',
+            '.abyss-project-inspector-open',
+          ].join(', '),
+        ),
+      );
+      expect(controls).toHaveLength(17);
+      for (const control of controls) {
+        const computed = getComputedStyle(control);
+        expect(
+          computed.minInlineSize,
+          control.getAttribute('aria-label') ?? control.textContent,
+        ).toBe('44px');
+        expect(
+          computed.minBlockSize,
+          control.getAttribute('aria-label') ?? control.textContent,
+        ).toBe('44px');
+      }
+    } finally {
+      workspace.remove();
+      style.remove();
+    }
+  });
+
+  it('keeps Work Note identity title-like against Obsidian button defaults', () => {
+    const pluginStyle = activeDocument.createElement('style');
+    pluginStyle.textContent = css;
+    const obsidianBaseline = activeDocument.createElement('style');
+    obsidianBaseline.textContent = `
+      .workspace-leaf-content button:not(.clickable-icon) {
+        padding: 10px 14px;
+        border: 2px solid rgb(120, 120, 120);
+        background: rgb(70, 70, 70);
+        box-shadow: 0 1px 2px rgb(0, 0, 0);
+        color: rgb(120, 120, 120);
+        font: bold 18px sans-serif;
+        text-align: center;
+      }`;
+    const workspace = activeDocument.createElement('section');
+    workspace.className = 'workspace-leaf-content abyss-panel-view';
+    workspace.style.setProperty('--text-normal', 'rgb(230, 230, 230)');
+    workspace.innerHTML = `
+      <div class="abyss-work-note-row">
+        <button class="abyss-work-note-identity" data-work-note-identity-control>
+          <span class="abyss-work-note-title">Research release plan</span>
+        </button>
+      </div>`;
+    activeDocument.head.append(pluginStyle, obsidianBaseline);
+    activeDocument.body.appendChild(workspace);
+    try {
+      const identity = workspace.querySelector<HTMLElement>('[data-work-note-identity-control]')!;
+      const computed = getComputedStyle(identity);
+      expect(['transparent', 'rgba(0, 0, 0, 0)']).toContain(computed.backgroundColor);
+      expect(computed.borderTopWidth).toBe('0px');
+      expect(computed.boxShadow).toBe('none');
+      expect(computed.color).toBe('var(--text-normal)');
+      expect(computed.paddingTop).toBe('0px');
+      expect(computed.textAlign).toBe('start');
+    } finally {
+      workspace.remove();
+      pluginStyle.remove();
+      obsidianBaseline.remove();
     }
   });
 

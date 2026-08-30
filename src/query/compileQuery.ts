@@ -95,7 +95,7 @@ class QueryParser {
 
   private expression(): QueryExpression | undefined {
     let left = this.conjunction();
-    while (left && this.keyword('OR')) {
+    while (left && this.binaryKeyword('OR')) {
       const right = this.conjunction();
       if (!right) return undefined;
       left = { type: 'or', left, right };
@@ -105,7 +105,7 @@ class QueryParser {
 
   private conjunction(): QueryExpression | undefined {
     let left = this.unary();
-    while (left && this.keyword('AND')) {
+    while (left && this.binaryKeyword('AND')) {
       const right = this.unary();
       if (!right) return undefined;
       left = { type: 'and', left, right };
@@ -184,7 +184,8 @@ class QueryParser {
         this.keywordAt(this.offset, 'AND') ||
         this.keywordAt(this.offset, 'OR')
       ) {
-        return { type: 'property', key, value: '' };
+        this.fail('expected-property-value', valueOffset);
+        return undefined;
       }
       const value =
         this.source[this.offset] === '"' || this.source[this.offset] === "'"
@@ -208,6 +209,20 @@ class QueryParser {
   private keyword(word: 'AND' | 'OR' | 'NOT'): boolean {
     this.whitespace();
     if (!this.keywordAt(this.offset, word)) {
+      return false;
+    }
+    this.offset += word.length;
+    return true;
+  }
+
+  private binaryKeyword(word: 'AND' | 'OR'): boolean {
+    this.whitespace();
+    const operatorOffset = this.offset;
+    if (!this.keywordAt(operatorOffset, word)) return false;
+    if (
+      !isWhitespace(this.source[operatorOffset - 1]) ||
+      !isWhitespace(this.source[operatorOffset + word.length])
+    ) {
       return false;
     }
     this.offset += word.length;

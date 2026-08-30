@@ -222,7 +222,14 @@ export function renderProjectsToolbar(
     if (!filters.classList.contains('is-overflowing')) {
       requiredFilterWidth = filters.scrollWidth;
     }
-    const overflowing = requiredFilterWidth > filters.clientWidth && filters.clientWidth > 0;
+    const computedFontSize = Number.parseFloat(
+      header.ownerDocument.defaultView?.getComputedStyle(header.ownerDocument.documentElement)
+        .fontSize ?? '',
+    );
+    const compactThreshold = 30 * (Number.isFinite(computedFontSize) ? computedFontSize : 16);
+    const compact = header.clientWidth > 0 && header.clientWidth <= compactThreshold;
+    const overflowing =
+      compact || (requiredFilterWidth > filters.clientWidth && filters.clientWidth > 0);
     filters.toggleClass('is-overflowing', overflowing);
     const chips = Array.from(
       filters.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
@@ -235,7 +242,7 @@ export function renderProjectsToolbar(
       const active = chip.classList.contains('is-active');
       const width = chip.offsetWidth;
       const fits = width + (retainedActive > 0 ? 6 : 0) <= remainingWidth;
-      const hidden = overflowing && (!active || retainedActive >= 2 || !fits);
+      const hidden = compact || (overflowing && (!active || retainedActive >= 2 || !fits));
       chip.toggleClass('is-overflow-hidden', hidden);
       if (active && !hidden) {
         retainedActive += 1;
@@ -247,6 +254,7 @@ export function renderProjectsToolbar(
   };
   const ResizeObserverCtor = header.ownerDocument.defaultView?.ResizeObserver;
   const observer = ResizeObserverCtor ? new ResizeObserverCtor(updateOverflow) : undefined;
+  observer?.observe(header);
   observer?.observe(filters);
   updateOverflow();
   return {

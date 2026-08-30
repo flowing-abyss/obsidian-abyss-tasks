@@ -975,14 +975,18 @@ export class CalendarSettingsTab extends PluginSettingTab {
           let n = projects.statuses.length + 1;
           while (projects.statuses.some((s) => s.id === `status-${n}`)) n++;
           const id = `status-${n}`;
-          projects.statuses.push({
+          const status = {
             id,
             label: 'New status',
             color: '#888888',
             onLeftPanel: false,
             behavior: 'regular',
             match: { kind: 'property', property: 'status', value: '' },
-          });
+          } as const;
+          projects.statuses.push(status);
+          if (!projects.view.visibleStatusIds.includes(id)) {
+            projects.view.visibleStatusIds = [...projects.view.visibleStatusIds, id];
+          }
           this.expandedCards.add(id); // open the new card for editing
           await this.plugin.saveSettings();
           // eslint-disable-next-line @typescript-eslint/no-deprecated

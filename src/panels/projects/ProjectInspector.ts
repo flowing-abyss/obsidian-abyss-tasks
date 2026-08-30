@@ -262,6 +262,14 @@ export function renderProjectInspector(
   open.addEventListener('click', () => options.openNote(project.path));
 
   const fields = container.createDiv({ cls: 'abyss-project-inspector-fields' });
+  const labeledField = (
+    label: 'Status' | 'Priority' | 'Start' | 'End' | 'Description',
+  ): { readonly row: HTMLElement; readonly controlLabel: HTMLLabelElement } => {
+    const row = fields.createDiv({ cls: 'abyss-project-inspector-field' });
+    const controlLabel = row.createEl('label', { cls: 'abyss-project-inspector-control-label' });
+    controlLabel.createSpan({ cls: 'abyss-project-inspector-field-label', text: label });
+    return { row, controlLabel };
+  };
   const run = async (
     field: InspectorDraftField,
     control: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -327,13 +335,16 @@ export function renderProjectInspector(
 
   if (options.statuses && options.onSetStatus) {
     const statusBaseline = project.statusId ?? '';
-    const status = fields.createEl('select', { attr: { 'aria-label': 'Project status' } });
+    const statusField = labeledField('Status');
+    const status = statusField.controlLabel.createEl('select', {
+      attr: { 'aria-label': 'Project status' },
+    });
     for (const definition of options.statuses) {
       status.createEl('option', { text: definition.label, value: definition.id });
     }
     const draft = captureSelect(status, identity, statusBaseline, draftRegistry);
     status.disabled = draft?.pending === true;
-    const feedback = fieldFeedback(fields, 'status', draft);
+    const feedback = fieldFeedback(statusField.row, 'status', draft);
     status.addEventListener('focus', () => {
       const current = draftRegistry?.get(identity, 'status');
       draftRegistry?.capture(identity, 'status', {
@@ -367,7 +378,8 @@ export function renderProjectInspector(
     });
   }
 
-  const priority = fields.createEl('input', {
+  const priorityField = labeledField('Priority');
+  const priority = priorityField.controlLabel.createEl('input', {
     attr: { type: 'text', maxlength: '1', 'aria-label': 'Project priority' },
   });
   const priorityDraft = restoreTextControl(
@@ -381,7 +393,7 @@ export function renderProjectInspector(
       value: project.observed?.priority ?? project.frontmatter['priority'],
     } satisfies ProjectFieldObservation,
   );
-  const priorityFeedback = fieldFeedback(fields, 'priority', priorityDraft);
+  const priorityFeedback = fieldFeedback(priorityField.row, 'priority', priorityDraft);
   priority.disabled = unsupported.has('priority') || priorityDraft?.pending === true;
   priority.addEventListener('change', () => {
     const value = priority.value.trim().toUpperCase();
@@ -408,7 +420,10 @@ export function renderProjectInspector(
     );
   });
 
-  const start = fields.createEl('input', { attr: { type: 'text', 'aria-label': 'Project start' } });
+  const startField = labeledField('Start');
+  const start = startField.controlLabel.createEl('input', {
+    attr: { type: 'text', 'aria-label': 'Project start' },
+  });
   const observedRange =
     typeof options.commands?.observeRange === 'function'
       ? options.commands.observeRange(project)
@@ -421,9 +436,12 @@ export function renderProjectInspector(
     draftRegistry,
     observedRange,
   );
-  const startFeedback = fieldFeedback(fields, 'start', startDraft);
+  const startFeedback = fieldFeedback(startField.row, 'start', startDraft);
   start.disabled = startDraft?.pending === true;
-  const end = fields.createEl('input', { attr: { type: 'text', 'aria-label': 'Project end' } });
+  const endField = labeledField('End');
+  const end = endField.controlLabel.createEl('input', {
+    attr: { type: 'text', 'aria-label': 'Project end' },
+  });
   const endDraft = restoreTextControl(
     end,
     identity,
@@ -432,7 +450,7 @@ export function renderProjectInspector(
     draftRegistry,
     observedRange,
   );
-  const endFeedback = fieldFeedback(fields, 'end', endDraft);
+  const endFeedback = fieldFeedback(endField.row, 'end', endDraft);
   end.disabled = endDraft?.pending === true;
   const saveRange = (field: 'start' | 'end', control: HTMLInputElement): void => {
     if (!options.commands) return;
@@ -468,7 +486,8 @@ export function renderProjectInspector(
   start.addEventListener('blur', () => saveRange('start', start));
   end.addEventListener('blur', () => saveRange('end', end));
 
-  const description = fields.createEl('textarea', {
+  const descriptionField = labeledField('Description');
+  const description = descriptionField.controlLabel.createEl('textarea', {
     attr: { 'aria-label': 'Project description' },
   });
   const descriptionDraft = restoreTextControl(
@@ -482,7 +501,7 @@ export function renderProjectInspector(
       value: project.observed?.description ?? project.frontmatter['description'],
     } satisfies ProjectFieldObservation,
   );
-  const descriptionFeedback = fieldFeedback(fields, 'description', descriptionDraft);
+  const descriptionFeedback = fieldFeedback(descriptionField.row, 'description', descriptionDraft);
   description.disabled = unsupported.has('description') || descriptionDraft?.pending === true;
   description.addEventListener('blur', () => {
     if (!options.commands) return;

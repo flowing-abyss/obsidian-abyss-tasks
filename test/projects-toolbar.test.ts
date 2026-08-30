@@ -172,4 +172,61 @@ describe('renderProjectsToolbar', () => {
       });
     }
   });
+
+  it('collapses every status chip into one Show summary at compact portfolio width', () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const PreviousResizeObserver = globalThis.ResizeObserver;
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        callbacks.push(callback);
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: TestResizeObserver,
+    });
+    try {
+      const ctx = context();
+      ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses.map(
+        ({ id }) => id,
+      );
+      const root = freshContainer();
+      const result = renderProjectsToolbar(root, ctx);
+      const header = root.querySelector<HTMLElement>('.abyss-projects-toolbar')!;
+      const filters = root.querySelector<HTMLElement>('.abyss-project-status-filters')!;
+      Object.defineProperty(header, 'clientWidth', { configurable: true, value: 440 });
+      Object.defineProperty(filters, 'clientWidth', { configurable: true, value: 300 });
+      Object.defineProperty(filters, 'scrollWidth', { configurable: true, value: 600 });
+      Object.defineProperty(result.statusSummaryButton, 'offsetWidth', {
+        configurable: true,
+        value: 60,
+      });
+      for (const chip of filters.querySelectorAll<HTMLElement>('.abyss-project-status-filter')) {
+        Object.defineProperty(chip, 'offsetWidth', { configurable: true, value: 80 });
+      }
+
+      callbacks[0]?.([], {} as ResizeObserver);
+
+      expect(
+        filters.querySelectorAll('.abyss-project-status-filter:not(.is-overflow-hidden)'),
+      ).toHaveLength(0);
+      expect(result.statusSummaryButton.hidden).toBe(false);
+      expect(result.statusSummaryButton.textContent).toBe(
+        `Show ${String(ctx.settings.projects.statuses.length + 1)}`,
+      );
+      expect(
+        Array.from(
+          root.querySelectorAll<HTMLElement>('.abyss-center-controls > [data-portfolio-zone]'),
+          (zone) => zone.dataset['portfolioZone'],
+        ),
+      ).toEqual(['filters', 'layout', 'add']);
+    } finally {
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        value: PreviousResizeObserver,
+      });
+    }
+  });
 });

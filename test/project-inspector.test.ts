@@ -85,6 +85,48 @@ describe('ProjectInspector', () => {
     expect(root.textContent).toContain('One task is blocked');
   });
 
+  it('shows concise visible labels for the five Project planning fields', () => {
+    const root = freshContainer();
+    renderProjectInspector(root, {
+      project: {
+        path: 'Projects/Atlas.md',
+        name: 'Atlas',
+        frontmatter: {},
+        tags: [],
+        statusId: 'active',
+        rawStatus: null,
+        range: {},
+        priority: 'B',
+        description: 'Ship safely',
+        comments: [],
+        stats: { total: 4, done: 2, cancelled: 0, inProgress: 1, open: 1, progress: 0.5 },
+      },
+      taskRollup: { total: 4, done: 2, cancelled: 0, inProgress: 1, open: 1, progress: 0.5 },
+      openNote: () => undefined,
+      statuses: [{ id: 'active', label: 'Active' }],
+      onSetStatus: vi.fn(),
+    });
+
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLElement>('.abyss-project-inspector-field-label'),
+        ({ textContent }) => textContent,
+      ),
+    ).toEqual(['Status', 'Priority', 'Start', 'End', 'Description']);
+    for (const ariaLabel of [
+      'Project status',
+      'Project priority',
+      'Project start',
+      'Project end',
+      'Project description',
+    ]) {
+      const control = root.querySelector<HTMLElement>(`[aria-label="${ariaLabel}"]`)!;
+      expect(
+        control.closest('label')?.querySelector('.abyss-project-inspector-field-label'),
+      ).not.toBeNull();
+    }
+  });
+
   it('uses the status selector callback for project status changes', () => {
     const root = freshContainer();
     const onSetStatus = vi.fn();

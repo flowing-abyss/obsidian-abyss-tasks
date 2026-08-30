@@ -2,6 +2,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { App, Setting } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { AppState } from '../src/app/AppState';
+import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
+import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type {
   WorkNoteCompatibilityDisableResult,
   WorkNoteCompatibilityPreset,
@@ -1420,6 +1423,117 @@ describe('CalendarSettingsTab collapsible cards + default status', () => {
     expect(
       plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]?.behavior,
     ).toBe('regular');
+  });
+
+  it('keeps a newly added Project status visible after Projects are mapped to it', async () => {
+    const { tab, plugin, captured } = makeTab();
+    const previouslyVisible = [...plugin.settings.projects.view.visibleStatusIds];
+    openSection(tab, 5);
+    const addStatus = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === '+ Add status';
+    });
+
+    addStatus!.comp.clickHandler!();
+    await Promise.resolve();
+
+    const added = plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]!;
+    expect(plugin.settings.projects.view.visibleStatusIds).toEqual([
+      ...previouslyVisible,
+      added.id,
+    ]);
+    expect(plugin.settings.projects.view.visibleStatusIds.filter((id) => id === added.id)).toEqual([
+      added.id,
+    ]);
+  });
+
+  it('keeps a Project rendered when it is newly mapped to the added status', async () => {
+    const { tab, plugin, captured } = makeTab();
+    openSection(tab, 5);
+    const addStatus = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === '+ Add status';
+    });
+    addStatus!.comp.clickHandler!();
+    await Promise.resolve();
+    const added = plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]!;
+    const taskRollup = {
+      total: 0,
+      done: 0,
+      cancelled: 0,
+      inProgress: 0,
+      open: 0,
+      progress: null,
+    };
+    const snapshot: ProjectWorkspaceSnapshot = {
+      project: {
+        path: 'Projects/Newly mapped.md',
+        name: 'Newly mapped',
+        frontmatter: { status: 'new' },
+        tags: [],
+        statusId: added.id,
+        rawStatus: null,
+        range: {},
+        stats: taskRollup,
+      },
+      tasks: [],
+      workNotes: [],
+      milestones: [],
+      taskRollup,
+      workNoteRollup: { active: 0, completed: 0, dropped: 0 },
+      milestoneRollups: new Map(),
+      workNoteRelations: [],
+      overdue: { tasks: 0, workNotes: 0 },
+      dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
+      diagnostics: [],
+    };
+    const container = activeDocument.body.createDiv();
+
+    const cleanup = renderProjectsList(container, [snapshot], {
+      state: new AppState(),
+      settings: plugin.settings,
+      onSaveSettings: async () => undefined,
+      onCreate: vi.fn().mockResolvedValue({
+        type: 'failed-before-create',
+        reason: 'unused',
+      }),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(
+      container.querySelector('[data-project-path="Projects/Newly mapped.md"]'),
+    ).not.toBeNull();
+    expect(container.textContent).not.toContain('No projects match the status filters');
+    cleanup();
+    container.remove();
+  });
+
+  it('does not duplicate a newly configured Project status already present in the filter order', async () => {
+    const projects = structuredClone(DEFAULT_SETTINGS.projects);
+    const nextId = `status-${projects.statuses.length + 1}`;
+    projects.view.visibleStatusIds = [projects.statuses[1]!.id, projects.statuses[0]!.id, nextId];
+    const { tab, plugin, captured } = makeTab({ projects });
+    openSection(tab, 5);
+    const addStatus = captured.find((entry) => {
+      if (entry.type !== 'button') return false;
+      const element = (entry.comp as unknown as { buttonEl?: HTMLElement }).buttonEl;
+      return element?.textContent === '+ Add status';
+    });
+
+    addStatus!.comp.clickHandler!();
+    await Promise.resolve();
+
+    expect(
+      plugin.settings.projects.statuses[plugin.settings.projects.statuses.length - 1]?.id,
+    ).toBe(nextId);
+    expect(plugin.settings.projects.view.visibleStatusIds).toEqual([
+      projects.statuses[1]!.id,
+      projects.statuses[0]!.id,
+      nextId,
+    ]);
   });
 
   it('lets each Project status persist one of the four lifecycle roles', () => {

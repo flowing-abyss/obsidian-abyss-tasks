@@ -17,8 +17,8 @@ describe('vault membership query compiler', () => {
     expect(evaluateCompiledQuery(query, candidate('A.md', ['#alpha', '#archived']))).toBe(true);
   });
 
-  it('recognizes case-insensitive keywords at parenthesis boundaries with flexible whitespace', () => {
-    const query = compileQuery('( #project )aNd( status = active )oR( #archive )');
+  it('recognizes case-insensitive binary keywords with required surrounding whitespace', () => {
+    const query = compileQuery('( #project ) aNd ( status = active ) oR ( #archive )');
 
     expect(query.state).toBe('valid');
     expect(
@@ -28,6 +28,24 @@ describe('vault membership query compiler', () => {
     expect(evaluateCompiledQuery(query, candidate('A.md', ['#project'], { status: 'done' }))).toBe(
       false,
     );
+  });
+
+  it('rejects binary operators without surrounding whitespace at the source offset', () => {
+    expect(compileQuery('( #project )AND( status=active )')).toMatchObject({
+      state: 'invalid',
+      diagnostic: { code: 'unexpected-token', offset: 12 },
+    });
+  });
+
+  it.each([
+    ['status=', 7],
+    ['status= AND #active', 8],
+    ['status= )', 8],
+  ])('rejects a missing property value in %s', (source, offset) => {
+    expect(compileQuery(source)).toMatchObject({
+      state: 'invalid',
+      diagnostic: { code: 'expected-property-value', offset },
+    });
   });
 
   it('matches folder and quoted-folder terms', () => {
