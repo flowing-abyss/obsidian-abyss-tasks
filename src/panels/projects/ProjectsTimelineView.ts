@@ -1539,7 +1539,11 @@ export function renderTimeline<T>(
           const identity = row.createDiv({ cls: 'abyss-timeline-identity' });
           renderEntryIdentity(identity, entry, options.renderIdentity);
           if (entry.item.kind === 'invalid') {
-            row.createSpan({ cls: 'abyss-timeline-diagnostic-reason', text: entry.item.reason });
+            row.createSpan({
+              cls: 'abyss-timeline-diagnostic-reason',
+              text: timelineDiagnosticReason(entry.item.reason),
+              attr: { 'data-timeline-diagnostic-code': entry.item.reason },
+            });
             const proposal = options.repairProposal?.(entry);
             if (proposal && options.onConfirmRepair) {
               row.createSpan({
@@ -1603,6 +1607,16 @@ export function renderTimeline<T>(
       container.empty();
     },
   };
+}
+
+function timelineDiagnosticReason(reason: string): string {
+  if (reason === 'invalid-start') return 'Start date is invalid';
+  if (reason === 'invalid-end') return 'End date is invalid';
+  if (reason === 'invalid-due') return 'Due date is invalid';
+  if (reason === 'invalid-scheduled') return 'Scheduled date is invalid';
+  if (reason === 'milestone-range') return 'Milestones use one date';
+  if (reason === 'reversed') return 'Start date is after end date';
+  return 'Timeline dates need attention';
 }
 
 function movedProjectDate(current: ProjectDateValue | undefined, date: string) {

@@ -408,7 +408,11 @@ describe('shared Timeline view', () => {
 
     const invalid = container.querySelector<HTMLDetailsElement>('[data-timeline-tray="invalid"]')!;
     invalid.open = true;
-    expect(invalid.textContent).toContain('reversed');
+    expect(invalid.textContent).toContain('Start date is after end date');
+    expect(
+      invalid.querySelector<HTMLElement>('.abyss-timeline-diagnostic-reason')?.dataset
+        .timelineDiagnosticCode,
+    ).toBe('reversed');
     expect(invalid.querySelector('[data-timeline-repair-preview]')?.textContent).toContain(
       '2026-08-20 – 2026-08-30',
     );
@@ -1025,7 +1029,7 @@ describe('shared Timeline view', () => {
     renderTimeline(container, {
       entries: [
         entry({ kind: 'undated', key: 'project:Undated' }, 'Undated'),
-        entry({ kind: 'invalid', key: 'project:Broken', reason: 'reversed' }, 'Broken'),
+        entry({ kind: 'invalid', key: 'project:Broken', reason: 'invalid-start' }, 'Broken'),
       ],
       onSetDate: () => ({ type: 'ok' }),
     });
@@ -1039,8 +1043,38 @@ describe('shared Timeline view', () => {
     expect(invalid.open).toBe(false);
     expect(invalid.querySelector('summary')?.textContent).toContain('Invalid · 1');
     expect(planning.querySelector('[data-timeline-schedule]')).not.toBeNull();
-    expect(invalid.textContent).toContain('reversed');
+    const reason = invalid.querySelector<HTMLElement>('.abyss-timeline-diagnostic-reason')!;
+    expect(reason.textContent).toBe('Start date is invalid');
+    expect(reason.dataset.timelineDiagnosticCode).toBe('invalid-start');
     expect(container.querySelector('.abyss-timeline-toolbar')).toBeNull();
+  });
+
+  it('humanizes every Timeline date diagnostic while retaining its exact code', () => {
+    const container = freshContainer();
+    renderTimeline(container, {
+      entries: [
+        entry({ kind: 'invalid', key: 'task:due', reason: 'invalid-due' }, 'Due'),
+        entry({ kind: 'invalid', key: 'task:scheduled', reason: 'invalid-scheduled' }, 'Scheduled'),
+        entry(
+          { kind: 'invalid', key: 'work-note:milestone', reason: 'milestone-range' },
+          'Milestone',
+        ),
+      ],
+    });
+
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>('.abyss-timeline-diagnostic-reason'),
+        (el) => ({
+          text: el.textContent,
+          code: el.dataset.timelineDiagnosticCode,
+        }),
+      ),
+    ).toEqual([
+      { text: 'Due date is invalid', code: 'invalid-due' },
+      { text: 'Scheduled date is invalid', code: 'invalid-scheduled' },
+      { text: 'Milestones use one date', code: 'milestone-range' },
+    ]);
   });
 
   it('renders a title-first narrow agenda without duplicate endpoint prose or a date grid', () => {
@@ -2249,7 +2283,6 @@ describe('shared Timeline view', () => {
     });
     const ship = task({
       title: 'Ship',
-      planning: { due: '2026-08-29' as never },
       source: { filePath: 'Projects/A.md', line: 3 },
     });
     const unrelated = task({
@@ -2291,13 +2324,15 @@ describe('shared Timeline view', () => {
       const subject = container.querySelector<HTMLElement>(
         '[data-timeline-key="task:Projects/A.md:3"]',
       )!;
+      expect(subject.classList.contains('abyss-timeline-diagnostic-row')).toBe(true);
       expect(subject.getAttribute('aria-current')).toBe('true');
       expect(subject.getAttribute('aria-description')).toBe(
         'Focused blocked task. Blocked by 2 prerequisites.',
       );
+      expect(getComputedStyle(subject).boxShadow).toContain('inset 3px 0');
       expect(
         getComputedStyle(subject.querySelector<HTMLElement>('.abyss-timeline-identity')!).boxShadow,
-      ).toContain('inset 3px 0');
+      ).not.toContain('inset 3px 0');
       expect(
         Array.from(
           container.querySelectorAll<HTMLElement>('[data-task-dependency-emphasis="prerequisite"]'),

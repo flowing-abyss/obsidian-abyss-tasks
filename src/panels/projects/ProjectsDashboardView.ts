@@ -22,7 +22,7 @@ import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
-import { taskTimelineItem, workNoteTimelineItem } from './timelineProjection';
+import { taskTimelineItem } from './timelineProjection';
 import {
   joinedNextAction,
   type ProjectChildRenderHandle,
@@ -296,8 +296,7 @@ export function renderProjectDashboard(
     scope === 'tasks'
       ? ctx.renderTaskTimeline !== undefined &&
         snapshot.tasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
-      : ctx.renderWorkNoteTimeline !== undefined &&
-        allWorkNotes.some((note) => workNoteTimelineItem(note).kind !== 'undated');
+      : ctx.renderWorkNoteTimeline !== undefined && allWorkNotes.length > 0;
   let syncTimelineButton = (): void => undefined;
   let syncCollectionControls = (): void => undefined;
   let child: ProjectChildRenderHandle | null = null;

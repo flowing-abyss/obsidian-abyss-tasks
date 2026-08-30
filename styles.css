@@ -7083,7 +7083,8 @@ body.abyss-modal-open .popover.hover-popover {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
-.abyss-timeline-row[data-task-dependency-emphasis='subject'] {
+.abyss-timeline-row[data-task-dependency-emphasis='subject'],
+.abyss-timeline-diagnostic-row[data-task-dependency-emphasis='subject'] {
   box-shadow: inset 3px 0 var(--interactive-accent);
 }
 .abyss-timeline-row[data-task-dependency-emphasis='subject'] > .abyss-timeline-identity {
@@ -7364,9 +7365,6 @@ body.abyss-modal-open .popover.hover-popover {
   border-color: var(--interactive-accent);
 }
 .abyss-timeline.is-agenda .abyss-timeline-axis,
-.abyss-timeline.is-agenda .abyss-timeline-plot {
-  display: none;
-}
 .abyss-timeline.is-agenda .abyss-timeline-plot {
   display: none;
 }

@@ -567,9 +567,14 @@ describe('Projects hardening styles', () => {
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-repair-confirm')).toContain(
       'grid-column: 2',
     );
-    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-plot')).toContain(
-      'display: none',
-    );
+    expect(
+      declarationsFor(
+        '.abyss-timeline.is-agenda .abyss-timeline-axis, .abyss-timeline.is-agenda .abyss-timeline-plot',
+      ),
+    ).toContain('display: none');
+    expect(
+      rules.filter(({ selector }) => selector === '.abyss-timeline.is-agenda .abyss-timeline-plot'),
+    ).toHaveLength(0);
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-scroll')).toContain(
       'overflow-x: hidden',
     );
