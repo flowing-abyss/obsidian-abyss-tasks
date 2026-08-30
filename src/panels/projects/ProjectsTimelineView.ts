@@ -1214,11 +1214,12 @@ export function renderTimeline<T>(
     const onToday = (): void => {
       if (session) session.focalDate = today;
       if (!dates.includes(today)) {
-        const from = shiftCivilDate(today, -15) ?? today;
-        const to = shiftCivilDate(today, 15) ?? today;
+        const todayWindow = paddedDateWindow({ from: today, to: today });
+        const from = window && window.from < todayWindow.from ? window.from : todayWindow.from;
+        const to = window && window.to > todayWindow.to ? window.to : todayWindow.to;
         window = { from, to };
         dates = continuousDates(from, to);
-        midpoint = today;
+        midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
         refreshGeometry(false);
       }
       centerOn(today);

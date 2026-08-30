@@ -385,15 +385,32 @@ describe('shared Timeline view', () => {
   });
 
   it.each([
-    ['historical', '1926-01-02'],
-    ['future', '2126-12-30'],
+    ['historical', '1926-01-02', '1926-01-01', '2026-08-31'],
+    ['future', '2126-12-30', '2026-08-29', '2126-12-31'],
   ] as const)(
-    'reframes a %s content window around Today without constructing a century canvas',
-    (_, itemDate) => {
+    'centers Today while preserving a %s item in the same continuous canvas',
+    (_, itemDate, expectedFirst, expectedLast) => {
       const container = freshContainer();
+      const session = {
+        firstKey: null,
+        firstIndex: 0,
+        focusedKey: null,
+        restoreFocus: false,
+        focalDate: itemDate,
+        scrollLeft: 0,
+        scale: 'month',
+        identityWidth: 240,
+        focusedInteraction: null,
+      };
       renderTimeline(container, {
         entries: [point('Distant', itemDate)],
         today: '2026-08-30',
+        session,
+      } as Parameters<typeof renderTimeline<Fixture>>[1]);
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      Object.defineProperties(scroll, {
+        clientWidth: { configurable: true, value: 600 },
+        scrollWidth: { configurable: true, value: 20_000_000 },
       });
 
       container.querySelector<HTMLButtonElement>('[data-timeline-today]')!.click();
@@ -402,9 +419,22 @@ describe('shared Timeline view', () => {
         container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
         (marker) => marker.dataset.timelineDateCoordinate,
       );
+      expect(coordinates[0]).toBe(expectedFirst);
+      expect(coordinates[coordinates.length - 1]).toBe(expectedLast);
+      expect(coordinates).toContain(itemDate);
       expect(coordinates).toContain('2026-08-30');
-      expect(coordinates.length).toBeLessThanOrEqual(40);
       expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
+      expect(
+        container.querySelector('[data-timeline-key="task:Distant"][data-timeline-point]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector(
+          '[data-timeline-key="task:Distant"][data-timeline-date-picker="due"]',
+        ),
+      ).not.toBeNull();
+      expect(session.focalDate).toBe('2026-08-30');
+      expect(session.scrollLeft).toBe(scroll.scrollLeft);
+      expect(scroll.scrollLeft).toBeGreaterThan(0);
     },
   );
 
