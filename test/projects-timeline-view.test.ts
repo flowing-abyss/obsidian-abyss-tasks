@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import {
+  renderContainerResponsiveTimeline,
   renderProjectsTimeline,
   renderTasksTimeline,
   renderTimeline,
@@ -640,6 +641,53 @@ describe('shared Timeline view', () => {
     expect(range('A').dateByRole).toEqual({ start: '2026-08-27', end: '2026-08-29' });
   });
 
+  it('keeps Today durable when a Year fill contains it outside the immutable content window', () => {
+    const container = freshContainer();
+    const focalEntry = point('Winter project', '2026-01-15');
+    const originalMetadata = { ...focalEntry.dateByRole };
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-01-15',
+      scrollLeft: 0,
+      scale: 'year',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    renderTimeline(container, {
+      entries: [focalEntry],
+      dateWindow: { from: '2026-01-14', to: '2026-01-16' },
+      scope: 'portfolio',
+      today: '2026-06-15',
+      session,
+    } as Parameters<typeof renderTimeline<Fixture>>[1]);
+    const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+    Object.defineProperties(scroll, {
+      clientWidth: { configurable: true, value: 1_200 },
+      scrollWidth: { configurable: true, value: 20_000 },
+    });
+    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
+    scale.value = 'year';
+    scale.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
+    container.querySelector<HTMLButtonElement>('[data-timeline-today]')!.click();
+    scale.value = 'week';
+    scale.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(session.focalDate).toBe('2026-06-15');
+    expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
+    expect(
+      Array.from(
+        container.querySelectorAll<HTMLElement>('[data-timeline-axis-label-date]'),
+        ({ dataset }) => dataset.timelineAxisLabelDate,
+      ),
+    ).toContain('2026-06-15');
+    expect(focalEntry.dateByRole).toEqual(originalMetadata);
+  });
+
   it.each([
     ['historical', '1926-01-02', 0],
     ['future', '2126-12-30', 300_000],
@@ -1144,6 +1192,139 @@ describe('shared Timeline view', () => {
     await flushMicrotasks();
     expect(container.childElementCount).toBe(0);
     expect(onSetDate).not.toHaveBeenCalled();
+  });
+
+  it('reflows a committed identity width in place without changing focal date, rows, or focus', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-27',
+      scrollLeft: 0,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    try {
+      renderTimeline(container, {
+        entries: [point('A')],
+        onSetDate: () => ({ type: 'ok' }),
+        coarsePointer: true,
+        session,
+      } as Parameters<typeof renderTimeline<Fixture>>[1]);
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1_200 });
+      const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
+      scale.value = 'month';
+      scale.dispatchEvent(new Event('change', { bubbles: true }));
+      const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
+      const row = container.querySelector<HTMLElement>('.abyss-timeline-row')!;
+      const control = container.querySelector<HTMLButtonElement>('[data-timeline-point]')!;
+      control.focus();
+      const focalDate = session.focalDate;
+
+      container.querySelector<HTMLButtonElement>('[data-timeline-identity-preset="wide"]')!.click();
+
+      expect(Number.parseFloat(canvas.style.getPropertyValue('--abyss-timeline-plot-width'))).toBe(
+        840,
+      );
+      expect(container.querySelector('.abyss-timeline-row')).toBe(row);
+      expect(container.querySelector('[data-timeline-point]')).toBe(control);
+      expect(activeDocument.activeElement).toBe(control);
+      expect(session.focalDate).toBe(focalDate);
+    } finally {
+      container.remove();
+    }
+  });
+
+  it('reflows a same-mode wide host resize in place without remounting controls or losing focus', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const ownerWindow = container.ownerDocument.defaultView!;
+    const originalResizeObserver = Object.getOwnPropertyDescriptor(ownerWindow, 'ResizeObserver');
+    let triggerResize = (): void => {
+      throw new Error('Resize observer was not installed');
+    };
+    class TestResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        triggerResize = () => callback([], this as unknown as ResizeObserver);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    Object.defineProperty(ownerWindow, 'ResizeObserver', {
+      configurable: true,
+      value: TestResizeObserver,
+    });
+    let containerWidth = 1_200;
+    Object.defineProperty(container, 'clientWidth', {
+      configurable: true,
+      get: () => containerWidth,
+    });
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-27',
+      scrollLeft: 0,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    let renderCount = 0;
+    const handle = renderContainerResponsiveTimeline(container, (isNarrow) => {
+      renderCount += 1;
+      return renderTimeline(container, {
+        entries: [point('A')],
+        onSetDate: () => ({ type: 'ok' }),
+        isNarrow,
+        session,
+      } as Parameters<typeof renderTimeline<Fixture>>[1]);
+    });
+    try {
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      let scrollWidth = 1_200;
+      Object.defineProperty(scroll, 'clientWidth', {
+        configurable: true,
+        get: () => scrollWidth,
+      });
+      const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
+      scale.value = 'month';
+      scale.dispatchEvent(new Event('change', { bubbles: true }));
+      const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
+      const row = container.querySelector<HTMLElement>('.abyss-timeline-row')!;
+      const control = container.querySelector<HTMLButtonElement>('[data-timeline-point]')!;
+      control.focus();
+      const focalDate = session.focalDate;
+
+      containerWidth = 1_400;
+      scrollWidth = 1_400;
+      triggerResize();
+
+      const plotWidth = Number.parseFloat(
+        canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
+      );
+      expect(plotWidth).toBeGreaterThanOrEqual(1_160);
+      expect(plotWidth).toBeLessThan(1_200);
+      expect(renderCount).toBe(1);
+      expect(container.querySelector('.abyss-timeline-row')).toBe(row);
+      expect(container.querySelector('[data-timeline-point]')).toBe(control);
+      expect(activeDocument.activeElement).toBe(control);
+      expect(session.focalDate).toBe(focalDate);
+    } finally {
+      handle.destroy();
+      if (originalResizeObserver) {
+        Object.defineProperty(ownerWindow, 'ResizeObserver', originalResizeObserver);
+      } else {
+        Reflect.deleteProperty(ownerWindow, 'ResizeObserver');
+      }
+      container.remove();
+    }
   });
 
   it('previews identity width ephemerally and clears interaction session state on cancel, commit, and destroy', async () => {

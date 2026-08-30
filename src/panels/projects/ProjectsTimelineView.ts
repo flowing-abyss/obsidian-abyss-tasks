@@ -125,6 +125,7 @@ export interface TimelineViewOptions<T> {
 }
 
 export interface TimelineViewHandle {
+  reflow?(): void;
   destroy(): void;
 }
 
@@ -143,7 +144,10 @@ export function renderContainerResponsiveTimeline(
     ? new ResizeObserverCtor(() => {
         if (destroyed) return;
         const next = narrow();
-        if (next === isNarrow) return;
+        if (next === isNarrow) {
+          child.reflow?.();
+          return;
+        }
         isNarrow = next;
         child.destroy();
         child = render(isNarrow);
@@ -151,6 +155,7 @@ export function renderContainerResponsiveTimeline(
     : null;
   observer?.observe(container);
   return {
+    reflow: () => child.reflow?.(),
     destroy: () => {
       if (destroyed) return;
       destroyed = true;
@@ -520,10 +525,11 @@ export function renderTimeline<T>(
   const undated = options.entries.filter((entry) => entry.item.kind === 'undated');
   const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
   if (dated.length === 0) toolbar.remove();
-  let contentWindow = (() => {
+  const contentWindow = (() => {
     const content = options.dateWindow ?? inferredDateWindow(dated);
     return content ? paddedDateWindow(content) : undefined;
   })();
+  let requiredPresentationDate = civilDate(session?.focalDate ?? undefined);
   let window = contentWindow;
   let dates = window ? continuousDates(window.from, window.to) : [];
   if (session) session.focusedInteraction = null;
@@ -534,6 +540,7 @@ export function renderTimeline<T>(
   let autoscrollFrame: number | null = null;
   let autoscrollDirection: -1 | 0 | 1 = 0;
   let autoscrollSpeed = 0;
+  let reflowTimeline: (() => void) | undefined;
   const scheduleEntryByInput = new WeakMap<HTMLInputElement, TimelineEntry<T>>();
   const canSetDate = (entry: TimelineEntry<T>, role: TimelinePointRole): boolean =>
     options.onSetDate !== undefined && options.canSetDate?.(entry, role) !== false;
@@ -892,6 +899,31 @@ export function renderTimeline<T>(
       renderCoarseMenu(controls, entry);
     };
 
+    const repositionRenderedEntries = (): void => {
+      for (const row of rows.querySelectorAll<HTMLElement>(
+        '.abyss-timeline-row[data-timeline-key]',
+      )) {
+        const entry = entryByKey.get(row.dataset['timelineKey'] ?? '');
+        if (!entry) continue;
+        const geometry = geometryForEntry(entry);
+        if (!geometry || !geometry.visible) continue;
+        if (entry.item.kind === 'range' && geometry.kind === 'range') {
+          const range = row.querySelector<HTMLElement>('[data-timeline-range]');
+          if (!range) continue;
+          range.style.insetInlineStart = `${String(geometry.left)}px`;
+          range.style.inlineSize = `${String(geometry.width)}px`;
+          continue;
+        }
+        if (entry.item.kind === 'point' && geometry.kind !== 'range') {
+          const point = row.querySelector<HTMLElement>('[data-timeline-primary]');
+          if (!point) continue;
+          point.style.insetInlineStart = `${String(geometry.centerX)}px`;
+          point.style.inlineSize = `${String(geometry.size)}px`;
+          point.style.blockSize = `${String(geometry.size)}px`;
+        }
+      }
+    };
+
     let renderWindow = (restoreFocus = false, seedFirst?: number): void => {
       if (destroyed) return;
       const result = bounded.render(rows, {
@@ -990,6 +1022,16 @@ export function renderTimeline<T>(
 
     const refreshGeometry = (preserveFocal = true): void => {
       window = contentWindow;
+      const requiredDate = civilDate(session?.focalDate ?? undefined) ?? requiredPresentationDate;
+      if (requiredDate) {
+        const requiredWindow = paddedDateWindow({ from: requiredDate, to: requiredDate });
+        window = window
+          ? {
+              from: window.from < requiredWindow.from ? window.from : requiredWindow.from,
+              to: window.to > requiredWindow.to ? window.to : requiredWindow.to,
+            }
+          : requiredWindow;
+      }
       dates = window ? continuousDates(window.from, window.to) : [];
       midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
       const probe = (() => {
@@ -1042,11 +1084,13 @@ export function renderTimeline<T>(
         });
         todayLine.style.insetInlineStart = `calc(var(--abyss-timeline-identity-width) + ${String(civilDateToX(viewport, today))}px)`;
       }
-      bounded.setKeys(dated.map(({ item }) => item.key));
       renderWindow(false);
-      const focal = session?.focalDate ?? midpoint;
+      repositionRenderedEntries();
+      const focal = session?.focalDate ?? requiredPresentationDate ?? midpoint;
       if (preserveFocal && civilDate(focal)) centerOn(focal);
     };
+
+    reflowTimeline = () => refreshGeometry(true);
 
     registerTarget(resizeHandle, { kind: 'identity-column', width: identityWidth });
 
@@ -1059,8 +1103,12 @@ export function renderTimeline<T>(
       root.style.setProperty('--abyss-timeline-identity-width', `${String(identityWidth)}px`);
       if (session) session.identityWidth = identityWidth;
       registerTarget(resizeHandle, { kind: 'identity-column', width: identityWidth });
-      renderAxisWindow();
-      if (notify) notifyPresentationChange();
+      if (notify) {
+        refreshGeometry(true);
+        notifyPresentationChange();
+      } else {
+        renderAxisWindow();
+      }
     };
 
     const previewIdentityWidth = (width: number): void => {
@@ -1422,19 +1470,9 @@ export function renderTimeline<T>(
       notifyPresentationChange();
     };
     const onToday = (): void => {
+      requiredPresentationDate = today;
       if (session) session.focalDate = today;
-      if (!dates.includes(today)) {
-        const todayWindow = paddedDateWindow({ from: today, to: today });
-        const from =
-          contentWindow && contentWindow.from < todayWindow.from
-            ? contentWindow.from
-            : todayWindow.from;
-        const to =
-          contentWindow && contentWindow.to > todayWindow.to ? contentWindow.to : todayWindow.to;
-        contentWindow = { from, to };
-        window = contentWindow;
-        dates = continuousDates(from, to);
-        midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
+      if (!contentWindow || today < contentWindow.from || today > contentWindow.to) {
         refreshGeometry(false);
       }
       centerOn(today);
@@ -1550,6 +1588,7 @@ export function renderTimeline<T>(
   renderDiagnosticSection(invalid, 'abyss-timeline-invalid', 'Invalid');
 
   return {
+    reflow: () => reflowTimeline?.(),
     destroy: () => {
       destroyed = true;
       controller?.destroy();
