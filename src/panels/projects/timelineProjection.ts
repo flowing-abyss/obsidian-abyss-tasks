@@ -103,15 +103,14 @@ export function workNoteTimelineItem(note: WorkNoteSnapshot): TimelineItem {
   const key = `work-note:${note.path}`;
   if (note.range.issue) return { kind: 'invalid', key, reason: note.range.issue };
   const { start, end } = note.range;
+  if (note.kind === 'milestone') {
+    if (end) return { kind: 'invalid', key, reason: 'milestone-range' };
+    if (start) return { kind: 'point', key, atMs: start.instantMs, role: 'milestone' };
+    return { kind: 'undated', key };
+  }
   if (start && end) return { kind: 'range', key, startMs: start.instantMs, endMs: end.instantMs };
   if (start) return { kind: 'point', key, atMs: start.instantMs, role: 'start' };
   if (end) return { kind: 'point', key, atMs: end.instantMs, role: 'end' };
-  if (note.kind === 'milestone' && note.updated !== undefined) {
-    const milestone = parseProjectDate(note.updated);
-    return milestone
-      ? { kind: 'point', key, atMs: milestone.instantMs, role: 'milestone' }
-      : { kind: 'invalid', key, reason: 'invalid-milestone' };
-  }
   return { kind: 'undated', key };
 }
 
@@ -124,9 +123,9 @@ export function workNoteTimelineEntry(
     detail: note.kind === 'milestone' ? 'Milestone' : 'Work Note',
     item: workNoteTimelineItem(note),
     dateByRole: {
-      ...(note.range.start && { start: note.range.start.raw }),
-      ...(note.range.end && { end: note.range.end.raw }),
-      ...(note.kind === 'milestone' && note.updated && { milestone: note.updated }),
+      ...(note.kind === 'ordinary' && note.range.start && { start: note.range.start.raw }),
+      ...(note.kind === 'ordinary' && note.range.end && { end: note.range.end.raw }),
+      ...(note.kind === 'milestone' && note.range.start && { milestone: note.range.start.raw }),
     },
   };
 }
@@ -158,8 +157,11 @@ export function taskTimelineItem(task: TaskSnapshot): TimelineItem {
       ? { kind: 'invalid', key, reason: 'invalid-due' }
       : { kind: 'point', key, atMs, role: 'due' };
   }
-  if (start !== undefined && parsedTaskDate(start) === undefined) {
-    return { kind: 'invalid', key, reason: 'invalid-start' };
+  if (start !== undefined) {
+    const atMs = parsedTaskDate(start);
+    return atMs === undefined
+      ? { kind: 'invalid', key, reason: 'invalid-start' }
+      : { kind: 'point', key, atMs, role: 'start' };
   }
   return { kind: 'undated', key };
 }

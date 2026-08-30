@@ -7083,6 +7083,16 @@ body.abyss-modal-open .popover.hover-popover {
   outline: 2px solid var(--interactive-accent);
   outline-offset: -2px;
 }
+.abyss-timeline-row[data-task-dependency-emphasis='subject'] {
+  box-shadow: inset 3px 0 var(--interactive-accent);
+}
+.abyss-timeline-row[data-task-dependency-emphasis='prerequisite'],
+.abyss-timeline-diagnostic-row[data-task-dependency-emphasis='prerequisite'] {
+  background: var(--background-secondary);
+}
+.abyss-timeline-row[data-task-dependency-emphasis='prerequisite'] .abyss-timeline-identity {
+  background: var(--background-secondary);
+}
 .abyss-timeline-identity {
   position: sticky;
   z-index: 3;

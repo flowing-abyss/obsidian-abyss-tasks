@@ -203,7 +203,7 @@ describe('shared Timeline view', () => {
     });
     const milestone = workNote('Work Notes/Launch milestone.md', {
       kind: 'milestone',
-      updated: '2026-08-29',
+      range: parseProjectRange('2026-08-29', undefined),
     });
     const ownedTask = task({
       title: 'Excluded portfolio task',
@@ -242,6 +242,59 @@ describe('shared Timeline view', () => {
     );
     control.click();
     expect(onSelectMilestone).toHaveBeenCalledWith(milestone, control);
+  });
+
+  it('moves a Portfolio milestone through the same configured start owner', async () => {
+    const container = freshContainer();
+    const project: Project = {
+      path: 'Projects/Launch.md',
+      name: 'Launch',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const milestone = workNote('Work Notes/Launch milestone.md', {
+      kind: 'milestone',
+      updated: '2026-08-29T18:00:00+07:00',
+      range: parseProjectRange('2026-08-29T09:15:00+07:00', undefined),
+    });
+    const observed = {
+      path: milestone.path,
+      presetRevision: milestone.presetRevision,
+      presetFingerprint: milestone.presetFingerprint,
+      projectPath: milestone.projectPath,
+      kind: milestone.kind,
+      fields: {
+        Start: milestone.range.start!.raw,
+        Updated: milestone.updated,
+      },
+    };
+    const setRange = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    renderProjectsTimeline(container, {
+      projects: [project],
+      snapshots: [workspaceSnapshot(project, { milestones: [milestone] })],
+      commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
+      milestoneCommands: {
+        observeRange: () => ({
+          observed,
+          start: milestone.range.start,
+          updated: parseProjectRange(milestone.updated, undefined).start,
+        }),
+        setRange,
+      } as never,
+    });
+
+    const diamond = container.querySelector<HTMLElement>('[data-timeline-role="milestone"]')!;
+    diamond.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    diamond.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(setRange).toHaveBeenCalledWith(observed, {
+      start: expect.objectContaining({ raw: '2026-08-30T09:15:00+07:00' }),
+    });
   });
 
   it('keeps a fully undated Project actionable and creates only its owned start field', async () => {
@@ -942,11 +995,13 @@ describe('shared Timeline view', () => {
     renderTimeline(container, {
       entries: [point('A'), entry({ kind: 'undated', key: 'task:B' }, 'B')],
       isNarrow: true,
+      today: '2026-08-27',
     });
 
     const root = container.querySelector<HTMLElement>('.abyss-timeline')!;
     expect(root.classList.contains('is-agenda')).toBe(true);
     expect(container.querySelector('.abyss-timeline-axis')).toBeNull();
+    expect(container.querySelector('[data-timeline-today-line]')).toBeNull();
     const identity = container.querySelector<HTMLElement>('.abyss-timeline-identity')!;
     expect(identity.firstElementChild?.textContent).toBe('A');
     expect(identity.querySelector('.abyss-timeline-agenda-date')).toBeNull();
@@ -963,6 +1018,29 @@ describe('shared Timeline view', () => {
       container.querySelector<HTMLInputElement>('[data-timeline-date-picker="due"]')?.tabIndex,
     ).toBe(0);
     expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+  });
+
+  it('does not carry a wide timeline horizontal offset into the narrow agenda', () => {
+    const container = freshContainer();
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-27',
+      scrollLeft: 240,
+      scale: 'day',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+
+    renderTimeline(container, {
+      entries: [point('A')],
+      isNarrow: true,
+      session,
+    });
+
+    expect(container.querySelector<HTMLElement>('.abyss-timeline-scroll')?.scrollLeft).toBe(0);
   });
 
   it('keeps invisible desktop editors out of sequential focus while preserving Enter editing', () => {
@@ -1707,7 +1785,7 @@ describe('shared Timeline view', () => {
     container.remove();
   });
 
-  it('uses the retained milestone role to create the guarded Work Note end field', async () => {
+  it('moves a milestone diamond through its configured start field and never updated', async () => {
     const container = freshContainer();
     const note: WorkNoteSnapshot = {
       path: 'Work Notes/Milestone.md',
@@ -1719,7 +1797,7 @@ describe('shared Timeline view', () => {
       rawStatus: null,
       writableStatusShape: true,
       updated: '2026-08-27',
-      range: {},
+      range: parseProjectRange('2026-08-27T09:15:00+07:00', undefined),
       blockedByPaths: [],
       relatedPaths: [],
       diagnostics: [],
@@ -1730,7 +1808,10 @@ describe('shared Timeline view', () => {
       presetFingerprint: 'fingerprint',
       projectPath: note.projectPath,
       kind: note.kind,
-      fields: { Updated: '2026-08-27T09:15:00+07:00' },
+      fields: {
+        Start: '2026-08-27T09:15:00+07:00',
+        Updated: '2026-08-27T18:00:00+07:00',
+      },
     };
     const setRange = vi.fn().mockResolvedValue({ type: 'ok', path: note.path });
     renderWorkNotesTimeline(container, {
@@ -1738,10 +1819,11 @@ describe('shared Timeline view', () => {
       commands: {
         observeRange: () => ({
           observed,
+          start: note.range.start,
           updated: {
-            raw: '2026-08-27T09:15:00+07:00',
+            raw: '2026-08-27T18:00:00+07:00',
             precision: 'datetime',
-            instantMs: Date.parse('2026-08-27T09:15:00+07:00'),
+            instantMs: Date.parse('2026-08-27T18:00:00+07:00'),
           },
         }),
         setRange,
@@ -1760,8 +1842,9 @@ describe('shared Timeline view', () => {
       );
     await flushMicrotasks();
 
+    expect(container.querySelector('[data-timeline-milestone="diamond"]')).not.toBeNull();
     expect(setRange).toHaveBeenCalledWith(observed, {
-      end: expect.objectContaining({
+      start: expect.objectContaining({
         raw: '2026-08-28T09:15:00+07:00',
         precision: 'datetime',
       }),
@@ -2026,5 +2109,146 @@ describe('shared Timeline view', () => {
     await flushMicrotasks();
 
     expect(state).toEqual({ start: '2026-08-28', due: '2026-08-30', writes: 1 });
+  });
+
+  it('keeps a start-only Task dated and moves only its owned start field', async () => {
+    const container = freshContainer();
+    const snapshot = task({
+      title: 'Start only',
+      planning: { start: '2026-08-27' as never },
+      source: { filePath: 'Projects/A.md', line: 7 },
+    });
+    const onSetDate = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: snapshot },
+    });
+    const onSetRange = vi.fn();
+    renderTasksTimeline(container, {
+      actions: [
+        {
+          task: snapshot,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ],
+      onSetDate,
+      onSetRange,
+    });
+
+    const move = container.querySelector<HTMLElement>('[data-timeline-role="start"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(onSetDate).toHaveBeenCalledWith(snapshot, 'start', '2026-08-28');
+    expect(onSetRange).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-timeline-tray="planning"]')).toBeNull();
+  });
+
+  it('plans a fully undated Task by creating scheduled only', async () => {
+    const container = freshContainer();
+    const snapshot = task({
+      title: 'Plan me',
+      source: { filePath: 'Projects/A.md', line: 8 },
+    });
+    const onSetDate = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: snapshot },
+    });
+    renderTasksTimeline(container, {
+      actions: [
+        {
+          task: snapshot,
+          projectPath: 'Projects/A.md',
+          dependency: { type: 'allowed' },
+          owner: { type: 'project', path: 'Projects/A.md' },
+        },
+      ],
+      onSetDate,
+      onSetRange: vi.fn(),
+    });
+
+    const schedule = container.querySelector<HTMLInputElement>('[data-timeline-schedule]')!;
+    schedule.value = '2026-08-31';
+    schedule.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushMicrotasks();
+
+    expect(onSetDate).toHaveBeenCalledWith(snapshot, 'scheduled', '2026-08-31');
+  });
+
+  it('reveals the transitive blocker corridor only while its Task has focus', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const prep = task({
+      title: 'Prepare',
+      planning: { due: '2026-08-27' as never },
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const review = task({
+      title: 'Review',
+      planning: { due: '2026-08-28' as never },
+      source: { filePath: 'Projects/A.md', line: 2 },
+    });
+    const ship = task({
+      title: 'Ship',
+      planning: { due: '2026-08-29' as never },
+      source: { filePath: 'Projects/A.md', line: 3 },
+    });
+    const unrelated = task({
+      title: 'Unrelated',
+      planning: { due: '2026-08-30' as never },
+      source: { filePath: 'Projects/A.md', line: 4 },
+    });
+    const actions = [
+      { task: prep, dependency: { type: 'allowed' as const } },
+      { task: review, dependency: { type: 'blocked' as const, prerequisites: [prep.ref] } },
+      { task: ship, dependency: { type: 'blocked' as const, prerequisites: [review.ref] } },
+      { task: unrelated, dependency: { type: 'allowed' as const } },
+    ].map((action) => ({
+      ...action,
+      projectPath: 'Projects/A.md',
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    }));
+    try {
+      renderTasksTimeline(container, {
+        actions,
+        isNarrow: true,
+        renderTask: (host, action) =>
+          host.createEl('button', {
+            text: action.task.title,
+            attr: { type: 'button', 'data-task-identity': action.task.title },
+          }),
+        onSetDate: () => ({ type: 'invalid', issues: [] }),
+        onSetRange: () => ({ type: 'invalid', issues: [] }),
+      });
+
+      expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+      expect(container.querySelector('.abyss-timeline-plot button')).toBeNull();
+      container.querySelector<HTMLButtonElement>('[data-task-identity="Ship"]')!.focus();
+
+      expect(
+        container.querySelector<HTMLElement>('[data-timeline-key="task:Projects/A.md:3"]')?.dataset
+          .taskDependencyEmphasis,
+      ).toBe('subject');
+      expect(
+        Array.from(
+          container.querySelectorAll<HTMLElement>('[data-task-dependency-emphasis="prerequisite"]'),
+          (row) => row.dataset.timelineKey,
+        ),
+      ).toEqual(['task:Projects/A.md:1', 'task:Projects/A.md:2']);
+      expect(
+        container
+          .querySelector('[data-timeline-key="task:Projects/A.md:4"]')
+          ?.getAttribute('data-task-dependency-emphasis'),
+      ).toBeNull();
+
+      container.querySelector<HTMLButtonElement>('[data-task-identity="Unrelated"]')!.focus();
+      expect(container.querySelector('[data-task-dependency-emphasis]')).toBeNull();
+    } finally {
+      container.remove();
+    }
   });
 });

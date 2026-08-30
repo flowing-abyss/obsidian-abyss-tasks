@@ -404,13 +404,6 @@ export class WorkNoteCommandService {
     const preset = this.preset();
     const observedStart = observedRaw(observed, preset, 'start');
     const observedEnd = observedRaw(observed, preset, 'end');
-    const observedUpdated = observedRaw(observed, preset, 'updated');
-    const guardsMilestoneFallback =
-      observed.kind === 'milestone' &&
-      observedStart === undefined &&
-      observedEnd === undefined &&
-      typeof observedUpdated === 'string' &&
-      parseProjectDate(observedUpdated) !== undefined;
     const nextStart = patch.start === undefined ? observedStart : (patch.start?.raw ?? undefined);
     const nextEnd = patch.end === undefined ? observedEnd : (patch.end?.raw ?? undefined);
     const nextRange = parseProjectRange(nextStart, nextEnd);
@@ -446,15 +439,6 @@ export class WorkNoteCommandService {
           ) {
             throw new AbortWorkNoteCommand({ type: 'conflict', field: semantic });
           }
-        }
-        if (
-          guardsMilestoneFallback &&
-          !sameRawValue(
-            frontmatter[transactionPreset.fields.updated],
-            observedRaw(observed, transactionPreset, 'updated'),
-          )
-        ) {
-          throw new AbortWorkNoteCommand({ type: 'conflict', field: 'updated' });
         }
         const snapshot = this.latestSnapshot(
           observed,

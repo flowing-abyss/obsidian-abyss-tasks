@@ -402,7 +402,7 @@ describe('WorkNoteCommandService', () => {
     expect(writes).not.toHaveBeenCalled();
   });
 
-  it('conflicts when a milestone fallback source changed after observation', async () => {
+  it('writes milestone start without treating updated as a scheduling guard', async () => {
     const candidate = enabledPreset();
     const app = await createAppWithFiles({
       'Projects/P.md': '# P\n',
@@ -419,13 +419,12 @@ describe('WorkNoteCommandService', () => {
       frontmatter['Updated'] = '2026-08-27T14:30:00+07:00';
     });
     await flushMicrotasks();
-    const writes = vi.spyOn(app.vault, 'modify');
-    writes.mockClear();
-
     expect(
-      await service.setRange(latestObserved, { end: parseProjectDate('2026-09-01')! }),
-    ).toEqual({ type: 'conflict', field: 'updated' });
-    expect(writes).not.toHaveBeenCalled();
+      await service.setRange(latestObserved, { start: parseProjectDate('2026-09-01')! }),
+    ).toEqual({ type: 'ok', path: 'Work Notes/M.md' });
+    const content = await app.vault.read(file);
+    expect(content).toContain('Start: 2026-09-01');
+    expect(content).toContain('Updated: 2026-08-27T14:30:00+07:00');
   });
 
   it('repairs an unknown scalar status but conflicts on the latest non-scalar shape', async () => {

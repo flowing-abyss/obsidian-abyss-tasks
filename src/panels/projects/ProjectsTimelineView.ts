@@ -828,7 +828,7 @@ export function renderTimeline<T>(
     ): void => {
       const geometry = geometryForEntry(entry);
       if (!geometry || !geometry.visible) return;
-      if (entry.item.kind === 'range' && geometry.kind === 'range') {
+      if (!isAgenda && entry.item.kind === 'range' && geometry.kind === 'range') {
         const wrapper = plot.createDiv({
           cls: 'abyss-timeline-range',
           attr: {
@@ -870,7 +870,7 @@ export function renderTimeline<T>(
           edge.disabled = !canSetDate(entry, role);
           if (!edge.disabled) registerTarget(edge, targetFor(entry, kind));
         }
-      } else if (entry.item.kind === 'point' && geometry.kind !== 'range') {
+      } else if (!isAgenda && entry.item.kind === 'point' && geometry.kind !== 'range') {
         const targetKind = entry.item.role === 'milestone' ? 'milestone-move' : 'point-move';
         const point = plot.createEl('button', {
           cls: `abyss-timeline-point${geometry.kind === 'milestone' ? ' is-milestone' : ''}${isAgenda ? ' abyss-timeline-touch-target' : ''}`,
@@ -1077,7 +1077,7 @@ export function renderTimeline<T>(
       canvas.style.setProperty('--abyss-timeline-plot-width', `${String(plotWidth)}px`);
       renderAxisWindow();
       canvas.querySelector('[data-timeline-today-line]')?.remove();
-      if (dates.includes(today)) {
+      if (!isAgenda && dates.includes(today)) {
         const todayLine = canvas.createDiv({
           cls: 'abyss-timeline-today-line',
           attr: { 'data-timeline-today-line': '', 'aria-hidden': 'true' },
@@ -1456,7 +1456,8 @@ export function renderTimeline<T>(
       options.shouldRestoreItemFocus?.() ?? session?.restoreFocus === true,
       initialFirst,
     );
-    if (session?.scrollLeft !== undefined) scroll.scrollLeft = session.scrollLeft;
+    if (isAgenda) scroll.scrollLeft = 0;
+    else if (session?.scrollLeft !== undefined) scroll.scrollLeft = session.scrollLeft;
     else centerOn(session?.focalDate ?? midpoint);
     if (isAgenda) axis.remove();
     rememberViewport();
@@ -1763,10 +1764,8 @@ export function renderProjectsTimeline(
     canSetDate: (entry, role) =>
       entry.value.kind === 'project'
         ? role === 'start' || role === 'end'
-        : options.milestoneCommands !== undefined &&
-          (role === 'start' || role === 'end' || role === 'milestone'),
-    canSetRange: (entry) =>
-      entry.value.kind === 'project' || options.milestoneCommands !== undefined,
+        : options.milestoneCommands !== undefined && role === 'milestone',
+    canSetRange: (entry) => entry.value.kind === 'project',
     onSetDate: async (entry, role, date) => {
       if (entry.value.kind === 'project') {
         if (role !== 'start' && role !== 'end') {
@@ -1782,11 +1781,11 @@ export function renderProjectsTimeline(
       }
       const commands = options.milestoneCommands;
       const observation = milestoneObservations.get(entry.item.key);
-      const field = role === 'milestone' ? 'end' : role;
-      if (!commands || !observation || (field !== 'start' && field !== 'end')) {
+      if (!commands || !observation || role !== 'milestone') {
         return { type: 'invalid', field: 'path' };
       }
-      const current = role === 'milestone' ? observation.updated : observation[field];
+      const field = 'start';
+      const current = observation.start;
       const value = movedProjectDate(current, date);
       if (!value) return { type: 'invalid', field };
       const result = await commands.setRange(observation.observed, { [field]: value });
@@ -1808,21 +1807,7 @@ export function renderProjectsTimeline(
         options.onMutation?.(entry.value.project, result);
         return result;
       }
-      const commands = options.milestoneCommands;
-      const observation = milestoneObservations.get(entry.item.key);
-      if (!commands || !observation?.start || !observation.end) {
-        return { type: 'invalid', field: 'path' };
-      }
-      const nextStart = movedProjectDate(observation.start, start);
-      const nextEnd = movedProjectDate(observation.end, end);
-      if (!nextStart) return { type: 'invalid', field: 'start' };
-      if (!nextEnd) return { type: 'invalid', field: 'end' };
-      const result = await commands.setRange(observation.observed, {
-        start: nextStart,
-        end: nextEnd,
-      });
-      options.onMilestoneMutation?.(entry.value.note, result);
-      return result;
+      return { type: 'invalid', field: 'milestone-range' };
     },
     repairProposal: (entry) => repairs.get(entry.item.key),
     onConfirmRepair: async (entry) => {
@@ -1854,11 +1839,11 @@ export function renderWorkNotesTimeline(
     role: TimelinePointRole,
     date: string,
   ): Promise<WorkNoteCommandResult> => {
-    const field = role === 'milestone' ? 'end' : role;
+    const field = role === 'milestone' ? 'start' : role;
     if (field !== 'start' && field !== 'end') return { type: 'invalid', field };
     const observation = observations.get(entry.item.key);
     if (!observation) return { type: 'invalid', field: 'path' };
-    const current = role === 'milestone' ? observation.updated : observation[field];
+    const current = observation[field];
     const value = movedProjectDate(current, date);
     if (!value) return { type: 'invalid', field };
     const result = await options.commands.setRange(observation.observed, { [field]: value });
@@ -1949,7 +1934,53 @@ export function renderTasksTimeline(
       )?.item.key ?? null
     );
   };
-  return renderTimeline(container, {
+  const entryByKey = new Map(entries.map((entry) => [entry.item.key, entry] as const));
+  const keyByRef = new Map(
+    entries.map((entry) => [taskReconciliationKey(entry.value.task.ref), entry.item.key] as const),
+  );
+  const actionByRef = new Map(
+    options.actions.map((action) => [taskReconciliationKey(action.task.ref), action] as const),
+  );
+  let emphasizedKey = focusedItemKey();
+  const dependencyCorridor = (entry: TimelineEntry<ProjectAction>): ReadonlySet<string> => {
+    const corridor = new Set<string>();
+    const visited = new Set<string>();
+    const visit = (action: ProjectAction): void => {
+      const actionKey = taskReconciliationKey(action.task.ref);
+      if (visited.has(actionKey)) return;
+      visited.add(actionKey);
+      if (action.dependency.type !== 'blocked') return;
+      for (const prerequisite of action.dependency.prerequisites) {
+        const prerequisiteRefKey = taskReconciliationKey(prerequisite);
+        const prerequisiteKey = keyByRef.get(prerequisiteRefKey);
+        if (prerequisiteKey) corridor.add(prerequisiteKey);
+        const prerequisiteAction = actionByRef.get(prerequisiteRefKey);
+        if (prerequisiteAction) visit(prerequisiteAction);
+      }
+    };
+    visit(entry.value);
+    return corridor;
+  };
+  const applyDependencyEmphasis = (): void => {
+    for (const row of container.querySelectorAll<HTMLElement>(
+      '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
+    )) {
+      delete row.dataset['taskDependencyEmphasis'];
+    }
+    if (!emphasizedKey) return;
+    const entry = entryByKey.get(emphasizedKey);
+    if (!entry) return;
+    const corridor = dependencyCorridor(entry);
+    if (corridor.size === 0) return;
+    for (const row of container.querySelectorAll<HTMLElement>(
+      '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
+    )) {
+      const key = row.dataset['timelineKey'];
+      if (key === emphasizedKey) row.dataset['taskDependencyEmphasis'] = 'subject';
+      else if (key && corridor.has(key)) row.dataset['taskDependencyEmphasis'] = 'prerequisite';
+    }
+  };
+  const handle = renderTimeline(container, {
     entries,
     scope: 'tasks',
     undatedRole: 'scheduled',
@@ -1988,4 +2019,33 @@ export function renderTasksTimeline(
     },
     onSetRange: (entry, start, end) => options.onSetRange(entry.value.task, start, end),
   });
+  applyDependencyEmphasis();
+  const onFocusIn = (event: FocusEvent): void => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const row = target?.closest<HTMLElement>(
+      '.abyss-timeline-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
+    );
+    emphasizedKey = row?.dataset['timelineKey'] ?? null;
+    applyDependencyEmphasis();
+  };
+  const onFocusOut = (): void => {
+    queueMicrotask(() => {
+      if (container.contains(container.ownerDocument.activeElement)) return;
+      emphasizedKey = null;
+      applyDependencyEmphasis();
+    });
+  };
+  container.addEventListener('focusin', onFocusIn);
+  container.addEventListener('focusout', onFocusOut);
+  return {
+    reflow: () => {
+      handle.reflow?.();
+      applyDependencyEmphasis();
+    },
+    destroy: () => {
+      container.removeEventListener('focusin', onFocusIn);
+      container.removeEventListener('focusout', onFocusOut);
+      handle.destroy();
+    },
+  };
 }

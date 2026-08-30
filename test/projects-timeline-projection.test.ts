@@ -108,8 +108,10 @@ describe('Timeline projections', () => {
       'end',
     ],
     [
-      'work-note-milestone-fallback',
-      workNoteTimelineItem(workNote({ kind: 'milestone', updated: '2026-08-26' })),
+      'work-note-milestone-start',
+      workNoteTimelineItem(
+        workNote({ kind: 'milestone', range: parseProjectRange('2026-08-26', undefined) }),
+      ),
       'milestone',
     ],
     [
@@ -133,13 +135,27 @@ describe('Timeline projections', () => {
     expect(items[2]).toMatchObject({ kind: 'invalid', reason: 'reversed' });
   });
 
-  it('does not turn a start-only Task or malformed milestone fallback into a dated point', () => {
+  it('keeps a start-only Task visible while treating updated-only milestones as undated', () => {
     expect(taskTimelineItem(task({ planning: { start: '2026-08-24' } }))).toMatchObject({
-      kind: 'undated',
+      kind: 'point',
+      role: 'start',
+      atMs: Date.UTC(2026, 7, 24),
     });
+    expect(workNoteTimelineItem(workNote({ kind: 'milestone', updated: '2026-08-26' }))).toEqual({
+      kind: 'undated',
+      key: 'work-note:Work Notes/A.md',
+    });
+  });
+
+  it('keeps range-like milestone metadata in the diagnostic tray', () => {
     expect(
-      workNoteTimelineItem(workNote({ kind: 'milestone', updated: 'August 26' })),
-    ).toMatchObject({ kind: 'invalid', reason: 'invalid-milestone' });
+      workNoteTimelineItem(
+        workNote({
+          kind: 'milestone',
+          range: parseProjectRange('2026-08-24', '2026-08-26'),
+        }),
+      ),
+    ).toMatchObject({ kind: 'invalid', reason: 'milestone-range' });
   });
 
   it('keeps exact raw endpoint values in separate Project, Work Note, and Task adapters', () => {
@@ -158,6 +174,15 @@ describe('Timeline projections', () => {
       scheduled: '2026-09-02',
       due: '2026-09-03',
     });
+    expect(
+      workNoteTimelineEntry(
+        workNote({
+          kind: 'milestone',
+          updated: '2026-09-04T08:00:00+07:00',
+          range: parseProjectRange('2026-09-05T09:30:00+07:00', undefined),
+        }),
+      ).dateByRole,
+    ).toEqual({ milestone: '2026-09-05T09:30:00+07:00' });
   });
 
   it('projects only Projects and their typed milestones from joined portfolio snapshots', () => {
@@ -169,7 +194,7 @@ describe('Timeline projections', () => {
     const milestone = workNote({
       path: 'Work Notes/Launch milestone.md',
       kind: 'milestone',
-      updated: '2026-08-23',
+      range: parseProjectRange('2026-08-23', undefined),
     });
     const ownedTask = task({
       title: 'Excluded portfolio task',
