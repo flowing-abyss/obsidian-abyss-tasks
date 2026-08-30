@@ -7720,6 +7720,10 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 @media (hover: none), (pointer: coarse) {
+  .abyss-projects-toolbar :is(button, input, select, summary) {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
   .abyss-timeline-touch-target {
     min-inline-size: 44px;
     min-block-size: 44px;
@@ -8295,6 +8299,28 @@ body.abyss-modal-open .popover.hover-popover {
 
 /* Keep the complete calendar toolbar and its portal visible in narrow center panes. */
 @container abyss-task-list (max-width: 30rem) {
+  .abyss-projects-toolbar > .abyss-center-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+
+  .abyss-project-status-filters {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .abyss-projects-toolbar [data-portfolio-zone='layout'] {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .abyss-projects-add-zone {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
   .abyss-cal-nav {
     flex-wrap: wrap;
     align-content: flex-start;

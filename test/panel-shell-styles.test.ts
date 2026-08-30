@@ -473,6 +473,59 @@ describe('Projects hardening styles', () => {
     expect(declarationsFor('.abyss-project-status-summary')).toContain('flex: 0 0 auto');
   });
 
+  it('reflows every visible 440px coarse portfolio control without clipping its Show summary', () => {
+    const style = activeDocument.createElement('style');
+    style.textContent = [
+      css,
+      boundedBlock(css, '@container abyss-task-list (max-width: 42rem)'),
+      boundedBlock(css, '@container abyss-task-list (max-width: 30rem)'),
+      boundedBlock(css, '@media (hover: none), (pointer: coarse)'),
+    ].join('\n');
+    const toolbar = activeDocument.createElement('header');
+    toolbar.className = 'abyss-center-header abyss-projects-toolbar';
+    toolbar.innerHTML = `
+      <h2 class="abyss-projects-title">Projects</h2>
+      <div class="abyss-center-controls">
+        <div class="abyss-project-status-filters" data-portfolio-zone="filters">
+          <button class="abyss-filter-chip abyss-project-status-filter is-active">Active</button>
+          <button class="abyss-filter-chip abyss-project-status-summary">Show 6</button>
+        </div>
+        <div data-portfolio-zone="layout">
+          <div class="abyss-cal-view-switcher abyss-projects-view-switcher">
+            <button class="abyss-cal-view-btn is-active">Overview</button>
+            <button class="abyss-cal-view-btn">Board</button>
+            <button class="abyss-cal-view-btn">Timeline</button>
+          </div>
+        </div>
+        <div class="abyss-projects-add-zone" data-portfolio-zone="add">
+          <button class="abyss-projects-new">New</button>
+        </div>
+      </div>`;
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(toolbar);
+    try {
+      const controls = toolbar.querySelector<HTMLElement>('.abyss-center-controls')!;
+      const filters = toolbar.querySelector<HTMLElement>('[data-portfolio-zone="filters"]')!;
+      const layout = toolbar.querySelector<HTMLElement>('[data-portfolio-zone="layout"]')!;
+      const add = toolbar.querySelector<HTMLElement>('[data-portfolio-zone="add"]')!;
+      expect(getComputedStyle(controls).display).toBe('grid');
+      expect(getComputedStyle(filters).gridColumn).toBe('1 / -1');
+      expect(getComputedStyle(filters).gridRow).toBe('2');
+      expect(getComputedStyle(layout).gridRow).toBe('1');
+      expect(getComputedStyle(add).gridRow).toBe('1');
+      const visibleControls = Array.from(toolbar.querySelectorAll<HTMLButtonElement>('button'));
+      expect(visibleControls).toHaveLength(6);
+      for (const control of visibleControls) {
+        const computed = getComputedStyle(control);
+        expect(computed.minInlineSize, control.textContent ?? 'control').toBe('44px');
+        expect(computed.minBlockSize, control.textContent ?? 'control').toBe('44px');
+      }
+    } finally {
+      toolbar.remove();
+      style.remove();
+    }
+  });
+
   it('uses a static focus/state cue when Projects motion is reduced', () => {
     const header = '@media (prefers-reduced-motion: reduce)';
     expect(
@@ -567,14 +620,19 @@ describe('Projects hardening styles', () => {
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-repair-confirm')).toContain(
       'grid-column: 2',
     );
-    expect(
-      declarationsFor(
-        '.abyss-timeline.is-agenda .abyss-timeline-axis, .abyss-timeline.is-agenda .abyss-timeline-plot',
-      ),
-    ).toContain('display: none');
-    expect(
-      rules.filter(({ selector }) => selector === '.abyss-timeline.is-agenda .abyss-timeline-plot'),
-    ).toHaveLength(0);
+    const style = activeDocument.createElement('style');
+    style.textContent = css;
+    const timeline = activeDocument.createElement('div');
+    timeline.className = 'abyss-timeline is-agenda';
+    const plot = timeline.createDiv({ cls: 'abyss-timeline-plot' });
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(timeline);
+    try {
+      expect(getComputedStyle(plot).display).toBe('none');
+    } finally {
+      timeline.remove();
+      style.remove();
+    }
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-scroll')).toContain(
       'overflow-x: hidden',
     );

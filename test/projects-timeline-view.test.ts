@@ -660,6 +660,61 @@ describe('shared Timeline view', () => {
     expect(weekWidth).toBeLessThan(2_000);
   });
 
+  it('culls measured 760px axis labels whose rendered boxes would collide', () => {
+    const nativeRect = HTMLElement.prototype.getBoundingClientRect;
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement): DOMRect {
+        if (this.matches('[data-timeline-axis-label-date]')) {
+          const anchor = Number.parseFloat(this.style.insetInlineStart);
+          const width = 54;
+          const align = this.dataset['timelineAxisLabelAlign'];
+          const left =
+            align === 'start' ? anchor : align === 'end' ? anchor - width : anchor - width / 2;
+          return new DOMRect(left, 0, width, 18);
+        }
+        return nativeRect.call(this);
+      });
+    const container = freshContainer();
+    const handle = renderTimeline(container, {
+      entries: [
+        {
+          value: { id: 'Long range' },
+          label: 'Long range',
+          item: {
+            kind: 'range',
+            key: 'project:Long range',
+            startMs: Date.UTC(2026, 7, 1),
+            endMs: Date.UTC(2026, 8, 11),
+          },
+          dateByRole: { start: '2026-08-01', end: '2026-09-11' },
+        },
+      ],
+      dateWindow: { from: '2026-08-01', to: '2026-09-11' },
+      scope: 'portfolio',
+      scale: 'quarter',
+      identityWidth: 240,
+    });
+    const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 712 });
+    handle.reflow?.();
+
+    try {
+      const labels = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-timeline-axis-label-date]'),
+      );
+      expect(labels.length).toBeGreaterThanOrEqual(2);
+      for (let index = 1; index < labels.length; index += 1) {
+        const previous = labels[index - 1]!.getBoundingClientRect();
+        const current = labels[index]!.getBoundingClientRect();
+        expect(current.left - previous.right).toBeGreaterThanOrEqual(6);
+      }
+    } finally {
+      handle.destroy();
+      rect.mockRestore();
+    }
+  });
+
   it('commits a whole-range move atomically while keeping edge resizes role-scoped', async () => {
     const container = freshContainer();
     const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });

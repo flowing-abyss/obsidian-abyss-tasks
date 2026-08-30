@@ -2916,42 +2916,108 @@ describe('ProjectsPanel dispatch', () => {
     panel.destroy();
   });
 
-  it('includes milestone Work Notes in the production Timeline projection', () => {
-    const state = new AppState();
-    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
-    const milestone = {
-      ...workNote('Work Notes/Release milestone.md', ACTIVE_ID, '2026-08-30'),
-      kind: 'milestone' as const,
-      range: {},
-    };
-    const commands = {
-      capabilities: () => ({ update: false, create: true }),
-      statuses: () => DEFAULT_SETTINGS.projects.statuses,
-      create: vi.fn(),
-    } as never;
-    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
-      snapshots: [
-        workspace(proj({}), {
-          milestones: [milestone],
-          milestoneRollups: new Map([
-            [milestone.path, { active: 0, completed: 0, dropped: 0, progress: null }],
-          ]),
-        }),
+  it.each([
+    {
+      name: 'empty',
+      workNotes: [] as WorkNoteSnapshot[],
+      milestones: [] as WorkNoteSnapshot[],
+      available: false,
+      planningKeys: [] as string[],
+      datedKeys: [] as string[],
+    },
+    {
+      name: 'all-undated ordinary',
+      workNotes: [
+        {
+          ...workNote('Work Notes/Undated ordinary.md', ACTIVE_ID, '2026-08-30'),
+          updated: undefined,
+          range: {},
+        },
       ],
-      workNoteCommands: commands,
-    });
-    const el = freshContainer();
+      milestones: [] as WorkNoteSnapshot[],
+      available: true,
+      planningKeys: ['work-note:Work Notes/Undated ordinary.md'],
+      datedKeys: [] as string[],
+    },
+    {
+      name: 'undated milestone',
+      workNotes: [] as WorkNoteSnapshot[],
+      milestones: [
+        {
+          ...workNote('Work Notes/Undated milestone.md', ACTIVE_ID, '2026-08-30'),
+          kind: 'milestone' as const,
+          updated: undefined,
+          range: {},
+        },
+      ],
+      available: true,
+      planningKeys: ['work-note:Work Notes/Undated milestone.md'],
+      datedKeys: [] as string[],
+    },
+    {
+      name: 'dated ordinary',
+      workNotes: [workNote('Work Notes/Dated ordinary.md', ACTIVE_ID, '2026-08-30')],
+      milestones: [] as WorkNoteSnapshot[],
+      available: true,
+      planningKeys: [] as string[],
+      datedKeys: ['work-note:Work Notes/Dated ordinary.md'],
+    },
+    {
+      name: 'mixed dated and undated',
+      workNotes: [
+        workNote('Work Notes/Dated mixed.md', ACTIVE_ID, '2026-08-30'),
+        {
+          ...workNote('Work Notes/Undated mixed.md', ACTIVE_ID, '2026-08-29'),
+          updated: undefined,
+          range: {},
+        },
+      ],
+      milestones: [] as WorkNoteSnapshot[],
+      available: true,
+      planningKeys: ['work-note:Work Notes/Undated mixed.md'],
+      datedKeys: ['work-note:Work Notes/Dated mixed.md'],
+    },
+  ])(
+    'derives Work Notes Timeline availability and Planning rows for $name input',
+    ({ workNotes, milestones, available, planningKeys, datedKeys }) => {
+      const state = new AppState();
+      state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+      const commands = {
+        capabilities: () => ({ update: false, create: true }),
+        statuses: () => DEFAULT_SETTINGS.projects.statuses,
+        create: vi.fn(),
+      } as never;
+      const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+        snapshots: [workspace(proj({}), { workNotes, milestones })],
+        workNoteCommands: commands,
+      });
+      const el = freshContainer();
 
-    panel.mount(el);
-    el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
-    const timeline = el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]');
-    expect(timeline).not.toBeNull();
-    timeline?.click();
-    expect(
-      el.querySelector('[data-timeline-key="work-note:Work Notes/Release milestone.md"]'),
-    ).not.toBeNull();
-    panel.destroy();
-  });
+      panel.mount(el);
+      el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      const timeline = el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]');
+      expect(timeline === null).toBe(!available);
+      timeline?.click();
+
+      const planning = new Set(
+        Array.from(
+          el.querySelectorAll<HTMLElement>(
+            '.abyss-timeline-undated-row[data-timeline-key], .abyss-timeline-diagnostic-row[data-timeline-key]',
+          ),
+          ({ dataset }) => dataset['timelineKey']!,
+        ),
+      );
+      const dated = new Set(
+        Array.from(
+          el.querySelectorAll<HTMLElement>('.abyss-timeline-row[data-timeline-key]'),
+          ({ dataset }) => dataset['timelineKey']!,
+        ),
+      );
+      expect([...planning]).toEqual(planningKeys);
+      expect([...dated]).toEqual(datedKeys);
+      panel.destroy();
+    },
+  );
 
   it('destroys the active dashboard child renderer when the real ProjectsPanel is destroyed', () => {
     const state = new AppState();

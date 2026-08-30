@@ -70,6 +70,7 @@ const TIMELINE_DIAGNOSTIC_VISIBLE_ROWS = 7;
 const TIMELINE_AXIS_LABEL_LIMIT = 8;
 const TIMELINE_AXIS_LABEL_MIN_GAP = 48;
 const TIMELINE_AXIS_LABEL_EDGE_INSET = 24;
+const TIMELINE_AXIS_LABEL_COLLISION_GAP = 6;
 /** Hard DOM ceiling for the live horizontal civil-date marker window at every scope and scale. */
 export const TIMELINE_MARKER_DOM_CAP = 120;
 
@@ -432,6 +433,29 @@ function spacedTimelineAxisLabels(
     x: positions[index]!,
     align: timelineAxisLabelAlignment(index, candidates.length),
   }));
+}
+
+function cullOverlappingTimelineAxisLabels(host: HTMLElement): void {
+  const labels = Array.from(host.querySelectorAll<HTMLElement>('[data-timeline-axis-label-date]'));
+  if (labels.length < 2) return;
+  const rects = labels.map((label) => label.getBoundingClientRect());
+  if (rects.some(({ width }) => width <= 0)) return;
+  const lastIndex = labels.length - 1;
+  const lastRect = rects[lastIndex]!;
+  let previousRect = rects[0]!;
+  for (let index = 1; index < lastIndex; index += 1) {
+    const rect = rects[index]!;
+    const clearsPrevious = rect.left >= previousRect.right + TIMELINE_AXIS_LABEL_COLLISION_GAP;
+    const clearsLast = rect.right + TIMELINE_AXIS_LABEL_COLLISION_GAP <= lastRect.left;
+    if (clearsPrevious && clearsLast) {
+      previousRect = rect;
+    } else {
+      labels[index]!.remove();
+    }
+  }
+  if (lastRect.left < previousRect.right + TIMELINE_AXIS_LABEL_COLLISION_GAP) {
+    labels[lastIndex]!.remove();
+  }
 }
 
 function coarseTimelineRole(item: TimelineItem, actionName: string): TimelinePointRole {
@@ -1012,6 +1036,7 @@ export function renderTimeline<T>(
         });
         label.style.insetInlineStart = `${String(x)}px`;
       }
+      cullOverlappingTimelineAxisLabels(axisLabels);
     };
 
     const centerOn = (date: string): void => {
