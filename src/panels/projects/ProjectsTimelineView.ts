@@ -80,7 +80,7 @@ interface TimelineMutationResult {
   readonly type: string;
 }
 
-export interface TimelineRepairProposal {
+interface TimelineRepairProposal {
   readonly preview: string;
 }
 

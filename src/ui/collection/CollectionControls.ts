@@ -1,6 +1,6 @@
 import { setIcon } from 'obsidian';
 
-export type CollectionControlKind = 'filter' | 'group' | 'sort';
+type CollectionControlKind = 'filter' | 'group' | 'sort';
 
 export interface CollectionControlAction {
   readonly kind: CollectionControlKind;

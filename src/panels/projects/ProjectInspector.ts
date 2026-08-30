@@ -19,7 +19,7 @@ import {
   type InspectorDraftResult,
 } from '../../ui/projectDraftContinuity';
 
-export interface ProjectInspectorCommandResult {
+interface ProjectInspectorCommandResult {
   readonly type: string;
 }
 

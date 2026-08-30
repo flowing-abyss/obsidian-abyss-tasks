@@ -1,7 +1,7 @@
 export const DEFAULT_TIMELINE_IDENTITY_WIDTH = 240;
 export const TIMELINE_IDENTITY_WIDTH_MIN = 160;
 export const TIMELINE_IDENTITY_WIDTH_MAX = 360;
-export const TIMELINE_PREFERENCE_VERSION = 1;
+const TIMELINE_PREFERENCE_VERSION = 1;
 
 export type TimelineScope = 'portfolio' | 'tasks' | 'workNotes';
 export type PortfolioTimelineScale = 'week' | 'month' | 'quarter' | 'year';

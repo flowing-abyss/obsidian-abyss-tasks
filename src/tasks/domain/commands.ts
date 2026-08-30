@@ -38,7 +38,7 @@ export interface TaskPatch {
 export type SubtaskPatch = Omit<TaskPatch, 'duration'>;
 
 /** Create-only fields. Checkbox status is intentionally not part of TaskPatch. */
-export interface TaskCreationInitial extends Omit<TaskPatch, 'markdownTitle'> {
+interface TaskCreationInitial extends Omit<TaskPatch, 'markdownTitle'> {
   readonly statusSymbol?: string;
 }
 
@@ -159,7 +159,7 @@ export interface MoveRecovery {
   readonly cause: 'conflict' | 'not-found' | 'ambiguous' | 'io-error';
 }
 
-export interface RootTagRecovery {
+interface RootTagRecovery {
   readonly state: 'new-tags-committed-old-tags-remain';
   readonly appliedTask: TaskSnapshot;
   readonly remainingTasks: readonly TaskSnapshot[];

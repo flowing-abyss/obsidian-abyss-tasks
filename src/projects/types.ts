@@ -26,7 +26,7 @@ export interface TaskRollup {
   readonly progress: number | null;
 }
 
-export type ProjectStats = TaskRollup;
+type ProjectStats = TaskRollup;
 
 export type ProjectPriority = 'A' | 'B' | 'C' | 'D' | 'E' | 'F';
 

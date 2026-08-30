@@ -2,9 +2,9 @@ import { getTaskDateCategory } from '../domain/taskDateCategory';
 import { NEXT_ACTION_TAG } from './NextActionService';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from './types';
 
-export type ProjectHealthSeverity = 'off-track' | 'at-risk' | 'on-track' | 'unknown';
+type ProjectHealthSeverity = 'off-track' | 'at-risk' | 'on-track' | 'unknown';
 
-export type ProjectHealthReason =
+type ProjectHealthReason =
   | { readonly type: 'overdue-next-action'; readonly task: ProjectAction['task']['ref'] }
   | { readonly type: 'blocked-critical-path'; readonly task: ProjectAction['task']['ref'] }
   | { readonly type: 'overdue-actionable-work'; readonly task: ProjectAction['task']['ref'] }
@@ -12,7 +12,7 @@ export type ProjectHealthReason =
   | { readonly type: 'unblocked-next-action'; readonly task: ProjectAction['task']['ref'] }
   | { readonly type: 'insufficient-actionable-evidence' };
 
-export type ProjectHealthDateSignal =
+type ProjectHealthDateSignal =
   | {
       readonly type: 'overdue-actionable-task' | 'future-actionable-task';
       readonly value: string;
@@ -20,7 +20,7 @@ export type ProjectHealthDateSignal =
     }
   | { readonly type: 'project-range-end' | 'project-range-start'; readonly value: string };
 
-export interface ProjectHealthFlags {
+interface ProjectHealthFlags {
   readonly noNextAction: boolean;
   readonly duplicateNextAction: boolean;
   readonly malformedNextAction: boolean;

@@ -18,7 +18,7 @@ export interface BoardDestinationGeometry<ColumnId extends string> {
   readonly hiddenColumnIds?: readonly ColumnId[];
 }
 
-export interface BoardItemGeometry<ItemId extends string, ColumnId extends string> {
+interface BoardItemGeometry<ItemId extends string, ColumnId extends string> {
   readonly itemId: ItemId;
   readonly columnId: ColumnId;
   readonly rect: BoardRect;
@@ -45,7 +45,7 @@ export interface BoardObservedPosition<ColumnId extends string> {
   readonly evidence: string;
 }
 
-export interface BoardLandingGap<ColumnId extends string> {
+interface BoardLandingGap<ColumnId extends string> {
   readonly columnId: ColumnId;
   readonly position: number;
   readonly beforeItemId?: string;
@@ -68,14 +68,14 @@ export interface BoardMoveIntent<ItemId extends string, ColumnId extends string>
   readonly interactionEpoch: number;
 }
 
-export type BoardCommitResult<UndoAuthority> =
+type BoardCommitResult<UndoAuthority> =
   | {
       readonly type: 'success';
       readonly undo?: { readonly authority: UndoAuthority; readonly evidence: string };
     }
   | { readonly type: 'conflict' | 'failure'; readonly reason?: string };
 
-export type BoardUndoResult =
+type BoardUndoResult =
   | { readonly type: 'success' }
   | { readonly type: 'conflict' | 'failure'; readonly reason?: string };
 

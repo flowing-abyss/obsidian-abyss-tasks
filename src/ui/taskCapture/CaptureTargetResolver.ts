@@ -12,7 +12,7 @@ import type {
 } from '../../tasks';
 import { localDate, shiftLocalDate } from '../../tasks';
 
-export interface ProjectCaptureContext {
+interface ProjectCaptureContext {
   readonly type: 'project-workspace';
   readonly projectPath: string;
   readonly destinationPath: string;

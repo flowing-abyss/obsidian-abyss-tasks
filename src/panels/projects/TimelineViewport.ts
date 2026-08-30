@@ -11,9 +11,9 @@ import {
 const MILLIS_PER_CIVIL_DAY = 86_400_000;
 const FIRST_SUPPORTED_CIVIL_DATE = '0000-01-01';
 const LAST_SUPPORTED_CIVIL_DATE = '9999-12-31';
-export const TIMELINE_SAME_DAY_RANGE_MIN_WIDTH = 6;
-export const TIMELINE_POINT_SIZE = 8;
-export const TIMELINE_MILESTONE_SIZE = 10;
+const TIMELINE_SAME_DAY_RANGE_MIN_WIDTH = 6;
+const TIMELINE_POINT_SIZE = 8;
+const TIMELINE_MILESTONE_SIZE = 10;
 
 const PIXELS_PER_DAY = {
   portfolio: { week: 28, month: 12, quarter: 5, year: 2 },

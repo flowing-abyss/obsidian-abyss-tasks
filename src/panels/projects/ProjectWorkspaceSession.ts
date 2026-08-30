@@ -32,7 +32,7 @@ export interface TimelinePresentationSession<
   focusedInteraction: { readonly itemKey: string; readonly role: TimelineOwnedRole } | null;
 }
 
-export interface ScopeSelectionSession {
+interface ScopeSelectionSession {
   selectedKeys: string[];
   focusedKey: string | null;
   inspectorKey: string | null;

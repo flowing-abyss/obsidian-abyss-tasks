@@ -19,7 +19,7 @@ export interface TaskQuery {
   readonly dateRange?: DateRange;
 }
 
-export interface TaskIndexFileSettlement {
+interface TaskIndexFileSettlement {
   readonly path: string;
   readonly generation: number;
 }
@@ -92,7 +92,7 @@ export interface DependencyClearIntent {
   readonly dependencyId: string;
 }
 
-export interface TaskRootTagChange {
+interface TaskRootTagChange {
   readonly task: TaskSnapshot;
   readonly tags: {
     readonly add?: readonly string[];

@@ -64,7 +64,7 @@ export interface ProjectStatus {
   match: StatusMatch;
 }
 
-export type ProjectsPortfolioLayout = 'overview' | 'board' | 'timeline';
+type ProjectsPortfolioLayout = 'overview' | 'board' | 'timeline';
 
 export interface ProjectTasksViewState {
   readonly groupBy: ListViewState['groupBy'];

@@ -8,8 +8,6 @@ import {
 import {
   DEFAULT_TIMELINE_IDENTITY_WIDTH,
   reconcileTimelinePreference,
-  TIMELINE_IDENTITY_WIDTH_MAX,
-  TIMELINE_IDENTITY_WIDTH_MIN,
   type PortfolioTimelineScale,
   type TaskTimelineScale,
   type WorkNoteTimelineScale,
@@ -17,12 +15,9 @@ import {
 
 export type { BoardViewPreference as ProjectBoardPreference } from './boardPreferences';
 
-export const PROJECT_IDENTITY_WIDTH_MIN = TIMELINE_IDENTITY_WIDTH_MIN;
-export const PROJECT_IDENTITY_WIDTH_MAX = TIMELINE_IDENTITY_WIDTH_MAX;
-export const DEFAULT_PROJECT_IDENTITY_WIDTH = DEFAULT_TIMELINE_IDENTITY_WIDTH;
+const DEFAULT_PROJECT_IDENTITY_WIDTH = DEFAULT_TIMELINE_IDENTITY_WIDTH;
 
-export type { PortfolioTimelineScale, TaskTimelineScale } from './timelinePreferences';
-export type WorkNotesDateRange = WorkNoteTimelineScale;
+type WorkNotesDateRange = WorkNoteTimelineScale;
 
 export interface ProjectTimelinePreferences {
   readonly version: 1;
@@ -44,10 +39,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-export function clampProjectIdentityWidth(value: unknown): number {
-  return reconcileTimelinePreference('portfolio', { identityWidth: value }).identityWidth;
 }
 
 export function buildProjectBoardPreference(

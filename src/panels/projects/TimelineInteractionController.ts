@@ -18,7 +18,7 @@ export interface TimelinePoint {
   readonly y: number;
 }
 
-export interface TimelineRect {
+interface TimelineRect {
   readonly left: number;
   readonly right: number;
 }
@@ -39,7 +39,7 @@ export interface TimelinePointCarrier {
   readonly at: ProjectDateValue;
 }
 
-export type TimelineOwnedPointRole = 'start' | 'end' | 'scheduled' | 'due' | 'milestone';
+type TimelineOwnedPointRole = 'start' | 'end' | 'scheduled' | 'due' | 'milestone';
 export type TimelineOwnedRole = 'range' | TimelineOwnedPointRole | 'identity-column';
 
 export type TimelineInteractionTarget<ItemId extends string> =
@@ -56,14 +56,14 @@ export type TimelineInteractionTarget<ItemId extends string> =
     }
   | { readonly kind: 'identity-column'; readonly width: number };
 
-export type TimelineTargetKind = TimelineInteractionTarget<string>['kind'];
+type TimelineTargetKind = TimelineInteractionTarget<string>['kind'];
 export type TimelineIdentityPreset = 'compact' | 'default' | 'wide';
 
 export type TimelinePreviewGeometry =
   | { readonly kind: 'range'; readonly start: string; readonly end: string }
   | { readonly kind: 'point' | 'milestone'; readonly at: string };
 
-export type TimelineValidity =
+type TimelineValidity =
   | { readonly valid: true }
   | { readonly valid: false; readonly reason: 'reversed' | 'out-of-range' };
 
@@ -89,7 +89,7 @@ export type TimelineCommitIntent<ItemId extends string> =
       readonly draft?: never;
     };
 
-export type TimelineCommitResult =
+type TimelineCommitResult =
   | { readonly type: 'success' }
   | { readonly type: 'conflict' | 'failure'; readonly reason?: string };
 
