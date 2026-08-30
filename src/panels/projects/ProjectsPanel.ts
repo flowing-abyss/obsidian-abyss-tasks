@@ -322,6 +322,18 @@ export class ProjectsPanel {
       commands: this.workNoteCommands,
       commandsEnabled: this.workNoteCommands.capabilities().update,
       session: this.workspaceSession.timelines.workNotes,
+      scale: this.settings.projects.view.timeline.workNotes.dateRange,
+      identityWidth: this.settings.projects.view.timeline.workNotes.identityWidth,
+      onPresentationChange: (presentation) => {
+        this.settings.projects.view.timeline = {
+          ...this.settings.projects.view.timeline,
+          workNotes: {
+            dateRange: presentation.scale,
+            identityWidth: presentation.identityWidth,
+          },
+        };
+        void this.onSaveSettings();
+      },
       openNote: (path) => this.openNote(path),
       onSelect: (note, origin) => {
         this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
@@ -540,6 +552,18 @@ export class ProjectsPanel {
         projects: timelineSnapshots.map(({ project }) => project),
         commands: this.projectCommands,
         session: this.workspaceSession.portfolioTimeline,
+        scale: this.settings.projects.view.timeline.portfolio.scale,
+        identityWidth: this.settings.projects.view.timeline.portfolio.identityWidth,
+        onPresentationChange: (presentation) => {
+          this.settings.projects.view.timeline = {
+            ...this.settings.projects.view.timeline,
+            portfolio: {
+              scale: presentation.scale,
+              identityWidth: presentation.identityWidth,
+            },
+          };
+          void this.onSaveSettings();
+        },
         openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
         onMutation: (_project, result) => {
           if (result.type === 'ok') this.projectStore.refresh();

@@ -52,6 +52,21 @@ function range(id: string): TimelineEntry<Fixture> {
   };
 }
 
+function pointerEvent(
+  type: string,
+  values: { readonly pointerId: number; readonly clientX: number; readonly clientY?: number },
+): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true });
+  Object.defineProperties(event, {
+    pointerId: { value: values.pointerId },
+    button: { value: 0 },
+    isPrimary: { value: true },
+    clientX: { value: values.clientX },
+    clientY: { value: values.clientY ?? 0 },
+  });
+  return event;
+}
+
 describe('shared Timeline view', () => {
   it('opens a portfolio Project dashboard from its one native title button', () => {
     const container = freshContainer();
@@ -212,27 +227,34 @@ describe('shared Timeline view', () => {
     expect(container.querySelector('[data-timeline-point="due"]')).not.toBeNull();
   });
 
-  it('keeps long ranges visible in a bounded date spine that still reaches the final date', () => {
+  it('exposes every civil date in a 90-day continuous coordinate space without drop cells', () => {
     const container = freshContainer();
     renderTimeline(container, {
       entries: [
         {
-          value: { id: 'Year' },
-          label: 'Year',
+          value: { id: 'Quarter' },
+          label: 'Quarter',
           item: {
             kind: 'range',
-            key: 'project:Year',
-            startMs: Date.UTC(2026, 0, 1),
-            endMs: Date.UTC(2026, 11, 31),
+            key: 'project:Quarter',
+            startMs: Date.UTC(2026, 5, 1),
+            endMs: Date.UTC(2026, 7, 29),
           },
-          dateByRole: { start: '2026-01-01', end: '2026-12-31' },
+          dateByRole: { start: '2026-06-01', end: '2026-08-29' },
         },
       ],
-      dateWindow: { from: '2026-01-01', to: '2026-12-31' },
+      dateWindow: { from: '2026-06-01', to: '2026-08-29' },
     });
 
-    expect(container.querySelectorAll('[data-timeline-drop-date]').length).toBeLessThanOrEqual(42);
-    expect(container.querySelector('[data-timeline-drop-date="2026-12-31"]')).not.toBeNull();
+    const coordinates = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
+      (marker) => marker.dataset.timelineDateCoordinate,
+    );
+    expect(coordinates).toHaveLength(90);
+    expect(new Set(coordinates).size).toBe(90);
+    expect(coordinates[0]).toBe('2026-06-01');
+    expect(coordinates[89]).toBe('2026-08-29');
+    expect(container.querySelector('[data-timeline-drop-date]')).toBeNull();
     expect(container.querySelector('[data-timeline-range]')).not.toBeNull();
   });
 
@@ -259,64 +281,144 @@ describe('shared Timeline view', () => {
       container.querySelectorAll('.abyss-timeline-axis-dates > span'),
       (label) => label.textContent,
     ).filter((label): label is string => Boolean(label));
-    const dropDates = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-timeline-drop-date]'),
-      (cell) => cell.dataset.timelineDropDate,
-    ).filter((date): date is string => Boolean(date));
+    const coordinates = container.querySelectorAll('[data-timeline-date-coordinate]');
 
     expect(labels.length).toBeGreaterThanOrEqual(2);
     expect(labels.length).toBeLessThanOrEqual(8);
     expect(labels[0]).toBe('08-01');
     expect(labels[labels.length - 1]).toBe('09-11');
-    expect(dropDates).toHaveLength(42);
-    expect(dropDates[0]).toBe('2026-08-01');
-    expect(dropDates).toContain('2026-08-21');
-    expect(dropDates[dropDates.length - 1]).toBe('2026-09-11');
+    expect(coordinates).toHaveLength(42);
   });
 
-  it('routes drag, keyboard, and native date-picker changes through the same retained-role command', async () => {
+  it('routes pointer movement and both range edge resizes through the interaction controller', async () => {
     const container = freshContainer();
     const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });
     renderTimeline(container, {
-      entries: [point('A')],
+      entries: [range('A')],
       onSetDate,
       dateWindow: { from: '2026-08-26', to: '2026-08-30' },
     });
-    const handle = container.querySelector<HTMLElement>('[data-timeline-role="due"]')!;
-    const picker = container.querySelector<HTMLInputElement>('[data-timeline-date-picker="due"]')!;
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    const start = container.querySelector<HTMLElement>('[data-timeline-target="start-edge"]')!;
+    const end = container.querySelector<HTMLElement>('[data-timeline-target="end-edge"]')!;
 
-    handle.dispatchEvent(
-      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
-    );
-    picker.value = '2026-08-29';
-    picker.dispatchEvent(new Event('change', { bubbles: true }));
-    handle.dispatchEvent(new Event('dragstart', { bubbles: true, cancelable: true }));
-    container
-      .querySelector<HTMLElement>('[data-timeline-drop-date="2026-08-30"]')!
-      .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
-    await flushMicrotasks();
+    for (const [target, delta] of [
+      [move, 12],
+      [start, -12],
+      [end, 12],
+    ] as const) {
+      target.dispatchEvent(pointerEvent('pointerdown', { pointerId: 3, clientX: 100 }));
+      activeDocument.dispatchEvent(
+        pointerEvent('pointermove', { pointerId: 3, clientX: 100 + delta }),
+      );
+      activeDocument.dispatchEvent(
+        pointerEvent('pointerup', { pointerId: 3, clientX: 100 + delta }),
+      );
+      await flushMicrotasks();
+    }
 
     expect(onSetDate.mock.calls.map((call) => call.slice(1, 3))).toEqual([
-      ['due', '2026-08-28'],
-      ['due', '2026-08-29'],
-      ['due', '2026-08-30'],
+      ['start', '2026-08-28'],
+      ['end', '2026-08-30'],
+      ['start', '2026-08-26'],
+      ['end', '2026-08-30'],
     ]);
   });
 
-  it('keeps invalid and undated items outside the desktop date grid', () => {
+  it('preserves focal date while changing scale and centers Today without changing metadata', () => {
+    const container = freshContainer();
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-20',
+      scrollLeft: 120,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    renderTimeline(container, {
+      entries: [range('A')],
+      dateWindow: { from: '2026-08-01', to: '2026-09-30' },
+      scope: 'portfolio',
+      today: '2026-08-30',
+      session,
+    } as Parameters<typeof renderTimeline<Fixture>>[1]);
+
+    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
+    scale.value = 'week';
+    scale.dispatchEvent(new Event('change', { bubbles: true }));
+
+    expect(session.scale).toBe('week');
+    expect(session.focalDate).toBe('2026-08-20');
+    expect(session.scrollLeft).toBeGreaterThanOrEqual(0);
+
+    container.querySelector<HTMLButtonElement>('[data-timeline-today]')!.click();
+    expect(session.focalDate).toBe('2026-08-30');
+    expect(range('A').dateByRole).toEqual({ start: '2026-08-27', end: '2026-08-29' });
+  });
+
+  it('renders viewport geometry for same-day ranges, points, and diamond milestones', () => {
     const container = freshContainer();
     renderTimeline(container, {
       entries: [
-        point('Dated'),
+        {
+          ...range('Same day'),
+          item: {
+            kind: 'range',
+            key: 'task:Same day',
+            startMs: Date.UTC(2026, 7, 27),
+            endMs: Date.UTC(2026, 7, 27),
+          },
+          dateByRole: { start: '2026-08-27', end: '2026-08-27' },
+        },
+        point('Point'),
+        {
+          value: { id: 'Milestone' },
+          label: 'Milestone',
+          item: {
+            kind: 'point',
+            key: 'work-note:Milestone',
+            atMs: Date.UTC(2026, 7, 28),
+            role: 'milestone',
+          },
+          dateByRole: { milestone: '2026-08-28' },
+        },
+      ],
+      dateWindow: { from: '2026-08-26', to: '2026-08-30' },
+    });
+
+    const sameDay = container.querySelector<HTMLElement>('[data-timeline-range]')!;
+    expect(Number.parseFloat(sameDay.style.inlineSize)).toBeGreaterThanOrEqual(6);
+    expect(sameDay.title).toContain('2026-08-27 – 2026-08-27');
+    expect(container.querySelector('[data-timeline-point="due"]')).not.toBeNull();
+    expect(container.querySelector('[data-timeline-milestone="diamond"]')).not.toBeNull();
+    expect(container.querySelectorAll('[data-timeline-target="start-edge"]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-timeline-target="end-edge"]')).toHaveLength(1);
+    expect(container.textContent).not.toMatch(/\bStart\b|\bEnd\b/u);
+  });
+
+  it('collapses bounded Planning and Invalid trays and promotes all-undated planning', () => {
+    const container = freshContainer();
+    renderTimeline(container, {
+      entries: [
         entry({ kind: 'undated', key: 'project:Undated' }, 'Undated'),
         entry({ kind: 'invalid', key: 'project:Broken', reason: 'reversed' }, 'Broken'),
       ],
+      onSetDate: () => ({ type: 'ok' }),
     });
 
-    expect(container.querySelectorAll('.abyss-timeline-row')).toHaveLength(1);
-    expect(container.querySelector('.abyss-timeline-undated')?.textContent).toContain('Undated');
-    expect(container.querySelector('.abyss-timeline-invalid')?.textContent).toContain('Broken');
-    expect(container.querySelector('.abyss-timeline-invalid')?.textContent).toContain('reversed');
+    const planning = container.querySelector<HTMLDetailsElement>(
+      '[data-timeline-tray="planning"]',
+    )!;
+    const invalid = container.querySelector<HTMLDetailsElement>('[data-timeline-tray="invalid"]')!;
+    expect(planning.open).toBe(true);
+    expect(planning.querySelector('summary')?.textContent).toContain('Planning · 1');
+    expect(invalid.open).toBe(false);
+    expect(invalid.querySelector('summary')?.textContent).toContain('Invalid · 1');
+    expect(planning.querySelector('[data-timeline-schedule]')).not.toBeNull();
+    expect(invalid.textContent).toContain('reversed');
   });
 
   it('renders a narrow vertical agenda without a horizontal date grid', () => {
@@ -332,7 +434,160 @@ describe('shared Timeline view', () => {
     expect(container.querySelector('.abyss-timeline-agenda-date')?.textContent).toContain(
       '2026-08-27',
     );
+    for (const control of container.querySelectorAll<HTMLElement>(
+      '.abyss-timeline-agenda-row button, .abyss-timeline-agenda-row input',
+    )) {
+      expect(control.classList.contains('abyss-timeline-touch-target')).toBe(true);
+    }
     expect(root.scrollWidth).toBeLessThanOrEqual(root.clientWidth);
+  });
+
+  it('supports keyboard move, editor, cancel, and coarse menu fallback on the focused item', async () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });
+    renderTimeline(container, {
+      entries: [point('A')],
+      onSetDate,
+      coarsePointer: true,
+    } as Parameters<typeof renderTimeline<Fixture>>[1]);
+    const pointControl = container.querySelector<HTMLElement>(
+      '[data-timeline-target="point-move"]',
+    )!;
+    const picker = container.querySelector<HTMLInputElement>('[data-timeline-date-picker="due"]')!;
+
+    pointControl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    pointControl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    expect(onSetDate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ label: 'A' }),
+      'due',
+      '2026-08-28',
+      pointControl,
+    );
+
+    pointControl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(activeDocument.activeElement).toBe(picker);
+    pointControl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }),
+    );
+    pointControl.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    expect(container.querySelector('[data-timeline-preview]')).toBeNull();
+
+    container
+      .querySelector<HTMLButtonElement>('[data-timeline-coarse-action="move-next"]')!
+      .click();
+    await flushMicrotasks();
+    expect(onSetDate).toHaveBeenCalledTimes(2);
+    container.remove();
+  });
+
+  it('clamps identity resize to 160/240/360 and removes document interaction on destroy', async () => {
+    const container = freshContainer();
+    const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-27',
+      scrollLeft: 0,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    const handle = renderTimeline(container, {
+      entries: [point('A')],
+      onSetDate,
+      coarsePointer: true,
+      session,
+    } as Parameters<typeof renderTimeline<Fixture>>[1]);
+    const root = container.querySelector<HTMLElement>('.abyss-timeline')!;
+    const resize = container.querySelector<HTMLElement>('[data-timeline-identity-resize]')!;
+
+    expect(root.style.getPropertyValue('--abyss-timeline-identity-width')).toBe('240px');
+    for (const [preset, width] of [
+      ['compact', 160],
+      ['default', 240],
+      ['wide', 360],
+    ] as const) {
+      container
+        .querySelector<HTMLButtonElement>(`[data-timeline-identity-preset="${preset}"]`)!
+        .click();
+      expect(session.identityWidth).toBe(width);
+      expect(root.style.getPropertyValue('--abyss-timeline-identity-width')).toBe(
+        `${String(width)}px`,
+      );
+    }
+
+    resize.dispatchEvent(pointerEvent('pointerdown', { pointerId: 9, clientX: 100 }));
+    handle.destroy();
+    activeDocument.dispatchEvent(pointerEvent('pointermove', { pointerId: 9, clientX: 220 }));
+    activeDocument.dispatchEvent(pointerEvent('pointerup', { pointerId: 9, clientX: 220 }));
+    await flushMicrotasks();
+    expect(container.childElementCount).toBe(0);
+    expect(onSetDate).not.toHaveBeenCalled();
+  });
+
+  it('uses bounded reduced-motion autoscroll and stops it when the shell is destroyed', () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const ownerWindow = container.ownerDocument.defaultView!;
+    const originalMatchMedia = ownerWindow.matchMedia;
+    ownerWindow.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+    try {
+      const handle = renderTimeline(container, {
+        entries: [point('A')],
+        onSetDate: () => ({ type: 'ok' }),
+        dateWindow: { from: '2026-08-01', to: '2026-09-30' },
+      });
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      Object.defineProperties(scroll, {
+        clientWidth: { configurable: true, value: 300 },
+        scrollWidth: { configurable: true, value: 1000 },
+      });
+      scroll.getBoundingClientRect = () =>
+        ({
+          left: 0,
+          right: 300,
+          top: 0,
+          bottom: 300,
+          width: 300,
+          height: 300,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      const item = container.querySelector<HTMLElement>('[data-timeline-target="point-move"]')!;
+      item.dispatchEvent(pointerEvent('pointerdown', { pointerId: 11, clientX: 200 }));
+      activeDocument.dispatchEvent(pointerEvent('pointermove', { pointerId: 11, clientX: 295 }));
+
+      expect(scroll.scrollLeft).toBeGreaterThan(0);
+      const stoppedAt = scroll.scrollLeft;
+      handle.destroy();
+      activeDocument.dispatchEvent(pointerEvent('pointermove', { pointerId: 11, clientX: 299 }));
+      expect(scroll.scrollLeft).toBe(stoppedAt);
+    } finally {
+      ownerWindow.matchMedia = originalMatchMedia;
+      container.remove();
+    }
   });
 
   it('restores deep logical focus and scroll from stable keys after a remount', () => {
@@ -503,6 +758,9 @@ describe('shared Timeline view', () => {
     handle.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
     );
+    handle.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
     await flushMicrotasks();
 
     expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.dataset).toMatchObject(
@@ -559,6 +817,11 @@ describe('shared Timeline view', () => {
       .querySelector<HTMLElement>('[data-timeline-role="milestone"]')!
       .dispatchEvent(
         new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+      );
+    container
+      .querySelector<HTMLElement>('[data-timeline-role="milestone"]')!
+      .dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
       );
     await flushMicrotasks();
 

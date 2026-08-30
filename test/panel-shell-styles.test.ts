@@ -500,4 +500,49 @@ describe('Projects hardening styles', () => {
       expect(declarations, selector).toMatch(/min-(?:height|block-size):\s*0/u);
     }
   });
+
+  it('freezes the resizable Timeline identity column over one continuous horizontal plot', () => {
+    const identity = declarationsFor('.abyss-timeline-identity');
+    expect(identity).toContain('position: sticky');
+    expect(identity).toContain('inline-size: var(--abyss-timeline-identity-width)');
+    expect(identity).toContain('background: var(--background-primary)');
+    const scroll = declarationsFor('.abyss-timeline-scroll');
+    expect(scroll).toContain('overflow-x: auto');
+    expect(declarationsFor('.abyss-timeline-plot')).not.toContain('grid-template-columns: repeat(');
+    expect(css).not.toContain('.abyss-timeline-drop-cell');
+  });
+
+  it('keeps Timeline handles quiet until hover/focus and gives coarse agenda controls 44px targets', () => {
+    const handles = declarationsFor('.abyss-timeline-edge-handle');
+    expect(handles).toContain('opacity: 0');
+    expect(
+      declarationsFor(
+        '.abyss-timeline-row:hover .abyss-timeline-edge-handle, .abyss-timeline-row:focus-within .abyss-timeline-edge-handle',
+      ),
+    ).toContain('opacity: 1');
+    const coarseTarget = declarationsInAtRule(
+      '@media (hover: none), (pointer: coarse)',
+      '.abyss-timeline-touch-target',
+    );
+    expect(coarseTarget).toContain('min-inline-size: 44px');
+    expect(coarseTarget).toContain('min-block-size: 44px');
+  });
+
+  it('bounds expanded Timeline trays and renders narrow mode as a complete agenda', () => {
+    expect(declarationsFor('.abyss-timeline-tray[open] .abyss-timeline-diagnostic-scroll')).toMatch(
+      /max-block-size:\s*min\(/u,
+    );
+    const agenda = declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-row');
+    expect(agenda).toContain('grid-template-columns: minmax(0, 1fr) auto');
+    expect(agenda).toContain('overflow: hidden');
+    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-plot')).toContain(
+      'display: none',
+    );
+    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-scroll')).toContain(
+      'overflow-x: hidden',
+    );
+    expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-canvas')).toContain(
+      'max-inline-size: 100%',
+    );
+  });
 });

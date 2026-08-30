@@ -1254,6 +1254,19 @@ export class CenterPanel {
     const timeline = renderTasksTimeline(host, {
       actions,
       collectionSession: session,
+      session: this.projectWorkspaceSession.timelines.tasks,
+      scale: this.settings.projects.view.timeline.tasks.scale,
+      identityWidth: this.settings.projects.view.timeline.tasks.identityWidth,
+      onPresentationChange: (presentation) => {
+        this.settings.projects.view.timeline = {
+          ...this.settings.projects.view.timeline,
+          tasks: {
+            scale: presentation.scale,
+            identityWidth: presentation.identityWidth,
+          },
+        };
+        void this.onSaveSettings();
+      },
       renderTask: (identity, action) => {
         this.renderTaskCard(identity, action.task, {
           projectPath: path,

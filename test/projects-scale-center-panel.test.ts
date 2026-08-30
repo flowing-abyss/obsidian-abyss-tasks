@@ -651,7 +651,7 @@ describe('Projects Tasks/List scale integration RED', () => {
       click(root.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!);
       const row = root.querySelector<HTMLElement>('.abyss-timeline-row:has(.abyss-task-card)')!;
       const ref = stateRef(row.querySelector('.abyss-task-card'))!;
-      row.querySelector<HTMLElement>('.abyss-timeline-date-handle')!.focus();
+      row.querySelector<HTMLElement>('[data-timeline-primary]')!.focus();
 
       expect(projectTaskSession(panel).focusedRef()).toEqual(ref);
       expect(projectTaskSession(panel).shouldRestoreFocus()).toBe(true);

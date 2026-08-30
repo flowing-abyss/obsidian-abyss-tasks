@@ -9,6 +9,38 @@ const taskDefault: ProjectTasksViewState = {
 };
 
 describe('ProjectWorkspaceSessionRegistry', () => {
+  it('owns independent session-only Timeline presentation state for every scope', () => {
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.openProject('Projects/A.md');
+
+    expect(registry.portfolioTimeline).toMatchObject({
+      focalDate: null,
+      scrollLeft: 0,
+      scale: 'quarter',
+      identityWidth: 240,
+      focusedInteraction: null,
+    });
+    expect(registry.timelines.tasks).toMatchObject({
+      focalDate: null,
+      scrollLeft: 0,
+      scale: 'week',
+      identityWidth: 240,
+      focusedInteraction: null,
+    });
+    expect(registry.timelines.workNotes).toMatchObject({
+      focalDate: null,
+      scrollLeft: 0,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
+    });
+
+    registry.timelines.tasks.focalDate = '2026-08-30';
+    registry.timelines.tasks.scrollLeft = 420;
+    expect(registry.timelines.workNotes.focalDate).toBeNull();
+    expect(registry.portfolioTimeline.scrollLeft).toBe(0);
+  });
+
   it('keeps independent Task and Work Note slices, including their scope-local continuity', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');

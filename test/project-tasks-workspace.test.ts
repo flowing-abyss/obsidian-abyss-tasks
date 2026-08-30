@@ -450,6 +450,11 @@ describe('Project Tasks workspace', () => {
       firstIndex: 0,
       focusedKey: null,
       restoreFocus: false,
+      focalDate: null,
+      scrollLeft: 0,
+      scale: 'month',
+      identityWidth: 240,
+      focusedInteraction: null,
     });
   });
 

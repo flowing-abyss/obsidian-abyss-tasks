@@ -6968,49 +6968,105 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-timeline-feedback:empty {
   display: none;
 }
+.abyss-timeline-toolbar {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.abyss-timeline-toolbar select,
+.abyss-timeline-toolbar button,
+.abyss-timeline-toolbar summary {
+  min-height: 28px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+.abyss-timeline-canvas {
+  position: relative;
+  min-block-size: 100%;
+}
 .abyss-timeline-axis,
 .abyss-timeline-row {
   display: grid;
-  grid-template-columns: minmax(11rem, 0.42fr) minmax(14rem, 1fr) auto;
+  grid-template-columns: var(--abyss-timeline-identity-width) var(--abyss-timeline-plot-width);
   min-width: 0;
 }
 .abyss-timeline-axis {
+  position: sticky;
+  z-index: 5;
+  top: 0;
   flex: 0 0 auto;
   align-items: end;
-  padding-inline: 12px;
   border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
   color: var(--text-faint);
   font-family: var(--font-monospace);
   font-size: var(--font-ui-smaller);
 }
-.abyss-timeline-axis-dates,
-.abyss-timeline-plot {
-  display: grid;
-  grid-template-columns: repeat(var(--abyss-timeline-days), minmax(0, 1fr));
+.abyss-timeline-axis-identity {
+  position: sticky;
+  z-index: 7;
+  inset-inline-start: 0;
+  min-height: 28px;
+  border-inline-end: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+.abyss-timeline-identity-resize {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: -6px;
+  inline-size: 12px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+.abyss-timeline-axis-plot,
+.abyss-timeline-axis-coordinates,
+.abyss-timeline-axis-dates {
+  position: relative;
+  block-size: 28px;
+}
+.abyss-timeline-axis-coordinates,
+.abyss-timeline-axis-dates {
+  position: absolute;
+  inset: 0;
+}
+.abyss-timeline-axis-coordinates > span {
+  position: absolute;
+  inset-block: 18px 0;
+  border-inline-start: 1px solid var(--background-modifier-border);
 }
 .abyss-timeline-axis-dates > span {
-  min-width: 0;
-  padding: 5px 2px;
+  position: absolute;
+  max-inline-size: 4.5rem;
+  padding: 5px 3px;
   overflow: hidden;
-  text-align: center;
   text-overflow: clip;
+  transform: translateX(-50%);
   white-space: nowrap;
 }
 .abyss-timeline-scroll {
   flex: 1;
   min-height: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .abyss-timeline-rows {
   min-height: 100%;
 }
 .abyss-timeline-row {
+  position: relative;
   box-sizing: border-box;
   block-size: 72px;
   align-items: center;
-  gap: 8px;
-  padding-inline: 12px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 .abyss-timeline-row:hover,
@@ -7022,8 +7078,17 @@ body.abyss-modal-open .popover.hover-popover {
   outline-offset: -2px;
 }
 .abyss-timeline-identity {
+  position: sticky;
+  z-index: 3;
+  inset-inline-start: 0;
+  box-sizing: border-box;
+  inline-size: var(--abyss-timeline-identity-width);
   min-width: 0;
+  block-size: 100%;
+  padding: 12px;
   overflow: hidden;
+  border-inline-end: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
 }
 .abyss-timeline-title,
 .abyss-timeline-detail,
@@ -7049,88 +7114,125 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-plot {
   position: relative;
-  height: 30px;
-  align-items: center;
+  inline-size: var(--abyss-timeline-plot-width);
+  block-size: 30px;
   isolation: isolate;
 }
-.abyss-timeline-drop-cell {
-  z-index: 0;
-  grid-row: 1;
-  align-self: stretch;
-  border-inline-start: 1px solid var(--background-modifier-border);
-}
 .abyss-timeline-range,
-.abyss-timeline-point {
+.abyss-timeline-point,
+.abyss-timeline-preview {
   position: absolute;
   z-index: 1;
-  pointer-events: none;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
 }
 .abyss-timeline-range {
-  height: 8px;
-  margin-inline: 3px;
+  min-inline-size: 6px;
+  block-size: 12px;
   border-radius: var(--radius-s);
   background: var(--interactive-accent);
 }
+.abyss-timeline-item-body {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: grab;
+}
+.abyss-timeline-edge-handle {
+  position: absolute;
+  z-index: 2;
+  inset-block: -6px;
+  inline-size: 12px;
+  padding: 0;
+  border: 1px solid var(--background-primary);
+  border-radius: var(--radius-s);
+  background: var(--interactive-accent);
+  cursor: ew-resize;
+  opacity: 0;
+}
+.abyss-timeline-edge-handle.is-start {
+  inset-inline-start: -6px;
+}
+.abyss-timeline-edge-handle.is-end {
+  inset-inline-end: -6px;
+}
+.abyss-timeline-row:hover .abyss-timeline-edge-handle,
+.abyss-timeline-row:focus-within .abyss-timeline-edge-handle {
+  opacity: 1;
+}
 .abyss-timeline-point {
-  width: 10px;
-  height: 10px;
-  justify-self: center;
+  padding: 0;
   border: 2px solid var(--background-primary);
   border-radius: 50%;
   background: var(--interactive-accent);
-  transform: translateX(-50%);
+  cursor: grab;
+  transform: translate(-50%, -50%);
+}
+.abyss-timeline-point.is-milestone {
+  border-radius: 1px;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+.abyss-timeline-preview {
+  z-index: 4;
+  min-inline-size: 6px;
+  block-size: 14px;
+  border: 1px solid var(--interactive-accent);
+  border-radius: var(--radius-s);
+  background: var(--background-primary);
+  pointer-events: none;
+}
+.abyss-timeline-today-line {
+  position: absolute;
+  z-index: 2;
+  inset-block: 0;
+  border-inline-start: 1px solid var(--interactive-accent);
+  pointer-events: none;
 }
 .abyss-timeline-date-controls {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-}
-.abyss-timeline-date-handle,
-.abyss-timeline-date-picker {
-  min-height: 26px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: transparent;
-  box-shadow: none;
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-}
-.abyss-timeline-date-handle {
-  padding: 2px 6px;
-  cursor: grab;
+  position: sticky;
+  z-index: 4;
+  inset-inline-end: 4px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
 }
 .abyss-timeline-date-picker {
-  width: 8.5rem;
-  padding: 2px 4px;
-  font-family: var(--font-monospace);
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  opacity: 0;
 }
-.abyss-timeline-date-handle:not(:disabled):hover,
-.abyss-timeline-date-picker:not(:disabled):hover {
-  border-color: var(--interactive-accent);
-  color: var(--text-normal);
-}
-.abyss-timeline-date-handle:focus-visible,
-.abyss-timeline-date-picker:focus-visible {
+.abyss-timeline-item-body:focus-visible,
+.abyss-timeline-edge-handle:focus-visible,
+.abyss-timeline-point:focus-visible,
+.abyss-timeline-identity-resize:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 1px;
 }
 .abyss-timeline-undated,
 .abyss-timeline-invalid {
   display: flex;
-  max-block-size: min(14rem, 40vh);
   min-block-size: 0;
   flex: 0 1 auto;
   flex-direction: column;
-  padding: 8px 12px;
   border-top: 1px solid var(--background-modifier-border);
 }
-.abyss-timeline-undated h4,
-.abyss-timeline-invalid h4 {
-  margin: 0 0 4px;
+.abyss-timeline-tray > summary {
+  padding: 7px 12px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+.abyss-timeline-tray[open] .abyss-timeline-diagnostic-scroll {
+  max-block-size: min(14rem, 40vh);
 }
 .abyss-timeline-diagnostic-row {
   display: flex;
@@ -7139,7 +7241,7 @@ body.abyss-modal-open .popover.hover-popover {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  padding: 3px 0;
+  padding: 3px 12px;
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
@@ -7166,12 +7268,27 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-timeline.is-agenda .abyss-timeline-plot {
   display: none;
 }
+.abyss-timeline.is-agenda .abyss-timeline-plot {
+  display: none;
+}
+.abyss-timeline.is-agenda .abyss-timeline-scroll {
+  overflow-x: hidden;
+}
+.abyss-timeline.is-agenda .abyss-timeline-canvas {
+  inline-size: 100%;
+  max-inline-size: 100%;
+}
 .abyss-timeline.is-agenda .abyss-timeline-row {
   block-size: 72px;
   min-block-size: 0;
   grid-template-columns: minmax(0, 1fr) auto;
   padding-block: 4px;
   overflow: hidden;
+}
+.abyss-timeline.is-agenda .abyss-timeline-identity {
+  position: static;
+  inline-size: auto;
+  border-inline-end: 0;
 }
 .abyss-timeline.is-agenda .abyss-timeline-date-controls {
   display: grid;
@@ -7180,10 +7297,12 @@ body.abyss-modal-open .popover.hover-popover {
   gap: 2px 4px;
 }
 .abyss-timeline.is-agenda .abyss-timeline-date-picker {
+  position: static;
   width: 100%;
+  block-size: 44px;
   min-width: 0;
+  opacity: 1;
 }
-
 /* Shared lifecycle/status board: quiet shell, existing cards carry the detail. */
 .abyss-board {
   display: flex;
@@ -7460,6 +7579,10 @@ body.abyss-modal-open .popover.hover-popover {
 }
 
 @media (hover: none), (pointer: coarse) {
+  .abyss-timeline-touch-target {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
   .abyss-board-status-menu {
     min-block-size: 44px;
     min-inline-size: 44px;

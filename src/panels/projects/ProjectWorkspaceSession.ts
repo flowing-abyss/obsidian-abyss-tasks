@@ -4,6 +4,13 @@ import type { BoardViewPreference } from './boardPreferences';
 import { MeasuredWindow } from './BoundedWindow';
 import type { ProjectWorkspaceLayout, ProjectWorkspaceScope } from './ProjectsDashboardView';
 import { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
+import type { TimelineOwnedRole } from './TimelineInteractionController';
+import {
+  DEFAULT_TIMELINE_IDENTITY_WIDTH,
+  defaultTimelineScale,
+  type TimelineScale,
+  type TimelineScope,
+} from './timelinePreferences';
 
 const MAX_CLEAN_PROJECT_SESSIONS = 12;
 
@@ -12,6 +19,17 @@ export interface LogicalViewportSession {
   firstIndex: number;
   focusedKey: string | null;
   restoreFocus: boolean;
+}
+
+/** Ephemeral continuous-Timeline state. Focal/scroll/interaction are never persisted. */
+export interface TimelinePresentationSession<
+  S extends TimelineScope,
+> extends LogicalViewportSession {
+  focalDate: string | null;
+  scrollLeft: number;
+  scale: TimelineScale<S>;
+  identityWidth: number;
+  focusedInteraction: { readonly itemKey: string; readonly role: TimelineOwnedRole } | null;
 }
 
 export interface ScopeSelectionSession {
@@ -79,11 +97,25 @@ interface ProjectWorkspaceEntry {
   readonly taskListGeometry: MeasuredWindow<string>;
   readonly taskListViewport: { firstRowKey: string | null; firstIndex: number };
   readonly workNotes: WorkNotesSession;
-  readonly timelines: { tasks: LogicalViewportSession; workNotes: LogicalViewportSession };
+  readonly timelines: {
+    tasks: TimelinePresentationSession<'tasks'>;
+    workNotes: TimelinePresentationSession<'workNotes'>;
+  };
 }
 
 function viewport(): LogicalViewportSession {
   return { firstKey: null, firstIndex: 0, focusedKey: null, restoreFocus: false };
+}
+
+function timelineViewport<S extends TimelineScope>(scope: S): TimelinePresentationSession<S> {
+  return {
+    ...viewport(),
+    focalDate: null,
+    scrollLeft: 0,
+    scale: defaultTimelineScale(scope),
+    identityWidth: DEFAULT_TIMELINE_IDENTITY_WIDTH,
+    focusedInteraction: null,
+  };
 }
 
 function selection(): ScopeSelectionSession {
@@ -132,7 +164,7 @@ function workspaceEntry(): ProjectWorkspaceEntry {
         columns: {},
       },
     },
-    timelines: { tasks: viewport(), workNotes: viewport() },
+    timelines: { tasks: timelineViewport('tasks'), workNotes: timelineViewport('workNotes') },
   };
 }
 
@@ -225,7 +257,7 @@ export class ProjectWorkspaceSession {
   private projectPath: string | null = null;
   private useAsDefaultIntent: UseProjectWorkspaceDefaultIntent | null = null;
   /** Portfolio continuity is independent of whichever Project workspace is open. */
-  readonly portfolioTimeline = viewport();
+  readonly portfolioTimeline = timelineViewport('portfolio');
   /** Portfolio Board continuity is independent of Project dashboard scope/layout state. */
   readonly portfolioBoard: WorkNoteBoardSession = {
     selectedColumnKey: null,
@@ -283,7 +315,10 @@ export class ProjectWorkspaceSession {
     return this.current().workNotes;
   }
 
-  get timelines(): { tasks: LogicalViewportSession; workNotes: LogicalViewportSession } {
+  get timelines(): {
+    tasks: TimelinePresentationSession<'tasks'>;
+    workNotes: TimelinePresentationSession<'workNotes'>;
+  } {
     return this.current().timelines;
   }
 
