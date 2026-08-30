@@ -19,7 +19,7 @@ describe('evaluateQuery', () => {
   it('matches a frontmatter key=value', () => {
     expect(evaluateQuery('status=active', 'A.md', [], fm({ status: 'active' }))).toBe(true);
     expect(evaluateQuery('status=active', 'A.md', [], fm({ status: 'done' }))).toBe(false);
-    expect(evaluateQuery('status=', 'A.md', [], fm())).toBe(true); // unset === ''
+    expect(evaluateQuery('status=', 'A.md', [], fm())).toBe(false); // missing values are invalid
   });
   it('supports AND / OR / NOT / parens', () => {
     expect(evaluateQuery('Projects/ AND #book', 'Projects/A.md', ['#book'], fm())).toBe(true);
