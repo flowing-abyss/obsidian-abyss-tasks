@@ -385,11 +385,11 @@ describe('shared Timeline view', () => {
   });
 
   it.each([
-    ['historical', '1926-01-02', '1926-01-01', '2026-08-31'],
-    ['future', '2126-12-30', '2026-08-29', '2126-12-31'],
+    ['historical', '1926-01-02', 0],
+    ['future', '2126-12-30', 300_000],
   ] as const)(
-    'centers Today while preserving a %s item in the same continuous canvas',
-    (_, itemDate, expectedFirst, expectedLast) => {
+    'virtualizes coordinates while keeping a %s item recoverable in the same canvas',
+    (_, itemDate, minimumDistantX) => {
       const container = freshContainer();
       const session = {
         firstKey: null,
@@ -419,14 +419,14 @@ describe('shared Timeline view', () => {
         container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
         (marker) => marker.dataset.timelineDateCoordinate,
       );
-      expect(coordinates[0]).toBe(expectedFirst);
-      expect(coordinates[coordinates.length - 1]).toBe(expectedLast);
-      expect(coordinates).toContain(itemDate);
+      expect(coordinates.length).toBeLessThanOrEqual(120);
       expect(coordinates).toContain('2026-08-30');
+      expect(coordinates).not.toContain(itemDate);
       expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
-      expect(
-        container.querySelector('[data-timeline-key="task:Distant"][data-timeline-point]'),
-      ).not.toBeNull();
+      const distantPoint = container.querySelector<HTMLElement>(
+        '[data-timeline-key="task:Distant"][data-timeline-point]',
+      )!;
+      expect(distantPoint).not.toBeNull();
       expect(
         container.querySelector(
           '[data-timeline-key="task:Distant"][data-timeline-date-picker="due"]',
@@ -435,6 +435,36 @@ describe('shared Timeline view', () => {
       expect(session.focalDate).toBe('2026-08-30');
       expect(session.scrollLeft).toBe(scroll.scrollLeft);
       expect(scroll.scrollLeft).toBeGreaterThan(0);
+
+      const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
+      const plotWidth = Number.parseFloat(
+        canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
+      );
+      const distantX = Number.parseFloat(distantPoint.style.insetInlineStart);
+      expect(plotWidth).toBeGreaterThan(300_000);
+      expect(distantX).toBeGreaterThan(minimumDistantX);
+      expect(distantX).toBeLessThan(plotWidth);
+
+      const distantScrollLeft = Math.max(0, 240 + distantX - 180);
+      scroll.scrollLeft = distantScrollLeft;
+      expect(scroll.scrollLeft).toBe(distantScrollLeft);
+      scroll.dispatchEvent(new Event('scroll'));
+      expect(session.scrollLeft).toBe(distantScrollLeft);
+
+      const localCoordinates = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
+        (marker) => marker.dataset.timelineDateCoordinate,
+      );
+      expect(localCoordinates.length).toBeLessThanOrEqual(120);
+      expect(localCoordinates).toContain(itemDate);
+      expect(
+        Array.from(
+          container.querySelectorAll<HTMLElement>('.abyss-timeline-axis-dates > span'),
+        ).some((label) => label.textContent?.startsWith(itemDate.slice(5, 7))),
+      ).toBe(true);
+      expect(
+        container.querySelector('[data-timeline-key="task:Distant"][data-timeline-point]'),
+      ).toBe(distantPoint);
     },
   );
 

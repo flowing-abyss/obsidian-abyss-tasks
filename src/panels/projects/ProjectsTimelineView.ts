@@ -791,13 +791,43 @@ export function renderTimeline<T>(
       }
     };
 
-    const centerOn = (date: string): void => {
-      const visibleWidth = Math.max(
-        1,
-        scroll.clientWidth - identityWidth || Math.min(plotWidth, 480),
+    const visiblePlotWidth = (): number => {
+      const measured = scroll.clientWidth - identityWidth;
+      return Math.max(1, measured > 0 ? measured : Math.min(plotWidth, 480));
+    };
+
+    const renderAxisWindow = (): void => {
+      if (isAgenda) return;
+      const visibleWidth = visiblePlotWidth();
+      const visibleStart = Math.max(0, scroll.scrollLeft - identityWidth);
+      const overscan = visibleWidth;
+      const fromDate = timelineDateAtX(viewport, Math.max(0, visibleStart - overscan));
+      const toDate = timelineDateAtX(
+        viewport,
+        Math.min(plotWidth, visibleStart + visibleWidth + overscan),
       );
+      const from = window && fromDate < window.from ? window.from : fromDate;
+      const to = window && toDate > window.to ? window.to : toDate;
+      const markerDates = continuousDates(from, to);
+      axisCoordinates.empty();
+      axisLabels.empty();
+      for (const date of markerDates) {
+        const marker = axisCoordinates.createSpan({
+          attr: { 'data-timeline-date-coordinate': date },
+        });
+        marker.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
+      }
+      for (const date of presentationDates(markerDates)) {
+        const label = axisLabels.createSpan({ text: date.slice(5) });
+        label.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
+      }
+    };
+
+    const centerOn = (date: string): void => {
+      const visibleWidth = visiblePlotWidth();
       const desired = identityWidth + civilDateToX(viewport, date) - visibleWidth / 2;
       scroll.scrollLeft = Math.max(0, Math.min(scroll.scrollWidth - scroll.clientWidth, desired));
+      renderAxisWindow();
       if (session) session.scrollLeft = scroll.scrollLeft;
     };
 
@@ -831,18 +861,7 @@ export function renderTimeline<T>(
       viewport = buildViewport();
       canvas.style.inlineSize = `calc(var(--abyss-timeline-identity-width) + ${String(plotWidth)}px)`;
       canvas.style.setProperty('--abyss-timeline-plot-width', `${String(plotWidth)}px`);
-      axisCoordinates.empty();
-      axisLabels.empty();
-      for (const date of dates) {
-        const marker = axisCoordinates.createSpan({
-          attr: { 'data-timeline-date-coordinate': date },
-        });
-        marker.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
-      }
-      for (const date of presentationDates(dates)) {
-        const label = axisLabels.createSpan({ text: date.slice(5) });
-        label.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
-      }
+      renderAxisWindow();
       canvas.querySelector('[data-timeline-today-line]')?.remove();
       if (dates.includes(today)) {
         const todayLine = canvas.createDiv({
@@ -851,6 +870,7 @@ export function renderTimeline<T>(
         });
         todayLine.style.insetInlineStart = `calc(var(--abyss-timeline-identity-width) + ${String(civilDateToX(viewport, today))}px)`;
       }
+      bounded.setKeys(dated.map(({ item }) => item.key));
       renderWindow(false);
       const focal = session?.focalDate ?? midpoint;
       if (preserveFocal && civilDate(focal)) centerOn(focal);
@@ -867,6 +887,7 @@ export function renderTimeline<T>(
       root.style.setProperty('--abyss-timeline-identity-width', `${String(identityWidth)}px`);
       if (session) session.identityWidth = identityWidth;
       registerTarget(resizeHandle, { kind: 'identity-column', width: identityWidth });
+      renderAxisWindow();
       if (notify) notifyPresentationChange();
     };
 
@@ -1171,15 +1192,16 @@ export function renderTimeline<T>(
       session.firstKey = dated[session.firstIndex]?.item.key ?? null;
       session.scrollLeft = scroll.scrollLeft;
       if (scroll.clientWidth <= 0) return;
-      const visibleWidth = Math.max(
-        1,
-        scroll.clientWidth - identityWidth || Math.min(plotWidth, 480),
-      );
+      const visibleWidth = visiblePlotWidth();
       const plotX = Math.max(0, scroll.scrollLeft - identityWidth + visibleWidth / 2);
       session.focalDate = timelineDateAtX(viewport, plotX);
     };
+    let renderedScrollTop = scroll.scrollTop;
     const onScroll = (): void => {
       rememberViewport();
+      renderAxisWindow();
+      if (scroll.scrollTop === renderedScrollTop) return;
+      renderedScrollTop = scroll.scrollTop;
       renderWindow(false);
     };
     scroll.addEventListener('scroll', onScroll);
