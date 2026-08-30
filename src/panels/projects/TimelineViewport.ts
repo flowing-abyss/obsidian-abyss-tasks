@@ -2,6 +2,8 @@ import { addCivilDays, parseProjectDate } from '../../projects/projectDates';
 import { isTimelineScale, type TimelineScale, type TimelineScope } from './timelinePreferences';
 
 const MILLIS_PER_CIVIL_DAY = 86_400_000;
+const FIRST_SUPPORTED_CIVIL_DATE = '0000-01-01';
+const LAST_SUPPORTED_CIVIL_DATE = '9999-12-31';
 export const TIMELINE_SAME_DAY_RANGE_MIN_WIDTH = 6;
 export const TIMELINE_POINT_SIZE = 8;
 export const TIMELINE_MILESTONE_SIZE = 10;
@@ -12,13 +14,26 @@ const PIXELS_PER_DAY = {
   workNotes: { day: 48, week: 24, month: 10, quarter: 4, year: 2 },
 } as const;
 
-export interface TimelineViewport<S extends TimelineScope = TimelineScope> {
+interface TimelineViewportForScope<S extends TimelineScope> {
   readonly scope: S;
   readonly scale: TimelineScale<S>;
   readonly focalDate: string;
   readonly viewportWidth: number;
   readonly pixelsPerDay: number;
 }
+
+export type TimelineViewport<S extends TimelineScope = TimelineScope> = S extends TimelineScope
+  ? TimelineViewportForScope<S>
+  : never;
+
+type TimelineViewportInput<S extends TimelineScope = TimelineScope> = S extends TimelineScope
+  ? {
+      readonly scope: S;
+      readonly scale: TimelineScale<S>;
+      readonly focalDate: string;
+      readonly viewportWidth: number;
+    }
+  : never;
 
 export type TimelineGeometryInput =
   | { readonly kind: 'range'; readonly start: string; readonly end: string }
@@ -57,10 +72,10 @@ function civilDate(value: string): string {
   return parsed.raw;
 }
 
-function civilDateFromMetadata(value: string): string {
+function timelineEndpoint(value: string): NonNullable<ReturnType<typeof parseProjectDate>> {
   const parsed = parseProjectDate(value);
   if (!parsed) throw new RangeError(`Invalid timeline endpoint: ${value}`);
-  return parsed.raw.slice(0, 10);
+  return parsed;
 }
 
 function civilDayOrdinal(date: string): number {
@@ -69,6 +84,17 @@ function civilDayOrdinal(date: string): number {
 
 function civilDayDistance(from: string, to: string): number {
   return civilDayOrdinal(to) - civilDayOrdinal(from);
+}
+
+const FIRST_SUPPORTED_CIVIL_DAY = civilDayOrdinal(FIRST_SUPPORTED_CIVIL_DATE);
+const LAST_SUPPORTED_CIVIL_DAY = civilDayOrdinal(LAST_SUPPORTED_CIVIL_DATE);
+
+function clampCivilDayOffset(date: string, delta: number): number {
+  const origin = civilDayOrdinal(date);
+  return Math.max(
+    FIRST_SUPPORTED_CIVIL_DAY - origin,
+    Math.min(LAST_SUPPORTED_CIVIL_DAY - origin, delta),
+  );
 }
 
 function timelinePixelsPerDay<S extends TimelineScope>(scope: S, scale: TimelineScale<S>): number {
@@ -91,12 +117,9 @@ function shiftedCivilDate(date: string, delta: number): string {
   return shifted;
 }
 
-export function createTimelineViewport<S extends TimelineScope>(input: {
-  readonly scope: S;
-  readonly scale: TimelineScale<S>;
-  readonly focalDate: string;
-  readonly viewportWidth: number;
-}): TimelineViewport<S> {
+export function createTimelineViewport<S extends TimelineScope>(
+  input: TimelineViewportInput<S>,
+): TimelineViewport<S> {
   if (!isTimelineScale(input.scope, input.scale)) {
     throw new RangeError(`Scale ${String(input.scale)} is invalid for ${input.scope}`);
   }
@@ -106,7 +129,7 @@ export function createTimelineViewport<S extends TimelineScope>(input: {
     focalDate: civilDate(input.focalDate),
     viewportWidth: requireViewportWidth(input.viewportWidth),
     pixelsPerDay: timelinePixelsPerDay(input.scope, input.scale),
-  };
+  } as TimelineViewport<S>;
 }
 
 export function civilDateToX(viewport: TimelineViewport, date: string): number {
@@ -118,7 +141,7 @@ export function civilDateToX(viewport: TimelineViewport, date: string): number {
 export function timelineDateAtX(viewport: TimelineViewport, x: number): string {
   if (!Number.isFinite(x)) throw new RangeError('Timeline coordinate must be finite');
   const dayOffset = Math.floor((x - viewport.viewportWidth / 2) / viewport.pixelsPerDay);
-  return shiftedCivilDate(viewport.focalDate, dayOffset);
+  return shiftedCivilDate(viewport.focalDate, clampCivilDayOffset(viewport.focalDate, dayOffset));
 }
 
 export function timelineVisibleWindow(viewport: TimelineViewport): {
@@ -127,8 +150,14 @@ export function timelineVisibleWindow(viewport: TimelineViewport): {
   readonly dates: readonly string[];
 } {
   const centerX = viewport.viewportWidth / 2;
-  const startOffset = Math.floor(-centerX / viewport.pixelsPerDay);
-  const endOffset = Math.ceil((viewport.viewportWidth - centerX) / viewport.pixelsPerDay) - 1;
+  const startOffset = clampCivilDayOffset(
+    viewport.focalDate,
+    Math.floor(-centerX / viewport.pixelsPerDay),
+  );
+  const endOffset = clampCivilDayOffset(
+    viewport.focalDate,
+    Math.ceil((viewport.viewportWidth - centerX) / viewport.pixelsPerDay) - 1,
+  );
   const start = shiftedCivilDate(viewport.focalDate, startOffset);
   const end = shiftedCivilDate(viewport.focalDate, endOffset);
   const dates = Array.from({ length: endOffset - startOffset + 1 }, (_, index) =>
@@ -139,26 +168,30 @@ export function timelineVisibleWindow(viewport: TimelineViewport): {
 
 export function reframeTimelineViewport<S extends TimelineScope>(
   viewport: TimelineViewport<S>,
-  changes: { readonly scale?: TimelineScale<S>; readonly viewportWidth?: number },
+  changes: { readonly scale?: TimelineScale<NoInfer<S>>; readonly viewportWidth?: number },
 ): TimelineViewport<S> {
-  return createTimelineViewport({
+  const scale = changes.scale ?? viewport.scale;
+  const viewportWidth = requireViewportWidth(changes.viewportWidth ?? viewport.viewportWidth);
+  return {
     scope: viewport.scope,
-    scale: changes.scale ?? viewport.scale,
+    scale,
     focalDate: viewport.focalDate,
-    viewportWidth: changes.viewportWidth ?? viewport.viewportWidth,
-  });
+    viewportWidth,
+    pixelsPerDay: timelinePixelsPerDay(viewport.scope, scale),
+  } as TimelineViewport<S>;
 }
 
 export function todayCenteredTimelineViewport<S extends TimelineScope>(
   viewport: TimelineViewport<S>,
   today: string,
 ): TimelineViewport<S> {
-  return createTimelineViewport({
+  return {
     scope: viewport.scope,
     scale: viewport.scale,
-    focalDate: today,
+    focalDate: civilDate(today),
     viewportWidth: viewport.viewportWidth,
-  });
+    pixelsPerDay: viewport.pixelsPerDay,
+  } as TimelineViewport<S>;
 }
 
 export function geometryForTimelineItem(
@@ -166,12 +199,19 @@ export function geometryForTimelineItem(
   item: TimelineGeometryInput,
 ): TimelineGeometry {
   if (item.kind === 'range') {
-    const start = civilDateFromMetadata(item.start);
-    const end = civilDateFromMetadata(item.end);
-    if (civilDayDistance(start, end) < 0) throw new RangeError('Timeline range is reversed');
-    const startX = civilDateToX(viewport, start);
-    const endX = civilDateToX(viewport, shiftedCivilDate(end, 1));
-    const sameDay = start === end;
+    const startEndpoint = timelineEndpoint(item.start);
+    const endEndpoint = timelineEndpoint(item.end);
+    if (startEndpoint.instantMs > endEndpoint.instantMs) {
+      throw new RangeError('Timeline range is reversed');
+    }
+    const start = startEndpoint.raw.slice(0, 10);
+    const end = endEndpoint.raw.slice(0, 10);
+    const civilOrder = civilDayDistance(start, end);
+    const firstCivilDate = civilOrder >= 0 ? start : end;
+    const lastCivilDate = civilOrder >= 0 ? end : start;
+    const startX = civilDateToX(viewport, firstCivilDate);
+    const endX = civilDateToX(viewport, lastCivilDate) + viewport.pixelsPerDay;
+    const sameDay = firstCivilDate === lastCivilDate;
     const naturalWidth = endX - startX;
     const unclippedWidth = sameDay
       ? Math.max(naturalWidth, TIMELINE_SAME_DAY_RANGE_MIN_WIDTH)
@@ -193,7 +233,7 @@ export function geometryForTimelineItem(
     };
   }
 
-  const date = civilDateFromMetadata(item.at);
+  const date = timelineEndpoint(item.at).raw.slice(0, 10);
   const centerX = civilDateToX(viewport, date) + viewport.pixelsPerDay / 2;
   const size = item.kind === 'milestone' ? TIMELINE_MILESTONE_SIZE : TIMELINE_POINT_SIZE;
   const left = centerX - size / 2;

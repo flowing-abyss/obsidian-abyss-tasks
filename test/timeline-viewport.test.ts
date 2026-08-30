@@ -7,10 +7,12 @@ import {
   timelineDateAtX,
   timelineVisibleWindow,
   todayCenteredTimelineViewport,
+  type TimelineViewport,
 } from '../src/panels/projects/TimelineViewport';
 import {
   DEFAULT_TIMELINE_IDENTITY_WIDTH,
   reconcileTimelinePreference,
+  type TimelineScale,
   type TimelineScope,
 } from '../src/panels/projects/timelinePreferences';
 import {
@@ -18,6 +20,40 @@ import {
   moveProjectDateByCivilDays,
   parseProjectDate,
 } from '../src/projects/projectDates';
+
+// @ts-expect-error A Task viewport cannot carry the portfolio-only year scale.
+const invalidTaskYearViewport: TimelineViewport = {
+  scope: 'tasks',
+  scale: 'year',
+  focalDate: '2026-08-20',
+  viewportWidth: 240,
+  pixelsPerDay: 2,
+};
+void invalidTaskYearViewport;
+
+// @ts-expect-error A Portfolio viewport cannot carry the Task-only day scale.
+const invalidPortfolioDayViewport: TimelineViewport = {
+  scope: 'portfolio',
+  scale: 'day',
+  focalDate: '2026-08-20',
+  viewportWidth: 240,
+  pixelsPerDay: 64,
+};
+void invalidPortfolioDayViewport;
+
+function expectFocalDatePreserved<S extends TimelineScope>(
+  initial: TimelineViewport<S>,
+  scales: readonly TimelineScale<S>[],
+): void {
+  let viewport = initial;
+  for (const [index, scale] of scales.entries()) {
+    const viewportWidth = 640 + index * 137;
+    viewport = reframeTimelineViewport(viewport, { scale, viewportWidth });
+    expect(viewport.focalDate).toBe('2028-02-29');
+    expect(civilDateToX(viewport, '2028-02-29')).toBe(viewportWidth / 2);
+    expect(timelineDateAtX(viewport, viewportWidth / 2)).toBe('2028-02-29');
+  }
+}
 
 describe('timeline preference reconciliation', () => {
   it.each([
@@ -92,26 +128,34 @@ describe('continuous timeline viewport', () => {
     expect(timelineVisibleWindow(viewport).dates.length).toBeGreaterThan(90);
   });
 
-  it.each([
-    ['portfolio', ['week', 'month', 'quarter', 'year']],
-    ['tasks', ['day', 'week', 'month']],
-    ['workNotes', ['day', 'week', 'month', 'quarter', 'year']],
-  ] as const)('preserves the %s focal date across every scale and width', (scope, scales) => {
-    const firstScale = scales[0];
-    let viewport = createTimelineViewport({
-      scope,
-      scale: firstScale,
-      focalDate: '2028-02-29',
-      viewportWidth: 641,
-    } as Parameters<typeof createTimelineViewport<TimelineScope>>[0]);
-
-    for (const [index, scale] of scales.entries()) {
-      const viewportWidth = 640 + index * 137;
-      viewport = reframeTimelineViewport(viewport, { scale, viewportWidth });
-      expect(viewport.focalDate).toBe('2028-02-29');
-      expect(civilDateToX(viewport, '2028-02-29')).toBe(viewportWidth / 2);
-      expect(timelineDateAtX(viewport, viewportWidth / 2)).toBe('2028-02-29');
-    }
+  it('preserves each scope focal date across every supported scale and width', () => {
+    expectFocalDatePreserved(
+      createTimelineViewport({
+        scope: 'portfolio',
+        scale: 'week',
+        focalDate: '2028-02-29',
+        viewportWidth: 641,
+      }),
+      ['week', 'month', 'quarter', 'year'],
+    );
+    expectFocalDatePreserved(
+      createTimelineViewport({
+        scope: 'tasks',
+        scale: 'day',
+        focalDate: '2028-02-29',
+        viewportWidth: 641,
+      }),
+      ['day', 'week', 'month'],
+    );
+    expectFocalDatePreserved(
+      createTimelineViewport({
+        scope: 'workNotes',
+        scale: 'day',
+        focalDate: '2028-02-29',
+        viewportWidth: 641,
+      }),
+      ['day', 'week', 'month', 'quarter', 'year'],
+    );
   });
 
   it('centers an injected Today without consulting ambient time', () => {
@@ -142,6 +186,31 @@ describe('continuous timeline viewport', () => {
     expect(timelineDateAtX(viewport, civilDateToX(viewport, window.start))).toBe(window.start);
     expect(timelineDateAtX(viewport, civilDateToX(viewport, window.end))).toBe(window.end);
   });
+
+  it.each([
+    ['0000-01-01', '0000-01-01', undefined],
+    ['9999-12-31', undefined, '9999-12-31'],
+  ] as const)(
+    'clamps a visible window centered at the supported boundary %s',
+    (focal, start, end) => {
+      const viewport = createTimelineViewport({
+        scope: 'portfolio',
+        scale: 'year',
+        focalDate: focal,
+        viewportWidth: 240,
+      });
+
+      const window = timelineVisibleWindow(viewport);
+
+      if (start !== undefined) expect(window.start).toBe(start);
+      if (end !== undefined) expect(window.end).toBe(end);
+      expect(window.dates[0]).toBe(window.start);
+      expect(window.dates[window.dates.length - 1]).toBe(window.end);
+      expect(timelineDateAtX(viewport, start !== undefined ? 0 : viewport.viewportWidth)).toBe(
+        focal,
+      );
+    },
+  );
 });
 
 describe('civil-day endpoint movement', () => {
@@ -203,6 +272,29 @@ describe('timeline item geometry', () => {
     });
   });
 
+  it('keeps upper-bound same-day range geometry finite without requiring day 10000', () => {
+    const upperBoundViewport = createTimelineViewport({
+      scope: 'portfolio',
+      scale: 'year',
+      focalDate: '9999-12-31',
+      viewportWidth: 240,
+    });
+
+    const geometry = geometryForTimelineItem(upperBoundViewport, {
+      kind: 'range',
+      start: '9999-12-31',
+      end: '9999-12-31',
+    });
+
+    expect(geometry).toMatchObject({
+      kind: 'range',
+      left: 118,
+      width: 6,
+      unclippedWidth: 6,
+      visible: true,
+    });
+  });
+
   it('derives ordinary inclusive range geometry from civil boundaries', () => {
     const geometry = geometryForTimelineItem(viewport, {
       kind: 'range',
@@ -217,6 +309,32 @@ describe('timeline item geometry', () => {
       clippedEnd: false,
     });
     if (geometry.kind === 'range') expect(geometry.unclippedWidth).toBe(60);
+  });
+
+  it('rejects a same-civil-day range whose canonical end instant precedes its start', () => {
+    expect(() =>
+      geometryForTimelineItem(viewport, {
+        kind: 'range',
+        start: '2026-08-20T17:00:00+07:00',
+        end: '2026-08-20T09:00:00+07:00',
+      }),
+    ).toThrow('Timeline range is reversed');
+  });
+
+  it('keeps an instant-valid opposite-offset range finite when its civil labels cross', () => {
+    const geometry = geometryForTimelineItem(viewport, {
+      kind: 'range',
+      start: '2026-08-20T00:00:00+14:00',
+      end: '2026-08-19T23:00:00-12:00',
+    });
+
+    expect(geometry).toMatchObject({
+      kind: 'range',
+      left: 108,
+      width: 24,
+      unclippedWidth: 24,
+      visible: true,
+    });
   });
 
   it('keeps point and milestone geometry as distinct stable contracts', () => {
