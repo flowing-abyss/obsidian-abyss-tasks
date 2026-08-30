@@ -7052,6 +7052,12 @@ body.abyss-modal-open .popover.hover-popover {
   transform: translateX(-50%);
   white-space: nowrap;
 }
+.abyss-timeline-axis-dates > [data-timeline-axis-label-align='start'] {
+  transform: translateX(0);
+}
+.abyss-timeline-axis-dates > [data-timeline-axis-label-align='end'] {
+  transform: translateX(-100%);
+}
 .abyss-timeline-scroll {
   flex: 1;
   min-height: 0;
@@ -7091,8 +7097,7 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-primary);
 }
 .abyss-timeline-title,
-.abyss-timeline-detail,
-.abyss-timeline-agenda-date {
+.abyss-timeline-detail {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7101,8 +7106,7 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-timeline-title {
   color: var(--text-normal);
 }
-.abyss-timeline-detail,
-.abyss-timeline-agenda-date {
+.abyss-timeline-detail {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }

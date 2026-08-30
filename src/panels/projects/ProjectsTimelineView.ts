@@ -67,6 +67,9 @@ const TIMELINE_OVERSCAN = 5;
 const TIMELINE_DIAGNOSTIC_ROW_EXTENT = 32;
 const TIMELINE_AGENDA_DIAGNOSTIC_ROW_EXTENT = 88;
 const TIMELINE_DIAGNOSTIC_VISIBLE_ROWS = 7;
+const TIMELINE_AXIS_LABEL_LIMIT = 8;
+const TIMELINE_AXIS_LABEL_MIN_GAP = 48;
+const TIMELINE_AXIS_LABEL_EDGE_INSET = 24;
 /** Hard DOM ceiling for the live horizontal civil-date marker window at every scope and scale. */
 export const TIMELINE_MARKER_DOM_CAP = 120;
 
@@ -299,10 +302,6 @@ function pointRoles(item: TimelineItem): readonly TimelinePointRole[] {
   return [];
 }
 
-function roleLabel(role: TimelinePointRole): string {
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
-
 function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
 }
@@ -324,10 +323,15 @@ function renderEntryIdentity<T>(
   if (entry.detail) host.createSpan({ cls: 'abyss-timeline-detail', text: entry.detail });
 }
 
-function timelineRowFocusTarget(row: HTMLElement, identity: HTMLElement): HTMLElement {
+function timelineRowFocusTarget(
+  row: HTMLElement,
+  identity: HTMLElement,
+  isAgenda: boolean,
+): HTMLElement {
   const focusTarget =
-    row.querySelector<HTMLElement>('[data-timeline-primary]:not(:disabled)') ??
-    row.querySelector<HTMLElement>('.abyss-timeline-date-picker:not(:disabled)') ??
+    (isAgenda
+      ? row.querySelector<HTMLElement>('.abyss-timeline-date-picker:not(:disabled)')
+      : row.querySelector<HTMLElement>('[data-timeline-primary]:not(:disabled)')) ??
     identity.querySelector<HTMLElement>('button, a[href], [role="button"]');
   if (focusTarget) return focusTarget;
   row.tabIndex = -1;
@@ -367,11 +371,61 @@ function timelineAnnouncementText(announcement: TimelineAnnouncement<string>): s
     : 'Timeline date was not changed.';
 }
 
-function coarseTimelineTarget(actionName: string): string | undefined {
+function coarseTimelineTarget(
+  item: TimelineItem,
+  actionName: string,
+): 'range-move' | 'start-edge' | 'end-edge' | 'point-move' | 'milestone-move' | undefined {
   if (actionName.startsWith('range-')) return 'range-move';
   if (actionName.startsWith('start-')) return 'start-edge';
   if (actionName.startsWith('end-')) return 'end-edge';
-  return undefined;
+  if (item.kind !== 'point') return undefined;
+  return item.role === 'milestone' ? 'milestone-move' : 'point-move';
+}
+
+interface TimelineAxisLabel {
+  readonly date: string;
+  readonly x: number;
+  readonly align: 'start' | 'center' | 'end';
+}
+
+function timelineAxisLabelAlignment(index: number, count: number): TimelineAxisLabel['align'] {
+  if (index === 0) return 'start';
+  if (index === count - 1) return 'end';
+  return 'center';
+}
+
+function spacedTimelineAxisLabels(
+  dates: readonly string[],
+  viewport: TimelineViewport,
+  plotWidth: number,
+  pinned: readonly (string | undefined)[],
+): readonly TimelineAxisLabel[] {
+  const candidates = cappedTimelineDates(dates, TIMELINE_AXIS_LABEL_LIMIT, pinned);
+  if (candidates.length === 0) return [];
+  const edgeInset = Math.min(TIMELINE_AXIS_LABEL_EDGE_INSET, plotWidth / 2);
+  const available = Math.max(0, plotWidth - 2 * edgeInset);
+  const gap =
+    candidates.length === 1
+      ? 0
+      : Math.min(TIMELINE_AXIS_LABEL_MIN_GAP, available / (candidates.length - 1));
+  const positions = candidates.map((date) =>
+    Math.max(edgeInset, Math.min(plotWidth - edgeInset, civilDateToX(viewport, date))),
+  );
+  for (let index = 1; index < positions.length; index += 1) {
+    positions[index] = Math.max(positions[index]!, positions[index - 1]! + gap);
+  }
+  positions[positions.length - 1] = Math.min(
+    positions[positions.length - 1]!,
+    plotWidth - edgeInset,
+  );
+  for (let index = positions.length - 2; index >= 0; index -= 1) {
+    positions[index] = Math.min(positions[index]!, positions[index + 1]! - gap);
+  }
+  return candidates.map((date, index) => ({
+    date,
+    x: positions[index]!,
+    align: timelineAxisLabelAlignment(index, candidates.length),
+  }));
 }
 
 function coarseTimelineRole(item: TimelineItem, actionName: string): TimelinePointRole {
@@ -466,10 +520,11 @@ export function renderTimeline<T>(
   const undated = options.entries.filter((entry) => entry.item.kind === 'undated');
   const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
   if (dated.length === 0) toolbar.remove();
-  let window = (() => {
+  let contentWindow = (() => {
     const content = options.dateWindow ?? inferredDateWindow(dated);
     return content ? paddedDateWindow(content) : undefined;
   })();
+  let window = contentWindow;
   let dates = window ? continuousDates(window.from, window.to) : [];
   if (session) session.focusedInteraction = null;
   let destroyed = false;
@@ -858,13 +913,6 @@ export function renderTimeline<T>(
             attr: timelineIdentityAttributes(entry.item.key),
           });
           renderEntryIdentity(identity, entry, options.renderIdentity);
-          const roles = pointRoles(entry.item);
-          if (isAgenda) {
-            const dateText = roles
-              .map((role) => `${roleLabel(role)} ${civilDate(entry.dateByRole[role]) ?? 'Undated'}`)
-              .join(' – ');
-            identity.createSpan({ cls: 'abyss-timeline-agenda-date', text: dateText });
-          }
           const plot = row.createDiv({ cls: 'abyss-timeline-plot' });
           const controls = row.createDiv({ cls: 'abyss-timeline-date-controls' });
           renderInteraction(plot, controls, entry);
@@ -876,7 +924,7 @@ export function renderTimeline<T>(
               session.restoreFocus = true;
             }
           });
-          return timelineRowFocusTarget(row, identity);
+          return timelineRowFocusTarget(row, identity, isAgenda);
         },
       });
       if (restoreFocus || seedFirst !== undefined) {
@@ -917,15 +965,18 @@ export function renderTimeline<T>(
         });
         marker.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
       }
-      for (const date of cappedTimelineDates(markerDates, 8, [
+      for (const { date, x, align } of spacedTimelineAxisLabels(markerDates, viewport, plotWidth, [
         activeDate,
         session?.focalDate ?? undefined,
       ])) {
         const label = axisLabels.createSpan({
           text: date.slice(5),
-          attr: { 'data-timeline-axis-label-date': date },
+          attr: {
+            'data-timeline-axis-label-date': date,
+            'data-timeline-axis-label-align': align,
+          },
         });
-        label.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
+        label.style.insetInlineStart = `${String(x)}px`;
       }
     };
 
@@ -938,6 +989,9 @@ export function renderTimeline<T>(
     };
 
     const refreshGeometry = (preserveFocal = true): void => {
+      window = contentWindow;
+      dates = window ? continuousDates(window.from, window.to) : [];
+      midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
       const probe = (() => {
         switch (scope) {
           case 'portfolio':
@@ -963,7 +1017,19 @@ export function renderTimeline<T>(
             });
         }
       })();
-      plotWidth = Math.max(1, dates.length * probe.pixelsPerDay);
+      const availablePlotWidth = Math.max(0, scroll.clientWidth - identityWidth);
+      const requiredDateCount = Math.ceil(availablePlotWidth / probe.pixelsPerDay);
+      if (window && dates.length < requiredDateCount) {
+        const missing = requiredDateCount - dates.length;
+        const before = Math.floor(missing / 2);
+        const after = missing - before;
+        const from = shiftCivilDate(window.from, -before) ?? window.from;
+        const to = shiftCivilDate(window.to, after) ?? window.to;
+        window = { from, to };
+        dates = continuousDates(from, to);
+        midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? midpoint;
+      }
+      plotWidth = Math.max(1, availablePlotWidth, dates.length * probe.pixelsPerDay);
       viewport = buildViewport();
       canvas.style.inlineSize = `calc(var(--abyss-timeline-identity-width) + ${String(plotWidth)}px)`;
       canvas.style.setProperty('--abyss-timeline-plot-width', `${String(plotWidth)}px`);
@@ -1172,6 +1238,23 @@ export function renderTimeline<T>(
       restoreFocus: (itemId, role) => {
         if (!itemId) return resizeHandle.focus({ preventScroll: true });
         const row = projectionHost(itemId);
+        if (isAgenda) {
+          if (
+            row &&
+            initiatingElement.isConnected &&
+            initiatingElement.closest<HTMLElement>('.abyss-timeline-row') === row
+          ) {
+            initiatingElement.focus({ preventScroll: true });
+            return;
+          }
+          const pickerRole = role === 'range' ? 'start' : role;
+          const visibleTarget =
+            row?.querySelector<HTMLElement>(
+              `[data-timeline-date-picker="${pickerRole}"]:not(:disabled)`,
+            ) ?? row?.querySelector<HTMLElement>('.abyss-timeline-identity button, summary');
+          visibleTarget?.focus({ preventScroll: true });
+          return;
+        }
         const selector =
           role === 'range'
             ? '[data-timeline-target="range-move"]'
@@ -1260,14 +1343,12 @@ export function renderTimeline<T>(
       const action = element?.closest<HTMLElement>('[data-timeline-coarse-action]');
       if (!action) return;
       const row = action.closest<HTMLElement>('.abyss-timeline-row');
+      const entry = entryByKey.get(row?.dataset['timelineKey'] ?? '');
       const actionName = action.dataset['timelineCoarseAction'] ?? '';
-      const targetName = coarseTimelineTarget(actionName);
-      const control = targetName
-        ? row?.querySelector<HTMLElement>(`[data-timeline-target="${targetName}"]`)
-        : row?.querySelector<HTMLElement>('[data-timeline-primary]');
-      const target = control && targetByElement.get(control);
-      if (!control || !target) return;
-      initiatingElement = control;
+      const targetName = entry && coarseTimelineTarget(entry.item, actionName);
+      const target = entry && targetName ? targetFor(entry, targetName) : undefined;
+      if (!target) return;
+      initiatingElement = action;
       const key = actionName.endsWith('previous') ? 'ArrowLeft' : 'ArrowRight';
       void controller
         ?.keyDown({ key, target, enabled: true, scope, scale })
@@ -1344,9 +1425,14 @@ export function renderTimeline<T>(
       if (session) session.focalDate = today;
       if (!dates.includes(today)) {
         const todayWindow = paddedDateWindow({ from: today, to: today });
-        const from = window && window.from < todayWindow.from ? window.from : todayWindow.from;
-        const to = window && window.to > todayWindow.to ? window.to : todayWindow.to;
-        window = { from, to };
+        const from =
+          contentWindow && contentWindow.from < todayWindow.from
+            ? contentWindow.from
+            : todayWindow.from;
+        const to =
+          contentWindow && contentWindow.to > todayWindow.to ? contentWindow.to : todayWindow.to;
+        contentWindow = { from, to };
+        window = contentWindow;
         dates = continuousDates(from, to);
         midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
         refreshGeometry(false);
@@ -1451,7 +1537,7 @@ export function renderTimeline<T>(
               options.session.restoreFocus = true;
             }
           });
-          return timelineRowFocusTarget(row, identity);
+          return timelineRowFocusTarget(row, identity, isAgenda);
         },
       });
     };

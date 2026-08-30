@@ -58,13 +58,14 @@ function workNote(over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnapshot {
 function workspaceSnapshot(
   projectValue: ProjectWorkspaceSnapshot['project'],
   input: {
+    readonly tasks?: ProjectWorkspaceSnapshot['tasks'];
     readonly workNotes?: readonly WorkNoteSnapshot[];
     readonly milestones?: readonly WorkNoteSnapshot[];
   } = {},
 ): ProjectWorkspaceSnapshot {
   return {
     project: projectValue,
-    tasks: [],
+    tasks: input.tasks ?? [],
     workNotes: input.workNotes ?? [],
     milestones: input.milestones ?? [],
     taskRollup: projectValue.stats,
@@ -170,8 +171,23 @@ describe('Timeline projections', () => {
       kind: 'milestone',
       updated: '2026-08-23',
     });
+    const ownedTask = task({
+      title: 'Excluded portfolio task',
+      source: { filePath: 'Projects/A.md', line: 7 },
+      planning: { due: '2026-08-22' },
+    });
+    const ownedAction: ProjectWorkspaceSnapshot['tasks'][number] = {
+      task: ownedTask,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
     const entries = portfolioTimelineEntries([
-      workspaceSnapshot(projectValue, { workNotes: [ordinary], milestones: [milestone] }),
+      workspaceSnapshot(projectValue, {
+        tasks: [ownedAction],
+        workNotes: [ordinary],
+        milestones: [milestone],
+      }),
     ]);
 
     expect(entries.map(({ item }) => item.key)).toEqual([
@@ -186,6 +202,7 @@ describe('Timeline projections', () => {
       value: { kind: 'milestone', projectPath: 'Projects/A.md', note: milestone },
     });
     expect(entries.some(({ item }) => item.key.startsWith('task:'))).toBe(false);
+    expect(entries.some(({ label }) => label === 'Excluded portfolio task')).toBe(false);
     expect(entries.some(({ item }) => item.key.includes('Ordinary'))).toBe(false);
   });
 });

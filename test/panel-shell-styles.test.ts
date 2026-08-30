@@ -333,7 +333,7 @@ describe('Projects hardening styles', () => {
     for (const selector of [
       '.abyss-project-name',
       '.abyss-work-note-title',
-      '.abyss-timeline-title, .abyss-timeline-detail, .abyss-timeline-agenda-date',
+      '.abyss-timeline-title, .abyss-timeline-detail',
     ]) {
       const declarations = declarationsFor(selector);
       expect(declarations, selector).toContain('overflow: hidden');
@@ -509,6 +509,13 @@ describe('Projects hardening styles', () => {
     const scroll = declarationsFor('.abyss-timeline-scroll');
     expect(scroll).toContain('overflow-x: auto');
     expect(declarationsFor('.abyss-timeline-plot')).not.toContain('grid-template-columns: repeat(');
+    expect(
+      declarationsFor(".abyss-timeline-axis-dates > [data-timeline-axis-label-align='start']"),
+    ).toContain('transform: translateX(0)');
+    expect(
+      declarationsFor(".abyss-timeline-axis-dates > [data-timeline-axis-label-align='end']"),
+    ).toContain('transform: translateX(-100%)');
+    expect(css).not.toContain('.abyss-timeline-agenda-date');
     expect(css).not.toContain('.abyss-timeline-drop-cell');
   });
 

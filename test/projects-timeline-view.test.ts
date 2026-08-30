@@ -77,13 +77,14 @@ function workNote(path: string, overrides: Partial<WorkNoteSnapshot> = {}): Work
 function workspaceSnapshot(
   project: Project,
   input: {
+    readonly tasks?: ProjectWorkspaceSnapshot['tasks'];
     readonly workNotes?: readonly WorkNoteSnapshot[];
     readonly milestones?: readonly WorkNoteSnapshot[];
   } = {},
 ): ProjectWorkspaceSnapshot {
   return {
     project,
-    tasks: [],
+    tasks: input.tasks ?? [],
     workNotes: input.workNotes ?? [],
     milestones: input.milestones ?? [],
     taskRollup: project.stats,
@@ -203,15 +204,34 @@ describe('shared Timeline view', () => {
       kind: 'milestone',
       updated: '2026-08-29',
     });
+    const ownedTask = task({
+      title: 'Excluded portfolio task',
+      source: { filePath: 'Projects/Launch.md', line: 11 },
+      planning: { due: '2026-08-29' },
+    });
+    const ownedAction: ProjectWorkspaceSnapshot['tasks'][number] = {
+      task: ownedTask,
+      projectPath: project.path,
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: project.path },
+    };
     const onSelectMilestone = vi.fn();
     renderProjectsTimeline(container, {
       projects: [project],
-      snapshots: [workspaceSnapshot(project, { workNotes: [ordinary], milestones: [milestone] })],
+      snapshots: [
+        workspaceSnapshot(project, {
+          tasks: [ownedAction],
+          workNotes: [ordinary],
+          milestones: [milestone],
+        }),
+      ],
       commands: { observeRange: vi.fn(), setRange: vi.fn() } as never,
       onSelectMilestone,
     });
 
     expect(container.textContent).not.toContain('Ordinary');
+    expect(container.textContent).not.toContain('Excluded portfolio task');
+    expect(container.querySelector('[data-timeline-key^="task:"]')).toBeNull();
     const control = container.querySelector<HTMLButtonElement>(
       '[data-project-milestone-identity-control]',
     )!;
@@ -473,6 +493,60 @@ describe('shared Timeline view', () => {
     expect(labels[0]).toBe('07-31');
     expect(labels[labels.length - 1]).toBe('09-12');
     expect(coordinates).toHaveLength(44);
+  });
+
+  it('fills the available desktop plot and spaces exact axis labels away from the grips', () => {
+    const container = freshContainer();
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-28',
+      scrollLeft: 0,
+      scale: 'quarter',
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    renderTimeline(container, {
+      entries: [range('A')],
+      dateWindow: { from: '2026-08-27', to: '2026-08-29' },
+      scope: 'portfolio',
+      session,
+    } as Parameters<typeof renderTimeline<Fixture>>[1]);
+    const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+    Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1_200 });
+
+    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
+    scale.value = 'quarter';
+    scale.dispatchEvent(new Event('change', { bubbles: true }));
+
+    const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
+    const plotWidth = Number.parseFloat(
+      canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
+    );
+    const labels = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-timeline-axis-label-date]'),
+    );
+    const positions = labels
+      .map((label) => Number.parseFloat(label.style.insetInlineStart))
+      .sort((left, right) => left - right);
+
+    expect(plotWidth).toBeGreaterThanOrEqual(960);
+    expect(labels.map(({ dataset }) => dataset.timelineAxisLabelDate)).toContain('2026-08-28');
+    expect(labels[0]?.dataset.timelineAxisLabelAlign).toBe('start');
+    expect(labels[labels.length - 1]?.dataset.timelineAxisLabelAlign).toBe('end');
+    for (let index = 1; index < positions.length; index += 1) {
+      expect(positions[index]! - positions[index - 1]!).toBeGreaterThanOrEqual(48);
+    }
+
+    scale.value = 'week';
+    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    const weekWidth = Number.parseFloat(
+      canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
+    );
+    expect(weekWidth).toBeGreaterThanOrEqual(960);
+    expect(weekWidth).toBeLessThan(2_000);
   });
 
   it('commits a whole-range move atomically while keeping edge resizes role-scoped', async () => {
@@ -815,7 +889,7 @@ describe('shared Timeline view', () => {
     expect(container.querySelector('.abyss-timeline-toolbar')).toBeNull();
   });
 
-  it('renders a narrow vertical agenda without a horizontal date grid', () => {
+  it('renders a title-first narrow agenda without duplicate endpoint prose or a date grid', () => {
     const container = freshContainer();
     renderTimeline(container, {
       entries: [point('A'), entry({ kind: 'undated', key: 'task:B' }, 'B')],
@@ -825,9 +899,13 @@ describe('shared Timeline view', () => {
     const root = container.querySelector<HTMLElement>('.abyss-timeline')!;
     expect(root.classList.contains('is-agenda')).toBe(true);
     expect(container.querySelector('.abyss-timeline-axis')).toBeNull();
-    expect(container.querySelector('.abyss-timeline-agenda-date')?.textContent).toContain(
-      '2026-08-27',
-    );
+    const identity = container.querySelector<HTMLElement>('.abyss-timeline-identity')!;
+    expect(identity.firstElementChild?.textContent).toBe('A');
+    expect(identity.querySelector('.abyss-timeline-agenda-date')).toBeNull();
+    expect(identity.textContent).not.toMatch(/\b(?:Start|End|Due|Scheduled)\b/u);
+    expect(
+      container.querySelector<HTMLInputElement>('[data-timeline-date-picker="due"]')?.value,
+    ).toBe('2026-08-27');
     for (const control of container.querySelectorAll<HTMLElement>(
       '.abyss-timeline-agenda-row button, .abyss-timeline-agenda-row input',
     )) {
@@ -933,10 +1011,38 @@ describe('shared Timeline view', () => {
       'start',
       '2026-08-28',
       expect.objectContaining({
-        dataset: expect.objectContaining({ timelineTarget: 'start-edge' }),
+        dataset: expect.objectContaining({ timelineCoarseAction: 'start-next' }),
       }),
     );
     expect(onSetRange).not.toHaveBeenCalled();
+  });
+
+  it('keeps agenda coarse actions focused on their visible initiator', async () => {
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const onSetRange = vi.fn().mockResolvedValue({ type: 'ok' });
+    try {
+      renderTimeline(container, {
+        entries: [range('A')],
+        onSetDate: vi.fn().mockResolvedValue({ type: 'ok' }),
+        onSetRange,
+        isNarrow: true,
+      });
+      const menu = container.querySelector<HTMLDetailsElement>('.abyss-timeline-coarse-menu')!;
+      menu.open = true;
+      const action = menu.querySelector<HTMLButtonElement>(
+        '[data-timeline-coarse-action="range-next"]',
+      )!;
+      action.focus();
+      action.click();
+      await flushMicrotasks();
+
+      expect(onSetRange).toHaveBeenCalledOnce();
+      expect(activeDocument.activeElement).toBe(action);
+      expect(action.closest('.abyss-timeline-plot')).toBeNull();
+    } finally {
+      container.remove();
+    }
   });
 
   it('shows the live exact range in the interaction preview instead of only the original dates', () => {
@@ -1241,6 +1347,59 @@ describe('shared Timeline view', () => {
       expect(session.firstIndex).toBe(40);
     } finally {
       container.remove();
+    }
+  });
+
+  it('restores agenda focus to a visible picker through remount and virtual scroll', () => {
+    const entries = Array.from({ length: 80 }, (_, index) => point(String(index)));
+    const session: LogicalViewportSession = {
+      firstKey: 'task:40',
+      firstIndex: 40,
+      focusedKey: 'task:42',
+      restoreFocus: true,
+    };
+    const first = freshContainer();
+    activeDocument.body.append(first);
+    const firstHandle = renderTimeline(first, {
+      entries,
+      session,
+      isNarrow: true,
+      onSetDate: () => ({ type: 'ok' }),
+    });
+    const firstPicker = first.querySelector<HTMLInputElement>(
+      '[data-timeline-key="task:42"] [data-timeline-date-picker="due"]',
+    )!;
+    expect(activeDocument.activeElement).toBe(firstPicker);
+    firstHandle.destroy();
+    first.remove();
+
+    const second = freshContainer();
+    activeDocument.body.append(second);
+    try {
+      renderTimeline(second, {
+        entries,
+        session,
+        isNarrow: true,
+        onSetDate: () => ({ type: 'ok' }),
+      });
+      const scroll = second.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      const restoredPicker = second.querySelector<HTMLInputElement>(
+        '[data-timeline-key="task:42"] [data-timeline-date-picker="due"]',
+      )!;
+      expect(activeDocument.activeElement).toBe(restoredPicker);
+      expect(restoredPicker.closest('.abyss-timeline-plot')).toBeNull();
+
+      Object.defineProperties(scroll, {
+        clientHeight: { configurable: true, value: 4 * 144 },
+        clientWidth: { configurable: true, value: 440 },
+      });
+      scroll.scrollLeft = 0;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      expect(activeDocument.activeElement).toBe(restoredPicker);
+      expect(session.firstIndex).toBe(40);
+    } finally {
+      second.remove();
     }
   });
 
