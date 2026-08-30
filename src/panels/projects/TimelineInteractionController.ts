@@ -493,7 +493,14 @@ export class TimelineInteractionController<ItemId extends string> {
 
   lostPointerCapture(pointerId: number): boolean {
     const active = this.active;
-    if (!active || active.mode !== 'pointer' || active.pointerId !== pointerId) return false;
+    if (
+      !active ||
+      active.mode !== 'pointer' ||
+      active.pointerId !== pointerId ||
+      !active.pointerCaptured
+    ) {
+      return false;
+    }
     this.cancelActive(false);
     return true;
   }
@@ -511,6 +518,7 @@ export class TimelineInteractionController<ItemId extends string> {
       this.cancelActive(true);
       return true;
     }
+    if (this.active?.mode === 'pointer') return false;
     if (!this.enabled) return false;
     if (!this.active && input.key === 'Enter') {
       if (!input.target || input.enabled !== true || input.target.kind === 'identity-column') {
@@ -527,6 +535,13 @@ export class TimelineInteractionController<ItemId extends string> {
     }
     if (input.key !== 'ArrowLeft' && input.key !== 'ArrowRight') return false;
 
+    const arrowTarget = this.active?.target ?? input.target;
+    let shiftDayStep: number | undefined;
+    if (input.shiftKey && arrowTarget?.kind !== 'identity-column') {
+      if (!input.scope || !input.scale || !isTimelineScale(input.scope, input.scale)) return false;
+      shiftDayStep = timelineKeyboardUnitDays(input.scope, input.scale);
+    }
+
     let active = this.active;
     if (!active) {
       if (!input.target || input.enabled !== true) return false;
@@ -541,12 +556,7 @@ export class TimelineInteractionController<ItemId extends string> {
         (active.draftWidth ?? active.target.width) + direction * step,
       );
     } else {
-      let step = 1;
-      if (input.shiftKey) {
-        if (!input.scope || !input.scale || !isTimelineScale(input.scope, input.scale))
-          return false;
-        step = timelineKeyboardUnitDays(input.scope, input.scale);
-      }
+      const step = shiftDayStep ?? 1;
       this.updateDateDraft(active, active.dayDelta + direction * step);
     }
     this.publish();
@@ -866,8 +876,8 @@ export class TimelineInteractionController<ItemId extends string> {
 
   private releasePointer(active: ActiveInteraction<ItemId>): void {
     if (active.pointerId === undefined || !active.pointerCaptured) return;
-    this.ports.releasePointer?.(active.pointerId);
     active.pointerCaptured = false;
+    this.ports.releasePointer?.(active.pointerId);
   }
 
   private restoreFocus(active: ActiveInteraction<ItemId>): void {

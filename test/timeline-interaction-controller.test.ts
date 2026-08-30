@@ -296,6 +296,43 @@ describe('TimelineInteractionController commit and cleanup authority', () => {
     expect(h.ports.restoreFocus).toHaveBeenLastCalledWith('project-1', 'range');
   });
 
+  it.each([
+    ['synchronous', 'success', undefined, true],
+    ['synchronous', 'conflict', 'changed', false],
+    ['synchronous', 'failure', 'offline', false],
+    ['asynchronous', 'success', undefined, true],
+    ['asynchronous', 'conflict', 'changed', false],
+    ['asynchronous', 'failure', 'offline', false],
+  ] as const)(
+    'does not treat %s expected release capture loss as cancellation after %s',
+    async (delivery, type, reason, expectedResult) => {
+      const h = harness();
+      vi.mocked(h.ports.releasePointer!).mockImplementation((pointerId) => {
+        if (delivery === 'synchronous') h.controller.lostPointerCapture(pointerId);
+        else queueMicrotask(() => h.controller.lostPointerCapture(pointerId));
+      });
+      h.commit.mockResolvedValueOnce({ type, ...(reason !== undefined && { reason }) });
+      pickup(h, rangeMove(), { x: 120, y: 20 });
+
+      const result = await h.controller.pointerUp({ pointerId: 7, point: { x: 120, y: 20 } });
+
+      expect(result).toBe(expectedResult);
+      expect(h.commit).toHaveBeenCalledOnce();
+      expect(h.ports.releasePointer).toHaveBeenCalledOnce();
+      expect(h.announcements.filter((announcement) => announcement.type === 'cancel')).toEqual([]);
+      expect(h.announcements.filter((announcement) => announcement.type === type)).toHaveLength(1);
+      expect(h.announcements[h.announcements.length - 1]).toEqual(
+        reason === undefined ? { type } : { type, reason },
+      );
+      expect(h.ports.restoreFocus).toHaveBeenCalledOnce();
+      expect(h.ports.restoreFocus).toHaveBeenLastCalledWith('project-1', 'range');
+      expect(h.controller.projection()).toEqual({
+        pending: false,
+        accessibility: { grabbed: false, editorAvailable: false },
+      });
+    },
+  );
+
   it.each(['pointerCancel', 'lostPointerCapture', 'Escape', 'disable', 'destroy'] as const)(
     '%s restores the exact original state/focus and clears all transient state',
     async (terminal) => {
@@ -425,6 +462,66 @@ describe('TimelineInteractionController keyboard date editing', () => {
     expect(h.announcements.filter(({ type }) => type === 'pickup')).toHaveLength(1);
     expect(h.announcements.filter(({ type }) => type === 'destination')).toHaveLength(2);
   });
+
+  it.each(['ArrowLeft', 'ArrowRight', 'Enter'] as const)(
+    'does not let %s alter or commit an active pointer interaction',
+    async (key) => {
+      const h = harness();
+      pickup(h, rangeMove('2026-01-01', '2026-01-03'), { x: 120, y: 20 });
+      const before = h.controller.projection();
+      const announcementCount = h.announcements.length;
+      const publicationCount = h.projections.length;
+
+      expect(await h.controller.keyDown({ key })).toBe(false);
+
+      expect(h.controller.projection()).toEqual(before);
+      expect(h.commit).not.toHaveBeenCalled();
+      expect(h.announcements).toHaveLength(announcementCount);
+      expect(h.projections).toHaveLength(publicationCount);
+    },
+  );
+
+  it.each([
+    ['missing scope', undefined, undefined],
+    ['missing scale', 'tasks', undefined],
+    ['missing scope for scale', undefined, 'week'],
+    ['mismatched scale', 'tasks', 'year'],
+  ] as const)(
+    'rejects Shift+Arrow with %s before creating keyboard interaction state',
+    async (_case, scope, scale) => {
+      const h = harness();
+
+      expect(
+        await h.controller.keyDown({
+          key: 'ArrowRight',
+          shiftKey: true,
+          target: point('2026-05-01'),
+          enabled: true,
+          ...(scope !== undefined && { scope }),
+          ...(scale !== undefined && { scale }),
+        }),
+      ).toBe(false);
+
+      expect(h.controller.projection()).toEqual({
+        pending: false,
+        accessibility: { grabbed: false, editorAvailable: false },
+      });
+      expect(h.announcements).toEqual([]);
+      expect(h.projections).toEqual([]);
+      expect(h.commit).not.toHaveBeenCalled();
+
+      expect(press(h, point('2026-05-01'))).toBe(true);
+      expect(h.controller.pointerCancel(7)).toBe(true);
+      expect(
+        await h.controller.keyDown({
+          key: 'Enter',
+          target: point('2026-05-01'),
+          enabled: true,
+        }),
+      ).toBe(true);
+      expect(h.semanticIntents).toHaveLength(1);
+    },
+  );
 
   it('keyboard edges own only one endpoint and Escape restores original focus', async () => {
     const h = harness();
