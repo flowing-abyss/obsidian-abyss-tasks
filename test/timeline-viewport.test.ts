@@ -46,6 +46,8 @@ function reframeUnknownScope(viewport: TimelineViewport): void {
 }
 void reframeUnknownScope;
 
+type ExtendedTaskViewport = TimelineViewport<'tasks'> & { readonly marker: 'kept' };
+
 function expectFocalDateAtCenter(viewport: TimelineViewport, viewportWidth: number): void {
   expect(viewport.focalDate).toBe('2028-02-29');
   expect(civilDateToX(viewport, '2028-02-29')).toBe(viewportWidth / 2);
@@ -105,6 +107,31 @@ describe('timeline preference reconciliation', () => {
 });
 
 describe('continuous timeline viewport', () => {
+  it('returns the scope-correlated base shape when resizing an extended viewport', () => {
+    const extended: ExtendedTaskViewport = {
+      ...createTimelineViewport({
+        scope: 'tasks',
+        scale: 'week',
+        focalDate: '2026-08-20',
+        viewportWidth: 240,
+      }),
+      marker: 'kept',
+    };
+
+    const resized = reframeTimelineViewport(extended, { viewportWidth: 320 });
+
+    // @ts-expect-error Resizing reconstructs the base viewport and does not preserve extensions.
+    resized.marker;
+    expect(resized).toEqual({
+      scope: 'tasks',
+      scale: 'week',
+      focalDate: '2026-08-20',
+      viewportWidth: 320,
+      pixelsPerDay: 28,
+    });
+    expect('marker' in resized).toBe(false);
+  });
+
   it('maps 90 consecutive civil dates to distinct monotonic reachable positions', () => {
     const viewport = createTimelineViewport({
       scope: 'portfolio',

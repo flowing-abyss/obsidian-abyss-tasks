@@ -183,10 +183,10 @@ interface TimelineReframeChanges<S extends TimelineScope> {
   readonly viewportWidth?: number;
 }
 
-export function reframeTimelineViewport<V extends TimelineViewport>(
-  viewport: V,
+export function reframeTimelineViewport<S extends TimelineScope>(
+  viewport: TimelineViewport<S>,
   changes: TimelineResizeChanges,
-): V;
+): TimelineViewport<S>;
 export function reframeTimelineViewport(
   viewport: TimelineViewport<'portfolio'>,
   changes: TimelineReframeChanges<'portfolio'>,
