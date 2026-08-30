@@ -3319,6 +3319,75 @@ describe('ProjectsPanel dispatch', () => {
     );
   });
 
+  it('renders the production Portfolio Timeline as an agenda from its container width', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const project = proj({
+      frontmatter: { start: '2026-08-27', end: '2026-08-29' },
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+    });
+    const width = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('abyss-projects-timeline-host') ? 600 : 900;
+      });
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(project)],
+      projectCommands: {
+        observeRange: () => ({ path: project.path, start: '2026-08-27', end: '2026-08-29' }),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = freshContainer();
+    try {
+      panel.mount(el);
+      expect(el.querySelector('.abyss-timeline')?.classList).toContain('is-agenda');
+      expect(el.querySelector('.abyss-timeline-axis')).toBeNull();
+    } finally {
+      panel.destroy();
+      width.mockRestore();
+    }
+  });
+
+  it('renders the production Work Note Timeline as an agenda from its container width', () => {
+    const project = proj({});
+    const note = {
+      ...workNote('Work Notes/Narrow.md', ACTIVE_ID, '2026-08-27'),
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+    };
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: project.path });
+    const width = vi
+      .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
+      .mockImplementation(function (this: HTMLElement) {
+        return this.classList.contains('abyss-project-tasks-content') ? 600 : 900;
+      });
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, DEFAULT_SETTINGS, null as never, {
+      snapshots: [workspace(project, { workNotes: [note] })],
+      workNoteCommands: {
+        capabilities: () => ({ update: true, create: true }),
+        statuses: () => DEFAULT_SETTINGS.projects.statuses,
+        observeRange: () => ({
+          observed: { path: note.path, fields: {} },
+          start: note.range.start,
+          end: note.range.end,
+        }),
+        setRange: vi.fn(),
+      } as never,
+    });
+    const el = freshContainer();
+    try {
+      panel.mount(el);
+      el.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+      el.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+      expect(el.querySelector('.abyss-timeline')?.classList).toContain('is-agenda');
+      expect(el.querySelector('.abyss-timeline-axis')).toBeNull();
+    } finally {
+      panel.destroy();
+      width.mockRestore();
+    }
+  });
+
   it('routes a portfolio Timeline Project identity through the real ProjectsPanel state', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'timeline';

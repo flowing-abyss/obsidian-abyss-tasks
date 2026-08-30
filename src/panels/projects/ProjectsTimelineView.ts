@@ -18,6 +18,7 @@ import {
 } from './ProjectWorkspaceSession';
 import {
   TimelineInteractionController,
+  type TimelineAnnouncement,
   type TimelineCommitIntent,
   type TimelineProjection as TimelineInteractionProjection,
   type TimelineInteractionTarget,
@@ -47,6 +48,7 @@ import {
 } from './timelineProjection';
 
 const TIMELINE_ROW_EXTENT = 72;
+const TIMELINE_AGENDA_ROW_EXTENT = 104;
 const TIMELINE_FALLBACK_VISIBLE_ROWS = 12;
 const TIMELINE_OVERSCAN = 5;
 const TIMELINE_DIAGNOSTIC_ROW_EXTENT = 32;
@@ -64,6 +66,12 @@ export interface TimelineViewOptions<T> {
     entry: TimelineEntry<T>,
     role: TimelinePointRole,
     date: string,
+    initiator: HTMLElement,
+  ) => Promise<TimelineMutationResult> | TimelineMutationResult;
+  readonly onSetRange?: (
+    entry: TimelineEntry<T>,
+    start: string,
+    end: string,
     initiator: HTMLElement,
   ) => Promise<TimelineMutationResult> | TimelineMutationResult;
   readonly dateWindow?: { readonly from: string; readonly to: string };
@@ -88,6 +96,38 @@ export interface TimelineViewOptions<T> {
 
 export interface TimelineViewHandle {
   destroy(): void;
+}
+
+/** Container-query bridge for production hosts; keeps responsive mode out of global viewport CSS. */
+export function renderContainerResponsiveTimeline(
+  container: HTMLElement,
+  render: (isNarrow: boolean) => TimelineViewHandle,
+): TimelineViewHandle {
+  const narrow = (): boolean =>
+    Platform.isMobile || (container.clientWidth > 0 && container.clientWidth <= 672);
+  let isNarrow = narrow();
+  let child = render(isNarrow);
+  let destroyed = false;
+  const ResizeObserverCtor = container.ownerDocument.defaultView?.ResizeObserver;
+  const observer = ResizeObserverCtor
+    ? new ResizeObserverCtor(() => {
+        if (destroyed) return;
+        const next = narrow();
+        if (next === isNarrow) return;
+        isNarrow = next;
+        child.destroy();
+        child = render(isNarrow);
+      })
+    : null;
+  observer?.observe(container);
+  return {
+    destroy: () => {
+      if (destroyed) return;
+      destroyed = true;
+      observer?.disconnect();
+      child.destroy();
+    },
+  };
 }
 
 export interface ProjectsTimelineOptions {
@@ -132,6 +172,11 @@ export interface TasksTimelineOptions {
     task: TaskSnapshot,
     role: Exclude<TimelinePointRole, 'milestone'>,
     date: string,
+  ) => Promise<TaskCommandResult> | TaskCommandResult;
+  readonly onSetRange: (
+    task: TaskSnapshot,
+    start: string,
+    end: string,
   ) => Promise<TaskCommandResult> | TaskCommandResult;
   readonly scale?: TaskTimelineScale;
   readonly identityWidth?: number;
@@ -189,6 +234,16 @@ function inferredDateWindow<T>(
   return { from: dates[0]!, to: dates[dates.length - 1]! };
 }
 
+function paddedDateWindow(window: { readonly from: string; readonly to: string }): {
+  readonly from: string;
+  readonly to: string;
+} {
+  return {
+    from: shiftCivilDate(window.from, -1) ?? window.from,
+    to: shiftCivilDate(window.to, 1) ?? window.to,
+  };
+}
+
 function pointRoles(item: TimelineItem): readonly TimelinePointRole[] {
   if (item.kind === 'range') return ['start', 'end'];
   if (item.kind === 'point') return [item.role];
@@ -228,6 +283,46 @@ function timelineRowFocusTarget(row: HTMLElement, identity: HTMLElement): HTMLEl
   if (focusTarget) return focusTarget;
   row.tabIndex = -1;
   return row;
+}
+
+function timelineAnnouncementText(announcement: TimelineAnnouncement<string>): string {
+  if (announcement.type === 'pickup') {
+    let label = `${announcement.ownedRole} date`;
+    if (announcement.ownedRole === 'range') label = 'range';
+    else if (announcement.ownedRole === 'identity-column') label = 'identity width';
+    return `Picked up ${label}.`;
+  }
+  if (announcement.type === 'destination') {
+    if (announcement.target === 'identity-column') {
+      const boundary = announcement.boundary === 'none' ? '' : `, ${announcement.boundary}imum`;
+      return `Identity width ${String(announcement.width)} pixels${boundary}.`;
+    }
+    if (!announcement.validity.valid) {
+      return `Invalid destination: ${announcement.validity.reason}.`;
+    }
+    const destination =
+      'at' in announcement.carrier
+        ? announcement.carrier.at.raw
+        : `${announcement.carrier.start.raw} – ${announcement.carrier.end.raw}`;
+    return `Destination: ${destination}.`;
+  }
+  if (announcement.type === 'commit-pending') return 'Saving timeline change.';
+  if (announcement.type === 'success') return 'Timeline change saved.';
+  if (announcement.type === 'cancel') {
+    return announcement.reason
+      ? `Timeline edit cancelled: ${announcement.reason}.`
+      : 'Timeline edit cancelled.';
+  }
+  return announcement.reason
+    ? `Timeline date was not changed: ${announcement.reason}.`
+    : 'Timeline date was not changed.';
+}
+
+function coarseTimelineTarget(actionName: string): string | undefined {
+  if (actionName.startsWith('range-')) return 'range-move';
+  if (actionName.startsWith('start-')) return 'start-edge';
+  if (actionName.startsWith('end-')) return 'end-edge';
+  return undefined;
 }
 
 /** Semantically neutral bounded Timeline shell shared by Project, Work Note, and Task adapters. */
@@ -307,8 +402,13 @@ export function renderTimeline<T>(
   );
   const undated = options.entries.filter((entry) => entry.item.kind === 'undated');
   const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
-  const window = options.dateWindow ?? inferredDateWindow(dated);
-  const dates = window ? continuousDates(window.from, window.to) : [];
+  if (dated.length === 0) toolbar.remove();
+  let window = (() => {
+    const content = options.dateWindow ?? inferredDateWindow(dated);
+    return content ? paddedDateWindow(content) : undefined;
+  })();
+  let dates = window ? continuousDates(window.from, window.to) : [];
+  if (session) session.focusedInteraction = null;
   let destroyed = false;
   const cleanups: Array<() => void> = [];
   let controller: TimelineInteractionController<string> | undefined;
@@ -342,6 +442,30 @@ export function renderTimeline<T>(
     return false;
   };
 
+  const commitRange = async (
+    entry: TimelineEntry<T>,
+    start: string,
+    end: string,
+    initiator: HTMLElement,
+  ): Promise<boolean> => {
+    if (!options.onSetRange) return false;
+    try {
+      const result = await Promise.resolve(options.onSetRange(entry, start, end, initiator));
+      if (successful(result)) {
+        feedback.empty();
+        delete feedback.dataset['resultType'];
+        return true;
+      }
+      feedback.dataset['resultType'] = result.type;
+      feedback.setText('Timeline date was not changed.');
+    } catch {
+      feedback.dataset['resultType'] = 'io-error';
+      feedback.setText('Timeline date could not be changed.');
+    }
+    if (initiator.isConnected) initiator.focus({ preventScroll: true });
+    return false;
+  };
+
   const onScheduleChange = (event: Event): void => {
     if (!(event.target instanceof HTMLInputElement) || !event.target.value) return;
     const entry = scheduleEntryByInput.get(event.target);
@@ -357,7 +481,6 @@ export function renderTimeline<T>(
     const canvas = scroll.createDiv({ cls: 'abyss-timeline-canvas' });
     const axis = canvas.createDiv({
       cls: 'abyss-timeline-axis',
-      attr: { 'aria-hidden': 'true' },
     });
     const axisIdentity = axis.createDiv({ cls: 'abyss-timeline-axis-identity' });
     const resizeHandle = axisIdentity.createEl('button', {
@@ -367,9 +490,13 @@ export function renderTimeline<T>(
         'data-timeline-identity-resize': '',
         'data-timeline-target': 'identity-column',
         'aria-label': 'Resize timeline identity column',
+        title: 'Resize timeline identity column',
       },
     });
-    const axisPlot = axis.createDiv({ cls: 'abyss-timeline-axis-plot' });
+    const axisPlot = axis.createDiv({
+      cls: 'abyss-timeline-axis-plot',
+      attr: { 'aria-hidden': 'true' },
+    });
     const axisCoordinates = axisPlot.createDiv({ cls: 'abyss-timeline-axis-coordinates' });
     const axisLabels = axisPlot.createDiv({ cls: 'abyss-timeline-axis-dates' });
     const rows = canvas.createDiv({
@@ -388,15 +515,16 @@ export function renderTimeline<T>(
       session,
       dated.map(({ item }) => item.key),
     );
+    const rowExtent = isAgenda ? TIMELINE_AGENDA_ROW_EXTENT : TIMELINE_ROW_EXTENT;
     const verticalViewport = (seedFirst?: number): { first: number; visible: number } => ({
-      first: seedFirst ?? Math.floor(Math.max(0, scroll.scrollTop) / TIMELINE_ROW_EXTENT),
+      first: seedFirst ?? Math.floor(Math.max(0, scroll.scrollTop) / rowExtent),
       visible:
         scroll.clientHeight > 0
-          ? Math.ceil(scroll.clientHeight / TIMELINE_ROW_EXTENT)
+          ? Math.ceil(scroll.clientHeight / rowExtent)
           : TIMELINE_FALLBACK_VISIBLE_ROWS,
     });
 
-    const midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
+    let midpoint = dates[Math.floor((dates.length - 1) / 2)] ?? today;
     let plotWidth = 1;
     let viewport: TimelineViewport = createTimelineViewport({
       scope: 'workNotes',
@@ -498,10 +626,44 @@ export function renderTimeline<T>(
           'aria-label': `Choose ${entry.label} ${role} date`,
           title: `Choose ${role} date`,
           ...(current ? { value: current } : {}),
+          ...(!isAgenda ? { tabindex: '-1' } : {}),
         },
       });
       picker.disabled = options.onSetDate === undefined;
       return picker;
+    };
+
+    const renderCoarseMenu = (controls: HTMLElement, entry: TimelineEntry<T>): void => {
+      if (!coarsePointer) return;
+      const menu = controls.createEl('details', { cls: 'abyss-timeline-coarse-menu' });
+      menu.createEl('summary', {
+        cls: 'abyss-timeline-touch-target',
+        text: '•••',
+        attr: { 'aria-label': `Timeline actions for ${entry.label}` },
+      });
+      const coarseActions =
+        entry.item.kind === 'range'
+          ? ([
+              ['range-previous', 'Move range earlier'],
+              ['range-next', 'Move range later'],
+              ['start-previous', 'Move start earlier'],
+              ['start-next', 'Move start later'],
+              ['end-previous', 'Move end earlier'],
+              ['end-next', 'Move end later'],
+            ] as const)
+          : ([
+              ['move-previous', 'Move earlier'],
+              ['move-next', 'Move later'],
+            ] as const);
+      for (const [action, label] of coarseActions) {
+        const button = menu.createEl('button', {
+          cls: 'abyss-timeline-touch-target',
+          text: label,
+          attr: { type: 'button', 'data-timeline-coarse-action': action },
+        });
+        if (action.startsWith('range-')) button.disabled = options.onSetRange === undefined;
+        else button.disabled = options.onSetDate === undefined;
+      }
     };
 
     const renderInteraction = (
@@ -532,7 +694,9 @@ export function renderTimeline<T>(
             title: `${entry.dateByRole.start ?? ''} – ${entry.dateByRole.end ?? ''}`,
           },
         });
-        registerTarget(move, targetFor(entry, 'range-move'));
+        move.disabled = options.onSetRange === undefined;
+        move.setAttribute('aria-disabled', String(move.disabled));
+        if (options.onSetRange) registerTarget(move, targetFor(entry, 'range-move'));
         for (const [kind, role] of [
           ['start-edge', 'start'],
           ['end-edge', 'end'],
@@ -577,31 +741,14 @@ export function renderTimeline<T>(
 
       const roles = pointRoles(entry.item);
       for (const role of roles) addPicker(controls, entry, role);
-      if (coarsePointer) {
-        const menu = controls.createEl('details', { cls: 'abyss-timeline-coarse-menu' });
-        menu.createEl('summary', {
-          cls: 'abyss-timeline-touch-target',
-          text: '•••',
-          attr: { 'aria-label': `Timeline actions for ${entry.label}` },
-        });
-        menu.createEl('button', {
-          cls: 'abyss-timeline-touch-target',
-          text: 'Move earlier',
-          attr: { type: 'button', 'data-timeline-coarse-action': 'move-previous' },
-        });
-        menu.createEl('button', {
-          cls: 'abyss-timeline-touch-target',
-          text: 'Move later',
-          attr: { type: 'button', 'data-timeline-coarse-action': 'move-next' },
-        });
-      }
+      renderCoarseMenu(controls, entry);
     };
 
     let renderWindow = (restoreFocus = false, seedFirst?: number): void => {
       if (destroyed) return;
       const result = bounded.render(rows, {
         ...verticalViewport(seedFirst),
-        itemExtent: TIMELINE_ROW_EXTENT,
+        itemExtent: rowExtent,
         restoreFocus,
         render: (host, _key, logicalIndex) => {
           const entry = dated[logicalIndex]!;
@@ -640,7 +787,7 @@ export function renderTimeline<T>(
         },
       });
       if (restoreFocus || seedFirst !== undefined) {
-        scroll.scrollTop = result.first * TIMELINE_ROW_EXTENT;
+        scroll.scrollTop = result.first * rowExtent;
       }
     };
 
@@ -723,6 +870,13 @@ export function renderTimeline<T>(
       if (notify) notifyPresentationChange();
     };
 
+    const previewIdentityWidth = (width: number): void => {
+      root.style.setProperty(
+        '--abyss-timeline-identity-width',
+        `${String(clampTimelineIdentityWidth(width))}px`,
+      );
+    };
+
     const projectionHost = (itemId: string): HTMLElement | undefined =>
       Array.from(rows.querySelectorAll<HTMLElement>('[data-timeline-key]'))
         .find(({ dataset }) => dataset['timelineKey'] === itemId)
@@ -734,7 +888,18 @@ export function renderTimeline<T>(
       }
       for (const preview of rows.querySelectorAll('[data-timeline-preview]')) preview.remove();
       if (!projection.itemId) {
-        if (projection.draftWidth !== undefined) applyIdentityWidth(projection.draftWidth);
+        if (projection.activeTarget === 'identity-column' && projection.draftWidth !== undefined) {
+          previewIdentityWidth(projection.draftWidth);
+          if (session) {
+            session.focusedInteraction = {
+              itemKey: 'identity-column',
+              role: 'identity-column',
+            };
+          }
+        } else {
+          previewIdentityWidth(identityWidth);
+          if (session) session.focusedInteraction = null;
+        }
         return;
       }
       const row = projectionHost(projection.itemId);
@@ -751,15 +916,25 @@ export function renderTimeline<T>(
       const geometry = geometryForTimelineItem(viewport, previewGeometry);
       const preview = plot.createDiv({
         cls: `abyss-timeline-preview is-${previewGeometry.kind}`,
-        attr: { 'data-timeline-preview': '', 'aria-hidden': 'true' },
+        attr: { 'data-timeline-preview': '' },
       });
       if (geometry.kind === 'range') {
         preview.style.insetInlineStart = `${String(geometry.left)}px`;
         preview.style.inlineSize = `${String(geometry.width)}px`;
+        preview.dataset['timelinePreviewStart'] =
+          previewGeometry.kind === 'range' ? previewGeometry.start : '';
+        preview.dataset['timelinePreviewEnd'] =
+          previewGeometry.kind === 'range' ? previewGeometry.end : '';
+        preview.title = `${preview.dataset['timelinePreviewStart']} – ${preview.dataset['timelinePreviewEnd']}`;
       } else {
         preview.style.insetInlineStart = `${String(geometry.centerX)}px`;
         preview.style.inlineSize = `${String(geometry.size)}px`;
+        if (previewGeometry.kind !== 'range') {
+          preview.dataset['timelinePreviewAt'] = previewGeometry.at;
+          preview.title = previewGeometry.at;
+        }
       }
+      preview.createSpan({ cls: 'abyss-timeline-preview-label', text: preview.title });
     };
 
     const applyDateIntent = async (
@@ -774,14 +949,7 @@ export function renderTimeline<T>(
         if (intent.target === 'end-edge') {
           return commit(entry, 'end', intent.draft.end.raw, initiatingElement);
         }
-        const startChanged = await commit(
-          entry,
-          'start',
-          intent.draft.start.raw,
-          initiatingElement,
-        );
-        if (!startChanged) return false;
-        return commit(entry, 'end', intent.draft.end.raw, initiatingElement);
+        return commitRange(entry, intent.draft.start.raw, intent.draft.end.raw, initiatingElement);
       }
       return commit(
         entry,
@@ -834,17 +1002,11 @@ export function renderTimeline<T>(
       },
       publish,
       announce: (announcement) => {
+        const message = timelineAnnouncementText(announcement);
+        if (feedback.textContent !== message) feedback.setText(message);
         if (announcement.type === 'conflict' || announcement.type === 'failure') {
           feedback.dataset['resultType'] = announcement.type;
-          feedback.setText('Timeline date was not changed.');
-        } else if (announcement.type === 'cancel') {
-          feedback.setText(
-            announcement.reason
-              ? `Timeline edit cancelled: ${announcement.reason}`
-              : 'Timeline edit cancelled.',
-          );
-        } else if (announcement.type === 'success') {
-          feedback.empty();
+        } else {
           delete feedback.dataset['resultType'];
         }
       },
@@ -904,7 +1066,10 @@ export function renderTimeline<T>(
         pointerId: event.pointerId,
         button: event.button,
         isPrimary: event.isPrimary,
-        enabled: options.onSetDate !== undefined || target.kind === 'identity-column',
+        enabled:
+          target.kind === 'range-move'
+            ? options.onSetRange !== undefined
+            : options.onSetDate !== undefined || target.kind === 'identity-column',
         point: { x: event.clientX, y: event.clientY },
         target,
       });
@@ -938,7 +1103,10 @@ export function renderTimeline<T>(
         key: event.key,
         shiftKey: event.shiftKey,
         ...(target && { target }),
-        enabled: options.onSetDate !== undefined || target?.kind === 'identity-column',
+        enabled:
+          target?.kind === 'range-move'
+            ? options.onSetRange !== undefined
+            : options.onSetDate !== undefined || target?.kind === 'identity-column',
         scope,
         scale,
       });
@@ -965,12 +1133,15 @@ export function renderTimeline<T>(
       const action = element?.closest<HTMLElement>('[data-timeline-coarse-action]');
       if (!action) return;
       const row = action.closest<HTMLElement>('.abyss-timeline-row');
-      const primary = row?.querySelector<HTMLElement>('[data-timeline-primary]');
-      const target = primary && targetByElement.get(primary);
-      if (!primary || !target) return;
-      initiatingElement = primary;
-      const key =
-        action.dataset['timelineCoarseAction'] === 'move-previous' ? 'ArrowLeft' : 'ArrowRight';
+      const actionName = action.dataset['timelineCoarseAction'] ?? '';
+      const targetName = coarseTimelineTarget(actionName);
+      const control = targetName
+        ? row?.querySelector<HTMLElement>(`[data-timeline-target="${targetName}"]`)
+        : row?.querySelector<HTMLElement>('[data-timeline-primary]');
+      const target = control && targetByElement.get(control);
+      if (!control || !target) return;
+      initiatingElement = control;
+      const key = actionName.endsWith('previous') ? 'ArrowLeft' : 'ArrowRight';
       void controller
         ?.keyDown({ key, target, enabled: true, scope, scale })
         .then(() => controller?.keyDown({ key: 'Enter', target, enabled: true, scope, scale }));
@@ -1042,6 +1213,14 @@ export function renderTimeline<T>(
     };
     const onToday = (): void => {
       if (session) session.focalDate = today;
+      if (!dates.includes(today)) {
+        const from = shiftCivilDate(today, -15) ?? today;
+        const to = shiftCivilDate(today, 15) ?? today;
+        window = { from, to };
+        dates = continuousDates(from, to);
+        midpoint = today;
+        refreshGeometry(false);
+      }
       centerOn(today);
     };
     scaleSelect.addEventListener('change', onScaleChange);
@@ -1137,6 +1316,7 @@ export function renderTimeline<T>(
     destroy: () => {
       destroyed = true;
       controller?.destroy();
+      if (session) session.focusedInteraction = null;
       if (autoscrollFrame !== null && ownerWindow)
         ownerWindow.cancelAnimationFrame(autoscrollFrame);
       for (const cleanup of cleanups.splice(0)) cleanup();
@@ -1199,6 +1379,18 @@ export function renderProjectsTimeline(
       options.onMutation?.(entry.value, result);
       return result;
     },
+    onSetRange: async (entry, start, end) => {
+      const nextStart = movedProjectDate(entry.value.range.start, start);
+      const nextEnd = movedProjectDate(entry.value.range.end, end);
+      if (!nextStart) return { type: 'invalid', issue: 'invalid-start' };
+      if (!nextEnd) return { type: 'invalid', issue: 'invalid-end' };
+      const result = await options.commands.setRange(options.commands.observeRange(entry.value), {
+        start: nextStart,
+        end: nextEnd,
+      });
+      options.onMutation?.(entry.value, result);
+      return result;
+    },
   });
 }
 
@@ -1227,6 +1419,24 @@ export function renderWorkNotesTimeline(
     const value = movedProjectDate(current, date);
     if (!value) return { type: 'invalid', field };
     const result = await options.commands.setRange(observation.observed, { [field]: value });
+    options.onMutation?.(entry.value, result);
+    return result;
+  };
+  const onSetRange = async (
+    entry: TimelineEntry<WorkNoteSnapshot>,
+    start: string,
+    end: string,
+  ): Promise<WorkNoteCommandResult> => {
+    const observation = observations.get(entry.item.key);
+    if (!observation) return { type: 'invalid', field: 'path' };
+    const nextStart = observation.start && movedProjectDate(observation.start, start);
+    const nextEnd = observation.end && movedProjectDate(observation.end, end);
+    if (!nextStart) return { type: 'invalid', field: 'start' };
+    if (!nextEnd) return { type: 'invalid', field: 'end' };
+    const result = await options.commands.setRange(observation.observed, {
+      start: nextStart,
+      end: nextEnd,
+    });
     options.onMutation?.(entry.value, result);
     return result;
   };
@@ -1273,7 +1483,7 @@ export function renderWorkNotesTimeline(
           },
         }
       : {}),
-    ...(options.commandsEnabled === false ? {} : { onSetDate }),
+    ...(options.commandsEnabled === false ? {} : { onSetDate, onSetRange }),
   });
 }
 
@@ -1333,5 +1543,6 @@ export function renderTasksTimeline(
       if (role === 'milestone') throw new Error('Task Timeline milestone mutation unavailable');
       return options.onSetDate(entry.value.task, role, date);
     },
+    onSetRange: (entry, start, end) => options.onSetRange(entry.value.task, start, end),
   });
 }

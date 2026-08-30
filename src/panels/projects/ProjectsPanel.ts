@@ -32,7 +32,11 @@ import {
   renderProjectsList,
   showNewProjectInput,
 } from './ProjectsListView';
-import { renderProjectsTimeline, renderWorkNotesTimeline } from './ProjectsTimelineView';
+import {
+  renderContainerResponsiveTimeline,
+  renderProjectsTimeline,
+  renderWorkNotesTimeline,
+} from './ProjectsTimelineView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderWorkNotesView, selectWorkNotes } from './WorkNotesView';
 import type { ProjectChildRenderHandle } from './viewContext';
@@ -316,40 +320,44 @@ export class ProjectsPanel {
     host: HTMLElement,
     notes: ProjectWorkspaceSnapshot['workNotes'],
   ): ProjectChildRenderHandle {
-    if (!this.workNoteCommands) return { destroy: () => undefined };
-    return renderWorkNotesTimeline(host, {
-      notes,
-      commands: this.workNoteCommands,
-      commandsEnabled: this.workNoteCommands.capabilities().update,
-      session: this.workspaceSession.timelines.workNotes,
-      scale: this.settings.projects.view.timeline.workNotes.dateRange,
-      identityWidth: this.settings.projects.view.timeline.workNotes.identityWidth,
-      onPresentationChange: (presentation) => {
-        this.settings.projects.view.timeline = {
-          ...this.settings.projects.view.timeline,
-          workNotes: {
-            dateRange: presentation.scale,
-            identityWidth: presentation.identityWidth,
-          },
-        };
-        void this.onSaveSettings();
-      },
-      openNote: (path) => this.openNote(path),
-      onSelect: (note, origin) => {
-        this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
-        const selection = deriveInspectorSelection({
-          project: { type: 'project', path: note.projectPath },
-          activeScope: 'work-notes',
-          workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
-        });
-        origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
-        this.state.batch(() => {
-          this.state.set('taskStack', []);
-          this.state.set('inspectorSelection', selection);
-          this.state.set('inspectorOrigin', { selection, element: origin });
-        });
-      },
-    });
+    const commands = this.workNoteCommands;
+    if (!commands) return { destroy: () => undefined };
+    return renderContainerResponsiveTimeline(host, (isNarrow) =>
+      renderWorkNotesTimeline(host, {
+        notes,
+        commands,
+        commandsEnabled: commands.capabilities().update,
+        session: this.workspaceSession.timelines.workNotes,
+        isNarrow,
+        scale: this.settings.projects.view.timeline.workNotes.dateRange,
+        identityWidth: this.settings.projects.view.timeline.workNotes.identityWidth,
+        onPresentationChange: (presentation) => {
+          this.settings.projects.view.timeline = {
+            ...this.settings.projects.view.timeline,
+            workNotes: {
+              dateRange: presentation.scale,
+              identityWidth: presentation.identityWidth,
+            },
+          };
+          void this.onSaveSettings();
+        },
+        openNote: (path) => this.openNote(path),
+        onSelect: (note, origin) => {
+          this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
+          const selection = deriveInspectorSelection({
+            project: { type: 'project', path: note.projectPath },
+            activeScope: 'work-notes',
+            workNote: { type: 'work-note', path: note.path, projectPath: note.projectPath },
+          });
+          origin.dataset['inspectorOriginKey'] = inspectorSelectionKey(selection);
+          this.state.batch(() => {
+            this.state.set('taskStack', []);
+            this.state.set('inspectorSelection', selection);
+            this.state.set('inspectorOrigin', { selection, element: origin });
+          });
+        },
+      }),
+    );
   }
 
   private capturePortfolioContinuity(): string | null {
@@ -524,8 +532,9 @@ export class ProjectsPanel {
           : visibleStatusIds.has(project.statusId)),
     );
     const timelineAvailable = this.projectCommands !== undefined;
+    const projectCommands = this.projectCommands;
     const portfolioContext = { ...listContext, timelineAvailable };
-    if (this.settings.projects.view.portfolioLayout === 'timeline' && timelineAvailable) {
+    if (this.settings.projects.view.portfolioLayout === 'timeline' && projectCommands) {
       const toolbar = renderProjectsToolbar(container, portfolioContext);
       const { newProjectButton } = toolbar;
       let captureCleanup: (() => void) | undefined;
@@ -548,27 +557,30 @@ export class ProjectsPanel {
         this.workspaceSession.portfolioTimeline.focusedKey = `project:${createdPath}`;
         this.workspaceSession.portfolioTimeline.restoreFocus = true;
       }
-      const handle = renderProjectsTimeline(timelineHost, {
-        projects: timelineSnapshots.map(({ project }) => project),
-        commands: this.projectCommands,
-        session: this.workspaceSession.portfolioTimeline,
-        scale: this.settings.projects.view.timeline.portfolio.scale,
-        identityWidth: this.settings.projects.view.timeline.portfolio.identityWidth,
-        onPresentationChange: (presentation) => {
-          this.settings.projects.view.timeline = {
-            ...this.settings.projects.view.timeline,
-            portfolio: {
-              scale: presentation.scale,
-              identityWidth: presentation.identityWidth,
-            },
-          };
-          void this.onSaveSettings();
-        },
-        openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
-        onMutation: (_project, result) => {
-          if (result.type === 'ok') this.projectStore.refresh();
-        },
-      });
+      const handle = renderContainerResponsiveTimeline(timelineHost, (isNarrow) =>
+        renderProjectsTimeline(timelineHost, {
+          projects: timelineSnapshots.map(({ project }) => project),
+          commands: projectCommands,
+          session: this.workspaceSession.portfolioTimeline,
+          isNarrow,
+          scale: this.settings.projects.view.timeline.portfolio.scale,
+          identityWidth: this.settings.projects.view.timeline.portfolio.identityWidth,
+          onPresentationChange: (presentation) => {
+            this.settings.projects.view.timeline = {
+              ...this.settings.projects.view.timeline,
+              portfolio: {
+                scale: presentation.scale,
+                identityWidth: presentation.identityWidth,
+              },
+            };
+            void this.onSaveSettings();
+          },
+          openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
+          onMutation: (_project, result) => {
+            if (result.type === 'ok') this.projectStore.refresh();
+          },
+        }),
+      );
       if (createdPath) {
         const identity = Array.from(
           timelineHost.querySelectorAll<HTMLElement>('[data-timeline-key]'),

@@ -174,6 +174,10 @@ function expectIconOnlyControlsNamed(root: HTMLElement): void {
     if (visibleText(control)) continue;
     expect(control.getAttribute('aria-label'), control.outerHTML).toBeTruthy();
     expect(control.getAttribute('title'), control.outerHTML).toBeTruthy();
+    if (control.classList.contains('abyss-timeline-date-picker')) {
+      expect((control as HTMLElement).tabIndex, control.outerHTML).toBe(-1);
+      continue;
+    }
     expect((control as HTMLElement).tabIndex, control.outerHTML).toBeGreaterThanOrEqual(0);
   }
 }

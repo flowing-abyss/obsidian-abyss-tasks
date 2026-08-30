@@ -127,7 +127,10 @@ import type {
 import { ProjectWorkspaceSession } from './projects/ProjectWorkspaceSession';
 import { renderProjectTasksBoard } from './projects/ProjectsBoardView';
 import { ProjectsPanel, type PendingProjectBoardUndo } from './projects/ProjectsPanel';
-import { renderTasksTimeline } from './projects/ProjectsTimelineView';
+import {
+  renderContainerResponsiveTimeline,
+  renderTasksTimeline,
+} from './projects/ProjectsTimelineView';
 import { buildBoardPreference } from './projects/boardPreferences';
 import {
   createProjectActionBoardMutation,
@@ -1238,6 +1241,22 @@ export class CenterPanel {
     return result;
   }
 
+  private async setProjectTimelineTaskRange(
+    task: TaskSnapshot,
+    start: string,
+    end: string,
+  ): Promise<TaskCommandResult> {
+    if (!this.tasks) throw new Error('Task Timeline mutation unavailable');
+    const command = calendarPatchCommand(task, {
+      start: { type: 'set', value: localDate(start) },
+      due: { type: 'set', value: localDate(end) },
+    });
+    if (!command) throw new Error('Task Timeline target unavailable');
+    const result = await this.tasks.execute(command);
+    presentTaskCommandResult(result);
+    return result;
+  }
+
   private renderProjectTaskTimeline(
     host: HTMLElement,
     path: string,
@@ -1251,32 +1270,36 @@ export class CenterPanel {
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
     session.reconcile(actions, allActions);
-    const timeline = renderTasksTimeline(host, {
-      actions,
-      collectionSession: session,
-      session: this.projectWorkspaceSession.timelines.tasks,
-      scale: this.settings.projects.view.timeline.tasks.scale,
-      identityWidth: this.settings.projects.view.timeline.tasks.identityWidth,
-      onPresentationChange: (presentation) => {
-        this.settings.projects.view.timeline = {
-          ...this.settings.projects.view.timeline,
-          tasks: {
-            scale: presentation.scale,
-            identityWidth: presentation.identityWidth,
-          },
-        };
-        void this.onSaveSettings();
-      },
-      renderTask: (identity, action) => {
-        this.renderTaskCard(identity, action.task, {
-          projectPath: path,
-          dependencyDecision: action.dependency,
-          projectTaskCollection: true,
-          onAddPropertyFilter,
-        });
-      },
-      onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
-    });
+    const timeline = renderContainerResponsiveTimeline(host, (isNarrow) =>
+      renderTasksTimeline(host, {
+        actions,
+        collectionSession: session,
+        session: this.projectWorkspaceSession.timelines.tasks,
+        isNarrow,
+        scale: this.settings.projects.view.timeline.tasks.scale,
+        identityWidth: this.settings.projects.view.timeline.tasks.identityWidth,
+        onPresentationChange: (presentation) => {
+          this.settings.projects.view.timeline = {
+            ...this.settings.projects.view.timeline,
+            tasks: {
+              scale: presentation.scale,
+              identityWidth: presentation.identityWidth,
+            },
+          };
+          void this.onSaveSettings();
+        },
+        renderTask: (identity, action) => {
+          this.renderTaskCard(identity, action.task, {
+            projectPath: path,
+            dependencyDecision: action.dependency,
+            projectTaskCollection: true,
+            onAddPropertyFilter,
+          });
+        },
+        onSetDate: (task, role, date) => this.setProjectTimelineTaskDate(task, role, date),
+        onSetRange: (task, start, end) => this.setProjectTimelineTaskRange(task, start, end),
+      }),
+    );
     this.completeTaskCardRender();
     this.updateSelectionVisuals();
     this.applyProjectTaskEffect(session.consumeEffect() ?? session.restoreEffect());

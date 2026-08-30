@@ -534,7 +534,7 @@ describe('Projects hardening styles', () => {
     );
     const agenda = declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-row');
     expect(agenda).toContain('grid-template-columns: minmax(0, 1fr) auto');
-    expect(agenda).toContain('overflow: hidden');
+    expect(agenda).toContain('overflow: visible');
     expect(declarationsFor('.abyss-timeline.is-agenda .abyss-timeline-plot')).toContain(
       'display: none',
     );

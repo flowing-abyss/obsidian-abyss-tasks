@@ -667,6 +667,54 @@ describe('Projects Tasks/List scale integration RED', () => {
     }
   });
 
+  it('executes a whole Task Timeline move as one atomic start-and-due patch', async () => {
+    installMeasuredProjectScrollGeometry();
+    const harness = mountScaleProject({ forceOpen: true });
+    const original = harness.actions[0]!;
+    const rangedTask: TaskSnapshot = {
+      ...original.task,
+      planning: { start: '2026-08-27' as never, due: '2026-08-29' as never },
+    };
+    harness.update([{ ...original, task: rangedTask }]);
+    try {
+      click(harness.root.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!);
+      const move = harness.root.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+
+      key(move, 'ArrowRight');
+      key(move, 'Enter');
+      await flushMicrotasks();
+
+      expect(harness.execute).toHaveBeenCalledOnce();
+      expect(harness.execute).toHaveBeenCalledWith({
+        type: 'patch',
+        target: { type: 'task', ref: rangedTask.ref },
+        patch: {
+          start: { type: 'set', value: '2026-08-28' },
+          due: { type: 'set', value: '2026-08-30' },
+        },
+      });
+    } finally {
+      harness.panel.destroy();
+    }
+  });
+
+  it('renders the production Task Timeline as an agenda from its container width', () => {
+    installMeasuredProjectScrollGeometry();
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
+      this: HTMLElement,
+    ): number {
+      return this.classList.contains('abyss-project-tasks-content') ? 600 : 800;
+    });
+    const { panel, root } = mountScaleProject({ forceOpen: true });
+    try {
+      click(root.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!);
+      expect(root.querySelector('.abyss-timeline')?.classList).toContain('is-agenda');
+      expect(root.querySelector('.abyss-timeline-axis')).toBeNull();
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('tears down the real Task owner before Work Notes without installing a local inspector listener', () => {
     const geometry = installMeasuredProjectScrollGeometry();
     const addListener = vi.spyOn(activeDocument, 'addEventListener');
