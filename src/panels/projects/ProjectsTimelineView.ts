@@ -53,6 +53,8 @@ const TIMELINE_FALLBACK_VISIBLE_ROWS = 12;
 const TIMELINE_OVERSCAN = 5;
 const TIMELINE_DIAGNOSTIC_ROW_EXTENT = 32;
 const TIMELINE_DIAGNOSTIC_VISIBLE_ROWS = 7;
+/** Hard DOM ceiling for the live horizontal civil-date marker window at every scope and scale. */
+export const TIMELINE_MARKER_DOM_CAP = 120;
 
 export type TimelineEntry<T> = TimelineProjection<T>;
 
@@ -211,13 +213,30 @@ function continuousDates(from: string, to: string): readonly string[] {
   );
 }
 
-function presentationDates(dates: readonly string[]): readonly string[] {
-  const maximumLabels = 8;
-  if (dates.length <= maximumLabels) return dates;
-  return Array.from(
-    { length: maximumLabels },
-    (_, index) => dates[Math.round(((dates.length - 1) * index) / (maximumLabels - 1))]!,
-  );
+function cappedTimelineDates(
+  dates: readonly string[],
+  cap: number,
+  pinned: readonly (string | undefined)[] = [],
+): readonly string[] {
+  if (dates.length <= cap) return dates;
+  const first = dates[0]!;
+  const last = dates[dates.length - 1]!;
+  const selected = new Set<string>();
+  const add = (date: string | undefined): void => {
+    if (date && selected.size < cap && date >= first && date <= last) selected.add(date);
+  };
+  add(first);
+  add(last);
+  for (const date of pinned) add(date);
+  const remaining = Math.max(0, cap - selected.size);
+  for (let index = 0; index < remaining; index += 1) {
+    const sampleIndex =
+      remaining === 1
+        ? Math.floor((dates.length - 1) / 2)
+        : Math.round(((dates.length - 1) * index) / (remaining - 1));
+    add(dates[sampleIndex]);
+  }
+  return [...selected].sort((left, right) => left.localeCompare(right));
 }
 
 function inferredDateWindow<T>(
@@ -808,7 +827,14 @@ export function renderTimeline<T>(
       );
       const from = window && fromDate < window.from ? window.from : fromDate;
       const to = window && toDate > window.to ? window.to : toDate;
-      const markerDates = continuousDates(from, to);
+      const activeDate = timelineDateAtX(
+        viewport,
+        Math.max(0, Math.min(plotWidth, visibleStart + visibleWidth / 2)),
+      );
+      const markerDates = cappedTimelineDates(continuousDates(from, to), TIMELINE_MARKER_DOM_CAP, [
+        activeDate,
+        session?.focalDate ?? undefined,
+      ]);
       axisCoordinates.empty();
       axisLabels.empty();
       for (const date of markerDates) {
@@ -817,8 +843,14 @@ export function renderTimeline<T>(
         });
         marker.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
       }
-      for (const date of presentationDates(markerDates)) {
-        const label = axisLabels.createSpan({ text: date.slice(5) });
+      for (const date of cappedTimelineDates(markerDates, 8, [
+        activeDate,
+        session?.focalDate ?? undefined,
+      ])) {
+        const label = axisLabels.createSpan({
+          text: date.slice(5),
+          attr: { 'data-timeline-axis-label-date': date },
+        });
         label.style.insetInlineStart = `${String(civilDateToX(viewport, date))}px`;
       }
     };
@@ -1225,6 +1257,7 @@ export function renderTimeline<T>(
     else centerOn(session?.focalDate ?? midpoint);
     if (isAgenda) axis.remove();
     rememberViewport();
+    renderedScrollTop = scroll.scrollTop;
 
     const onScaleChange = (): void => {
       if (!isTimelineScale(scope, scaleSelect.value)) return;

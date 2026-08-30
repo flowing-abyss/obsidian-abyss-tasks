@@ -7,6 +7,7 @@ import {
   renderTasksTimeline,
   renderTimeline,
   renderWorkNotesTimeline,
+  TIMELINE_MARKER_DOM_CAP,
   type TimelineEntry,
 } from '../src/panels/projects/ProjectsTimelineView';
 import type { LogicalViewportSession } from '../src/panels/projects/ProjectWorkspaceSession';
@@ -419,7 +420,7 @@ describe('shared Timeline view', () => {
         container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
         (marker) => marker.dataset.timelineDateCoordinate,
       );
-      expect(coordinates.length).toBeLessThanOrEqual(120);
+      expect(coordinates.length).toBeLessThanOrEqual(TIMELINE_MARKER_DOM_CAP);
       expect(coordinates).toContain('2026-08-30');
       expect(coordinates).not.toContain(itemDate);
       expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
@@ -455,7 +456,7 @@ describe('shared Timeline view', () => {
         container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
         (marker) => marker.dataset.timelineDateCoordinate,
       );
-      expect(localCoordinates.length).toBeLessThanOrEqual(120);
+      expect(localCoordinates.length).toBeLessThanOrEqual(TIMELINE_MARKER_DOM_CAP);
       expect(localCoordinates).toContain(itemDate);
       expect(
         Array.from(
@@ -465,6 +466,67 @@ describe('shared Timeline view', () => {
       expect(
         container.querySelector('[data-timeline-key="task:Distant"][data-timeline-point]'),
       ).toBe(distantPoint);
+    },
+  );
+
+  it.each(
+    (
+      [
+        ['portfolio', 'week'],
+        ['portfolio', 'month'],
+        ['portfolio', 'quarter'],
+        ['portfolio', 'year'],
+        ['tasks', 'day'],
+        ['tasks', 'week'],
+        ['tasks', 'month'],
+        ['workNotes', 'day'],
+        ['workNotes', 'week'],
+        ['workNotes', 'month'],
+        ['workNotes', 'quarter'],
+        ['workNotes', 'year'],
+      ] as const
+    ).flatMap(([scope, scale]) =>
+      ([600, 1200] as const).map((width) => [scope, scale, width] as const),
+    ),
+  )(
+    'caps %s %s coordinate markers at %ipx while retaining the active date',
+    (scope, scale, width) => {
+      const container = freshContainer();
+      renderTimeline(container, {
+        entries: [point('Active date', '2026-08-30')],
+        dateWindow: { from: '1926-01-02', to: '2026-08-30' },
+        scope,
+        scale,
+      });
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
+      const pointControl = container.querySelector<HTMLElement>('[data-timeline-point="due"]')!;
+      const plotWidth = Number.parseFloat(
+        canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
+      );
+      const pointX = Number.parseFloat(pointControl.style.insetInlineStart);
+      Object.defineProperties(scroll, {
+        clientWidth: { configurable: true, value: width },
+        scrollWidth: { configurable: true, value: plotWidth + 240 },
+      });
+      scroll.scrollLeft = Math.max(0, 240 + pointX - (width - 240) / 2);
+      scroll.dispatchEvent(new Event('scroll'));
+
+      const coordinates = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-timeline-date-coordinate]'),
+        (marker) => marker.dataset.timelineDateCoordinate,
+      );
+      expect(coordinates.length).toBeLessThanOrEqual(TIMELINE_MARKER_DOM_CAP);
+      expect(coordinates).toContain('2026-08-30');
+      expect(
+        Array.from(
+          container.querySelectorAll<HTMLElement>('[data-timeline-axis-label-date]'),
+          (label) => label.dataset.timelineAxisLabelDate,
+        ),
+      ).toContain('2026-08-30');
+      expect(plotWidth).toBeGreaterThan(70_000);
+      expect(pointX).toBeGreaterThan(0);
+      expect(pointX).toBeLessThan(plotWidth);
     },
   );
 
@@ -957,6 +1019,47 @@ describe('shared Timeline view', () => {
     } finally {
       if (original) Object.defineProperty(HTMLElement.prototype, 'scrollTop', original);
       else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollTop;
+    }
+  });
+
+  it('keeps a deep restored row and control mounted on the first horizontal-only scroll', () => {
+    const entries = Array.from({ length: 80 }, (_, index) => point(String(index)));
+    const session: LogicalViewportSession = {
+      firstKey: 'task:40',
+      firstIndex: 40,
+      focusedKey: 'task:42',
+      restoreFocus: true,
+    };
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      renderTimeline(container, { entries, session, onSetDate: () => ({ type: 'ok' }) });
+      const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
+      const restoredRow = container.querySelector<HTMLElement>(
+        '.abyss-timeline-row[data-timeline-key="task:42"]',
+      )!;
+      const restoredControl = restoredRow.querySelector<HTMLElement>('[data-timeline-primary]')!;
+      Object.defineProperties(scroll, {
+        clientHeight: { configurable: true, value: 4 * 72 },
+        clientWidth: { configurable: true, value: 600 },
+        scrollWidth: { configurable: true, value: 2_000 },
+      });
+
+      scroll.scrollLeft = 120;
+      scroll.dispatchEvent(new Event('scroll'));
+
+      expect(container.querySelector('.abyss-timeline-row[data-timeline-key="task:42"]')).toBe(
+        restoredRow,
+      );
+      expect(
+        container.querySelector(
+          '.abyss-timeline-row[data-timeline-key="task:42"] [data-timeline-primary]',
+        ),
+      ).toBe(restoredControl);
+      expect(container.ownerDocument.activeElement).toBe(restoredControl);
+      expect(session.firstIndex).toBe(40);
+    } finally {
+      container.remove();
     }
   });
 
