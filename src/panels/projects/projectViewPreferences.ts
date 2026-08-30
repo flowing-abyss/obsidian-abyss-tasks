@@ -5,16 +5,24 @@ import {
   resetBoardPreference,
   type BoardViewPreference,
 } from './boardPreferences';
+import {
+  DEFAULT_TIMELINE_IDENTITY_WIDTH,
+  reconcileTimelinePreference,
+  TIMELINE_IDENTITY_WIDTH_MAX,
+  TIMELINE_IDENTITY_WIDTH_MIN,
+  type PortfolioTimelineScale,
+  type TaskTimelineScale,
+  type WorkNoteTimelineScale,
+} from './timelinePreferences';
 
 export type { BoardViewPreference as ProjectBoardPreference } from './boardPreferences';
 
-export const PROJECT_IDENTITY_WIDTH_MIN = 160;
-export const PROJECT_IDENTITY_WIDTH_MAX = 360;
-export const DEFAULT_PROJECT_IDENTITY_WIDTH = 240;
+export const PROJECT_IDENTITY_WIDTH_MIN = TIMELINE_IDENTITY_WIDTH_MIN;
+export const PROJECT_IDENTITY_WIDTH_MAX = TIMELINE_IDENTITY_WIDTH_MAX;
+export const DEFAULT_PROJECT_IDENTITY_WIDTH = DEFAULT_TIMELINE_IDENTITY_WIDTH;
 
-export type PortfolioTimelineScale = 'week' | 'month' | 'quarter' | 'year';
-export type TaskTimelineScale = 'day' | 'week' | 'month';
-export type WorkNotesDateRange = 'day' | 'week' | 'month' | 'quarter' | 'year';
+export type { PortfolioTimelineScale, TaskTimelineScale } from './timelinePreferences';
+export type WorkNotesDateRange = WorkNoteTimelineScale;
 
 export interface ProjectTimelinePreferences {
   readonly version: 1;
@@ -39,8 +47,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
 }
 
 export function clampProjectIdentityWidth(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_PROJECT_IDENTITY_WIDTH;
-  return Math.max(PROJECT_IDENTITY_WIDTH_MIN, Math.min(PROJECT_IDENTITY_WIDTH_MAX, value));
+  return reconcileTimelinePreference('portfolio', { identityWidth: value }).identityWidth;
 }
 
 export function buildProjectBoardPreference(
@@ -85,48 +92,31 @@ export function migrateProjectBoardPreference(
   return migrateBoardPreference(value, configuredStatusIds);
 }
 
-function isPortfolioTimelineScale(value: unknown): value is PortfolioTimelineScale {
-  return value === 'week' || value === 'month' || value === 'quarter' || value === 'year';
-}
-
-function isTaskTimelineScale(value: unknown): value is TaskTimelineScale {
-  return value === 'day' || value === 'week' || value === 'month';
-}
-
-function isWorkNotesDateRange(value: unknown): value is WorkNotesDateRange {
-  return (
-    value === 'day' ||
-    value === 'week' ||
-    value === 'month' ||
-    value === 'quarter' ||
-    value === 'year'
-  );
-}
-
 /** Migrates independently-scoped timeline preferences without accepting another scope's scale. */
 export function migrateProjectTimelinePreferences(value: unknown): ProjectTimelinePreferences {
-  const defaults = buildProjectTimelinePreferences();
   const candidate = record(value);
   const portfolio = record(candidate?.['portfolio']);
   const tasks = record(candidate?.['tasks']);
   const workNotes = record(candidate?.['workNotes']);
+  const portfolioPreference = reconcileTimelinePreference('portfolio', portfolio);
+  const taskPreference = reconcileTimelinePreference('tasks', tasks);
+  const workNotePreference = reconcileTimelinePreference('workNotes', {
+    scale: workNotes?.['dateRange'],
+    identityWidth: workNotes?.['identityWidth'],
+  });
   return {
     version: 1,
     portfolio: {
-      scale: isPortfolioTimelineScale(portfolio?.['scale'])
-        ? portfolio['scale']
-        : defaults.portfolio.scale,
-      identityWidth: clampProjectIdentityWidth(portfolio?.['identityWidth']),
+      scale: portfolioPreference.scale,
+      identityWidth: portfolioPreference.identityWidth,
     },
     tasks: {
-      scale: isTaskTimelineScale(tasks?.['scale']) ? tasks['scale'] : defaults.tasks.scale,
-      identityWidth: clampProjectIdentityWidth(tasks?.['identityWidth']),
+      scale: taskPreference.scale,
+      identityWidth: taskPreference.identityWidth,
     },
     workNotes: {
-      dateRange: isWorkNotesDateRange(workNotes?.['dateRange'])
-        ? workNotes['dateRange']
-        : defaults.workNotes.dateRange,
-      identityWidth: clampProjectIdentityWidth(workNotes?.['identityWidth']),
+      dateRange: workNotePreference.scale,
+      identityWidth: workNotePreference.identityWidth,
     },
   };
 }

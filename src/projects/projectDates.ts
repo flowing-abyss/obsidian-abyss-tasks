@@ -89,3 +89,32 @@ export function projectDateOnLocalDate(
   if (observed.precision === 'date') return parsedDate;
   return parseProjectDate(`${date}${observed.raw.slice(10)}`);
 }
+
+/** Adds whole Gregorian calendar days to a validated YYYY-MM-DD value. */
+export function addCivilDays(date: string, delta: number): string | undefined {
+  const local = LOCAL_DATE_RE.exec(date);
+  if (!local || !Number.isInteger(delta)) return undefined;
+  const year = Number(local[1]);
+  const month = Number(local[2]);
+  const day = Number(local[3]);
+  if (!validDate(year, month, day)) return undefined;
+  if (delta === 0) return date;
+
+  const shifted = new Date(0);
+  shifted.setUTCHours(0, 0, 0, 0);
+  shifted.setUTCFullYear(year, month - 1, day + delta);
+  const shiftedYear = shifted.getUTCFullYear();
+  if (!Number.isFinite(shifted.getTime()) || shiftedYear < 0 || shiftedYear > 9999)
+    return undefined;
+  return `${String(shiftedYear).padStart(4, '0')}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function moveProjectDateByCivilDays(
+  observed: ProjectDateValue,
+  delta: number,
+): ProjectDateValue | undefined {
+  if (!Number.isInteger(delta)) return undefined;
+  if (delta === 0) return observed;
+  const date = addCivilDays(observed.raw.slice(0, 10), delta);
+  return date === undefined ? undefined : projectDateOnLocalDate(observed, date);
+}

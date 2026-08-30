@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addCivilDays,
+  moveProjectDateByCivilDays,
   parseProjectDate,
   parseProjectRange,
   projectDateOnLocalDate,
@@ -93,5 +95,20 @@ describe('projectDateOnLocalDate', () => {
       precision: 'date',
     });
     expect(projectDateOnLocalDate(observed, '2026-09-31')).toBeUndefined();
+  });
+});
+
+describe('civil-day movement', () => {
+  it('uses Gregorian calendar boundaries instead of local elapsed milliseconds', () => {
+    expect(addCivilDays('2024-02-28', 1)).toBe('2024-02-29');
+    expect(addCivilDays('2024-02-29', 1)).toBe('2024-03-01');
+    expect(addCivilDays('2026-01-01', -1)).toBe('2025-12-31');
+  });
+
+  it('keeps date precision and the complete Atom suffix when moving an endpoint', () => {
+    expect(moveProjectDateByCivilDays(parseProjectDate('2026-03-07')!, 1)?.raw).toBe('2026-03-08');
+    expect(
+      moveProjectDateByCivilDays(parseProjectDate('2026-11-01T01:30:00.123456-04:00')!, 1)?.raw,
+    ).toBe('2026-11-02T01:30:00.123456-04:00');
   });
 });
