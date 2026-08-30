@@ -12,8 +12,6 @@ import {
 import {
   DEFAULT_TIMELINE_IDENTITY_WIDTH,
   reconcileTimelinePreference,
-  type TimelineScale,
-  type TimelineScope,
 } from '../src/panels/projects/timelinePreferences';
 import {
   addCivilDays,
@@ -41,18 +39,17 @@ const invalidPortfolioDayViewport: TimelineViewport = {
 };
 void invalidPortfolioDayViewport;
 
-function expectFocalDatePreserved<S extends TimelineScope>(
-  initial: TimelineViewport<S>,
-  scales: readonly TimelineScale<S>[],
-): void {
-  let viewport = initial;
-  for (const [index, scale] of scales.entries()) {
-    const viewportWidth = 640 + index * 137;
-    viewport = reframeTimelineViewport(viewport, { scale, viewportWidth });
-    expect(viewport.focalDate).toBe('2028-02-29');
-    expect(civilDateToX(viewport, '2028-02-29')).toBe(viewportWidth / 2);
-    expect(timelineDateAtX(viewport, viewportWidth / 2)).toBe('2028-02-29');
-  }
+function reframeUnknownScope(viewport: TimelineViewport): void {
+  // @ts-expect-error A union viewport must be narrowed before changing its scale.
+  reframeTimelineViewport(viewport, { scale: 'year' });
+  reframeTimelineViewport(viewport, { viewportWidth: 320 });
+}
+void reframeUnknownScope;
+
+function expectFocalDateAtCenter(viewport: TimelineViewport, viewportWidth: number): void {
+  expect(viewport.focalDate).toBe('2028-02-29');
+  expect(civilDateToX(viewport, '2028-02-29')).toBe(viewportWidth / 2);
+  expect(timelineDateAtX(viewport, viewportWidth / 2)).toBe('2028-02-29');
 }
 
 describe('timeline preference reconciliation', () => {
@@ -129,33 +126,41 @@ describe('continuous timeline viewport', () => {
   });
 
   it('preserves each scope focal date across every supported scale and width', () => {
-    expectFocalDatePreserved(
-      createTimelineViewport({
-        scope: 'portfolio',
-        scale: 'week',
-        focalDate: '2028-02-29',
-        viewportWidth: 641,
-      }),
-      ['week', 'month', 'quarter', 'year'],
-    );
-    expectFocalDatePreserved(
-      createTimelineViewport({
-        scope: 'tasks',
-        scale: 'day',
-        focalDate: '2028-02-29',
-        viewportWidth: 641,
-      }),
-      ['day', 'week', 'month'],
-    );
-    expectFocalDatePreserved(
-      createTimelineViewport({
-        scope: 'workNotes',
-        scale: 'day',
-        focalDate: '2028-02-29',
-        viewportWidth: 641,
-      }),
-      ['day', 'week', 'month', 'quarter', 'year'],
-    );
+    let portfolio = createTimelineViewport({
+      scope: 'portfolio',
+      scale: 'week',
+      focalDate: '2028-02-29',
+      viewportWidth: 641,
+    });
+    for (const [index, scale] of (['week', 'month', 'quarter', 'year'] as const).entries()) {
+      const viewportWidth = 640 + index * 137;
+      portfolio = reframeTimelineViewport(portfolio, { scale, viewportWidth });
+      expectFocalDateAtCenter(portfolio, viewportWidth);
+    }
+
+    let tasks = createTimelineViewport({
+      scope: 'tasks',
+      scale: 'day',
+      focalDate: '2028-02-29',
+      viewportWidth: 641,
+    });
+    for (const [index, scale] of (['day', 'week', 'month'] as const).entries()) {
+      const viewportWidth = 640 + index * 137;
+      tasks = reframeTimelineViewport(tasks, { scale, viewportWidth });
+      expectFocalDateAtCenter(tasks, viewportWidth);
+    }
+
+    let workNotes = createTimelineViewport({
+      scope: 'workNotes',
+      scale: 'day',
+      focalDate: '2028-02-29',
+      viewportWidth: 641,
+    });
+    for (const [index, scale] of (['day', 'week', 'month', 'quarter', 'year'] as const).entries()) {
+      const viewportWidth = 640 + index * 137;
+      workNotes = reframeTimelineViewport(workNotes, { scale, viewportWidth });
+      expectFocalDateAtCenter(workNotes, viewportWidth);
+    }
   });
 
   it('centers an injected Today without consulting ambient time', () => {

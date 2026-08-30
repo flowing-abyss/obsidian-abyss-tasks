@@ -1,5 +1,12 @@
 import { addCivilDays, parseProjectDate } from '../../projects/projectDates';
-import { isTimelineScale, type TimelineScale, type TimelineScope } from './timelinePreferences';
+import {
+  isTimelineScale,
+  type PortfolioTimelineScale,
+  type TaskTimelineScale,
+  type TimelineScale,
+  type TimelineScope,
+  type WorkNoteTimelineScale,
+} from './timelinePreferences';
 
 const MILLIS_PER_CIVIL_DAY = 86_400_000;
 const FIRST_SUPPORTED_CIVIL_DATE = '0000-01-01';
@@ -166,19 +173,67 @@ export function timelineVisibleWindow(viewport: TimelineViewport): {
   return { start, end, dates };
 }
 
-export function reframeTimelineViewport<S extends TimelineScope>(
-  viewport: TimelineViewport<S>,
-  changes: { readonly scale?: TimelineScale<NoInfer<S>>; readonly viewportWidth?: number },
-): TimelineViewport<S> {
+interface TimelineResizeChanges {
+  readonly scale?: never;
+  readonly viewportWidth?: number;
+}
+
+interface TimelineReframeChanges<S extends TimelineScope> {
+  readonly scale?: TimelineScale<S>;
+  readonly viewportWidth?: number;
+}
+
+export function reframeTimelineViewport<V extends TimelineViewport>(
+  viewport: V,
+  changes: TimelineResizeChanges,
+): V;
+export function reframeTimelineViewport(
+  viewport: TimelineViewport<'portfolio'>,
+  changes: TimelineReframeChanges<'portfolio'>,
+): TimelineViewport<'portfolio'>;
+export function reframeTimelineViewport(
+  viewport: TimelineViewport<'tasks'>,
+  changes: TimelineReframeChanges<'tasks'>,
+): TimelineViewport<'tasks'>;
+export function reframeTimelineViewport(
+  viewport: TimelineViewport<'workNotes'>,
+  changes: TimelineReframeChanges<'workNotes'>,
+): TimelineViewport<'workNotes'>;
+export function reframeTimelineViewport(
+  viewport: TimelineViewport,
+  changes: {
+    readonly scale?: PortfolioTimelineScale | TaskTimelineScale | WorkNoteTimelineScale;
+    readonly viewportWidth?: number;
+  },
+): TimelineViewport {
   const scale = changes.scale ?? viewport.scale;
   const viewportWidth = requireViewportWidth(changes.viewportWidth ?? viewport.viewportWidth);
-  return {
-    scope: viewport.scope,
-    scale,
-    focalDate: viewport.focalDate,
-    viewportWidth,
-    pixelsPerDay: timelinePixelsPerDay(viewport.scope, scale),
-  } as TimelineViewport<S>;
+  switch (viewport.scope) {
+    case 'portfolio':
+      if (!isTimelineScale('portfolio', scale)) throw new RangeError('Invalid portfolio scale');
+      return createTimelineViewport({
+        scope: 'portfolio',
+        scale,
+        focalDate: viewport.focalDate,
+        viewportWidth,
+      });
+    case 'tasks':
+      if (!isTimelineScale('tasks', scale)) throw new RangeError('Invalid Task scale');
+      return createTimelineViewport({
+        scope: 'tasks',
+        scale,
+        focalDate: viewport.focalDate,
+        viewportWidth,
+      });
+    case 'workNotes':
+      if (!isTimelineScale('workNotes', scale)) throw new RangeError('Invalid Work Note scale');
+      return createTimelineViewport({
+        scope: 'workNotes',
+        scale,
+        focalDate: viewport.focalDate,
+        viewportWidth,
+      });
+  }
 }
 
 export function todayCenteredTimelineViewport<S extends TimelineScope>(
