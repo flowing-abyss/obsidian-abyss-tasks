@@ -226,6 +226,19 @@ describe('Panel shell top rhythm', () => {
 });
 
 describe('Portfolio Board density contract', () => {
+  it('bounds high-volume Board columns inside the available Projects workspace height', () => {
+    const host = declarationsFor('.abyss-projects-board-host');
+    const scroll = declarationsFor('.abyss-board-column-scroll');
+
+    expect(host).toContain('display: flex');
+    expect(host).toContain('flex: 1');
+    expect(host).toContain('min-height: 0');
+    expect(host).toContain('overflow: hidden');
+    expect(scroll).toContain('flex: 1');
+    expect(scroll).toContain('min-height: 0');
+    expect(scroll).toContain('overflow-y: auto');
+  });
+
   it('owns one horizontal scroller with readable expanded columns and fixed rails', () => {
     const columns = declarationsFor('.abyss-board-columns');
     const expanded = declarationsFor('.abyss-board-column');
@@ -339,6 +352,10 @@ describe('Projects hardening styles', () => {
     expect(coarse).toContain('opacity: 1');
     expect(coarse).toContain('min-block-size: 44px');
     expect(coarse).toContain('min-inline-size: 44px');
+    expect(coarse).toContain('inset-inline-end: 54px');
+    expect(
+      declarationsInAtRule('@media (hover: none), (pointer: coarse)', '.abyss-project-row'),
+    ).toContain('padding-inline-end: 96px');
     const desktop = declarationsFor('.abyss-board-status-menu');
     expect(desktop).toContain('block-size: 26px');
     expect(desktop).toContain('inline-size: 26px');
@@ -355,6 +372,15 @@ describe('Projects hardening styles', () => {
     expect(declarationsInAtRule(compactBoard, '.abyss-board-column.is-active')).toContain(
       'display: flex',
     );
+    expect(declarationsInAtRule(compactBoard, '.abyss-board-column.is-active')).toContain(
+      'inline-size: 100%',
+    );
+    expect(declarationsFor('.abyss-board-column-tab.is-board-active-destination')).toContain(
+      'outline: 2px solid var(--interactive-accent)',
+    );
+    const tabGap = declarationsFor('.abyss-board-tab-landing-gap');
+    expect(tabGap).toContain('position: absolute');
+    expect(tabGap).toContain('background: currentColor');
   });
 
   it('resets compact Project identity button chrome and exposes existing row actions on coarse pointers', () => {

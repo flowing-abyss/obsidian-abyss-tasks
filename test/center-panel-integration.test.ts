@@ -3944,6 +3944,8 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
   )(
     'keeps the concrete CenterPanel $view subtask occurrence available on $label under a blocked root',
     async ({ activation, view }) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-08-28T12:00:00Z'));
       const baseRoot = task({
         title: 'Blocked root',
         dependency: { dependsOn: ['prep'] },
@@ -4026,6 +4028,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       const marker = el.querySelector<HTMLElement>('.abyss-status-marker')!;
       expect(marker).not.toBeNull();
       expect(marker.hasAttribute('aria-disabled')).toBe(false);
+      vi.useRealTimers();
       marker.dispatchEvent(
         activation === 'click'
           ? new MouseEvent('click', { bubbles: true, cancelable: true })

@@ -82,12 +82,16 @@ export interface BoardViewOptions<T> {
   readonly columnPreferences?: {
     readonly value: BoardViewPreference;
     readonly onChange: (next: BoardViewPreference) => void | Promise<void>;
+    /** Canonical Settings order, independent of a persisted presentation override. */
+    readonly configuredColumnIds?: readonly string[];
     readonly terminalLeftIds: readonly string[];
     readonly terminalRightIds: readonly string[];
   };
   /** Opts only the Portfolio renderer into Task 5's pointer/keyboard interaction adapter. */
   readonly interactionController?: boolean;
   readonly itemLabel?: (item: T) => string;
+  /** Canonical cross-column order used for landing and temporary post-move projection. */
+  readonly canonicalItems?: readonly T[];
   readonly announce?: (message: string) => void;
 }
 
@@ -182,9 +186,9 @@ export function renderBoard<T>(
   container.addClass('abyss-board');
   const boardId = `abyss-board-${String(++nextBoardId)}`;
   const overrides = new Map<string, string>();
-  const configuredColumnIds = options.columns
-    .filter(({ role }) => role !== 'unmapped')
-    .map(({ key }) => key);
+  const configuredColumnIds =
+    options.columnPreferences?.configuredColumnIds ??
+    options.columns.filter(({ role }) => role !== 'unmapped').map(({ key }) => key);
   const preferenceRoles = options.columnPreferences
     ? {
         terminalLeftIds: options.columnPreferences.terminalLeftIds,
@@ -212,22 +216,48 @@ export function renderBoard<T>(
         ]),
       ],
     };
-    void options.columnPreferences?.onChange(columnPreference);
+    if (options.mutationEnabled !== false) {
+      void options.columnPreferences?.onChange(columnPreference);
+    }
   } else if (
     columnPreference &&
     JSON.stringify(columnPreference) !== JSON.stringify(options.columnPreferences?.value)
   ) {
-    void options.columnPreferences?.onChange(columnPreference);
+    if (options.mutationEnabled !== false) {
+      void options.columnPreferences?.onChange(columnPreference);
+    }
   }
+  const presentationColumns = (): readonly BoardColumn<T>[] => {
+    if (!columnPreference) return options.columns;
+    const columnsByKey = new Map(options.columns.map((column) => [column.key, column]));
+    const ordered = columnPreference.columnOrder.flatMap((key) => {
+      const column = columnsByKey.get(key);
+      return column && column.role !== 'unmapped' ? [column] : [];
+    });
+    const orderedKeys = new Set(ordered.map(({ key }) => key));
+    ordered.push(
+      ...options.columns.filter(({ key, role }) => role !== 'unmapped' && !orderedKeys.has(key)),
+    );
+    const unmapped = options.columns.filter(({ role }) => role === 'unmapped');
+    const terminalRightIndex = ordered.findIndex(({ role }) => role === 'terminal-right');
+    if (terminalRightIndex < 0) return [...ordered, ...unmapped];
+    return [
+      ...ordered.slice(0, terminalRightIndex),
+      ...unmapped,
+      ...ordered.slice(terminalRightIndex),
+    ];
+  };
   let dragging: { readonly item: T; readonly initiator: HTMLElement } | null = null;
+  const selectableColumns = (): readonly BoardColumn<T>[] => {
+    const hidden = new Set(columnPreference?.hiddenColumnIds ?? []);
+    return presentationColumns().filter(
+      (column) => options.visibleColumnKeys?.has(column.key) !== false && !hidden.has(column.key),
+    );
+  };
   const selectedFromSession = options.session?.selectedColumnKey;
   let selectedColumnKey =
-    options.columns.find(
-      (column) =>
-        column.key === selectedFromSession && options.visibleColumnKeys?.has(column.key) !== false,
-    )?.key ??
-    options.columns.find((column) => options.visibleColumnKeys?.has(column.key) !== false)?.key ??
-    options.columns[0]?.key ??
+    selectableColumns().find((column) => column.key === selectedFromSession)?.key ??
+    selectableColumns()[0]?.key ??
     '';
   if (options.session) options.session.selectedColumnKey = selectedColumnKey;
   let destroyed = false;
@@ -246,8 +276,53 @@ export function renderBoard<T>(
   let interactionProjection: BoardRenderProjection<string, string> | undefined;
   let pointerOwner: HTMLElement | null = null;
   let interactionController: BoardInteractionController<string, string, UndoAuthority> | undefined;
+  let activePointerId: number | undefined;
+  let lastPointerPoint: { x: number; y: number } | undefined;
+  let autoscrollDirection = 0;
+  let autoscrollSpeed = 0;
+  let autoscrollFrame: number | undefined;
+  const ownerWindow = container.ownerDocument.defaultView;
+
+  const stopAutoscroll = (): void => {
+    autoscrollDirection = 0;
+    autoscrollSpeed = 0;
+    if (autoscrollFrame !== undefined) ownerWindow?.cancelAnimationFrame(autoscrollFrame);
+    autoscrollFrame = undefined;
+  };
+
+  const stopAutoscrollWhenHidden = (): void => {
+    if (container.ownerDocument.visibilityState === 'hidden') stopAutoscroll();
+  };
+  container.ownerDocument.addEventListener('visibilitychange', stopAutoscrollWhenHidden);
+
+  const scheduleAutoscroll = (): void => {
+    if (autoscrollFrame !== undefined || autoscrollDirection === 0 || !ownerWindow) return;
+    autoscrollFrame = ownerWindow.requestAnimationFrame(() => {
+      autoscrollFrame = undefined;
+      if (destroyed || autoscrollDirection === 0) return;
+      const scroller = container.querySelector<HTMLElement>('.abyss-board-columns');
+      if (!scroller) {
+        stopAutoscroll();
+        return;
+      }
+      const before = scroller.scrollLeft;
+      scroller.scrollLeft += autoscrollDirection * autoscrollSpeed;
+      if (scroller.scrollLeft === before) {
+        stopAutoscroll();
+        return;
+      }
+      if (activePointerId !== undefined && lastPointerPoint) {
+        interactionController?.pointerMove({
+          pointerId: activePointerId,
+          point: lastPointerPoint,
+        });
+      }
+      scheduleAutoscroll();
+    });
+  };
 
   const updateColumnPreference = (next: BoardViewPreference): void => {
+    if (options.mutationEnabled === false) return;
     columnPreference = { ...next, terminalDefaultsApplied: true };
     void options.columnPreferences?.onChange(columnPreference);
     render();
@@ -286,6 +361,11 @@ export function renderBoard<T>(
     showMenuAtMouseEventWithFocus(menu, event);
   };
 
+  const canonicalRank =
+    options.canonicalItems === undefined
+      ? undefined
+      : new Map(options.canonicalItems.map((item, index) => [options.itemKey(item), index]));
+
   const projectedItems = (column: BoardColumn<T>): readonly T[] => {
     const retained = column.items.filter((item) => {
       const target = overrides.get(options.itemKey(item));
@@ -295,12 +375,19 @@ export function renderBoard<T>(
       source.items.filter((item) => overrides.get(options.itemKey(item)) === column.key),
     );
     const seen = new Set<string>();
-    return [...retained, ...moved].filter((item) => {
+    const projected = [...retained, ...moved].filter((item) => {
       const key = options.itemKey(item);
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+    return canonicalRank
+      ? projected.sort(
+          (left, right) =>
+            (canonicalRank.get(options.itemKey(left)) ?? Number.MAX_SAFE_INTEGER) -
+            (canonicalRank.get(options.itemKey(right)) ?? Number.MAX_SAFE_INTEGER),
+        )
+      : projected;
   };
 
   const itemByKey = (key: string): T | undefined =>
@@ -323,6 +410,86 @@ export function renderBoard<T>(
     return undefined;
   };
 
+  const boardColumnElement = (columnId: string): HTMLElement | undefined =>
+    Array.from(container.querySelectorAll<HTMLElement>('[data-board-column]')).find(
+      ({ dataset }) => dataset['boardColumn'] === columnId,
+    );
+
+  const compactDestinationTab = (
+    columnId: string,
+    column: HTMLElement | undefined,
+  ): HTMLElement | undefined => {
+    const tab = Array.from(container.querySelectorAll<HTMLElement>('[data-board-column-tab]')).find(
+      ({ dataset }) => dataset['boardColumnTab'] === columnId,
+    );
+    const rect = column?.getBoundingClientRect();
+    return tab && (!rect || rect.width === 0 || rect.height === 0) ? tab : undefined;
+  };
+
+  const renderActiveDestination = (projection: BoardRenderProjection<string, string>): void => {
+    const destination = projection.activeDestination;
+    if (!destination || destination.kind === 'hidden-disclosure') return;
+    const column = boardColumnElement(destination.columnId);
+    (compactDestinationTab(destination.columnId, column) ?? column)?.addClass(
+      'is-board-active-destination',
+    );
+  };
+
+  const renderLandingGap = (projection: BoardRenderProjection<string, string>): void => {
+    const landing = projection.landingGap;
+    if (!landing) return;
+    const column = boardColumnElement(landing.columnId);
+    const compactTab = compactDestinationTab(landing.columnId, column);
+    if (compactTab) {
+      compactTab.createSpan({
+        cls: 'abyss-board-tab-landing-gap',
+        attr: { 'data-board-landing-gap': '', 'aria-hidden': 'true' },
+      });
+      return;
+    }
+    const itemsHost = column?.querySelector<HTMLElement>('.abyss-board-items');
+    if (!itemsHost) return;
+    const surfaces = Array.from(
+      itemsHost.querySelectorAll<HTMLElement>('[data-board-item-surface]'),
+    );
+    const before = landing.beforeItemId
+      ? (surfaces.find(({ dataset }) => dataset['boardItemSurface'] === landing.beforeItemId) ??
+        null)
+      : null;
+    const after = landing.afterItemId
+      ? (surfaces.find(({ dataset }) => dataset['boardItemSurface'] === landing.afterItemId) ??
+        null)
+      : null;
+    const landingIsMounted =
+      after !== null ||
+      before !== null ||
+      (landing.beforeItemId === undefined && landing.afterItemId === undefined);
+    if (!landingIsMounted) return;
+    const gap = itemsHost.createDiv({
+      cls: 'abyss-board-landing-gap',
+      attr: { 'data-board-landing-gap': '' },
+    });
+    itemsHost.insertBefore(gap, after ?? before?.nextSibling ?? null);
+  };
+
+  const renderInteractionPreview = (projection: BoardRenderProjection<string, string>): void => {
+    if (!projection.preview || !projection.pickedItemId) return;
+    const item = itemByKey(projection.pickedItemId);
+    const destination = projection.activeDestination;
+    const destinationLabel =
+      destination && destination.kind !== 'hidden-disclosure'
+        ? (options.columns.find(({ key }) => key === destination.columnId)?.label ?? '')
+        : '';
+    const preview = container.createDiv({
+      cls: 'abyss-board-drag-preview',
+      attr: { 'data-board-drag-preview': '', 'aria-hidden': 'true' },
+    });
+    preview.createSpan({ text: item && options.itemLabel ? options.itemLabel(item) : '' });
+    if (destinationLabel) preview.createEl('small', { text: destinationLabel });
+    preview.style.left = `${String(projection.preview.anchor.x)}px`;
+    preview.style.top = `${String(projection.preview.anchor.y)}px`;
+  };
+
   const applyInteractionProjection = (): void => {
     if (!interactionController || !interactionProjection || destroyed) return;
     container.querySelectorAll<HTMLElement>('[data-board-item-surface]').forEach((surface) => {
@@ -330,7 +497,7 @@ export function renderBoard<T>(
       surface.setAttribute('aria-grabbed', 'false');
     });
     container
-      .querySelectorAll<HTMLElement>('[data-board-column]')
+      .querySelectorAll<HTMLElement>('[data-board-column], [data-board-column-tab]')
       .forEach((column) => column.classList.remove('is-board-active-destination'));
     container
       .querySelectorAll(
@@ -338,6 +505,7 @@ export function renderBoard<T>(
       )
       .forEach((el) => el.remove());
     const projection = interactionProjection;
+    if (!projection.accessibility.grabbed || projection.pending) stopAutoscroll();
     if (projection.sourcePlaceholder) {
       const source = Array.from(
         container.querySelectorAll<HTMLElement>('[data-board-item-surface]'),
@@ -345,49 +513,9 @@ export function renderBoard<T>(
       source?.addClass('is-board-source-placeholder');
       source?.setAttribute('aria-grabbed', 'true');
     }
-    if (projection.activeDestination && projection.activeDestination.kind !== 'hidden-disclosure') {
-      const target = Array.from(
-        container.querySelectorAll<HTMLElement>('[data-board-column]'),
-      ).find(
-        ({ dataset }) =>
-          dataset['boardColumn'] ===
-          (projection.activeDestination as { readonly columnId: string }).columnId,
-      );
-      target?.addClass('is-board-active-destination');
-    }
-    if (projection.landingGap) {
-      const target = Array.from(
-        container.querySelectorAll<HTMLElement>('[data-board-column]'),
-      ).find(({ dataset }) => dataset['boardColumn'] === projection.landingGap!.columnId);
-      const itemsHost = target?.querySelector<HTMLElement>('.abyss-board-items');
-      if (itemsHost) {
-        const gap = itemsHost.createDiv({
-          cls: 'abyss-board-landing-gap',
-          attr: { 'data-board-landing-gap': '' },
-        });
-        const children = Array.from(itemsHost.children).filter(
-          (child) =>
-            child !== gap && !(child as HTMLElement).hasAttribute('data-bounded-window-edge'),
-        );
-        itemsHost.insertBefore(gap, children[projection.landingGap.position] ?? null);
-      }
-    }
-    if (projection.preview && projection.pickedItemId) {
-      const item = itemByKey(projection.pickedItemId);
-      const destination = projection.activeDestination;
-      const destinationLabel =
-        destination && destination.kind !== 'hidden-disclosure'
-          ? (options.columns.find(({ key }) => key === destination.columnId)?.label ?? '')
-          : '';
-      const preview = container.createDiv({
-        cls: 'abyss-board-drag-preview',
-        attr: { 'data-board-drag-preview': '', 'aria-hidden': 'true' },
-      });
-      preview.createSpan({ text: item && options.itemLabel ? options.itemLabel(item) : '' });
-      if (destinationLabel) preview.createEl('small', { text: destinationLabel });
-      preview.style.left = `${String(projection.preview.anchor.x)}px`;
-      preview.style.top = `${String(projection.preview.anchor.y)}px`;
-    }
+    renderActiveDestination(projection);
+    renderLandingGap(projection);
+    renderInteractionPreview(projection);
     const exposedHidden = projection.accessibility.dropTargets.filter(
       (
         destination,
@@ -445,15 +573,26 @@ export function renderBoard<T>(
           const hidden = columnPreference?.hiddenColumnIds ?? [];
           const destinations: BoardDestinationGeometry<string>[] = Array.from(
             container.querySelectorAll<HTMLElement>('[data-board-column]'),
-          ).map((column) => ({
-            kind: column.classList.contains('is-column-collapsed')
-              ? ('rail' as const)
-              : ('column' as const),
-            columnId: column.dataset['boardColumn']!,
-            rect: boardRect(column.getBoundingClientRect()),
-            enabled:
-              options.mutationEnabled !== false && column.dataset['boardColumnRole'] !== 'unmapped',
-          }));
+          ).map((column) => {
+            const columnRect = column.getBoundingClientRect();
+            const hasColumnBox = columnRect.width > 0 && columnRect.height > 0;
+            const compactTab = container.querySelector<HTMLElement>(
+              `[data-board-column-tab="${column.dataset['boardColumn']!}"]`,
+            );
+            return {
+              kind:
+                column.classList.contains('is-column-collapsed') || !hasColumnBox
+                  ? ('rail' as const)
+                  : ('column' as const),
+              columnId: column.dataset['boardColumn']!,
+              rect: boardRect(
+                !hasColumnBox && compactTab ? compactTab.getBoundingClientRect() : columnRect,
+              ),
+              enabled:
+                options.mutationEnabled !== false &&
+                column.dataset['boardColumnRole'] !== 'unmapped',
+            };
+          });
           const disclosure = container.querySelector<HTMLElement>('[data-board-hidden-disclosure]');
           if (disclosure) {
             destinations.push({
@@ -502,7 +641,7 @@ export function renderBoard<T>(
           const item = itemByKey(itemId);
           const destination = options.columns.find(({ key }) => key === destinationColumnId);
           if (!item || !destination || destination.role === 'unmapped') return undefined;
-          const canonical = options.columns.flatMap(({ items }) => items);
+          const canonical = options.canonicalItems ?? options.columns.flatMap(({ items }) => items);
           const itemRank = canonical.findIndex(
             (candidate) => options.itemKey(candidate) === itemId,
           );
@@ -585,8 +724,13 @@ export function renderBoard<T>(
       capturePointer: (pointerId) => pointerOwner?.setPointerCapture?.(pointerId),
       releasePointer: (pointerId) => pointerOwner?.releasePointerCapture?.(pointerId),
       requestAutoscroll: ({ direction, speed }) => {
-        const scroller = container.querySelector<HTMLElement>('.abyss-board-columns');
-        if (scroller && direction !== 0) scroller.scrollLeft += direction * speed;
+        if (direction === 0) {
+          stopAutoscroll();
+          return;
+        }
+        autoscrollDirection = direction;
+        autoscrollSpeed = speed;
+        scheduleAutoscroll();
       },
       restoreFocus: (itemId) => {
         Array.from(container.querySelectorAll<HTMLElement>('[data-board-item-focus]'))
@@ -665,6 +809,7 @@ export function renderBoard<T>(
 
   // eslint-disable-next-line sonarjs/cognitive-complexity -- One bounded render pass owns matching tab, column, virtualization, and interaction lifecycles.
   const render = (): void => {
+    stopAutoscroll();
     const focusedTabKey =
       container.ownerDocument.activeElement?.getAttribute('data-board-column-tab');
     for (const cleanup of cleanups.splice(0)) cleanup();
@@ -691,12 +836,15 @@ export function renderBoard<T>(
         },
       });
       setIcon(reset, 'rotate-ccw');
-      reset.addEventListener('click', () =>
+      reset.disabled = options.mutationEnabled === false;
+      reset.setAttribute('aria-disabled', String(reset.disabled));
+      reset.addEventListener('click', () => {
+        if (reset.disabled) return;
         updateColumnPreference({
           ...resetBoardPreference(columnPreference!, configuredColumnIds, preferenceRoles),
           orderOverride: false,
-        }),
-      );
+        });
+      });
     }
     const tabs = container.createDiv({
       cls: 'abyss-board-column-tabs',
@@ -713,9 +861,15 @@ export function renderBoard<T>(
     });
     const hiddenColumnIds = new Set(columnPreference?.hiddenColumnIds ?? []);
     const collapsedColumnIds = new Set(columnPreference?.collapsedColumnIds ?? []);
-    const tabColumns = options.columns.filter(
-      (column) => options.visibleColumnKeys?.has(column.key) !== false,
+    const tabColumns = presentationColumns().filter(
+      (column) =>
+        options.visibleColumnKeys?.has(column.key) !== false && !hiddenColumnIds.has(column.key),
     );
+    const selectionReconciled = !tabColumns.some(({ key }) => key === selectedColumnKey);
+    if (selectionReconciled) {
+      selectedColumnKey = tabColumns[0]?.key ?? '';
+      if (options.session) options.session.selectedColumnKey = selectedColumnKey;
+    }
 
     const setDraggingState = (active: boolean): void => {
       board.classList.toggle('is-drag-active', active);
@@ -732,7 +886,7 @@ export function renderBoard<T>(
         });
     };
 
-    for (const column of options.columns) {
+    for (const column of presentationColumns()) {
       if (hiddenColumnIds.has(column.key)) continue;
       const visible = options.visibleColumnKeys?.has(column.key) !== false;
       const terminal = column.role === 'terminal-left' || column.role === 'terminal-right';
@@ -814,13 +968,16 @@ export function renderBoard<T>(
           },
         });
         setIcon(collapse, presentationCollapsed ? 'panel-left-open' : 'panel-left-close');
-        collapse.addEventListener('click', () =>
+        collapse.disabled = options.mutationEnabled === false;
+        collapse.setAttribute('aria-disabled', String(collapse.disabled));
+        collapse.addEventListener('click', () => {
+          if (collapse.disabled) return;
           updateColumnPreference(
             presentationCollapsed
               ? restoreBoardColumn(columnPreference!, column.key)
               : collapseBoardColumn(columnPreference!, column.key),
-          ),
-        );
+          );
+        });
         if (!terminal) {
           const hide = actions.createEl('button', {
             cls: 'clickable-icon',
@@ -832,9 +989,12 @@ export function renderBoard<T>(
             },
           });
           setIcon(hide, 'eye-off');
-          hide.addEventListener('click', () =>
-            updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
-          );
+          hide.disabled = options.mutationEnabled === false;
+          hide.setAttribute('aria-disabled', String(hide.disabled));
+          hide.addEventListener('click', () => {
+            if (hide.disabled) return;
+            updateColumnPreference(hideBoardColumn(columnPreference!, column.key));
+          });
           const menuButton = actions.createEl('button', {
             cls: 'clickable-icon',
             attr: {
@@ -845,24 +1005,30 @@ export function renderBoard<T>(
             },
           });
           setIcon(menuButton, 'more-horizontal');
+          menuButton.disabled = options.mutationEnabled === false;
+          menuButton.setAttribute('aria-disabled', String(menuButton.disabled));
           menuButton.addEventListener('click', (event) => {
+            if (menuButton.disabled) return;
             const menu = new Menu();
             for (const direction of ['left', 'right'] as const) {
               menu.addItem((item) =>
                 item
                   .setTitle(`Move ${direction}`)
                   .setIcon(direction === 'left' ? 'arrow-left' : 'arrow-right')
+                  .setDisabled(options.mutationEnabled === false)
                   .onClick(() =>
-                    updateColumnPreference({
-                      ...moveBoardColumn(
-                        columnPreference!,
-                        configuredColumnIds,
-                        column.key,
-                        direction,
-                        preferenceRoles,
-                      ),
-                      orderOverride: true,
-                    }),
+                    options.mutationEnabled === false
+                      ? undefined
+                      : updateColumnPreference({
+                          ...moveBoardColumn(
+                            columnPreference!,
+                            configuredColumnIds,
+                            column.key,
+                            direction,
+                            preferenceRoles,
+                          ),
+                          orderOverride: true,
+                        }),
                   ),
               );
             }
@@ -870,8 +1036,11 @@ export function renderBoard<T>(
               item
                 .setTitle('Hide column')
                 .setIcon('eye-off')
+                .setDisabled(options.mutationEnabled === false)
                 .onClick(() =>
-                  updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
+                  options.mutationEnabled === false
+                    ? undefined
+                    : updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
                 ),
             );
             showMenuAtMouseEventWithFocus(menu, event);
@@ -886,7 +1055,10 @@ export function renderBoard<T>(
             },
           });
           setIcon(handle, 'grip-vertical');
+          handle.disabled = options.mutationEnabled === false;
+          handle.setAttribute('aria-disabled', String(handle.disabled));
           handle.addEventListener('keydown', (event) => {
+            if (handle.disabled) return;
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
             event.preventDefault();
             updateColumnPreference({
@@ -1000,6 +1172,8 @@ export function renderBoard<T>(
                 const source = observedPosition(item);
                 if (!source) return;
                 pointerOwner = itemEl;
+                activePointerId = pointerId(event);
+                lastPointerPoint = point(event);
                 interactionController.pointerDown({
                   pointerId: pointerId(event),
                   button: event.button,
@@ -1011,6 +1185,7 @@ export function renderBoard<T>(
                 });
               });
               itemEl.addEventListener('pointermove', (event) => {
+                lastPointerPoint = point(event);
                 interactionController.pointerMove({
                   pointerId: pointerId(event),
                   point: point(event),
@@ -1019,16 +1194,20 @@ export function renderBoard<T>(
                   suppressActivationAfterDrag = true;
                 }
               });
+              itemEl.addEventListener('pointerleave', stopAutoscroll);
               itemEl.addEventListener('pointerup', (event) => {
+                stopAutoscroll();
                 void interactionController.pointerUp({
                   pointerId: pointerId(event),
                   point: point(event),
                 });
               });
               itemEl.addEventListener('pointercancel', (event) => {
+                stopAutoscroll();
                 interactionController.pointerCancel(pointerId(event));
               });
               itemEl.addEventListener('lostpointercapture', (event) => {
+                stopAutoscroll();
                 interactionController.lostPointerCapture(pointerId(event));
               });
               itemEl.addEventListener(
@@ -1147,14 +1326,18 @@ export function renderBoard<T>(
             'aria-label': `Restore ${column.label}`,
           },
         });
-        restore.addEventListener('click', () =>
-          updateColumnPreference(restoreBoardColumn(columnPreference!, column.key)),
-        );
+        restore.disabled = options.mutationEnabled === false;
+        restore.setAttribute('aria-disabled', String(restore.disabled));
+        restore.addEventListener('click', () => {
+          if (restore.disabled) return;
+          updateColumnPreference(restoreBoardColumn(columnPreference!, column.key));
+        });
       }
     }
-    if (focusedTabKey !== null) {
+    if (focusedTabKey !== null || selectionReconciled) {
+      const focusKey = focusedTabKey ?? selectedColumnKey;
       Array.from(container.querySelectorAll<HTMLElement>('[data-board-column-tab]'))
-        .find(({ dataset }) => dataset['boardColumnTab'] === focusedTabKey)
+        .find(({ dataset }) => dataset['boardColumnTab'] === focusKey)
         ?.focus({ preventScroll: true });
     }
     applyInteractionProjection();
@@ -1167,6 +1350,8 @@ export function renderBoard<T>(
       if (interactionController?.projection().pickedItemId) {
         void interactionController.keyDown({ key: 'Escape' });
       }
+      stopAutoscroll();
+      container.ownerDocument.removeEventListener('visibilitychange', stopAutoscrollWhenHidden);
       for (const cleanup of cleanups.splice(0)) cleanup();
       container.empty();
     },
@@ -1231,7 +1416,7 @@ export function renderProjectsBoard(
   let destroyed = false;
   const toolbar = renderProjectsToolbar(container, options);
   const { newProjectButton } = toolbar;
-  const boardHost = container.createDiv();
+  const boardHost = container.createDiv({ cls: 'abyss-projects-board-host' });
   const captureSession = options.captureSession ?? {
     open: false,
     draft: '',
@@ -1327,6 +1512,7 @@ export function renderProjectsBoard(
   }
   const board = renderBoard(boardSurface, {
     columns,
+    canonicalItems: projects,
     visibleColumnKeys,
     mutation,
     undo: (project, columnKey, result) => {
@@ -1376,6 +1562,7 @@ export function renderProjectsBoard(
     announce: options.onAnnounce,
     columnPreferences: {
       value: options.settings.projects.view.board,
+      configuredColumnIds: statuses.map(({ id }) => id),
       terminalLeftIds,
       terminalRightIds,
       onChange: async (next) => {

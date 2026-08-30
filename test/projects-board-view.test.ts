@@ -5,7 +5,7 @@ import {
   type BoardColumn,
   type BoardMutation,
 } from '../src/panels/projects/boardProjection';
-import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
+import { renderBoard, type BoardViewOptions } from '../src/panels/projects/ProjectsBoardView';
 import type { WorkNoteBoardSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectAction } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
@@ -81,6 +81,62 @@ describe('shared board view', () => {
           ?.getAttribute('aria-label'),
       ).toBe(name);
     }
+  });
+
+  it('excludes hidden columns from restored selection, roving tabs, and active-column fallback', () => {
+    const el = freshContainer();
+    const session: WorkNoteBoardSession = {
+      selectedColumnKey: 'done',
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    };
+    renderBoard(el, {
+      columns: [
+        column('active', 'regular', [{ id: 'a', name: 'A' }]),
+        column('done', 'regular'),
+        column('published', 'terminal-right'),
+      ],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+      session,
+      columnPreferences: {
+        value: {
+          version: 1,
+          terminalDefaultsApplied: true,
+          columnOrder: ['active', 'done', 'published'],
+          collapsedColumnIds: ['published'],
+          hiddenColumnIds: ['done'],
+        },
+        terminalLeftIds: [],
+        terminalRightIds: ['published'],
+        onChange: vi.fn(),
+      },
+    });
+
+    expect(session.selectedColumnKey).toBe('active');
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLElement>('[data-board-column-tab]'),
+        ({ dataset }) => dataset['boardColumnTab'],
+      ),
+    ).toEqual(['active', 'published']);
+    expect(
+      el.querySelector<HTMLElement>('[data-board-column-tab][aria-selected="true"]')?.dataset[
+        'boardColumnTab'
+      ],
+    ).toBe('active');
+
+    el.querySelector<HTMLButtonElement>('[data-board-hide-column="active"]')!.click();
+
+    expect(session.selectedColumnKey).toBe('published');
+    expect(
+      el.querySelector<HTMLElement>('[data-board-column-tab][aria-selected="true"]')?.dataset[
+        'boardColumnTab'
+      ],
+    ).toBe('published');
+    expect(el.querySelectorAll('[role="tabpanel"][data-selected-column="true"]')).toHaveLength(1);
   });
 
   it('offers the same status menu through an explicit compact touch affordance', async () => {
@@ -707,5 +763,424 @@ describe('shared board view', () => {
       currentToolbar.compareDocumentPosition(el.querySelector('.abyss-board-columns')!) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).not.toBe(0);
+  });
+
+  it('uses one canonical item order for the landing gap and optimistic destination', async () => {
+    const [a, b, c, d] = ['a', 'b', 'c', 'd'].map((id) => ({ id, name: id.toUpperCase() }));
+    const move = vi.fn().mockResolvedValue({ type: 'ok' });
+    const onMutation = vi.fn();
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [column('active', 'regular', [a!, c!]), column('done', 'regular', [b!, d!])],
+      canonicalItems: [a!, b!, c!, d!],
+      mutation: { move, menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      onMutation,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    } satisfies BoardViewOptions<Item>);
+    const card = el.querySelector<HTMLElement>('[data-board-item="c"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 560, 500);
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 11 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    const destinationBeforeDrop = Array.from(
+      done.querySelectorAll<HTMLElement>('[data-board-item-surface], [data-board-landing-gap]'),
+    ).map((node) => node.dataset['boardItemSurface'] ?? 'gap');
+    expect(destinationBeforeDrop).toEqual(['b', 'gap', 'd']);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(move).toHaveBeenCalledOnce();
+    expect(move).toHaveBeenCalledWith(c, 'done');
+    expect(onMutation).toHaveBeenCalledOnce();
+    const renderedDone = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    expect(
+      Array.from(renderedDone.querySelectorAll<HTMLElement>('[data-board-item-surface]')).map(
+        ({ dataset }) => dataset['boardItemSurface'],
+      ),
+    ).toEqual(['b', 'c', 'd']);
+  });
+
+  it('places a canonical landing gap by item identity inside a scrolled virtual window', () => {
+    const targets = Array.from({ length: 40 }, (_, index) => ({
+      id: `target-${String(index).padStart(2, '0')}`,
+      name: `Target ${String(index)}`,
+    }));
+    const source = { id: 'source', name: 'Source' };
+    const canonicalItems = [...targets.slice(0, 20), source, ...targets.slice(20)];
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [column('active', 'regular', [source]), column('done', 'regular', targets)],
+      canonicalItems,
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const sourceCard = el.querySelector<HTMLElement>('[data-board-item="source"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const doneScroll = done.querySelector<HTMLElement>('.abyss-board-column-scroll')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    Object.defineProperty(doneScroll, 'clientHeight', { configurable: true, value: 352 });
+    doneScroll.scrollTop = 18 * 88;
+    doneScroll.dispatchEvent(new Event('scroll'));
+    sourceCard.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 560, 500);
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 21 },
+        isPrimary: { value: true },
+      });
+      sourceCard.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+
+    const mounted = Array.from(
+      done.querySelectorAll<HTMLElement>('[data-board-item-surface], [data-board-landing-gap]'),
+      (node) => node.dataset['boardItemSurface'] ?? 'gap',
+    );
+    expect(mounted.indexOf('target-19')).toBeGreaterThanOrEqual(0);
+    expect(mounted.slice(mounted.indexOf('target-19'), mounted.indexOf('target-19') + 3)).toEqual([
+      'target-19',
+      'gap',
+      'target-20',
+    ]);
+
+    const topEl = freshContainer();
+    renderBoard(topEl, {
+      columns: [column('active', 'regular', [source]), column('done', 'regular', targets)],
+      canonicalItems: [source, ...targets],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const topSource = topEl.querySelector<HTMLElement>('[data-board-item="source"]')!;
+    const topActive = topEl.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const topDone = topEl.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const topDoneScroll = topDone.querySelector<HTMLElement>('.abyss-board-column-scroll')!;
+    const topScroller = topEl.querySelector<HTMLElement>('.abyss-board-columns')!;
+    Object.defineProperty(topDoneScroll, 'clientHeight', { configurable: true, value: 352 });
+    topDoneScroll.scrollTop = 18 * 88;
+    topDoneScroll.dispatchEvent(new Event('scroll'));
+    topSource.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    topActive.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    topDone.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    topScroller.getBoundingClientRect = () => new DOMRect(0, 0, 560, 500);
+    const topPointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 22 },
+        isPrimary: { value: true },
+      });
+      topSource.dispatchEvent(event);
+    };
+
+    topPointer('pointerdown', 40);
+    topPointer('pointermove', 320);
+
+    expect(topDone.querySelector('[data-board-landing-gap]')).toBeNull();
+  });
+
+  it('uses visible compact tabs as pointer destinations when inactive columns have no box', async () => {
+    const item = { id: 'a', name: 'A' };
+    const move = vi.fn().mockResolvedValue({ type: 'ok' });
+    const el = freshContainer();
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('done', 'regular')],
+      mutation: { move, menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const doneTab = el.querySelector<HTMLElement>('[data-board-column-tab="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 80, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+    doneTab.getBoundingClientRect = () => new DOMRect(300, 20, 96, 44);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 80, 560, 500);
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 12 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40, 140);
+    pointer('pointermove', 340, 42);
+    expect(doneTab.classList.contains('is-board-active-destination')).toBe(true);
+    expect(doneTab.querySelector('[data-board-landing-gap]')).not.toBeNull();
+    expect(done.classList.contains('is-board-active-destination')).toBe(false);
+    pointer('pointerup', 340, 42);
+    await flushMicrotasks();
+
+    expect(move).toHaveBeenCalledOnce();
+    expect(move).toHaveBeenCalledWith(item, 'done');
+  });
+
+  it('continues horizontal autoscroll while a picked pointer rests at the edge', () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    const view = activeDocument.defaultView!;
+    const frames: FrameRequestCallback[] = [];
+    const request = vi
+      .spyOn(view, 'requestAnimationFrame')
+      .mockImplementation((callback) => (frames.push(callback), frames.length));
+    vi.spyOn(view, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('done', 'regular')],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 300, 500);
+    Object.defineProperties(scroller, {
+      clientWidth: { configurable: true, value: 300 },
+      scrollWidth: { configurable: true, value: 1200 },
+    });
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 13 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 295);
+    const afterPointer = scroller.scrollLeft;
+    expect(request).toHaveBeenCalled();
+    frames.shift()?.(0);
+    frames.shift()?.(16);
+    expect(scroller.scrollLeft).toBeGreaterThan(afterPointer);
+  });
+
+  it('stops continuous autoscroll when the pointer leaves the board surface', () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    const view = activeDocument.defaultView!;
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(view, 'requestAnimationFrame').mockImplementation(
+      (callback) => (frames.push(callback), frames.length),
+    );
+    const cancel = vi.spyOn(view, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('done', 'regular')],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 300, 500);
+    Object.defineProperties(scroller, {
+      clientWidth: { configurable: true, value: 300 },
+      scrollWidth: { configurable: true, value: 1200 },
+    });
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 14 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 295);
+    const afterPointer = scroller.scrollLeft;
+    card.dispatchEvent(new MouseEvent('pointerleave', { bubbles: true }));
+    expect(cancel).toHaveBeenCalled();
+    frames.shift()?.(0);
+    expect(scroller.scrollLeft).toBe(afterPointer);
+  });
+
+  it('stops continuous autoscroll when the board rerenders', () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    const view = activeDocument.defaultView!;
+    const frames: FrameRequestCallback[] = [];
+    vi.spyOn(view, 'requestAnimationFrame').mockImplementation(
+      (callback) => (frames.push(callback), frames.length),
+    );
+    const cancel = vi.spyOn(view, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('done', 'regular')],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 300, 500);
+    Object.defineProperties(scroller, {
+      clientWidth: { configurable: true, value: 300 },
+      scrollWidth: { configurable: true, value: 1200 },
+    });
+    const event = new MouseEvent('pointerdown', {
+      bubbles: true,
+      clientX: 40,
+      clientY: 160,
+      button: 0,
+    });
+    Object.defineProperties(event, {
+      pointerId: { value: 15 },
+      isPrimary: { value: true },
+    });
+    card.dispatchEvent(event);
+    const move = new MouseEvent('pointermove', {
+      bubbles: true,
+      clientX: 295,
+      clientY: 160,
+      button: 0,
+    });
+    Object.defineProperties(move, {
+      pointerId: { value: 15 },
+      isPrimary: { value: true },
+    });
+    card.dispatchEvent(move);
+
+    el.querySelector<HTMLButtonElement>('[data-board-column-tab="done"]')!.click();
+
+    expect(cancel).toHaveBeenCalled();
+  });
+
+  it('stops continuous autoscroll when the document becomes hidden', () => {
+    const item = { id: 'a', name: 'A' };
+    const el = freshContainer();
+    const view = activeDocument.defaultView!;
+    vi.spyOn(view, 'requestAnimationFrame').mockImplementation(() => 101);
+    const cancel = vi.spyOn(view, 'cancelAnimationFrame').mockImplementation(() => undefined);
+    const visibility = vi
+      .spyOn(activeDocument, 'visibilityState', 'get')
+      .mockReturnValue('visible');
+    renderBoard(el, {
+      columns: [column('active', 'regular', [item]), column('done', 'regular')],
+      mutation: { move: vi.fn(), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      interactionController: true,
+      renderItem: (host, current) => host.createDiv({ text: current.name }),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    const active = el.querySelector<HTMLElement>('[data-board-column="active"]')!;
+    const done = el.querySelector<HTMLElement>('[data-board-column="done"]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 120, 220, 72);
+    active.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+    done.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 0, 300, 500);
+    const pointer = (type: string, x: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: 160,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 16 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+    pointer('pointerdown', 40);
+    pointer('pointermove', 295);
+    visibility.mockReturnValue('hidden');
+
+    activeDocument.dispatchEvent(new Event('visibilitychange'));
+
+    expect(cancel).toHaveBeenCalledWith(101);
   });
 });

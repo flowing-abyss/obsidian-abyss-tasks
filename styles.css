@@ -7199,6 +7199,13 @@ body.abyss-modal-open .popover.hover-popover {
   min-width: 0;
   min-height: 0;
 }
+.abyss-projects-board-host {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+}
 .abyss-board-toolbar {
   display: flex;
   block-size: var(--input-height);
@@ -7336,6 +7343,19 @@ body.abyss-modal-open .popover.hover-popover {
   border-color: var(--interactive-accent);
   box-shadow: inset 0 0 0 1px var(--interactive-accent);
 }
+.abyss-board-column-tab.is-board-active-destination {
+  position: relative;
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+.abyss-board-tab-landing-gap {
+  position: absolute;
+  inset-inline: 8px;
+  inset-block-end: 3px;
+  block-size: 2px;
+  border-radius: var(--radius-s);
+  background: currentColor;
+}
 .abyss-board-items > .is-board-source-placeholder {
   opacity: 0.42;
   outline: 1px dashed var(--interactive-accent);
@@ -7353,6 +7373,7 @@ body.abyss-modal-open .popover.hover-popover {
   margin-left: auto;
 }
 .abyss-board-column-scroll {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
 }
@@ -7432,6 +7453,7 @@ body.abyss-modal-open .popover.hover-popover {
   .abyss-board-status-menu {
     min-block-size: 44px;
     min-inline-size: 44px;
+    inset-inline-end: 54px;
     opacity: 1;
   }
   .abyss-board-column-actions > button,
@@ -7449,7 +7471,7 @@ body.abyss-modal-open .popover.hover-popover {
     min-block-size: 44px;
   }
   .abyss-project-row {
-    padding-inline-end: 48px;
+    padding-inline-end: 96px;
   }
 }
 
@@ -7479,6 +7501,8 @@ body.abyss-modal-open .popover.hover-popover {
   }
   .abyss-board-column.is-active {
     display: flex;
+    inline-size: 100%;
+    min-inline-size: 0;
   }
   .abyss-board-column.is-collapsed {
     display: none;

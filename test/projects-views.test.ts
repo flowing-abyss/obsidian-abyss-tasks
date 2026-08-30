@@ -18,7 +18,7 @@ import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { computeWorkNotePresetFingerprint } from '../src/projects/work-notes/compatibility';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import { deferred, freshContainer, task } from './helpers';
+import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
 const shippedStyles = readFileSync(`${import.meta.dirname}/../styles.css`, 'utf8');
@@ -89,6 +89,38 @@ function workspace(
     dependencies: { blocked: 0, invalid: 0, diagnostics: [] },
     diagnostics: [],
     ...over,
+  };
+}
+
+function projectPointer(
+  el: HTMLElement,
+  sourceColumnId: string,
+  destinationColumnId: string,
+  pointerId = 21,
+): (type: string, x: number) => void {
+  const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+  const source = el.querySelector<HTMLElement>(`[data-board-column="${sourceColumnId}"]`)!;
+  const destination = el.querySelector<HTMLElement>(
+    `[data-board-column="${destinationColumnId}"]`,
+  )!;
+  const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+  card.getBoundingClientRect = () => new DOMRect(20, 40, 220, 72);
+  source.getBoundingClientRect = () => new DOMRect(0, 0, 272, 500);
+  destination.getBoundingClientRect = () => new DOMRect(280, 0, 272, 500);
+  scroller.getBoundingClientRect = () => new DOMRect(0, 0, 560, 500);
+  return (type, x) => {
+    const event = new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: 60,
+      button: 0,
+    });
+    Object.defineProperties(event, {
+      pointerId: { value: pointerId },
+      isPrimary: { value: true },
+    });
+    card.dispatchEvent(event);
   };
 }
 
@@ -289,6 +321,7 @@ describe('renderProjectsList', () => {
 
   it('shows one repair diagnostic and disables every lifecycle mutation for duplicate terminals', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
+    const hiddenStatus = settings.projects.statuses[1]!;
     settings.projects.statuses.push(
       {
         id: 'dropped',
@@ -306,12 +339,21 @@ describe('renderProjectsList', () => {
       },
     );
     settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      orderOverride: true,
+      columnOrder: [...settings.projects.view.board.columnOrder].reverse(),
+      hiddenColumnIds: [hiddenStatus.id],
+    };
+    const preferenceBefore = structuredClone(settings.projects.view.board);
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
     const el = freshContainer();
 
     renderProjectsBoard(el, {
       ...ctx,
       settings,
       snapshots: [workspace()],
+      onSaveSettings,
       onMoveStatus: vi.fn(),
       onUndoStatus: vi.fn(),
     });
@@ -328,6 +370,22 @@ describe('renderProjectsList', () => {
     expect(el.querySelector('[data-board-interaction-root]')?.getAttribute('aria-disabled')).toBe(
       'true',
     );
+    expect(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('[data-board-reorder-handle]')).every(
+        ({ disabled }) => disabled,
+      ),
+    ).toBe(true);
+    expect(el.querySelector<HTMLButtonElement>('[data-board-reset-order]')?.disabled).toBe(true);
+    const preferenceControls = Array.from(
+      el.querySelectorAll<HTMLButtonElement>(
+        '[data-board-collapse-column], [data-board-hide-column], [data-board-column-menu], [data-board-restore-column]',
+      ),
+    );
+    expect(preferenceControls.length).toBeGreaterThan(0);
+    expect(preferenceControls.every(({ disabled }) => disabled)).toBe(true);
+    for (const control of preferenceControls) control.click();
+    expect(settings.projects.view.board).toEqual(preferenceBefore);
+    expect(onSaveSettings).not.toHaveBeenCalled();
   });
 
   it('persists regular column collapse, hide, restore, reorder, and reset from Board controls', async () => {
@@ -372,11 +430,23 @@ describe('renderProjectsList', () => {
     expect(settings.projects.view.board.columnOrder.indexOf(regular[0]!.id)).toBeGreaterThan(
       settings.projects.view.board.columnOrder.indexOf(regular[1]!.id),
     );
+    expect(
+      Array.from(el.querySelectorAll<HTMLElement>('[data-board-column]'))
+        .map(({ dataset }) => dataset['boardColumn'])
+        .filter((id) => id !== 'unmapped'),
+    ).toEqual(settings.projects.view.board.columnOrder);
+    handle.destroy();
+    handle = render();
     el.querySelector<HTMLButtonElement>('[data-board-reset-order]')!.click();
     await Promise.resolve();
     expect(settings.projects.view.board.columnOrder).toEqual(
       settings.projects.statuses.map(({ id }) => id),
     );
+    expect(
+      Array.from(el.querySelectorAll<HTMLElement>('[data-board-column]'))
+        .map(({ dataset }) => dataset['boardColumn'])
+        .filter((id) => id !== 'unmapped'),
+    ).toEqual(settings.projects.view.board.columnOrder);
     expect(onSaveSettings).toHaveBeenCalled();
     handle.destroy();
   });
@@ -438,6 +508,295 @@ describe('renderProjectsList', () => {
     expect(onMoveStatus).toHaveBeenCalledWith('Projects/A.md', planned!.id);
     expect(state.get('projectsPanel')).toEqual({ view: 'list' });
     expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+  });
+
+  it.each([
+    { label: 'Dropped rail', behavior: 'dropped' as const, id: 'dropped', collapsed: true },
+    { label: 'Published rail', behavior: 'published' as const, id: 'published', collapsed: true },
+    {
+      label: 'collapsed regular column',
+      behavior: 'regular' as const,
+      id: 'planned',
+      collapsed: true,
+    },
+  ])('moves a Project by pointer into a $label', async ({ behavior, id, collapsed }) => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const active = settings.projects.statuses[0]!;
+    const existing = settings.projects.statuses.find(({ label }) => label === 'Planned');
+    const target =
+      behavior === 'regular'
+        ? existing!
+        : {
+            ...active,
+            id,
+            label: behavior === 'dropped' ? 'Dropped' : 'Published',
+            behavior,
+            match: { kind: 'property' as const, property: 'status', value: id },
+          };
+    if (behavior !== 'regular') settings.projects.statuses.push(target);
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      collapsedColumnIds: collapsed ? [target.id] : [],
+    };
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: active.id,
+      nextStatusId: target.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    const pointer = projectPointer(el, active.id, target.id);
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(onMoveStatus).toHaveBeenCalledWith('Projects/A.md', target.id);
+  });
+
+  it('moves a Project through the hidden-column disclosure destination', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      hiddenColumnIds: [planned!.id],
+    };
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: active!.id,
+      nextStatusId: planned!.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+    const source = el.querySelector<HTMLElement>(`[data-board-column="${active!.id}"]`)!;
+    const disclosure = el.querySelector<HTMLElement>('[data-board-hidden-disclosure]')!;
+    const scroller = el.querySelector<HTMLElement>('.abyss-board-columns')!;
+    card.getBoundingClientRect = () => new DOMRect(20, 80, 220, 72);
+    source.getBoundingClientRect = () => new DOMRect(0, 60, 272, 500);
+    disclosure.getBoundingClientRect = () => new DOMRect(300, 0, 120, 44);
+    scroller.getBoundingClientRect = () => new DOMRect(0, 60, 560, 500);
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+      });
+      Object.defineProperties(event, {
+        pointerId: { value: 24 },
+        isPrimary: { value: true },
+      });
+      card.dispatchEvent(event);
+    };
+
+    pointer('pointerdown', 40, 100);
+    pointer('pointermove', 340, 22);
+    const hiddenTarget = el.querySelector<HTMLElement>(
+      `[data-board-hidden-target="${planned!.id}"]`,
+    )!;
+    expect(hiddenTarget).not.toBeNull();
+    hiddenTarget.getBoundingClientRect = () => new DOMRect(300, 50, 120, 44);
+    pointer('pointermove', 340, 72);
+    expect(el.querySelector('[data-board-drag-preview]')?.textContent).toContain('Planned');
+    el.querySelector<HTMLElement>(
+      `[data-board-hidden-target="${planned!.id}"]`,
+    )!.getBoundingClientRect = () => new DOMRect(300, 50, 120, 44);
+    pointer('pointerup', 340, 72);
+    await flushMicrotasks();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(onMoveStatus).toHaveBeenCalledWith('Projects/A.md', planned!.id);
+  });
+
+  it('cancels an invalid pointer landing and restores the source after a conflict', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'conflict',
+      currentStatusId: active!.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    let pointer = projectPointer(el, active!.id, planned!.id);
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    el.querySelector<HTMLElement>('[data-board-item-focus="Projects/A.md"]')!.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+    );
+    pointer('pointerup', 320);
+    expect(onMoveStatus).not.toHaveBeenCalled();
+    expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+
+    pointer = projectPointer(el, active!.id, planned!.id, 22);
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(
+      el.querySelector(`[data-board-column="${active!.id}"] [data-board-item="Projects/A.md"]`),
+    ).not.toBeNull();
+    expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+  });
+
+  it('does not commit a Project move when the pointer lands outside every destination', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onMoveStatus = vi.fn();
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+    });
+    const pointer = projectPointer(el, active!.id, planned!.id, 25);
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 900);
+    pointer('pointerup', 900);
+    await flushMicrotasks();
+
+    expect(onMoveStatus).not.toHaveBeenCalled();
+    expect(
+      el.querySelector(`[data-board-column="${active!.id}"] [data-board-item="Projects/A.md"]`),
+    ).not.toBeNull();
+    expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+  });
+
+  it('restores the Project source and reports one local error after a failed command', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onMoveStatus = vi.fn().mockResolvedValue({ type: 'io-error' });
+    const onAnnounce = vi.fn();
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus: vi.fn(),
+      onAnnounce,
+    });
+    const pointer = projectPointer(el, active!.id, planned!.id, 26);
+
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+
+    expect(onMoveStatus).toHaveBeenCalledOnce();
+    expect(
+      el.querySelector(`[data-board-column="${active!.id}"] [data-board-item="Projects/A.md"]`),
+    ).not.toBeNull();
+    expect(el.querySelector('[data-board-drag-preview]')).toBeNull();
+    expect(onAnnounce.mock.calls.filter(([message]) => message === 'io-error')).toHaveLength(1);
+  });
+
+  it('preserves the Project destination when Undo is refused by a conflict', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onMoveStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: active!.id,
+      nextStatusId: planned!.id,
+    });
+    const onUndoStatus = vi
+      .fn()
+      .mockResolvedValue({ type: 'conflict', currentStatusId: planned!.id });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus,
+      onUndoStatus,
+    });
+    const pointer = projectPointer(el, active!.id, planned!.id);
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+
+    el.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    await flushMicrotasks();
+    expect(onUndoStatus).toHaveBeenCalledOnce();
+    expect(
+      el.querySelector(`[data-board-column="${planned!.id}"] [data-board-item="Projects/A.md"]`),
+    ).not.toBeNull();
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+  });
+
+  it('restores the Project source after a successful Undo', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const onUndoStatus = vi.fn().mockResolvedValue({
+      type: 'ok',
+      previousStatusId: planned!.id,
+      nextStatusId: active!.id,
+    });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      state: new AppState(),
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus: vi.fn().mockResolvedValue({
+        type: 'ok',
+        previousStatusId: active!.id,
+        nextStatusId: planned!.id,
+      }),
+      onUndoStatus,
+    });
+    const pointer = projectPointer(el, active!.id, planned!.id, 23);
+    pointer('pointerdown', 40);
+    pointer('pointermove', 320);
+    pointer('pointerup', 320);
+    await flushMicrotasks();
+
+    el.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
+    await flushMicrotasks();
+    expect(onUndoStatus).toHaveBeenCalledOnce();
+    expect(
+      el.querySelector(`[data-board-column="${active!.id}"] [data-board-item="Projects/A.md"]`),
+    ).not.toBeNull();
   });
 
   it('offers the same controller move through Space and arrow keys', async () => {
