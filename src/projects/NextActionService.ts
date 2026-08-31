@@ -161,10 +161,9 @@ export class NextActionService {
           changes: [{ task, tags: { remove: [NEXT_ACTION_TAG] } }],
         });
         const verified = await this.verify(projectPath);
+        if (verified.ran) this.publishVerifiedState(projectPath);
         if (result.type !== 'ok') return result;
-        if (verified.ran && !verified.conflict) {
-          this.publishVerifiedState(projectPath);
-        } else if (!verified.ran) {
+        if (!verified.ran) {
           this.rememberTagState(task, false);
         }
         return verified.conflict ?? result;

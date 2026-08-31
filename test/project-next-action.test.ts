@@ -82,6 +82,36 @@ describe('Project Next Action', () => {
     expect(projectedNextAction(application, taskToClear)).toBe(false);
   });
 
+  it('projects the authoritative remaining action when a clear rescan conflicts', async () => {
+    const current = task({
+      title: 'Current',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const application = {
+      queries: taskQueryApi({
+        list: () => [current],
+        rescan: async () => ({ type: 'settled' as const, reason: 'index' as const, files: [] }),
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: current },
+        changed: true,
+      }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionService(application).clear('Projects/A.md', current),
+    ).resolves.toMatchObject({
+      type: 'integrity-conflict',
+      tasks: [expect.objectContaining({ title: 'Current' })],
+    });
+    expect(projectedNextAction(application, current)).toBe(true);
+    acknowledgeProjectedNextActions(application, 'Projects/A.md');
+    expect(projectedNextAction(application, current)).toBeUndefined();
+  });
+
   it('keeps the previous authoritative action projected until the rescan verifies replacement', async () => {
     const previous = task({
       title: 'Previous',
