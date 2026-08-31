@@ -88,7 +88,7 @@ export function renderProjectDashboard(
   }
   const project = snapshot.project;
   const session = ctx.workspaceSession ?? new ProjectWorkspaceSession();
-  session.bindCollectionPreferences(ctx.settings);
+  session.bindCollectionPreferences(ctx.settings, ctx.onSaveSettings);
   session.openProject(project.path);
   const taskScope = session.scopeSession('tasks');
   const workNotesScope = session.scopeSession('work-notes');
@@ -97,14 +97,9 @@ export function renderProjectDashboard(
     ctx.workNotesAvailable ?? (allWorkNotes.length > 0 || ctx.renderWorkNotes !== undefined);
   const workNotesAvailability =
     ctx.workNotesAvailability ?? ({ state: workNotesAvailable ? 'available' : 'hidden' } as const);
-  const taskViewState = (): ProjectTasksViewState =>
-    taskScope.effectiveView(
-      session.collectionView(project.path, 'tasks', ctx.settings.projects.view.tasks),
-    );
+  const taskViewState = (): ProjectTasksViewState => session.collectionView(project.path, 'tasks');
   const workNotesViewState = (): WorkNotesViewState =>
-    workNotesScope.effectiveView(
-      session.collectionView(project.path, 'work-notes', ctx.settings.projects.view.workNotes),
-    );
+    session.collectionView(project.path, 'work-notes');
   const selectedTasks = (): readonly (typeof snapshot.tasks)[number][] =>
     selectProjectTasks({
       actions: snapshot.tasks,
@@ -467,7 +462,18 @@ export function renderProjectDashboard(
   };
 
   const updateTaskView = (next: ProjectTasksViewState): void => {
-    taskScope.viewOverride = next;
+    void session.updateCollectionPreference(project.path, 'tasks', (current) => {
+      const layoutPreference = { ...current.layoutPreferences['primary'], table: next.table };
+      if (next.statusGroups) layoutPreference.statusGroups = next.statusGroups;
+      else delete layoutPreference.statusGroups;
+      return {
+        ...current,
+        filters: [...next.filters],
+        group: next.groupBy,
+        sort: { ...next.sortBy },
+        layoutPreferences: { ...current.layoutPreferences, primary: layoutPreference },
+      };
+    });
     renderWorkspace();
   };
   const addTaskFilter = (filter: PropertyFilter): void => {
@@ -477,7 +483,12 @@ export function renderProjectDashboard(
     updateTaskView({ ...current, filters: [...current.filters, filter] });
   };
   const updateWorkNotesView = (next: WorkNotesViewState): void => {
-    workNotesScope.viewOverride = next;
+    void session.updateCollectionPreference(project.path, 'work-notes', (current) => ({
+      ...current,
+      filters: [...next.statusIds],
+      group: next.groupBy,
+      sort: { ...next.sortBy },
+    }));
     renderWorkspace();
   };
   const showWorkspaceMenu = (menu: Menu, event: MouseEvent): void => {
@@ -647,9 +658,11 @@ export function renderProjectDashboard(
       });
       setIcon(add, 'plus');
       add.addEventListener('click', () => {
-        content
-          .querySelector<HTMLButtonElement>('[data-project-task-capture], .abyss-add-task-trigger')
-          ?.click();
+        const selector =
+          scope === 'tasks'
+            ? '[data-project-task-capture], .abyss-add-task-trigger'
+            : '[data-work-note-create], .abyss-work-note-create';
+        content.querySelector<HTMLButtonElement>(selector)?.click();
       });
     },
   });
@@ -691,12 +704,13 @@ export function renderProjectDashboard(
   };
   renderWorkspace();
   return {
-    destroy: () => {
+    destroy: (releaseSession = true) => {
       if (destroyed) return;
       destroyed = true;
       arbitrationVersion += 1;
       child?.destroy();
       child = null;
+      if (releaseSession) session.releaseCollectionSessions(project.path);
       container.empty();
     },
   };

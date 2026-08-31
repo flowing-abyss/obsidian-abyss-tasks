@@ -216,6 +216,7 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
       workNotes['statusIds'] = [...defaults.workNotes.statusIds];
     }
   }
+  if (!record(view['collectionPreferences'])) view['collectionPreferences'] = {};
 }
 
 /**

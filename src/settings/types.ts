@@ -96,8 +96,6 @@ export interface PersistedCollectionPreference<TFilter, TGroup, TSort, TLayout, 
 
 export interface CollectionSessionState {
   readonly query: string;
-  /** Ephemeral collection layout; omitted for older session producers. */
-  readonly layout?: string | null;
   readonly selectionKey: string | null;
   readonly focusedKey: string | null;
   readonly scrollAnchor: string | null;
@@ -121,6 +119,32 @@ export interface WorkNotesViewState {
   readonly statusIds: readonly string[];
 }
 
+interface ProjectTasksCollectionLayoutPreference {
+  readonly table: ProjectTasksTablePreference;
+  readonly statusGroups?: readonly TaskStatusType[];
+}
+
+export type ProjectTasksCollectionPreference = PersistedCollectionPreference<
+  PropertyFilter,
+  ProjectTasksViewState['groupBy'],
+  ProjectTasksViewState['sortBy'],
+  'list' | 'board' | 'timeline',
+  ProjectTasksCollectionLayoutPreference
+>;
+
+export type WorkNotesCollectionPreference = PersistedCollectionPreference<
+  string,
+  WorkNotesViewState['groupBy'],
+  WorkNotesViewState['sortBy'],
+  'list' | 'board' | 'timeline',
+  Record<string, never>
+>;
+
+export interface ProjectScopedCollectionPreferences {
+  readonly tasks: ProjectTasksCollectionPreference;
+  readonly workNotes: WorkNotesCollectionPreference;
+}
+
 export interface ProjectsViewSettings {
   portfolioLayout: ProjectsPortfolioLayout;
   visibleStatusIds: string[];
@@ -130,6 +154,8 @@ export interface ProjectsViewSettings {
   timeline: ProjectTimelinePreferences;
   tasks: ProjectTasksViewState;
   workNotes: WorkNotesViewState;
+  /** Versioned per-project overrides; global task/work-note views remain migration baselines. */
+  collectionPreferences: Record<string, ProjectScopedCollectionPreferences>;
 }
 
 export interface ProjectsSettings {

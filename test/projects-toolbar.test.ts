@@ -33,6 +33,9 @@ describe('renderProjectsToolbar', () => {
     expect(controls.querySelector('[data-collection-kind="search"]')).toBeNull();
     expect(root.textContent).not.toContain('Show');
     expect(root.querySelectorAll('[data-collection-controls]')).toHaveLength(1);
+    expect(controls.getAttribute('role')).toBe('toolbar');
+    expect(controls.getAttribute('aria-label')).toBe('Project portfolio controls');
+    expect(root.querySelectorAll('[role="toolbar"]')).toHaveLength(1);
   });
 
   it('keeps Timeline in the segmented switcher when the renderer is unavailable', () => {

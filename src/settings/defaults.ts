@@ -66,6 +66,7 @@ export function buildDefaultProjectsView(statusIds: readonly string[]): Projects
       sortBy: { field: 'updated', dir: 'desc' },
       statusIds: [...statusIds],
     },
+    collectionPreferences: {},
   };
 }
 

@@ -273,6 +273,20 @@ async function makePanel(
 describe('CenterPanel task-card primary row', () => {
   fixedToday('2026-06-25');
 
+  it('exposes the main Tasks controls as one named toolbar landmark', () => {
+    const panel = makeStaticPanel(new AppState(), []);
+    try {
+      panel.mount(freshContainer());
+
+      const toolbar = panel['el'].querySelector<HTMLElement>('[data-collection-controls]')!;
+      expect(toolbar.getAttribute('role')).toBe('toolbar');
+      expect(toolbar.getAttribute('aria-label')).toBe('Task collection controls');
+      expect(panel['el'].querySelectorAll('[role="toolbar"]')).toHaveLength(1);
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it('keeps every primary control in one row and renders the description below it', () => {
     const snapshot = task({
       title: 'Pay Migaku',

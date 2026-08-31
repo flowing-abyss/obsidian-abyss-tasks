@@ -108,10 +108,18 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     expectedVersion: number,
     next: TPreference,
   ): Promise<TPreference> {
-    const settled = await this.ports.preferences.update(scope, expectedVersion, next);
-    const migrated = this.ports.migratePreference(settled);
-    this.migrated.set(scope, migrated);
-    return migrated;
+    const previous = this.migrated.get(scope);
+    this.migrated.set(scope, this.ports.migratePreference(next));
+    try {
+      const settled = await this.ports.preferences.update(scope, expectedVersion, next);
+      const migrated = this.ports.migratePreference(settled);
+      this.migrated.set(scope, migrated);
+      return migrated;
+    } catch (error) {
+      if (previous) this.migrated.set(scope, previous);
+      else this.migrated.delete(scope);
+      throw error;
+    }
   }
 
   subscribePreference(

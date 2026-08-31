@@ -185,6 +185,7 @@ export function renderProjectsToolbar(
   const { element: controls } = renderCollectionControls(header, {
     query: '',
     searchLabel: 'Filter projects',
+    toolbarLabel: 'Project portfolio controls',
     search: false,
     renderLeading: (host) => {
       filters = host.createDiv({

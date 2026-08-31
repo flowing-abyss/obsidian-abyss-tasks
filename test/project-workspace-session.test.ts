@@ -1,14 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ProjectWorkspaceSessionRegistry } from '../src/panels/projects/ProjectWorkspaceSession';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { ProjectTasksViewState } from '../src/settings/types';
-
-const taskDefault: ProjectTasksViewState = {
-  groupBy: 'none',
-  sortBy: { field: 'date', dir: 'asc' },
-  filters: [],
-  table: { version: 1, columns: [], collapsedGroups: [] },
-};
 
 describe('ProjectWorkspaceSessionRegistry', () => {
   it('constructs one coordinator-backed session per exact Project scope without persisting interaction state', () => {
@@ -25,7 +17,6 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     tasks.selection.inspectorKey = 'task-1';
     tasks.viewport.focusedKey = 'task-1';
     tasks.viewport.firstKey = 'task-1';
-    tasks.layout = 'board';
     workNotes.textQuery = 'retro';
 
     expect(registry.collectionScopeKey('Projects/A.md', 'tasks')).toBe(
@@ -36,15 +27,13 @@ describe('ProjectWorkspaceSessionRegistry', () => {
       selectionKey: 'task-1',
       focusedKey: 'task-1',
       scrollAnchor: 'task-1',
-      layout: 'board',
     });
+    expect(registry.collectionSession('Projects/A.md', 'tasks')).not.toHaveProperty('layout');
     expect(registry.collectionSession('Projects/A.md', 'work-notes').query).toBe('retro');
     expect(registry.collectionPreference('Projects/A.md', 'tasks').group).toBe(
       settings.projects.view.tasks.groupBy,
     );
-    expect(tasksListener).toHaveBeenCalledWith(
-      expect.objectContaining({ query: 'ship', layout: 'board' }),
-    );
+    expect(tasksListener).toHaveBeenCalledWith(expect.objectContaining({ query: 'ship' }));
     expect(settings.projects.view.tasks).toEqual(DEFAULT_SETTINGS.projects.view.tasks);
 
     stop();
@@ -55,6 +44,41 @@ describe('ProjectWorkspaceSessionRegistry', () => {
       focusedKey: null,
       scrollAnchor: null,
     });
+  });
+
+  it('persists versioned preferences per Project scope, publishes once, and reloads without leaking global defaults', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const save = vi.fn().mockResolvedValue(undefined);
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, save);
+    const listener = vi.fn();
+    registry.subscribeCollectionPreference('Projects/A.md', 'tasks', listener);
+
+    await registry.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      layout: 'board',
+      group: 'priority',
+    }));
+
+    expect(settings.projects.view.collectionPreferences['Projects/A.md']?.tasks).toMatchObject({
+      version: 1,
+      layout: 'board',
+      group: 'priority',
+    });
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledOnce();
+    expect(registry.collectionPreference('Projects/B.md', 'tasks')).toMatchObject({
+      layout: 'list',
+      group: settings.projects.view.tasks.groupBy,
+    });
+
+    const reloaded = new ProjectWorkspaceSessionRegistry();
+    reloaded.bindCollectionPreferences(settings);
+    expect(reloaded.collectionPreference('Projects/A.md', 'tasks')).toMatchObject({
+      layout: 'board',
+      group: 'priority',
+    });
+    expect(settings.projects.view.tasks.groupBy).toBe('none');
   });
 
   it('owns independent session-only Timeline presentation state for every scope', () => {
@@ -122,15 +146,19 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     });
   });
 
-  it('uses an override only when the current scope has one', () => {
+  it('reads the scoped persisted preference instead of a session view override', async () => {
     const registry = new ProjectWorkspaceSessionRegistry();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    registry.bindCollectionPreferences(settings);
     registry.openProject('Projects/A.md');
-    const tasks = registry.scopeSession('tasks');
-    const override = { ...taskDefault, groupBy: 'priority' as const };
+    await registry.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      group: 'priority',
+    }));
 
-    expect(tasks.effectiveView(taskDefault)).toBe(taskDefault);
-    tasks.viewOverride = override;
-    expect(tasks.effectiveView(taskDefault)).toBe(override);
+    expect(registry.collectionView('Projects/A.md', 'tasks')).toMatchObject({
+      groupBy: 'priority',
+    });
   });
 
   it('evicts the least-recently-used clean Project session after twelve entries', () => {
@@ -212,35 +240,18 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(registry.scopeSession('tasks').textQuery).toBe('keep me');
   });
 
-  it('makes live source state authoritative on rename collisions while reconciling safe arrays source-first', () => {
+  it('makes live source session state authoritative on rename collisions', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/Source.md');
     registry.scopeSession('tasks').textQuery = 'source';
-    registry.scopeSession('tasks').viewOverride = {
-      ...taskDefault,
-      filters: [{ type: 'status', value: 'todo' }],
-    };
     registry.openProject('Projects/Destination.md');
     registry.scopeSession('tasks').textQuery = 'destination';
-    registry.scopeSession('tasks').viewOverride = {
-      ...taskDefault,
-      filters: [
-        { type: 'tag', value: 'me' },
-        { type: 'status', value: 'todo' },
-      ],
-    };
     registry.openProject('Projects/Source.md');
 
     registry.renameProject('Projects/Source.md', 'Projects/Destination.md');
     registry.openProject('Projects/Destination.md');
 
     expect(registry.scopeSession('tasks').textQuery).toBe('source');
-    expect(registry.scopeSession('tasks').viewOverride).toMatchObject({
-      filters: [
-        { type: 'status', value: 'todo' },
-        { type: 'tag', value: 'me' },
-      ],
-    });
   });
 
   it('retains a dirty dormant collision destination as an explicit recovery entry', () => {

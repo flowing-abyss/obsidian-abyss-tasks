@@ -110,8 +110,11 @@ export class ProjectsPanel {
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
   private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
+  private readonly persistCollectionPreferences: boolean;
   private readonly onAnnounce: (message: string) => void;
   private viewCleanup: (() => void) | null = null;
+  /** The dashboard owns a mounted collection instance until an actual close. */
+  private dashboardSessionPath: string | null = null;
   private readonly portfolioScroll = new Map<string, number>();
   private portfolioFocusIntent: string | null = null;
 
@@ -134,6 +137,7 @@ export class ProjectsPanel {
     this.renderTaskTimeline = opts.renderTaskTimeline;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
+    this.persistCollectionPreferences = opts.onSaveSettings !== undefined;
     this.pendingBoardUndo = opts.pendingBoardUndo;
     this.onBoardUndoPending = opts.onBoardUndoPending;
     this.onBoardUndoStarted = opts.onBoardUndoStarted;
@@ -419,6 +423,7 @@ export class ProjectsPanel {
       const dashboard = renderProjectDashboard(container, snapshot, {
         state: this.state,
         settings: this.settings,
+        ...(this.persistCollectionPreferences ? { onSaveSettings: this.onSaveSettings } : {}),
         onSetStatus: (p, id) => void this.setStatus(p, id),
         openNote: (p) => this.openNote(p),
         workspaceSession: this.workspaceSession,
@@ -462,9 +467,7 @@ export class ProjectsPanel {
                   host,
                   path,
                   notes,
-                  this.workspaceSession
-                    .scopeSession('work-notes')
-                    .effectiveView(this.settings.projects.view.workNotes),
+                  this.workspaceSession.collectionView(path, 'work-notes'),
                   'board',
                   snapshot.milestoneRollups,
                 ),
@@ -473,10 +476,20 @@ export class ProjectsPanel {
             }
           : {}),
       });
-      this.viewCleanup = () => dashboard.destroy();
+      this.dashboardSessionPath = view.path;
+      // A data refresh replaces the DOM but is not a collection close: retain the
+      // coordinator session for focus/query/scroll restoration into the next mount.
+      this.viewCleanup = () =>
+        (
+          dashboard as ProjectChildRenderHandle & { destroy(releaseSession?: boolean): void }
+        ).destroy(false);
       return;
     }
 
+    if (this.dashboardSessionPath) {
+      this.workspaceSession.releaseCollectionSessions(this.dashboardSessionPath);
+      this.dashboardSessionPath = null;
+    }
     this.workspaceSession.closeProject();
     const container = this.el.createDiv();
     const listContext = {
@@ -626,9 +639,13 @@ export class ProjectsPanel {
     this.restorePortfolioContinuity(portfolioFocus);
   }
 
-  destroy(): void {
+  destroy(options: { readonly preserveWorkspaceSession?: boolean } = {}): void {
     this.viewCleanup?.();
     this.viewCleanup = null;
+    if (!options.preserveWorkspaceSession && this.dashboardSessionPath) {
+      this.workspaceSession.releaseCollectionSessions(this.dashboardSessionPath);
+      this.dashboardSessionPath = null;
+    }
     this.offs.forEach((f) => f());
     this.offs = [];
     this.el?.empty();

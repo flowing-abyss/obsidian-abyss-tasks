@@ -11,6 +11,29 @@ import type {
 } from '../src/settings/types';
 
 describe('migrateSettings', () => {
+  it('adds the per-Project collection preference store without rewriting dormant records', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [],
+        view: {
+          collectionPreferences: {
+            'Projects/A.md': {
+              tasks: { version: 1, layout: 'board', futureField: 'preserve me' },
+              workNotes: { version: 1, layout: 'list' },
+            },
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['collectionPreferences']).toMatchObject({
+      'Projects/A.md': { tasks: { futureField: 'preserve me' } },
+    });
+  });
+
   it('accepts partial raw settings only at migration while loaded settings require both Table preferences', () => {
     const raw: Record<string, unknown> = { projects: { statuses: [] } };
 

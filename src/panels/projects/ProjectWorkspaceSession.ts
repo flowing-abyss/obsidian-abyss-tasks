@@ -2,8 +2,10 @@ import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import type {
   CalendarSettings,
   CollectionSessionState,
-  PersistedCollectionPreference,
+  ProjectScopedCollectionPreferences,
+  ProjectTasksCollectionPreference,
   ProjectTasksViewState,
+  WorkNotesCollectionPreference,
   WorkNotesViewState,
 } from '../../settings/types';
 import {
@@ -50,25 +52,20 @@ interface ScopeSelectionSession {
   inspectorKey: string | null;
 }
 
-export interface ProjectWorkspaceScopeSession<TViewState> {
+export interface ProjectWorkspaceScopeSession<_TViewState> {
   layout: ProjectWorkspaceLayout;
   textQuery: string;
-  viewOverride: TViewState | undefined;
   readonly viewport: LogicalViewportSession;
   readonly selection: ScopeSelectionSession;
   inspectorDirty: boolean;
   captureDraft: string | null;
   openSurface: string | null;
-  effectiveView(defaultView: TViewState): TViewState;
 }
 
-type WorkspacePreference = PersistedCollectionPreference<
-  unknown,
-  unknown,
-  unknown,
-  string,
-  unknown
->;
+type WorkspacePreference = ProjectTasksCollectionPreference | WorkNotesCollectionPreference;
+type WorkspacePreferenceFor<S extends ProjectWorkspaceScope> = S extends 'tasks'
+  ? ProjectTasksCollectionPreference
+  : WorkNotesCollectionPreference;
 
 interface ManagedProjectWorkspaceScopeSession<
   TViewState,
@@ -202,17 +199,18 @@ function scopeSession<TViewState>(
     },
   };
   const managed = {
-    viewOverride: undefined as TViewState | undefined,
     viewport: viewportState,
     selection: selectionState,
     inspectorDirty: false,
     captureDraft: null,
     get layout(): ProjectWorkspaceLayout {
-      const layout = coordinator.session(instanceKey).layout;
+      const layout = coordinator.preference(instanceKey as CollectionScopeKey).layout;
       return layout === 'board' || layout === 'timeline' ? layout : 'list';
     },
     set layout(next: ProjectWorkspaceLayout) {
-      updateCollectionSession(coordinator, () => instanceKey, { layout: next });
+      const scope = instanceKey as CollectionScopeKey;
+      const current = coordinator.preference(scope);
+      void coordinator.updatePreference(scope, current.version, { ...current, layout: next });
     },
     get textQuery(): string {
       return coordinator.session(instanceKey).query;
@@ -225,9 +223,6 @@ function scopeSession<TViewState>(
     },
     set openSurface(next: string | null) {
       updateCollectionSession(coordinator, () => instanceKey, { openSurface: next });
-    },
-    effectiveView(defaultView: TViewState): TViewState {
-      return this.viewOverride ?? defaultView;
     },
     rebindCollectionInstance(nextInstanceKey: string): void {
       const current = coordinator.session(instanceKey);
@@ -282,7 +277,6 @@ function copyScope<TViewState>(
   return {
     layout: source.layout,
     textQuery: source.textQuery,
-    viewOverride: source.viewOverride && structuredClone(source.viewOverride),
     viewport: { ...source.viewport },
     selection: {
       selectedKeys: [...source.selection.selectedKeys],
@@ -292,9 +286,6 @@ function copyScope<TViewState>(
     inspectorDirty: source.inspectorDirty,
     captureDraft: source.captureDraft,
     openSurface: source.openSurface,
-    effectiveView(defaultView: TViewState): TViewState {
-      return this.viewOverride ?? defaultView;
-    },
   };
 }
 
@@ -359,15 +350,10 @@ function reconcileSafeArrays<TViewState>(
   source: ProjectWorkspaceScopeSession<TViewState>,
   destination: ProjectWorkspaceScopeSession<TViewState>,
 ): void {
-  if (!source.viewOverride || !destination.viewOverride) return;
-  const sourceRecord = source.viewOverride as Record<string, unknown>;
-  const destinationRecord = destination.viewOverride as Record<string, unknown>;
-  const merged = { ...sourceRecord };
-  for (const [key, value] of Object.entries(sourceRecord)) {
-    const other = destinationRecord[key];
-    if (Array.isArray(value) && Array.isArray(other)) merged[key] = sourceFirst(value, other);
-  }
-  source.viewOverride = merged as TViewState;
+  source.selection.selectedKeys = sourceFirst(
+    source.selection.selectedKeys,
+    destination.selection.selectedKeys,
+  );
 }
 
 export function logicalViewportFirst(
@@ -391,57 +377,94 @@ export function boardColumnViewport(
   return created;
 }
 
-function emptyWorkspacePreference(): WorkspacePreference {
+function emptyWorkspacePreference(): WorkNotesCollectionPreference {
   return {
     version: 1,
     layout: 'list',
     filters: [],
     group: 'none',
-    sort: 'date',
+    sort: { field: 'updated', dir: 'desc' },
     visibleFields: [],
     layoutPreferences: {},
   };
 }
 
-/** Reads existing Settings without letting mount-local interaction state write back into them. */
+function scopeParts(
+  scope: CollectionScopeKey,
+): { readonly path: string; readonly kind: 'tasks' | 'work-notes' } | null {
+  if (!scope.startsWith('project:')) return null;
+  if (scope.endsWith(':tasks'))
+    return { path: scope.slice('project:'.length, -':tasks'.length), kind: 'tasks' };
+  if (scope.endsWith(':work-notes')) {
+    return { path: scope.slice('project:'.length, -':work-notes'.length), kind: 'work-notes' };
+  }
+  return null;
+}
+
+/** Versioned settings-backed preference store; mount sessions never write into it. */
 class ProjectWorkspacePreferencePort implements CollectionPreferencePort<WorkspacePreference> {
   private settings: CalendarSettings | null = null;
+  private onSaveSettings: (() => Promise<void>) | undefined;
+  private readonly fallback = new Map<CollectionScopeKey, WorkspacePreference>();
   private readonly listeners = new Map<
     CollectionScopeKey,
     Set<(next: WorkspacePreference) => void>
   >();
 
-  bind(settings: CalendarSettings): void {
+  bind(settings: CalendarSettings, onSaveSettings?: () => Promise<void>): void {
     this.settings = settings;
+    this.onSaveSettings = onSaveSettings;
+    if (onSaveSettings) this.fallback.clear();
   }
 
-  read(scope: CollectionScopeKey): WorkspacePreference {
-    const settings = this.settings;
-    if (!settings || !scope.startsWith('project:')) return emptyWorkspacePreference();
-    if (scope.endsWith(':tasks')) {
-      const view = settings.projects.view.tasks;
-      return {
-        version: 1,
-        layout: 'list',
-        filters: view.filters,
-        group: view.groupBy,
-        sort: view.sortBy,
-        visibleFields: view.table.columns
-          .filter(({ visible }) => visible)
-          .map(({ propertyId }) => propertyId),
-        layoutPreferences: { table: view.table, view },
-      };
-    }
+  private taskBaseline(settings: CalendarSettings): ProjectTasksCollectionPreference {
+    const view = settings.projects.view.tasks;
+    return {
+      version: 1,
+      layout: 'list',
+      filters: [...view.filters],
+      group: view.groupBy,
+      sort: { ...view.sortBy },
+      visibleFields: view.table.columns
+        .filter(({ visible }) => visible)
+        .map(({ propertyId }) => propertyId),
+      layoutPreferences: {
+        primary: { table: structuredClone(view.table), statusGroups: view.statusGroups },
+      },
+    };
+  }
+
+  private workNotesBaseline(settings: CalendarSettings): WorkNotesCollectionPreference {
     const view = settings.projects.view.workNotes;
     return {
       version: 1,
       layout: 'list',
-      filters: view.statusIds,
+      filters: [...view.statusIds],
       group: view.groupBy,
-      sort: view.sortBy,
+      sort: { ...view.sortBy },
       visibleFields: [],
-      layoutPreferences: { view },
+      layoutPreferences: {},
     };
+  }
+
+  private stored(scope: CollectionScopeKey): WorkspacePreference | undefined {
+    const fallback = this.fallback.get(scope);
+    if (fallback) return fallback;
+    const settings = this.settings;
+    const parts = scopeParts(scope);
+    if (!settings || !parts) return undefined;
+    return settings.projects.view.collectionPreferences[parts.path]?.[
+      parts.kind === 'tasks' ? 'tasks' : 'workNotes'
+    ];
+  }
+
+  read(scope: CollectionScopeKey): WorkspacePreference {
+    const settings = this.settings;
+    const parts = scopeParts(scope);
+    const stored = this.stored(scope);
+    if (stored) return structuredClone(stored);
+    if (!settings || !parts) return emptyWorkspacePreference();
+    return parts.kind === 'tasks' ? this.taskBaseline(settings) : this.workNotesBaseline(settings);
   }
 
   update(
@@ -449,10 +472,26 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     expectedVersion: number,
     next: WorkspacePreference,
   ): Promise<WorkspacePreference> {
+    const parts = scopeParts(scope);
+    const settings = this.settings;
+    if (!parts || !settings || !this.onSaveSettings) {
+      if (this.read(scope).version !== expectedVersion)
+        return Promise.reject(new Error('version conflict'));
+      this.fallback.set(scope, structuredClone(next));
+      for (const listener of this.listeners.get(scope) ?? []) listener(next);
+      return Promise.resolve(next);
+    }
     if (this.read(scope).version !== expectedVersion)
       return Promise.reject(new Error('version conflict'));
+    const current = settings.projects.view.collectionPreferences[parts.path];
+    const nextRecord: ProjectScopedCollectionPreferences = {
+      tasks: current?.tasks ?? this.taskBaseline(settings),
+      workNotes: current?.workNotes ?? this.workNotesBaseline(settings),
+      [parts.kind === 'tasks' ? 'tasks' : 'workNotes']: structuredClone(next) as never,
+    };
+    settings.projects.view.collectionPreferences[parts.path] = nextRecord;
     for (const listener of this.listeners.get(scope) ?? []) listener(next);
-    return Promise.resolve(next);
+    return Promise.resolve(this.onSaveSettings()).then(() => next);
   }
 
   subscribe(scope: CollectionScopeKey, listener: (next: WorkspacePreference) => void): () => void {
@@ -463,6 +502,15 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       scoped.delete(listener);
       if (scoped.size === 0) this.listeners.delete(scope);
     };
+  }
+
+  renameProject(sourcePath: string, destinationPath: string): void {
+    const settings = this.settings;
+    if (!settings || sourcePath === destinationPath) return;
+    const source = settings.projects.view.collectionPreferences[sourcePath];
+    if (!source) return;
+    settings.projects.view.collectionPreferences[destinationPath] = source;
+    delete settings.projects.view.collectionPreferences[sourcePath];
   }
 }
 
@@ -495,8 +543,11 @@ export class ProjectWorkspaceSession {
     createdPath: null,
   };
 
-  bindCollectionPreferences(settings: CalendarSettings): void {
-    this.preferencePort.bind(settings);
+  bindCollectionPreferences(
+    settings: CalendarSettings,
+    onSaveSettings?: () => Promise<void>,
+  ): void {
+    this.preferencePort.bind(settings, onSaveSettings);
     this.coordinator.invalidatePreferences();
   }
 
@@ -520,20 +571,66 @@ export class ProjectWorkspaceSession {
     return this.coordinator.preference(this.collectionScopeKey(path, scope));
   }
 
-  collectionView<TViewState>(
+  subscribeCollectionPreference(
     path: string,
     scope: ProjectWorkspaceScope,
-    fallback: TViewState,
-  ): TViewState {
-    const view = this.collectionPreference(path, scope).layoutPreferences['view'];
-    return view && typeof view === 'object' ? (view as TViewState) : fallback;
+    listener: (next: WorkspacePreference) => void,
+  ): () => void {
+    return this.coordinator.subscribePreference(this.collectionScopeKey(path, scope), listener);
+  }
+
+  updateCollectionPreference<S extends ProjectWorkspaceScope>(
+    path: string,
+    scope: S,
+    mutate: (current: WorkspacePreferenceFor<S>) => WorkspacePreferenceFor<S>,
+  ): Promise<WorkspacePreferenceFor<S>> {
+    const key = this.collectionScopeKey(path, scope);
+    const current = this.coordinator.preference(key) as WorkspacePreferenceFor<S>;
+    return this.coordinator.updatePreference(key, current.version, mutate(current)) as Promise<
+      WorkspacePreferenceFor<S>
+    >;
+  }
+
+  collectionView(path: string, scope: 'tasks'): ProjectTasksViewState;
+  collectionView(path: string, scope: 'work-notes'): WorkNotesViewState;
+  collectionView(
+    path: string,
+    scope: ProjectWorkspaceScope,
+  ): ProjectTasksViewState | WorkNotesViewState {
+    const preference = this.collectionPreference(path, scope);
+    if (scope === 'tasks') {
+      const tasks = preference as ProjectTasksCollectionPreference;
+      return {
+        groupBy: tasks.group,
+        sortBy: tasks.sort,
+        filters: tasks.filters,
+        ...(tasks.layoutPreferences['primary']?.statusGroups && {
+          statusGroups: tasks.layoutPreferences['primary'].statusGroups,
+        }),
+        table: tasks.layoutPreferences['primary']?.table ?? {
+          version: 1,
+          columns: [],
+          collapsedGroups: [],
+        },
+      };
+    }
+    const workNotes = preference as WorkNotesCollectionPreference;
+    return {
+      groupBy: workNotes.group,
+      sortBy: workNotes.sort,
+      statusIds: workNotes.filters,
+    };
   }
 
   releaseProject(path: string): void {
     this.sessions.delete(path);
+    this.releaseCollectionSessions(path);
+    if (this.projectPath === path) this.projectPath = null;
+  }
+
+  releaseCollectionSessions(path: string): void {
     this.coordinator.release(this.collectionScopeKey(path, 'tasks'));
     this.coordinator.release(this.collectionScopeKey(path, 'work-notes'));
-    if (this.projectPath === path) this.projectPath = null;
   }
 
   destroy(): void {
@@ -634,6 +731,7 @@ export class ProjectWorkspaceSession {
     if (sourcePath === destinationPath) return;
     const source = this.sessions.get(sourcePath);
     if (!source) return;
+    this.preferencePort.renameProject(sourcePath, destinationPath);
     const destination = this.sessions.get(destinationPath);
     if (destination) {
       if (this.isDirty(destination)) {

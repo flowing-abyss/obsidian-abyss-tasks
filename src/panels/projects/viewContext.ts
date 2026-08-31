@@ -37,6 +37,7 @@ export interface ProjectsListContext {
 export interface ProjectsDashboardContext {
   state: AppState;
   settings: CalendarSettings;
+  onSaveSettings?: () => Promise<void>;
   onSetStatus: (path: string, statusId: string) => void;
   openNote: (path: string) => void;
   workspaceSession?: ProjectWorkspaceSession;

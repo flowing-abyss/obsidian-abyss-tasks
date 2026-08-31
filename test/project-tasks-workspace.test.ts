@@ -135,6 +135,54 @@ describe('Project Tasks workspace', () => {
     expect(capture).toHaveBeenCalledOnce();
   });
 
+  it('routes Add to Task capture or Work Note creation for the active scope', () => {
+    const container = freshContainer();
+    const taskCapture = vi.fn();
+    const workNoteCreate = vi.fn();
+    renderProjectDashboard(container, snapshot('with-work-notes'), {
+      state: new AppState(),
+      settings: structuredClone(DEFAULT_SETTINGS),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: (host) => {
+        const trigger = host.createEl('button', { attr: { 'data-project-task-capture': '' } });
+        trigger.addEventListener('click', taskCapture);
+        return { destroy: () => undefined };
+      },
+      renderWorkNotes: (host) => {
+        const trigger = host.createEl('button', { attr: { 'data-work-note-create': '' } });
+        trigger.addEventListener('click', workNoteCreate);
+        return { destroy: () => undefined };
+      },
+    });
+
+    const add = container.querySelector<HTMLButtonElement>('[data-project-add]')!;
+    add.click();
+    container.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    container.querySelector<HTMLButtonElement>('[data-project-add]')!.click();
+
+    expect(taskCapture).toHaveBeenCalledOnce();
+    expect(workNoteCreate).toHaveBeenCalledOnce();
+  });
+
+  it('releases both mounted workspace sessions when the dashboard is destroyed', () => {
+    const container = freshContainer();
+    const workspaceSession = new ProjectWorkspaceSession();
+    const handle = renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings: structuredClone(DEFAULT_SETTINGS),
+      workspaceSession,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+    });
+    workspaceSession.scopeSession('tasks').textQuery = 'release me';
+
+    handle.destroy();
+
+    expect(workspaceSession.collectionSession('Projects/A.md', 'tasks').query).toBe('');
+  });
+
   it.each(['filter', 'group', 'sort'] as const)(
     'returns focus to the workspace %s trigger when its native menu hides',
     (kind) => {
@@ -254,17 +302,27 @@ describe('Project Tasks workspace', () => {
     >().toEqualTypeOf<ProjectChildRenderHandle>();
   });
 
-  it('delivers the effective Task view state to List and Board child renderers', () => {
+  it('delivers the persisted scoped Task view state to List and Board child renderers', async () => {
     const container = freshContainer();
     const settings = structuredClone(DEFAULT_SETTINGS);
     const session = new ProjectWorkspaceSession();
+    session.bindCollectionPreferences(settings);
     session.openProject('Projects/A.md');
     const override = {
       ...settings.projects.view.tasks,
       groupBy: 'priority' as const,
       statusGroups: ['done' as const],
     };
-    session.scopeSession('tasks').viewOverride = override;
+    await session.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      group: override.groupBy,
+      sort: override.sortBy,
+      filters: override.filters,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        primary: { table: override.table, statusGroups: ['done'] },
+      },
+    }));
     const renderTasks = vi.fn<NonNullable<ProjectsDashboardContext['renderTasks']>>(() => ({
       destroy: () => undefined,
     }));
@@ -283,11 +341,11 @@ describe('Project Tasks workspace', () => {
     });
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
 
-    expect(renderTasks.mock.calls[0]?.[3]).toBe(override);
-    expect(renderTaskBoard.mock.calls[0]?.[3]).toBe(override);
+    expect(renderTasks.mock.calls[0]?.[3]).toMatchObject(override);
+    expect(renderTaskBoard.mock.calls[0]?.[3]).toMatchObject(override);
   });
 
-  it('owns Project-card property filters in the Task scope override', () => {
+  it('owns Project-card property filters in the Task scoped preference', async () => {
     const container = freshContainer();
     const settings = structuredClone(DEFAULT_SETTINGS);
     const state = new AppState();
@@ -311,12 +369,13 @@ describe('Project Tasks workspace', () => {
       renderTasks,
     });
     container.querySelector<HTMLButtonElement>('[data-test-project-filter]')!.click();
+    await Promise.resolve();
 
     expect(renderTasks.mock.lastCall?.[3].filters).toContainEqual({
       type: 'tag',
       value: '#project-only',
     });
-    expect(session.scopeSession('tasks').viewOverride?.filters).toContainEqual({
+    expect(session.collectionPreference('Projects/A.md', 'tasks').filters).toContainEqual({
       type: 'tag',
       value: '#project-only',
     });

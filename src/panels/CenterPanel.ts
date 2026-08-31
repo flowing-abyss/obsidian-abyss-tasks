@@ -281,6 +281,7 @@ export class CenterPanel {
   // the "Status group" row still expanded (multi-select shouldn't close on pick).
   private reopenStatusGroupPopover = false;
   private onSaveSettings: () => Promise<void>;
+  private readonly persistsSettings: boolean;
   private md = new Component();
   private searchInputEl: HTMLInputElement | null = null;
   private searchResultsEl: HTMLElement | null = null;
@@ -311,7 +312,7 @@ export class CenterPanel {
     private settings: CalendarSettings,
     private queries: TaskQueryApi,
     private statusRegistry: StatusRegistry,
-    onSaveSettings: () => Promise<void> = async () => {},
+    onSaveSettings?: () => Promise<void>,
     private projectStore: ProjectStore | null = null,
     private projectManager: ProjectManager | null = null,
     private tasks?: TaskApplicationApi,
@@ -329,7 +330,8 @@ export class CenterPanel {
     private readonly projectCommands?: ProjectCommandService,
     private readonly dependencyProjection?: DependencyProjectionPort,
   ) {
-    this.onSaveSettings = onSaveSettings;
+    this.onSaveSettings = onSaveSettings ?? (async (): Promise<void> => {});
+    this.persistsSettings = onSaveSettings !== undefined;
     this.captureApplication = captureApplication ?? null;
     this.nextActions = tasks
       ? new NextActionService(tasks, (projectPath, candidate) =>
@@ -357,7 +359,7 @@ export class CenterPanel {
           setCalendarView: (view) => this.setCalendarView(view),
           openQuickCapture: () => undefined,
         },
-        onSaveSettings,
+        this.onSaveSettings,
       );
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
@@ -770,8 +772,8 @@ export class CenterPanel {
     this.selectionLiveEl = null;
   }
 
-  private destroyProjectsPanel(): void {
-    this.projectsPanel?.destroy();
+  private destroyProjectsPanel(preserveWorkspaceSession = false): void {
+    this.projectsPanel?.destroy({ preserveWorkspaceSession });
     this.projectsPanel = null;
   }
 
@@ -1435,7 +1437,7 @@ export class CenterPanel {
         this.reconcilePendingProjectBoardUndo();
         // Rebuild the panel fresh; it owns its own subscriptions and cleans them
         // up in destroy(), so recreating on each render is leak-free.
-        this.destroyProjectsPanel();
+        this.destroyProjectsPanel(true);
         this.projectsPanel = new ProjectsPanel(
           this.state,
           this.projectStore,
@@ -1464,7 +1466,7 @@ export class CenterPanel {
                 onAddPropertyFilter,
               ),
             snapshots: this.projectSnapshots,
-            onSaveSettings: this.onSaveSettings,
+            ...(this.persistsSettings ? { onSaveSettings: this.onSaveSettings } : {}),
             pendingBoardUndo: this.pendingProjectBoardUndo,
             onBoardUndoPending: (pending) => {
               this.pendingProjectBoardUndo = pending;
@@ -1522,6 +1524,7 @@ export class CenterPanel {
     const { searchInput, element: collectionControls } = renderCollectionControls(header, {
       query: this.state.get('centerFilter'),
       searchLabel: 'Filter tasks',
+      toolbarLabel: 'Task collection controls',
       actions: [
         {
           kind: 'filter',

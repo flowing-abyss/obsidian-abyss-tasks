@@ -2397,17 +2397,18 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const stubMgr = { setStatus: vi.fn().mockResolvedValue(undefined) } as never;
 
-  it('keeps a Task-only session override out of persisted settings', () => {
+  it('keeps a Task scoped preference out of the global settings baseline', async () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const settings = structuredClone(DEFAULT_SETTINGS);
     const session = new ProjectWorkspaceSession();
-    session.openProject('Projects/A.md');
-    session.scopeSession('tasks').viewOverride = {
-      ...settings.projects.view.tasks,
-      groupBy: 'priority',
-    };
     const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    session.bindCollectionPreferences(settings, onSaveSettings);
+    session.openProject('Projects/A.md');
+    await session.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      group: 'priority',
+    }));
     const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
       snapshots: [workspace()],
       workspaceSession: session,
@@ -2418,11 +2419,13 @@ describe('ProjectsPanel dispatch', () => {
     panel.mount(el);
     expect(el.querySelector('[data-project-use-as-default]')).toBeNull();
     expect(settings.projects.view.tasks.groupBy).not.toBe('priority');
-    expect(onSaveSettings).not.toHaveBeenCalled();
+    expect(settings.projects.view.collectionPreferences['Projects/A.md']?.tasks.group).toBe(
+      'priority',
+    );
     panel.destroy();
   });
 
-  it('uses the Work Note session query, status filter, and sort identically in List, Board, and Timeline', () => {
+  it('uses the scoped Work Note query, status filter, and sort identically in List, Board, and Timeline', async () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -2437,13 +2440,14 @@ describe('ProjectsPanel dispatch', () => {
       workNote('Work Notes/Done.md', 'done', '2026-08-29'),
     ];
     const session = new ProjectWorkspaceSession();
+    session.bindCollectionPreferences(settings, async () => undefined);
     session.openProject('Projects/A.md');
     session.scopeSession('work-notes').textQuery = 'Beta';
-    session.scopeSession('work-notes').viewOverride = {
-      ...settings.projects.view.workNotes,
-      statusIds: [ACTIVE_ID],
-      sortBy: { field: 'title', dir: 'asc' },
-    };
+    await session.updateCollectionPreference('Projects/A.md', 'work-notes', (current) => ({
+      ...current,
+      filters: [ACTIVE_ID],
+      sort: { field: 'title', dir: 'asc' },
+    }));
     const timelinePaths: string[][] = [];
     const commands = {
       capabilities: () => ({ update: true, create: true }),
