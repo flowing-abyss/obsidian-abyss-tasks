@@ -86,6 +86,24 @@ describe('CenterPanel task metadata styles', () => {
     expect(deleteButton).not.toContain('align-self');
   });
 
+  it('uses an invariant overlay for the revealed Task action and ellipsizes long identity values', () => {
+    const card = declarationsFor('.abyss-task-card');
+    const actionLayer = declarationsFor('.abyss-entity-action-layer');
+    const deleteButton = declarationsFor('.abyss-task-delete-btn');
+    const title = declarationsFor('.abyss-task-title');
+    const sourceName = declarationsFor('.abyss-task-source-note-name');
+
+    expect(card).toContain('position: relative');
+    expect(actionLayer).toContain('position: absolute');
+    expect(deleteButton).toContain('position: absolute');
+    expect(deleteButton).toContain('opacity: 0');
+    expect(title).toContain('overflow: hidden');
+    expect(title).toContain('text-overflow: ellipsis');
+    expect(title).toContain('white-space: nowrap');
+    expect(sourceName).toContain('overflow: hidden');
+    expect(sourceName).toContain('text-overflow: ellipsis');
+  });
+
   it('keeps descriptions title-aligned while narrow primary rows contain their content', () => {
     const description = declarationsFor('.abyss-task-card > .abyss-task-desc');
     const body = declarationsFor('.abyss-task-body');
@@ -110,17 +128,15 @@ describe('CenterPanel task metadata styles', () => {
     expect(center).toContain('container-name: abyss-task-list');
     expect(mainRow).toContain('display: grid');
     expect(mainRow).toContain(
-      'grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px',
+      'grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr)',
     );
     expect(metadata).toContain('grid-column: 2 / -1');
     expect(metadata).toContain('grid-row: 2');
     expect(sourceNote).toContain('white-space: nowrap');
 
-    // R1 live evidence: a 292px center leaves a 253px card main row after scrollbar/padding.
-    // Moving metadata to row 2 leaves the first row's title track at 194px instead of 0px:
-    // 253 - 19px marker - 24px delete button - two 8px gaps.
-    const titleTrack = 253 - 19 - 24 - 2 * 8;
-    expect(titleTrack).toBe(194);
+    // The action layer is absolutely positioned, so the primary grid has no hidden 24px slot.
+    const titleTrack = 253 - 19 - 8;
+    expect(titleTrack).toBe(226);
     expect(titleTrack).toBeGreaterThanOrEqual(160);
   });
 

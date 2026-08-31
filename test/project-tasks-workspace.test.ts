@@ -622,6 +622,33 @@ describe('Project Tasks workspace', () => {
     );
   });
 
+  it('synchronizes the shared search field when the workspace scope changes', () => {
+    const container = freshContainer();
+    const session = new ProjectWorkspaceSession();
+    session.openProject('Projects/A.md');
+    session.scopeSession('tasks').textQuery = 'task query';
+    session.scopeSession('work-notes').textQuery = 'note query';
+
+    renderProjectDashboard(container, snapshot('with-work-notes'), {
+      state: new AppState(),
+      settings: DEFAULT_SETTINGS,
+      workspaceSession: session,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      renderWorkNotes: vi.fn(() => ({ destroy: () => undefined })),
+    });
+
+    const search = container.querySelector<HTMLInputElement>('[data-collection-kind="search"]')!;
+    expect(search.value).toBe('task query');
+    expect(search.getAttribute('aria-label')).toBe('Filter tasks');
+
+    container.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+
+    expect(search.value).toBe('note query');
+    expect(search.getAttribute('aria-label')).toBe('Filter Work Notes');
+  });
+
   it('preserves the user primary sort and uses ownership, created date, and file order only as equal-key tie-breakers', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.tasks = {

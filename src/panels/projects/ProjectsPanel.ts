@@ -21,10 +21,7 @@ import {
   deriveInspectorSelection,
   inspectorSelectionKey,
 } from '../../ui/inspector/InspectorSelection';
-import {
-  ProjectWorkspaceSession,
-  type UseProjectWorkspaceDefaultIntent,
-} from './ProjectWorkspaceSession';
+import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
 import {
@@ -67,12 +64,6 @@ export interface ProjectsPanelOptions {
     allTasks?: ProjectWorkspaceSnapshot['tasks'],
     onAddPropertyFilter?: (filter: PropertyFilter) => void,
   ) => ProjectChildRenderHandle;
-  renderTaskCollectionControls?: (
-    host: HTMLElement,
-    viewState: ProjectTasksViewState,
-    defaults: ProjectTasksViewState,
-    onUpdate: (next: ProjectTasksViewState) => void,
-  ) => void;
   snapshots?: readonly ProjectWorkspaceSnapshot[];
   onSaveSettings?: () => Promise<void>;
   pendingBoardUndo?: PendingProjectBoardUndo;
@@ -107,7 +98,6 @@ export class ProjectsPanel {
   private readonly renderTasks: NonNullable<ProjectsPanelOptions['renderTasks']>;
   private readonly renderTaskBoard: ProjectsPanelOptions['renderTaskBoard'];
   private readonly renderTaskTimeline: ProjectsPanelOptions['renderTaskTimeline'];
-  private readonly renderTaskCollectionControls: ProjectsPanelOptions['renderTaskCollectionControls'];
   private readonly snapshots: readonly ProjectWorkspaceSnapshot[];
   private readonly onSaveSettings: () => Promise<void>;
   private readonly pendingBoardUndo: PendingProjectBoardUndo | undefined;
@@ -142,7 +132,6 @@ export class ProjectsPanel {
     this.renderTasks = opts.renderTasks ?? (() => ({ destroy: () => undefined }));
     this.renderTaskBoard = opts.renderTaskBoard;
     this.renderTaskTimeline = opts.renderTaskTimeline;
-    this.renderTaskCollectionControls = opts.renderTaskCollectionControls;
     this.snapshots = opts.snapshots ?? [];
     this.onSaveSettings = opts.onSaveSettings ?? (async (): Promise<void> => {});
     this.pendingBoardUndo = opts.pendingBoardUndo;
@@ -203,19 +192,6 @@ export class ProjectsPanel {
     const observed = this.workNoteCommands?.observe(note);
     if (!this.workNoteCommands || !observed) return { type: 'invalid', field: 'path' };
     return this.workNoteCommands.setStatus(observed, statusId);
-  }
-
-  private async useWorkspaceDefault(intent: UseProjectWorkspaceDefaultIntent): Promise<void> {
-    if (intent.scope === 'tasks') {
-      this.settings.projects.view.tasks = structuredClone(
-        intent.viewState,
-      ) as ProjectTasksViewState;
-    } else {
-      this.settings.projects.view.workNotes = structuredClone(
-        intent.viewState,
-      ) as WorkNotesViewState;
-    }
-    await this.onSaveSettings();
   }
 
   private renderWorkNotes(
@@ -371,8 +347,8 @@ export class ProjectsPanel {
         focusKey = `status:${active.dataset['projectStatusFilter']}`;
       } else if (active.hasAttribute('data-project-unmapped-filter')) {
         focusKey = 'unmapped';
-      } else if (active.classList.contains('abyss-project-status-summary')) {
-        focusKey = 'status-summary';
+      } else if (active.hasAttribute('data-collection-filter')) {
+        focusKey = 'filter';
       }
     }
     for (const scroll of this.el.querySelectorAll<HTMLElement>(
@@ -395,8 +371,8 @@ export class ProjectsPanel {
       if (focusKey === 'unmapped') {
         return this.el.querySelector<HTMLElement>('[data-project-unmapped-filter]');
       }
-      if (focusKey === 'status-summary') {
-        return this.el.querySelector<HTMLElement>('.abyss-project-status-summary');
+      if (focusKey === 'filter') {
+        return this.el.querySelector<HTMLElement>('[data-collection-filter]');
       }
       const [kind, value] = focusKey.split(':', 2);
       const attribute = kind === 'layout' ? 'projectPortfolioLayout' : 'projectStatusFilter';
@@ -449,10 +425,6 @@ export class ProjectsPanel {
         renderTasks: this.renderTasks,
         ...(this.renderTaskBoard ? { renderTaskBoard: this.renderTaskBoard } : {}),
         ...(this.renderTaskTimeline ? { renderTaskTimeline: this.renderTaskTimeline } : {}),
-        ...(this.renderTaskCollectionControls
-          ? { renderTaskCollectionControls: this.renderTaskCollectionControls }
-          : {}),
-        onUseWorkspaceDefault: (intent) => void this.useWorkspaceDefault(intent),
         workNotesAvailability,
         onOpenWorkNotesSettings: () => {
           const settingsController = (
@@ -511,8 +483,8 @@ export class ProjectsPanel {
       state: this.state,
       settings: this.settings,
       onSaveSettings: this.onSaveSettings,
-      onFiltersChanged: (focusIntent?: 'status-summary') => {
-        this.portfolioFocusIntent = focusIntent ?? null;
+      onFiltersChanged: () => {
+        this.portfolioFocusIntent = null;
         this.render();
       },
       onPortfolioLayoutChanged: () => this.render(),

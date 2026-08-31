@@ -25,7 +25,11 @@ export function renderSourceNoteChip(
   });
   const iconEl = chip.createEl('span', { cls: 'abyss-task-source-note-icon' });
   setIcon(iconEl, 'file-text');
-  chip.createEl('span', { cls: 'abyss-task-source-note-name', text: noteName });
+  chip.createEl('span', {
+    cls: 'abyss-task-source-note-name',
+    text: noteName,
+    attr: { title: noteName },
+  });
   if (onClick) {
     chip.addEventListener('click', (e) => {
       e.stopPropagation();

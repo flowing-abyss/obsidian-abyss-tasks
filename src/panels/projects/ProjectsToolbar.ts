@@ -1,5 +1,9 @@
 import { Menu, setIcon } from 'obsidian';
 import type { ProjectStatus } from '../../settings/types';
+import {
+  renderCollectionControls,
+  type CollectionControlAction,
+} from '../../ui/collection/CollectionControls';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { ProjectsListContext } from './viewContext';
 
@@ -7,7 +11,7 @@ export interface ProjectsToolbarResult {
   readonly newProjectButton: HTMLButtonElement;
   readonly captureHost: HTMLElement;
   readonly liveRegion: HTMLElement;
-  readonly statusSummaryButton: HTMLButtonElement;
+  readonly filterButton: HTMLButtonElement;
   destroy(): void;
 }
 
@@ -45,23 +49,19 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
   }
 }
 
-function saveFilterChange(ctx: ProjectsListContext, focusIntent?: 'status-summary'): void {
+function saveFilterChange(ctx: ProjectsListContext): void {
   void ctx.onSaveSettings();
-  ctx.onFiltersChanged?.(focusIntent);
+  ctx.onFiltersChanged?.();
 }
 
-function toggleStatus(
-  ctx: ProjectsListContext,
-  statusId: string,
-  focusIntent?: 'status-summary',
-): void {
+function toggleStatus(ctx: ProjectsListContext, statusId: string): void {
   const visible = new Set(ctx.settings.projects.view.visibleStatusIds);
   if (visible.has(statusId)) visible.delete(statusId);
   else visible.add(statusId);
   ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses
     .map(({ id }) => id)
     .filter((id) => visible.has(id));
-  saveFilterChange(ctx, focusIntent);
+  saveFilterChange(ctx);
 }
 
 function renderStatusFilter(
@@ -149,43 +149,23 @@ export function renderProjectsToolbar(
 ): ProjectsToolbarResult {
   const header = container.createDiv({ cls: 'abyss-center-header abyss-projects-toolbar' });
   header.createEl('h2', { cls: 'abyss-center-title abyss-projects-title', text: 'Projects' });
-  const controls = header.createDiv({ cls: 'abyss-center-controls' });
-
-  const filters = controls.createDiv({
-    cls: 'abyss-project-status-filters',
-    attr: {
-      role: 'group',
-      'aria-label': 'Project status filters',
-      'data-portfolio-zone': 'filters',
-    },
-  });
-  for (const status of ctx.settings.projects.statuses) renderStatusFilter(filters, status, ctx);
-  renderUnmappedFilter(filters, ctx);
-
-  const statusSummaryButton = filters.createEl('button', {
-    cls: 'abyss-filter-chip abyss-project-status-summary',
-    text: 'Show',
-    attr: {
-      type: 'button',
-      'aria-label': 'Show project status filters',
-      'aria-haspopup': 'menu',
-      'aria-expanded': 'false',
-    },
-  });
-  statusSummaryButton.hidden = true;
-  statusSummaryButton.addEventListener('click', (event) => {
+  let filters!: HTMLElement;
+  let filterButton!: HTMLButtonElement;
+  const showStatusFilterMenu = (event: MouseEvent): void => {
     const menu = new Menu();
-    statusSummaryButton.setAttribute('aria-expanded', 'true');
+    filterButton.setAttribute('aria-expanded', 'true');
     menu.onHide(() => {
-      if (statusSummaryButton.isConnected) {
-        statusSummaryButton.setAttribute('aria-expanded', 'false');
+      if (filterButton.isConnected) {
+        filterButton.setAttribute('aria-expanded', 'false');
+        filterButton.focus({ preventScroll: true });
       }
     });
+    menu.addItem((item) => item.setTitle('Status').setDisabled(true));
     for (const status of ctx.settings.projects.statuses) {
       menu.addItem((item) => {
         item.setTitle(status.label);
         item.setChecked(ctx.settings.projects.view.visibleStatusIds.includes(status.id));
-        item.onClick(() => toggleStatus(ctx, status.id, 'status-summary'));
+        item.onClick(() => toggleStatus(ctx, status.id));
       });
     }
     menu.addItem((item) => {
@@ -193,24 +173,50 @@ export function renderProjectsToolbar(
       item.setChecked(ctx.settings.projects.view.includeUnmapped);
       item.onClick(() => {
         ctx.settings.projects.view.includeUnmapped = !ctx.settings.projects.view.includeUnmapped;
-        saveFilterChange(ctx, 'status-summary');
+        saveFilterChange(ctx);
       });
     });
     showMenuAtMouseEventWithFocus(menu, event);
+  };
+  const actions: readonly CollectionControlAction[] = [
+    { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showStatusFilterMenu },
+  ];
+  let newProjectButton!: HTMLButtonElement;
+  const { element: controls } = renderCollectionControls(header, {
+    query: '',
+    searchLabel: 'Filter projects',
+    search: false,
+    renderLeading: (host) => {
+      filters = host.createDiv({
+        cls: 'abyss-project-status-filters',
+        attr: {
+          role: 'group',
+          'aria-label': 'Project status filters',
+          'data-portfolio-zone': 'filters',
+        },
+      });
+      for (const status of ctx.settings.projects.statuses) renderStatusFilter(filters, status, ctx);
+      renderUnmappedFilter(filters, ctx);
+    },
+    renderLayout: (host) => {
+      host.setAttribute('data-portfolio-zone', 'layout');
+      renderPortfolioLayout(host, ctx);
+    },
+    actions,
+    onQueryInput: () => undefined,
+    renderAdd: (host) => {
+      host.classList.add('abyss-projects-add-zone');
+      host.setAttribute('data-portfolio-zone', 'add');
+      newProjectButton = host.createEl('button', {
+        cls: 'abyss-projects-new abyss-project-open-btn',
+        attr: { type: 'button', 'aria-label': 'New project', title: 'New project' },
+      });
+      setIcon(newProjectButton, 'plus');
+    },
   });
-
-  const layoutZone = controls.createDiv({ attr: { 'data-portfolio-zone': 'layout' } });
-  renderPortfolioLayout(layoutZone, ctx);
-
-  const addZone = controls.createDiv({
-    cls: 'abyss-projects-add-zone',
-    attr: { 'data-portfolio-zone': 'add' },
-  });
-  const newProjectButton = addZone.createEl('button', {
-    cls: 'abyss-projects-new abyss-project-open-btn',
-    attr: { type: 'button', 'aria-label': 'New project', title: 'New project' },
-  });
-  setIcon(newProjectButton, 'plus');
+  filterButton = controls.querySelector<HTMLButtonElement>('[data-collection-filter]')!;
+  filterButton.setAttribute('aria-haspopup', 'menu');
+  filterButton.setAttribute('aria-expanded', 'false');
   const captureHost = header.createDiv({ cls: 'abyss-projects-new-input-host' });
   const liveRegion = header.createDiv({
     cls: 'abyss-sr-only abyss-project-create-live',
@@ -235,13 +241,17 @@ export function renderProjectsToolbar(
       filters.querySelectorAll<HTMLButtonElement>('.abyss-project-status-filter'),
     );
     let hiddenCount = 0;
-    statusSummaryButton.hidden = !overflowing;
     for (const chip of chips) {
       const hidden = overflowing;
       chip.toggleClass('is-overflow-hidden', hidden);
       if (hidden) hiddenCount += 1;
     }
-    statusSummaryButton.textContent = overflowing ? `Show ${String(hiddenCount)}` : 'Show';
+    filterButton.setAttribute(
+      'aria-label',
+      overflowing
+        ? `Filter project statuses (${String(hiddenCount)} hidden)`
+        : 'Filter project statuses',
+    );
   };
   const ResizeObserverCtor = header.ownerDocument.defaultView?.ResizeObserver;
   const observer = ResizeObserverCtor ? new ResizeObserverCtor(updateOverflow) : undefined;
@@ -252,7 +262,7 @@ export function renderProjectsToolbar(
     newProjectButton,
     captureHost,
     liveRegion,
-    statusSummaryButton,
+    filterButton,
     destroy: () => observer?.disconnect(),
   };
 }

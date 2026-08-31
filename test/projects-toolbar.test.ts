@@ -19,31 +19,20 @@ function context() {
 afterEach(() => vi.restoreAllMocks());
 
 describe('renderProjectsToolbar', () => {
-  it('orders the working-set filters before layout and New project in DOM and tab order', () => {
+  it('uses the shared semantic order without a Show control', () => {
     const root = freshContainer();
     renderProjectsToolbar(root, { ...context(), timelineAvailable: true });
 
-    const controls = root.querySelector<HTMLElement>('.abyss-center-controls')!;
-    expect(
-      Array.from(controls.children, (element) => element.getAttribute('data-portfolio-zone')),
-    ).toEqual(['filters', 'layout', 'add']);
+    const controls = root.querySelector<HTMLElement>('[data-collection-controls]')!;
     expect(
       Array.from(
-        controls.querySelectorAll<HTMLElement>('button:not([hidden])'),
-        (button) =>
-          button.dataset['projectStatusFilter'] ??
-          (button.hasAttribute('data-project-unmapped-filter') ? 'unmapped' : undefined) ??
-          button.dataset['projectPortfolioLayout'] ??
-          button.getAttribute('aria-label'),
+        controls.querySelectorAll<HTMLElement>(':scope > [data-collection-kind]'),
+        (element) => element.dataset['collectionKind'],
       ),
-    ).toEqual([
-      ...context().settings.projects.statuses.map(({ id }) => id),
-      'unmapped',
-      'overview',
-      'board',
-      'timeline',
-      'New project',
-    ]);
+    ).toEqual(['scope-or-status', 'layout', 'filter', 'add']);
+    expect(controls.querySelector('[data-collection-kind="search"]')).toBeNull();
+    expect(root.textContent).not.toContain('Show');
+    expect(root.querySelectorAll('[data-collection-controls]')).toHaveLength(1);
   });
 
   it('keeps Timeline in the segmented switcher when the renderer is unavailable', () => {
@@ -53,11 +42,10 @@ describe('renderProjectsToolbar', () => {
     const timeline = root.querySelector<HTMLButtonElement>(
       '[data-project-portfolio-layout="timeline"]',
     )!;
-    expect(timeline).not.toBeNull();
     expect(timeline.disabled).toBe(true);
   });
 
-  it('replaces every chip with one native Show summary during ordinary overflow', () => {
+  it('moves overflowing direct statuses into Filter as a Status section', () => {
     const callbacks: ResizeObserverCallback[] = [];
     const PreviousResizeObserver = globalThis.ResizeObserver;
     class TestResizeObserver {
@@ -72,11 +60,25 @@ describe('renderProjectsToolbar', () => {
       configurable: true,
       value: TestResizeObserver,
     });
-    const menu = { addItem: vi.fn().mockReturnThis(), showAtMouseEvent: vi.fn() };
-    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(menu.addItem as never);
-    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(menu.showAtMouseEvent as never);
-    const root = freshContainer();
+    const capturedTitles: string[] = [];
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      const item = {
+        setTitle: (title: string) => {
+          capturedTitles.push(title);
+          return item;
+        },
+        setDisabled: () => item,
+        setChecked: () => item,
+        onClick: () => item,
+      };
+      callback(item as never);
+      return this;
+    });
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      return this;
+    });
     try {
+      const root = freshContainer();
       const result = renderProjectsToolbar(root, context());
       const filters = root.querySelector<HTMLElement>('.abyss-project-status-filters')!;
       Object.defineProperty(filters, 'clientWidth', { configurable: true, value: 120 });
@@ -87,13 +89,10 @@ describe('renderProjectsToolbar', () => {
       expect(
         filters.querySelectorAll('.abyss-project-status-filter:not(.is-overflow-hidden)'),
       ).toHaveLength(0);
-      expect(result.statusSummaryButton.hidden).toBe(false);
-      expect(result.statusSummaryButton.textContent).toBe(
-        `Show ${String(context().settings.projects.statuses.length + 1)}`,
-      );
-      expect(root.querySelectorAll('.abyss-project-status-summary')).toHaveLength(1);
-      result.statusSummaryButton.click();
-      expect(Menu.prototype.addItem).toHaveBeenCalled();
+      result.filterButton.click();
+      expect(capturedTitles[0]).toBe('Status');
+      expect(capturedTitles).toContain('Unmapped');
+      expect(root.textContent).not.toContain('Show');
     } finally {
       Object.defineProperty(globalThis, 'ResizeObserver', {
         configurable: true,
@@ -102,136 +101,17 @@ describe('renderProjectsToolbar', () => {
     }
   });
 
-  it('persists a filter changed from the compact summary through the same callback', async () => {
-    let invokeFirstItem: (() => void) | undefined;
-    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
-      const item = {
-        setTitle: () => item,
-        setChecked: () => item,
-        onClick: (handler: () => void) => {
-          invokeFirstItem ??= handler;
-          return item;
-        },
-      };
-      callback(item as never);
-      return this;
-    });
-    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
-      return this;
-    });
+  it('persists a direct status toggle immediately', async () => {
     const ctx = context();
     const root = freshContainer();
-    const result = renderProjectsToolbar(root, ctx);
+    renderProjectsToolbar(root, ctx);
 
-    result.statusSummaryButton.click();
-    invokeFirstItem?.();
+    root.querySelector<HTMLButtonElement>('[data-project-status-filter]')!.click();
     await Promise.resolve();
 
     expect(ctx.settings.projects.view.visibleStatusIds).not.toContain(
       ctx.settings.projects.statuses[0]!.id,
     );
     expect(ctx.onSaveSettings).toHaveBeenCalledOnce();
-  });
-
-  it('retains no long active chips when only the Show summary fits', () => {
-    const callbacks: ResizeObserverCallback[] = [];
-    const PreviousResizeObserver = globalThis.ResizeObserver;
-    class TestResizeObserver {
-      constructor(callback: ResizeObserverCallback) {
-        callbacks.push(callback);
-      }
-      observe(): void {}
-      disconnect(): void {}
-    }
-    Object.defineProperty(globalThis, 'ResizeObserver', {
-      configurable: true,
-      value: TestResizeObserver,
-    });
-    try {
-      const root = freshContainer();
-      const result = renderProjectsToolbar(root, context());
-      const filters = root.querySelector<HTMLElement>('.abyss-project-status-filters')!;
-      Object.defineProperty(filters, 'clientWidth', { configurable: true, value: 54 });
-      Object.defineProperty(filters, 'scrollWidth', { configurable: true, value: 600 });
-      Object.defineProperty(result.statusSummaryButton, 'offsetWidth', {
-        configurable: true,
-        value: 50,
-      });
-      for (const chip of filters.querySelectorAll<HTMLElement>('.abyss-project-status-filter')) {
-        Object.defineProperty(chip, 'offsetWidth', { configurable: true, value: 80 });
-      }
-      callbacks[0]?.([], {} as ResizeObserver);
-
-      expect(
-        filters.querySelectorAll('.abyss-project-status-filter:not(.is-overflow-hidden)'),
-      ).toHaveLength(0);
-      expect(result.statusSummaryButton.hidden).toBe(false);
-      expect(result.statusSummaryButton.textContent).not.toBe('Show 0');
-      expect(filters.getAttribute('role')).toBe('group');
-      expect(result.statusSummaryButton.getAttribute('aria-haspopup')).toBe('menu');
-      expect(result.statusSummaryButton.getAttribute('aria-expanded')).toBe('false');
-    } finally {
-      Object.defineProperty(globalThis, 'ResizeObserver', {
-        configurable: true,
-        value: PreviousResizeObserver,
-      });
-    }
-  });
-
-  it('collapses every status chip into one Show summary at compact portfolio width', () => {
-    const callbacks: ResizeObserverCallback[] = [];
-    const PreviousResizeObserver = globalThis.ResizeObserver;
-    class TestResizeObserver {
-      constructor(callback: ResizeObserverCallback) {
-        callbacks.push(callback);
-      }
-      observe(): void {}
-      disconnect(): void {}
-    }
-    Object.defineProperty(globalThis, 'ResizeObserver', {
-      configurable: true,
-      value: TestResizeObserver,
-    });
-    try {
-      const ctx = context();
-      ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses.map(
-        ({ id }) => id,
-      );
-      const root = freshContainer();
-      const result = renderProjectsToolbar(root, ctx);
-      const header = root.querySelector<HTMLElement>('.abyss-projects-toolbar')!;
-      const filters = root.querySelector<HTMLElement>('.abyss-project-status-filters')!;
-      Object.defineProperty(header, 'clientWidth', { configurable: true, value: 440 });
-      Object.defineProperty(filters, 'clientWidth', { configurable: true, value: 300 });
-      Object.defineProperty(filters, 'scrollWidth', { configurable: true, value: 600 });
-      Object.defineProperty(result.statusSummaryButton, 'offsetWidth', {
-        configurable: true,
-        value: 60,
-      });
-      for (const chip of filters.querySelectorAll<HTMLElement>('.abyss-project-status-filter')) {
-        Object.defineProperty(chip, 'offsetWidth', { configurable: true, value: 80 });
-      }
-
-      callbacks[0]?.([], {} as ResizeObserver);
-
-      expect(
-        filters.querySelectorAll('.abyss-project-status-filter:not(.is-overflow-hidden)'),
-      ).toHaveLength(0);
-      expect(result.statusSummaryButton.hidden).toBe(false);
-      expect(result.statusSummaryButton.textContent).toBe(
-        `Show ${String(ctx.settings.projects.statuses.length + 1)}`,
-      );
-      expect(
-        Array.from(
-          root.querySelectorAll<HTMLElement>('.abyss-center-controls > [data-portfolio-zone]'),
-          (zone) => zone.dataset['portfolioZone'],
-        ),
-      ).toEqual(['filters', 'layout', 'add']);
-    } finally {
-      Object.defineProperty(globalThis, 'ResizeObserver', {
-        configurable: true,
-        value: PreviousResizeObserver,
-      });
-    }
   });
 });

@@ -296,7 +296,6 @@ describe('CenterPanel task-card primary row', () => {
         expect.stringContaining('abyss-status-marker'),
         'abyss-task-body',
         'abyss-task-meta-right',
-        'abyss-task-delete-btn',
       ]);
 
       const titleRow = mainRow.querySelector<HTMLElement>('.abyss-task-title-row')!;
@@ -307,7 +306,10 @@ describe('CenterPanel task-card primary row', () => {
       expect(description.parentElement).toBe(card);
       expect(description.previousElementSibling).toBe(mainRow);
 
-      const deleteButton = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn')!;
+      const deleteButton = card.querySelector<HTMLButtonElement>('.abyss-task-delete-btn')!;
+      expect(deleteButton.parentElement?.classList.contains('abyss-entity-action-layer')).toBe(
+        true,
+      );
       expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
       expect(deleteButton.textContent).toBe('');
     } finally {
@@ -354,7 +356,9 @@ describe('CenterPanel task-card primary row', () => {
 
       const mainRow = panel['el'].querySelector<HTMLElement>('.abyss-task-card-main-row')!;
       const body = mainRow.querySelector<HTMLElement>('.abyss-task-body')!;
-      expect(body.querySelector('.abyss-task-title')).not.toBeNull();
+      const title = body.querySelector<HTMLElement>('.abyss-task-title')!;
+      expect(title).not.toBeNull();
+      expect(title.getAttribute('title')).toBe(snapshot.title);
       expect(mainRow.querySelector('.abyss-task-meta-right')).not.toBeNull();
       expect(panel['el'].querySelector('.abyss-task-card > .abyss-task-desc')).toBeNull();
     } finally {
@@ -842,21 +846,21 @@ describe('CenterPanel sort and group popover keyboard ownership', () => {
       popover = open();
       expect(option(popover, 'Sort by', 'Priority ↑').getAttribute('aria-pressed')).toBe('true');
       expect(option(popover, 'Sort by', 'Date').getAttribute('aria-pressed')).toBe('false');
-      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('true');
-      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
-      option(popover, 'Show', 'All').click();
+      expect(option(popover, 'Status', 'Active').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Status', 'All').getAttribute('aria-pressed')).toBe('false');
+      option(popover, 'Status', 'All').click();
 
       popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
-      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('true');
-      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
-      expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('true');
-      option(popover, 'Show', 'Done').click();
+      expect(option(popover, 'Status', 'All').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Status', 'Active').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Status', 'Done').getAttribute('aria-pressed')).toBe('true');
+      option(popover, 'Status', 'Done').click();
 
       popover = container.querySelector<HTMLElement>('.abyss-view-state-popover')!;
-      expect(option(popover, 'Show', 'Done').getAttribute('aria-pressed')).toBe('false');
-      expect(option(popover, 'Show', 'To do').getAttribute('aria-pressed')).toBe('true');
-      expect(option(popover, 'Show', 'All').getAttribute('aria-pressed')).toBe('false');
-      expect(option(popover, 'Show', 'Active').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Status', 'Done').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Status', 'To do').getAttribute('aria-pressed')).toBe('true');
+      expect(option(popover, 'Status', 'All').getAttribute('aria-pressed')).toBe('false');
+      expect(option(popover, 'Status', 'Active').getAttribute('aria-pressed')).toBe('false');
     } finally {
       panel.destroy();
       container.remove();

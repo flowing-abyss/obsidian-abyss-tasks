@@ -3445,7 +3445,9 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 .abyss-task-title {
   flex: 1;
   min-width: 0;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--font-ui-medium);
   color: var(--text-normal);
 }
@@ -3562,6 +3564,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   height: 11px;
 }
 .abyss-task-source-note-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-decoration: underline;
   text-decoration-color: var(--text-faint);
   text-decoration-thickness: 1px;
@@ -3612,9 +3618,22 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   margin-right: 4px;
 }
 
+.abyss-entity-action-layer {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 4px;
+  width: 24px;
+  height: 24px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
 /* Delete button on task card */
 .abyss-task-delete-btn {
+  position: absolute;
+  inset: 0;
   opacity: 0;
+  pointer-events: none;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -3639,8 +3658,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   width: 16px;
   height: 16px;
 }
-.abyss-task-card:hover .abyss-task-delete-btn {
+.abyss-task-card:hover .abyss-task-delete-btn,
+.abyss-task-card:focus .abyss-task-delete-btn,
+.abyss-task-card:focus-within .abyss-task-delete-btn,
+.abyss-task-delete-btn:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 .abyss-task-delete-btn:hover {
   color: var(--text-error);
@@ -3653,7 +3676,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 @container abyss-task-list (max-width: 28rem) {
   .abyss-task-card-main-row {
     display: grid;
-    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
+    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr);
     column-gap: var(--abyss-task-card-primary-gap);
     row-gap: 2px;
   }
@@ -3665,11 +3688,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
   .abyss-task-body {
     grid-column: 2;
-    grid-row: 1;
-  }
-
-  .abyss-task-delete-btn {
-    grid-column: 3;
     grid-row: 1;
   }
 

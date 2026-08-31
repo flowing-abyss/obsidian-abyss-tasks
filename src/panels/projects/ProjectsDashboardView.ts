@@ -10,10 +10,7 @@ import type {
   PropertyFilter,
   WorkNotesViewState,
 } from '../../settings/types';
-import {
-  renderCollectionActions,
-  renderCollectionControls,
-} from '../../ui/collection/CollectionControls';
+import { renderCollectionControls } from '../../ui/collection/CollectionControls';
 import {
   deriveInspectorSelection,
   inspectorSelectionKey,
@@ -298,7 +295,7 @@ export function renderProjectDashboard(
         snapshot.tasks.some(({ task }) => taskTimelineItem(task).kind !== 'undated')
       : ctx.renderWorkNoteTimeline !== undefined && allWorkNotes.length > 0;
   let syncTimelineButton = (): void => undefined;
-  let syncCollectionControls = (): void => undefined;
+  let collectionControls: ReturnType<typeof renderCollectionControls> | null = null;
   let child: ProjectChildRenderHandle | null = null;
   let destroyed = false;
   let arbitrationVersion = 0;
@@ -354,8 +351,14 @@ export function renderProjectDashboard(
 
   const renderWorkspace = (): void => {
     if (destroyed) return;
-    syncCollectionControls();
     syncTimelineButton();
+    if (collectionControls) {
+      const input = collectionControls.searchInput;
+      if (!input) return;
+      const query = scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery;
+      input.value = query;
+      input.setAttribute('aria-label', scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes');
+    }
     workspace.dataset['scope'] = scope;
     workspace.dataset['layout'] = layout;
     workspaceTitle.setText(scope === 'work-notes' ? 'Work Notes' : 'Tasks');
@@ -447,7 +450,6 @@ export function renderProjectDashboard(
     scopeButtons.push(button);
   };
   let layoutHost!: HTMLElement;
-  let scopeCollectionControlsHost!: HTMLElement;
   const layoutButton = (value: ProjectWorkspaceLayout, label: string, selectable = true): void => {
     const button = layoutHost.createEl('button', {
       text: label,
@@ -476,16 +478,6 @@ export function renderProjectDashboard(
     });
     settings.addEventListener('click', () => ctx.onOpenWorkNotesSettings?.());
   }
-  const useAsDefault = scopeRow.createEl('button', {
-    text: 'Use as default',
-    attr: { type: 'button', 'data-project-use-as-default': '' },
-  });
-  useAsDefault.addEventListener('click', () => {
-    session.requestUseAsDefault(scope);
-    const intent = session.consumeUseAsDefaultIntent();
-    if (intent) ctx.onUseWorkspaceDefault?.(intent);
-  });
-
   const updateTaskView = (next: ProjectTasksViewState): void => {
     taskScope.viewOverride = next;
     renderWorkspace();
@@ -596,10 +588,10 @@ export function renderProjectDashboard(
     showMenuAtMouseEventWithFocus(menu, event);
   };
 
-  const controls = renderCollectionControls(workspace, {
+  collectionControls = renderCollectionControls(workspace, {
     query: scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery,
     searchLabel: scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes',
-    renderLeading: (host) => {
+    renderLayout: (host) => {
       layoutHost = host.createDiv({
         cls: 'abyss-project-layout-controls',
         attr: { role: 'group', 'aria-label': 'Collection layout' },
@@ -612,8 +604,12 @@ export function renderProjectDashboard(
       ) {
         layoutButton('board', 'Board');
       }
-      scopeCollectionControlsHost = host.createDiv({ cls: 'abyss-scope-collection-controls' });
     },
+    actions: [
+      { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showFilterMenu },
+      { kind: 'group', label: 'Group', icon: 'layout-list', onActivate: showGroupMenu },
+      { kind: 'sort', label: 'Sort', icon: 'arrow-up-down', onActivate: showSortMenu },
+    ],
     onQueryInput: (value) => {
       if (scope === 'tasks') taskScope.textQuery = value;
       else workNotesScope.textQuery = value;
@@ -648,28 +644,6 @@ export function renderProjectDashboard(
       renderWorkspace();
     });
     layoutButtons.push(timelineButton);
-  };
-  syncCollectionControls = (): void => {
-    scopeCollectionControlsHost.empty();
-    if (scope === 'tasks' && ctx.renderTaskCollectionControls) {
-      ctx.renderTaskCollectionControls(
-        scopeCollectionControlsHost,
-        taskViewState(),
-        ctx.settings.projects.view.tasks,
-        updateTaskView,
-      );
-    } else {
-      renderCollectionActions(scopeCollectionControlsHost, [
-        { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showFilterMenu },
-        { kind: 'group', label: 'Group', icon: 'layout-list', onActivate: showGroupMenu },
-        { kind: 'sort', label: 'Sort', icon: 'arrow-up-down', onActivate: showSortMenu },
-      ]);
-    }
-    controls.searchInput.value = scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery;
-    controls.searchInput.setAttribute(
-      'aria-label',
-      scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes',
-    );
   };
   renderWorkspace();
   return {

@@ -75,7 +75,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     });
   });
 
-  it('uses an override only when the current scope has one and exposes use-as-default intent', () => {
+  it('uses an override only when the current scope has one', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');
     const tasks = registry.scopeSession('tasks');
@@ -84,11 +84,6 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(tasks.effectiveView(taskDefault)).toBe(taskDefault);
     tasks.viewOverride = override;
     expect(tasks.effectiveView(taskDefault)).toBe(override);
-    expect(registry.consumeUseAsDefaultIntent()).toBeNull();
-
-    registry.requestUseAsDefault('tasks');
-    expect(registry.consumeUseAsDefaultIntent()).toEqual({ scope: 'tasks', viewState: override });
-    expect(registry.consumeUseAsDefaultIntent()).toBeNull();
   });
 
   it('evicts the least-recently-used clean Project session after twelve entries', () => {

@@ -74,11 +74,6 @@ export interface ProjectCaptureSession {
   terminalResult?: Extract<ProjectCreateResult, { type: 'file-created' }>;
 }
 
-export interface UseProjectWorkspaceDefaultIntent {
-  readonly scope: ProjectWorkspaceScope;
-  readonly viewState: ProjectTasksViewState | WorkNotesViewState;
-}
-
 export interface ProjectWorkspaceRecoveryEntry {
   readonly sourcePath: string;
   readonly destinationPath: string;
@@ -283,7 +278,6 @@ export class ProjectWorkspaceSession {
   private readonly idle = workspaceEntry();
   private readonly recoveries: ProjectWorkspaceRecoveryEntry[] = [];
   private projectPath: string | null = null;
-  private useAsDefaultIntent: UseProjectWorkspaceDefaultIntent | null = null;
   /** Portfolio continuity is independent of whichever Project workspace is open. */
   readonly portfolioTimeline = timelineViewport('portfolio');
   /** Portfolio Board continuity is independent of Project dashboard scope/layout state. */
@@ -382,17 +376,6 @@ export class ProjectWorkspaceSession {
     | ProjectWorkspaceScopeSession<WorkNotesViewState> {
     const entry = this.current();
     return scope === 'tasks' ? entry.tasksScope : entry.workNotesScope;
-  }
-
-  requestUseAsDefault(scope: ProjectWorkspaceScope = this.scope): void {
-    const viewState = this.scopeSession(scope).viewOverride;
-    if (viewState) this.useAsDefaultIntent = { scope, viewState };
-  }
-
-  consumeUseAsDefaultIntent(): UseProjectWorkspaceDefaultIntent | null {
-    const intent = this.useAsDefaultIntent;
-    this.useAsDefaultIntent = null;
-    return intent;
   }
 
   recoveryEntries(): readonly ProjectWorkspaceRecoveryEntry[] {

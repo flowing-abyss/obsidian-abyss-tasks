@@ -8,11 +8,7 @@ import type {
   PropertyFilter,
   WorkNotesViewState,
 } from '../../settings/types';
-import type {
-  ProjectCaptureSession,
-  ProjectWorkspaceSession,
-  UseProjectWorkspaceDefaultIntent,
-} from './ProjectWorkspaceSession';
+import type { ProjectCaptureSession, ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 
 /** Lifecycle owned by a Project dashboard child renderer. */
 export interface ProjectChildRenderHandle {
@@ -27,7 +23,7 @@ export interface ProjectsListContext {
   state: AppState;
   settings: CalendarSettings;
   onSaveSettings: () => Promise<void>;
-  onFiltersChanged?: (focusIntent?: 'status-summary') => void;
+  onFiltersChanged?: () => void;
   onPortfolioLayoutChanged?: () => void;
   onCaptureSettled?: () => void;
   timelineAvailable?: boolean;
@@ -71,13 +67,6 @@ export interface ProjectsDashboardContext {
     allTasks?: readonly ProjectAction[],
     onAddPropertyFilter?: (filter: PropertyFilter) => void,
   ) => ProjectChildRenderHandle;
-  /** Mounts the canonical Task chips and Group/Sort/Show model for Project-local view state. */
-  renderTaskCollectionControls?: (
-    host: HTMLElement,
-    viewState: ProjectTasksViewState,
-    defaults: ProjectTasksViewState,
-    onUpdate: (next: ProjectTasksViewState) => void,
-  ) => void;
   /** Renders rich supporting notes without projecting them into checkbox Tasks. */
   renderWorkNotes?: (
     host: HTMLElement,
@@ -105,8 +94,6 @@ export interface ProjectsDashboardContext {
   ) => readonly WorkNoteSnapshot[];
   /** Audited compatibility catalog shared by the Work Note filter and selector. */
   workNoteStatuses?: readonly WorkNoteStatusDefinition[];
-  /** Owner callback for the explicit one-way session-to-preference promotion. */
-  onUseWorkspaceDefault?: (intent: UseProjectWorkspaceDefaultIntent) => void;
   /** Eligible records or an audited create capability make the optional scope visible. */
   workNotesAvailable?: boolean;
   /** Explicit capability state distinguishes disabled setup from an invalid enabled source. */

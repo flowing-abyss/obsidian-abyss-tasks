@@ -1671,28 +1671,12 @@ describe('renderProjectDashboard', () => {
     expect(el.querySelector('button button, button input, a button, button a')).toBeNull();
   });
 
-  it('mounts the canonical Task chips and Group Sort Show owner for Project-local view intents', () => {
+  it('mounts shared Filter, Group, and Sort controls for Project-local view intents', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.tasks = {
       ...settings.projects.view.tasks,
       filters: [{ type: 'tag', value: '#focus' }],
     };
-    const renderTaskCollectionControls = vi.fn(
-      (
-        host: HTMLElement,
-        viewState: typeof settings.projects.view.tasks,
-        _defaults: typeof settings.projects.view.tasks,
-        onUpdate: (next: typeof settings.projects.view.tasks) => void,
-      ) => {
-        const filter = viewState.filters[0];
-        host.createSpan({
-          cls: 'abyss-filter-chip',
-          text: filter?.type === 'tag' ? filter.value : '',
-        });
-        const show = host.createEl('button', { cls: 'abyss-view-state-btn', text: 'Show' });
-        show.addEventListener('click', () => onUpdate({ ...viewState, statusGroups: undefined }));
-      },
-    );
     const renderTasks = vi.fn((..._args: unknown[]) => ({ destroy: () => undefined }));
     const el = freshContainer();
 
@@ -1702,20 +1686,12 @@ describe('renderProjectDashboard', () => {
       onSetStatus: vi.fn(),
       openNote: vi.fn(),
       renderTasks,
-      renderTaskCollectionControls,
     });
 
-    expect(renderTaskCollectionControls).toHaveBeenCalledWith(
-      expect.any(HTMLElement),
-      expect.objectContaining({ filters: [{ type: 'tag', value: '#focus' }] }),
-      settings.projects.view.tasks,
-      expect.any(Function),
-    );
-    expect(el.querySelector('.abyss-filter-chip')?.textContent).toBe('#focus');
-    expect(el.querySelector('.abyss-view-state-btn')).not.toBeNull();
-    expect(el.querySelector('[data-collection-filter]')).toBeNull();
-    el.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
-    expect(renderTasks.mock.lastCall?.[3] as object).toMatchObject({ statusGroups: undefined });
+    expect(el.querySelector('[data-collection-filter]')).not.toBeNull();
+    expect(el.querySelector('[data-collection-group]')).not.toBeNull();
+    expect(el.querySelector('[data-collection-sort]')).not.toBeNull();
+    expect(el.textContent).not.toContain('Show');
   });
 
   it('ships bounded two-row summary and wrapping collection controls for narrow panes', () => {
@@ -2421,7 +2397,7 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const stubMgr = { setStatus: vi.fn().mockResolvedValue(undefined) } as never;
 
-  it('promotes a Task-only session override when Use as default is clicked', async () => {
+  it('keeps a Task-only session override out of persisted settings', () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
     const settings = structuredClone(DEFAULT_SETTINGS);
@@ -2440,11 +2416,9 @@ describe('ProjectsPanel dispatch', () => {
     const el = freshContainer();
 
     panel.mount(el);
-    el.querySelector<HTMLButtonElement>('[data-project-use-as-default]')!.click();
-    await Promise.resolve();
-
-    expect(settings.projects.view.tasks.groupBy).toBe('priority');
-    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(el.querySelector('[data-project-use-as-default]')).toBeNull();
+    expect(settings.projects.view.tasks.groupBy).not.toBe('priority');
+    expect(onSaveSettings).not.toHaveBeenCalled();
     panel.destroy();
   });
 
@@ -2640,12 +2614,13 @@ describe('ProjectsPanel dispatch', () => {
   });
 
   it.each(['overview', 'board', 'timeline'] as const)(
-    'returns overflow-filter focus to Show after a %s remount',
+    'returns overflow-filter focus to Filter after a %s remount',
     (layout) => {
       let invokeFirstItem: (() => void) | undefined;
       vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
         const item = {
           setTitle: () => item,
+          setDisabled: () => item,
           setChecked: () => item,
           onClick: (handler: () => void) => {
             invokeFirstItem ??= handler;
@@ -2678,16 +2653,15 @@ describe('ProjectsPanel dispatch', () => {
       const el = attachedContainer();
       panel.mount(el);
       try {
-        const summary = el.querySelector<HTMLButtonElement>('.abyss-project-status-summary')!;
-        summary.hidden = false;
-        summary.focus();
-        summary.click();
-        expect(summary.getAttribute('aria-expanded')).toBe('true');
+        const filter = el.querySelector<HTMLButtonElement>('[data-collection-filter]')!;
+        filter.focus();
+        filter.click();
+        expect(filter.getAttribute('aria-expanded')).toBe('true');
 
         invokeFirstItem?.();
 
-        const replacement = el.querySelector<HTMLButtonElement>('.abyss-project-status-summary')!;
-        expect(replacement).not.toBe(summary);
+        const replacement = el.querySelector<HTMLButtonElement>('[data-collection-filter]')!;
+        expect(replacement).not.toBe(filter);
         expect(activeDocument.activeElement).toBe(replacement);
         expect(replacement.getAttribute('aria-expanded')).toBe('false');
       } finally {

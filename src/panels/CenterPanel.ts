@@ -46,6 +46,7 @@ import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { renderCollectionControls } from '../ui/collection/CollectionControls';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
+import { renderEntityActionLayer } from '../ui/entity/EntityActionLayer';
 import { inspectorSelectionKey, type InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
@@ -1461,22 +1462,6 @@ export class CenterPanel {
                 allTasks,
                 onAddPropertyFilter,
               ),
-            renderTaskCollectionControls: (host, viewState, defaults, onUpdate) =>
-              this.renderTaskCollectionControls(host, {
-                viewState: {
-                  groupBy: viewState.groupBy,
-                  sortBy: { ...viewState.sortBy },
-                  filters: [...viewState.filters],
-                  ...(viewState.statusGroups ? { statusGroups: [...viewState.statusGroups] } : {}),
-                },
-                defaults: {
-                  groupBy: defaults.groupBy,
-                  sortBy: { ...defaults.sortBy },
-                  filters: [...defaults.filters],
-                  ...(defaults.statusGroups ? { statusGroups: [...defaults.statusGroups] } : {}),
-                },
-                onUpdate: (next) => onUpdate({ ...viewState, ...next, table: viewState.table }),
-              }),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,
             pendingBoardUndo: this.pendingProjectBoardUndo,
@@ -1533,12 +1518,43 @@ export class CenterPanel {
     const header = this.el.createDiv({ cls: 'abyss-center-header' });
     header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle() });
 
-    const { searchInput } = renderCollectionControls(header, {
+    const { searchInput, element: collectionControls } = renderCollectionControls(header, {
       query: this.state.get('centerFilter'),
       searchLabel: 'Filter tasks',
-      renderLeading: (controls) => {
-        this.renderTaskCollectionControls(controls);
-      },
+      actions: [
+        {
+          kind: 'filter',
+          label: 'Filter',
+          icon: 'list-filter',
+          onActivate: (event) =>
+            this.showViewStatePopover(
+              event.currentTarget as HTMLElement,
+              this.mainTaskCollectionControlBinding(),
+            ),
+        },
+        {
+          kind: 'group',
+          label: 'Group',
+          icon: 'layout-list',
+          onActivate: (event) =>
+            this.showViewStatePopover(
+              event.currentTarget as HTMLElement,
+              this.mainTaskCollectionControlBinding(),
+            ),
+        },
+        {
+          kind: 'sort',
+          label: 'Sort',
+          icon: 'arrow-up-down',
+          className: 'abyss-view-state-btn',
+          onActivate: (event) =>
+            this.showViewStatePopover(
+              event.currentTarget as HTMLElement,
+              this.mainTaskCollectionControlBinding(),
+            ),
+        },
+      ],
+      renderActiveChips: (controls) => this.renderPropertyChips(controls),
       onQueryInput: (value) => {
         window.clearTimeout(this.filterDebounce);
         this.filterDebounce = window.setTimeout(() => {
@@ -1547,6 +1563,13 @@ export class CenterPanel {
         }, 150);
       },
     });
+    if (this.reopenStatusGroupPopover) {
+      this.reopenStatusGroupPopover = false;
+      const trigger = collectionControls.querySelector<HTMLElement>('.abyss-view-state-btn');
+      if (trigger)
+        this.showViewStatePopover(trigger, this.mainTaskCollectionControlBinding(), true);
+    }
+    if (!searchInput) throw new Error('Task collection requires a search input');
     // Restore focus + caret after a debounced filter re-render so typing stays smooth.
     if (this.refocusSearch) {
       this.refocusSearch = false;
@@ -2586,7 +2609,10 @@ export class CenterPanel {
       badge.createEl('span', { text: String(linkCount) });
     }
 
-    const titleEl = titleRow.createEl('span', { cls: 'abyss-task-title' });
+    const titleEl = titleRow.createEl('span', {
+      cls: 'abyss-task-title',
+      attr: { title: task.title },
+    });
     renderTaskText(titleEl, task.markdownTitle, {
       app: this.app,
       sourcePath: task.source.filePath,
@@ -2753,15 +2779,14 @@ export class CenterPanel {
       });
     }
 
-    // Delete button (visible on hover)
-    const deleteBtn = mainRow.createEl('button', {
-      cls: 'abyss-task-delete-btn',
-      attr: { title: 'Delete task', 'aria-label': 'Delete task' },
-    });
-    setIcon(deleteBtn, 'x');
-    deleteBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      void this.deleteTask(task);
+    renderEntityActionLayer(card, {
+      className: 'abyss-task-delete-btn',
+      label: 'Delete task',
+      icon: 'x',
+      onActivate: (e) => {
+        e.stopPropagation();
+        void this.deleteTask(task);
+      },
     });
 
     // Drag source
@@ -3266,14 +3291,6 @@ export class CenterPanel {
     };
   }
 
-  private renderTaskCollectionControls(
-    container: HTMLElement,
-    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
-  ): void {
-    this.renderPropertyChips(container, binding);
-    this.renderViewStateButton(container, binding);
-  }
-
   private renderPropertyChips(
     container: HTMLElement,
     binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
@@ -3341,31 +3358,6 @@ export class CenterPanel {
 
   private activeListKey(): string {
     return listSelectionToKey(this.state.get('selectedList'));
-  }
-
-  private renderViewStateButton(
-    container: HTMLElement,
-    binding: TaskCollectionControlBinding = this.mainTaskCollectionControlBinding(),
-  ): void {
-    const vs = binding.viewState;
-    const defaults = binding.defaults;
-    const isNonDefault =
-      vs.groupBy !== defaults.groupBy ||
-      vs.sortBy.field !== defaults.sortBy.field ||
-      vs.sortBy.dir !== defaults.sortBy.dir ||
-      !statusGroupsEqual(vs.statusGroups, defaults.statusGroups);
-
-    const btn = container.createEl('button', {
-      cls: `abyss-view-state-btn${isNonDefault ? ' abyss-view-state-btn--active' : ''}`,
-      attr: { 'aria-label': 'Sort & group options' },
-    });
-    setIcon(btn, 'arrow-up-down');
-    btn.addEventListener('click', () => this.showViewStatePopover(btn, binding));
-
-    if (this.reopenStatusGroupPopover) {
-      this.reopenStatusGroupPopover = false;
-      this.showViewStatePopover(btn, binding, true);
-    }
   }
 
   private showViewStatePopover(
@@ -3579,7 +3571,7 @@ export class CenterPanel {
     const STATUS_GROUP_OPTIONS: Array<{ label: string; value: TaskStatusType }> =
       ALL_STATUS_GROUPS.map((value) => ({ label: TYPE_LABELS[value], value }));
 
-    // Unified "Show" display value: All (undefined/all 4), Active (exactly
+    // Unified status display value: All (undefined/all 4), Active (exactly
     // the open+in-progress pair), otherwise a count of the selected groups.
     const showDisplayValue = (selected: TaskStatusType[] | undefined): string => {
       const effective = normalizeStatusGroups(selected) ?? ALL_STATUS_GROUPS;
@@ -3617,7 +3609,7 @@ export class CenterPanel {
       },
     );
 
-    // Single unified "Show" control — replaces the old separate Show
+    // Single unified Status control replaces the old duplicate confirmation path.
     // single-select and Status group multi-select, which contradicted each
     // other. "Active"/"All" are one-click presets; the 4 toggles below them
     // are the actual source of truth (presets just set their state).
@@ -3629,7 +3621,7 @@ export class CenterPanel {
 
     makeMultiRow(
       'eye',
-      'Show',
+      'Status',
       showDisplayValue(vs.statusGroups),
       vs.statusGroups ?? ALL_STATUS_GROUPS,
       STATUS_GROUP_OPTIONS,
