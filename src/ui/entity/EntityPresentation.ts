@@ -1,3 +1,11 @@
+import { setIcon } from 'obsidian';
+
+interface EntityPresentationAction {
+  readonly label: string;
+  readonly icon: string;
+  readonly onClick: (event: MouseEvent) => void;
+}
+
 export interface EntityPresentationOptions {
   readonly identity?: string;
   readonly status?: string;
@@ -5,6 +13,7 @@ export interface EntityPresentationOptions {
   readonly progress?: string;
   readonly date?: string;
   readonly health?: string;
+  readonly actions?: readonly EntityPresentationAction[];
 }
 
 /** Shared semantic slots for Project cards and table identities. */
@@ -25,7 +34,24 @@ export class EntityPresentation {
     this.slot(root, 'progress', this.options.progress);
     this.slot(root, 'date', this.options.date);
     this.slot(root, 'health', this.options.health);
+    this.renderActions(root);
     return root;
+  }
+
+  renderActions(parent: HTMLElement): void {
+    if (!this.options.actions?.length) return;
+    const actions = parent.createDiv({
+      cls: 'abyss-entity-actions',
+      attr: { 'data-entity-slot': 'actions' },
+    });
+    for (const action of this.options.actions) {
+      const button = actions.createEl('button', {
+        cls: 'abyss-project-overflow-btn',
+        attr: { type: 'button', 'aria-label': action.label, title: action.label },
+      });
+      setIcon(button, action.icon);
+      button.addEventListener('click', action.onClick);
+    }
   }
 
   private slot(parent: HTMLElement, name: string, value: string | undefined): void {

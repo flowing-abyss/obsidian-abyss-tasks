@@ -1,10 +1,29 @@
 import { App, TFile } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
+import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import {
   ProjectPropertyAdapter,
   parseProjectPropertyEditorValue,
 } from '../src/projects/properties/ProjectPropertyAdapter';
 import { ProjectPropertyCommands } from '../src/projects/properties/ProjectPropertyCommands';
+import type { ProjectStatus } from '../src/settings/types';
+
+const lifecycleStatuses: readonly ProjectStatus[] = [
+  {
+    id: 'active',
+    label: 'Active',
+    behavior: 'regular',
+    onLeftPanel: true,
+    match: { kind: 'property', property: 'phase', value: 'active' },
+  },
+  {
+    id: 'published',
+    label: 'Published',
+    behavior: 'published',
+    onLeftPanel: false,
+    match: { kind: 'tag', tag: 'project/published' },
+  },
+];
 
 describe('ProjectPropertyAdapter', () => {
   it('infers safe editable property kinds and preserves unsupported values', () => {
@@ -120,5 +139,40 @@ describe('ProjectPropertyAdapter', () => {
     await expect(
       commands.write({ path: 'Projects/A.md', propertyId: 'priority', expected: 'C', next: 'A' }),
     ).resolves.toEqual({ type: 'unsupported', field: 'priority' });
+  });
+
+  it('marks configured lifecycle carriers and every specialised metadata field read-only', async () => {
+    const adapter = new ProjectPropertyAdapter(lifecycleStatuses);
+    for (const id of ['phase', 'tags', 'priority', 'start', 'end', 'description', 'comments']) {
+      expect(adapter.describe(id, id === 'tags' ? ['project/published'] : 'value').writable).toBe(
+        false,
+      );
+    }
+    const app = new App();
+    const commands = new ProjectPropertyCommands(app, lifecycleStatuses);
+    await expect(
+      commands.write({
+        path: 'Projects/A.md',
+        propertyId: 'phase',
+        expected: 'active',
+        next: 'done',
+      }),
+    ).resolves.toEqual({ type: 'unsupported', field: 'phase' });
+    await expect(
+      commands.write({
+        path: 'Projects/A.md',
+        propertyId: 'tags',
+        expected: ['project/published'],
+        next: [],
+      }),
+    ).resolves.toEqual({ type: 'unsupported', field: 'tags' });
+    await expect(
+      new ProjectCommandService(app, () => lifecycleStatuses).setProperty({
+        path: 'Projects/A.md',
+        propertyId: 'phase',
+        expected: 'active',
+        next: 'done',
+      }),
+    ).resolves.toEqual({ type: 'unsupported', field: 'phase' });
   });
 });

@@ -1,4 +1,4 @@
-import { Menu, setIcon } from 'obsidian';
+import { Menu } from 'obsidian';
 import {
   ProjectPropertyAdapter,
   parseProjectPropertyEditorValue,
@@ -51,6 +51,7 @@ export function projectTableFields(
 export interface ProjectsTableOptions {
   readonly settings: CalendarSettings;
   readonly onOpen: (path: string) => void;
+  readonly onOpenNote?: (path: string) => void;
   readonly preference?: ProjectsTablePreference;
   readonly onPreferenceChange?: (next: ProjectsTablePreference) => void;
   readonly groupBy?: PortfolioGroupBy;
@@ -187,6 +188,23 @@ function makeCellFocusable(cell: HTMLElement, value: string, activate: () => voi
   });
 }
 
+function makeEditableCell(cell: HTMLElement, value: string, renderEditor: () => void): void {
+  const activate = (): void => {
+    cell.empty();
+    renderEditor();
+    cell.querySelector<HTMLElement>('input, select, textarea, button')?.focus({
+      preventScroll: true,
+    });
+  };
+  makeCellFocusable(cell, value, activate);
+  cell.addEventListener('dblclick', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
+  if (value) cell.createSpan({ text: value, attr: { title: value } });
+}
+
 function propertyDescriptor(
   adapter: ProjectPropertyAdapter,
   snapshot: ProjectWorkspaceSnapshot,
@@ -240,6 +258,11 @@ function renderPropertyEditor(
   const restore = (): void => {
     if (type === 'checkbox') input.checked = settled === true;
     else input.value = projectPropertyEditorValue(descriptor, settled);
+    const value = projectPropertyEditorValue(descriptor, settled);
+    if (value) {
+      input.title = value;
+      input.setAttribute('aria-label', `Edit ${descriptor.displayName}: ${value}`);
+    }
   };
   restore();
   const feedback = cell.createSpan({
@@ -320,6 +343,11 @@ function renderOwnedSelect(
   });
   const restore = (): void => {
     select.value = settled;
+    const value = select.selectedOptions[0]?.textContent ?? '';
+    if (value) {
+      select.title = value;
+      select.setAttribute('aria-label', `Edit ${label}: ${value}`);
+    }
   };
   select.addEventListener('click', (event) => event.stopPropagation());
   select.addEventListener('keydown', (event) => {
@@ -378,6 +406,10 @@ function renderRangeEditor(
   });
   const restore = (): void => {
     input.value = settled;
+    if (settled) {
+      input.title = settled;
+      input.setAttribute('aria-label', `Edit ${endpoint}: ${settled}`);
+    }
   };
   const commit = async (): Promise<void> => {
     if (!options.onSetRange) {
@@ -432,6 +464,14 @@ function showProjectMenu(
       .setIcon('folder-open')
       .onClick(() => options.onOpen(snapshot.project.path)),
   );
+  if (options.onOpenNote) {
+    menu.addItem((item) =>
+      item
+        .setTitle('Open note')
+        .setIcon('file-text')
+        .onClick(() => options.onOpenNote!(snapshot.project.path)),
+    );
+  }
   const statusMenu = (
     menu.addItem((item) => item.setTitle('Status')) as unknown as { setSubmenu(): Menu }
   ).setSubmenu();
@@ -468,7 +508,7 @@ export function renderProjectsTable(
   options: ProjectsTableOptions,
 ): VirtualTableHandle {
   const preference = options.preference ?? options.settings.projects.view.table;
-  const adapter = new ProjectPropertyAdapter();
+  const adapter = new ProjectPropertyAdapter(options.settings.projects.statuses);
   const tableColumns = columns(preference, snapshots, options.bases ?? []);
   const ordered = sortProjects(
     snapshots,
@@ -516,13 +556,14 @@ export function renderProjectsTable(
             new EntityPresentation({
               identity: snapshot.project.name,
               priority: snapshot.project.priority,
+              actions: [
+                {
+                  label: 'Project actions',
+                  icon: 'ellipsis',
+                  onClick: (event) => showProjectMenu(event, snapshot, options),
+                },
+              ],
             }).render(cell);
-            const menu = cell.createEl('button', {
-              cls: 'abyss-project-overflow-btn',
-              attr: { type: 'button', 'aria-label': 'Project actions', title: 'Project actions' },
-            });
-            setIcon(menu, 'ellipsis');
-            menu.addEventListener('click', (event) => showProjectMenu(event, snapshot, options));
             cell.addEventListener('contextmenu', (event) =>
               showProjectMenu(event, snapshot, options),
             );
@@ -530,43 +571,52 @@ export function renderProjectsTable(
             continue;
           }
           case 'status': {
-            renderOwnedSelect(
-              cell,
-              'Status',
-              snapshot.project.statusId,
-              options.settings.projects.statuses.map((status) => ({
-                value: status.id,
-                label: status.label,
-              })),
-              options.onSetStatus
-                ? (next) =>
-                    next
-                      ? options.onSetStatus!(snapshot.project.path, next)
-                      : Promise.resolve({ type: 'invalid' })
-                : undefined,
+            const value =
+              options.settings.projects.statuses.find(({ id }) => id === snapshot.project.statusId)
+                ?.label ??
+              snapshot.project.rawStatus ??
+              '';
+            makeEditableCell(cell, value, () =>
+              renderOwnedSelect(
+                cell,
+                'Status',
+                snapshot.project.statusId,
+                options.settings.projects.statuses.map((status) => ({
+                  value: status.id,
+                  label: status.label,
+                })),
+                options.onSetStatus
+                  ? (next) =>
+                      next
+                        ? options.onSetStatus!(snapshot.project.path, next)
+                        : Promise.resolve({ type: 'invalid' })
+                  : undefined,
+              ),
             );
-            makeCellFocusable(cell, snapshot.project.statusId ?? '', open);
             continue;
           }
-          case 'priority':
-            renderOwnedSelect(
-              cell,
-              'Priority',
-              snapshot.project.priority ?? null,
-              ['A', 'B', 'C', 'D', 'E', 'F'].map((priority) => ({
-                value: priority,
-                label: priority,
-              })),
-              options.onSetPriority
-                ? (next) =>
-                    options.onSetPriority!(
-                      snapshot.project.path,
-                      next as ProjectWorkspaceSnapshot['project']['priority'],
-                    )
-                : undefined,
+          case 'priority': {
+            const value = snapshot.project.priority ?? '';
+            makeEditableCell(cell, value, () =>
+              renderOwnedSelect(
+                cell,
+                'Priority',
+                snapshot.project.priority ?? null,
+                ['A', 'B', 'C', 'D', 'E', 'F'].map((priority) => ({
+                  value: priority,
+                  label: priority,
+                })),
+                options.onSetPriority
+                  ? (next) =>
+                      options.onSetPriority!(
+                        snapshot.project.path,
+                        next as ProjectWorkspaceSnapshot['project']['priority'],
+                      )
+                  : undefined,
+              ),
             );
-            makeCellFocusable(cell, snapshot.project.priority ?? '', open);
             continue;
+          }
           case 'progress':
             value =
               snapshot.taskRollup.progress === null
@@ -579,24 +629,26 @@ export function renderProjectsTable(
               : '';
             break;
           case 'start':
-            renderRangeEditor(
-              cell,
-              'start',
-              snapshot.project.range.start?.raw,
-              options,
-              snapshot.project.path,
+            makeEditableCell(cell, snapshot.project.range.start?.raw ?? '', () =>
+              renderRangeEditor(
+                cell,
+                'start',
+                snapshot.project.range.start?.raw,
+                options,
+                snapshot.project.path,
+              ),
             );
-            makeCellFocusable(cell, snapshot.project.range.start?.raw ?? '', open);
             continue;
           case 'end':
-            renderRangeEditor(
-              cell,
-              'end',
-              snapshot.project.range.end?.raw,
-              options,
-              snapshot.project.path,
+            makeEditableCell(cell, snapshot.project.range.end?.raw ?? '', () =>
+              renderRangeEditor(
+                cell,
+                'end',
+                snapshot.project.range.end?.raw,
+                options,
+                snapshot.project.path,
+              ),
             );
-            makeCellFocusable(cell, snapshot.project.range.end?.raw ?? '', open);
             continue;
           default: {
             const descriptor = propertyDescriptor(
@@ -606,15 +658,16 @@ export function renderProjectsTable(
               options.bases ?? [],
             );
             value = adapter.display(snapshot.project.frontmatter[column.id]);
-            renderPropertyEditor(
-              cell,
-              descriptor,
-              snapshot.project.frontmatter[column.id],
-              snapshot.project.path,
-              options,
-            );
-            if (cell.querySelector('[data-property-editor]')) {
-              makeCellFocusable(cell, value, open);
+            if (descriptor.writable && editorType(descriptor.kind)) {
+              makeEditableCell(cell, value, () =>
+                renderPropertyEditor(
+                  cell,
+                  descriptor,
+                  snapshot.project.frontmatter[column.id],
+                  snapshot.project.path,
+                  options,
+                ),
+              );
               continue;
             }
           }

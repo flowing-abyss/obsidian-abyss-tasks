@@ -1,4 +1,5 @@
 import { TFile, type App } from 'obsidian';
+import type { ProjectStatus } from '../../settings/types';
 import {
   isOwnedProjectProperty,
   ProjectPropertyAdapter,
@@ -30,15 +31,18 @@ function sameValue(left: unknown, right: unknown): boolean {
 
 /** Guarded public `processFrontMatter` writer for fields not owned by a specialised command. */
 export class ProjectPropertyCommands {
-  constructor(private readonly app: App) {}
+  constructor(
+    private readonly app: App,
+    private readonly statuses: readonly ProjectStatus[] = [],
+  ) {}
 
   async write(write: ProjectPropertyWrite): Promise<ProjectPropertyWriteResult> {
     if (!write.propertyId || write.propertyId === '__proto__' || write.propertyId === 'constructor')
       return { type: 'invalid', field: 'property' };
-    if (isOwnedProjectProperty(write.propertyId)) {
+    if (isOwnedProjectProperty(write.propertyId, this.statuses)) {
       return { type: 'unsupported', field: write.propertyId };
     }
-    const adapter = new ProjectPropertyAdapter();
+    const adapter = new ProjectPropertyAdapter(this.statuses);
     if (
       adapter.describe(write.propertyId, write.expected).kind === 'unsupported' ||
       adapter.describe(write.propertyId, write.next).kind === 'unsupported'

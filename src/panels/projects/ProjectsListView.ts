@@ -621,52 +621,54 @@ export function renderProjectRow(
   }
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
-
-  const overflow = actions.createEl('button', {
-    cls: 'abyss-project-overflow-btn',
-    attr: { type: 'button', 'aria-label': 'Project actions', title: 'Project actions' },
-  });
-  setIcon(overflow, 'ellipsis');
-  overflow.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const menu = new Menu();
-    menu.addItem((item) =>
-      item
-        .setTitle('Open note')
-        .setIcon('file-text')
-        .onClick(() => ctx.openNote(project.path)),
-    );
-    if (showStatusControl) {
-      const statusMenu = (
-        menu.addItem((item) => item.setTitle('Status')) as unknown as {
-          setSubmenu(): Menu;
-        }
-      ).setSubmenu();
-      for (const action of projectStatusMenuModel(statuses, project))
-        statusMenu.addItem((item) =>
-          item
-            .setTitle(action.label)
-            .setIcon(action.icon)
-            .setChecked(action.checked)
-            .setDisabled(action.disabled)
-            .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
-        );
-    }
-    const priorityMenu = (
-      menu.addItem((item) => item.setTitle('Priority')) as unknown as {
-        setSubmenu(): Menu;
-      }
-    ).setSubmenu();
-    for (const priority of ['A', 'B', 'C', 'D', 'E', 'F'] as const) {
-      priorityMenu.addItem((item) =>
-        item
-          .setTitle(priority)
-          .setChecked(project.priority === priority)
-          .onClick(() => ctx.onSetPriority?.(project.path, priority)),
-      );
-    }
-    showMenuAtMouseEventWithFocus(menu, e);
-  });
+  new EntityPresentation({
+    actions: [
+      {
+        label: 'Project actions',
+        icon: 'ellipsis',
+        onClick: (e) => {
+          e.stopPropagation();
+          const menu = new Menu();
+          menu.addItem((item) =>
+            item
+              .setTitle('Open note')
+              .setIcon('file-text')
+              .onClick(() => ctx.openNote(project.path)),
+          );
+          if (showStatusControl) {
+            const statusMenu = (
+              menu.addItem((item) => item.setTitle('Status')) as unknown as {
+                setSubmenu(): Menu;
+              }
+            ).setSubmenu();
+            for (const action of projectStatusMenuModel(statuses, project))
+              statusMenu.addItem((item) =>
+                item
+                  .setTitle(action.label)
+                  .setIcon(action.icon)
+                  .setChecked(action.checked)
+                  .setDisabled(action.disabled)
+                  .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
+              );
+          }
+          const priorityMenu = (
+            menu.addItem((item) => item.setTitle('Priority')) as unknown as {
+              setSubmenu(): Menu;
+            }
+          ).setSubmenu();
+          for (const priority of ['A', 'B', 'C', 'D', 'E', 'F'] as const) {
+            priorityMenu.addItem((item) =>
+              item
+                .setTitle(priority)
+                .setChecked(project.priority === priority)
+                .onClick(() => ctx.onSetPriority?.(project.path, priority)),
+            );
+          }
+          showMenuAtMouseEventWithFocus(menu, e);
+        },
+      },
+    ],
+  }).renderActions(actions);
 
   nameWrap.addEventListener('click', () => {
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });

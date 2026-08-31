@@ -217,7 +217,7 @@ export class ProjectCommandService {
 
   /** Public generic property command for typed Table cells; specialised commands retain ownership. */
   async setProperty(write: ProjectPropertyWrite): Promise<ProjectPropertyWriteResult> {
-    return await new ProjectPropertyCommands(this.app).write(write);
+    return await new ProjectPropertyCommands(this.app, this.statuses()).write(write);
   }
 
   observeComments(

@@ -1,3 +1,4 @@
+import type { ProjectStatus } from '../../settings/types';
 import { parseProjectDate } from '../projectDates';
 
 export type ProjectPropertyKind =
@@ -39,14 +40,28 @@ export type ProjectPropertyEditorValue =
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const DATETIME = /^\d{4}-\d{2}-\d{2}[T ]/u;
 const WIKILINK = /^\[\[[^\]]+\]\]$/u;
-const OWNED_PROJECT_PROPERTIES = new Set(['status', 'priority', 'start', 'end']);
+const OWNED_PROJECT_PROPERTIES = new Set([
+  'status',
+  'tags',
+  'priority',
+  'start',
+  'end',
+  'description',
+  'comments',
+]);
 
 function titleCase(id: string): string {
   return id.replace(/[-_]/gu, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-export function isOwnedProjectProperty(id: string): boolean {
-  return OWNED_PROJECT_PROPERTIES.has(id);
+export function isOwnedProjectProperty(
+  id: string,
+  statuses: readonly ProjectStatus[] = [],
+): boolean {
+  return (
+    OWNED_PROJECT_PROPERTIES.has(id) ||
+    statuses.some((status) => status.match.kind === 'property' && status.match.property === id)
+  );
 }
 
 /**
@@ -113,17 +128,26 @@ export function projectPropertyEditorValue(
 
 /** Public, Bases-optional adapter. It never imports Obsidian internals or normalizes unknown values. */
 export class ProjectPropertyAdapter {
+  constructor(private readonly statuses: readonly ProjectStatus[] = []) {}
+
   describe(id: string, value: unknown, bases?: PublicBasesDescriptor): ProjectPropertyDescriptor {
     if (bases?.id === id) {
       return {
         id,
         displayName: bases.displayName ?? titleCase(id),
         kind: bases.kind ?? this.infer(id, value),
-        writable: bases.writable ?? this.infer(id, value) !== 'unsupported',
+        writable:
+          !isOwnedProjectProperty(id, this.statuses) &&
+          (bases.writable ?? this.infer(id, value) !== 'unsupported'),
       };
     }
     const kind = this.infer(id, value);
-    return { id, displayName: titleCase(id), kind, writable: kind !== 'unsupported' };
+    return {
+      id,
+      displayName: titleCase(id),
+      kind,
+      writable: !isOwnedProjectProperty(id, this.statuses) && kind !== 'unsupported',
+    };
   }
 
   describeAll(

@@ -717,6 +717,7 @@ export class ProjectsPanel {
                 );
             },
             onOpen: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
+            onOpenNote: (path) => this.openNote(path),
             onWriteProperty: (write) => this.writeProperty(write),
             onSetStatus: (path, statusId) => this.setStatus(path, statusId),
             onSetPriority: (path, priority) => this.setPriority(path, priority ?? null),

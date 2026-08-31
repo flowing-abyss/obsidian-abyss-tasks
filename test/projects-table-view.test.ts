@@ -1,3 +1,4 @@
+import { Menu, type MenuItem } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { renderProjectsTable } from '../src/panels/projects/ProjectsTableView';
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
@@ -42,7 +43,7 @@ describe('ProjectsTableView', () => {
     expect(table.querySelectorAll('[role="row"]').length).toBeLessThan(120);
   });
 
-  it('renders arbitrary frontmatter fields and exposes typed edit controls without normalizing unsupported values', () => {
+  it('keeps custom property cells presentational until explicit edit activation without normalizing unsupported values', () => {
     const root = freshContainer();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.table = {
@@ -61,7 +62,16 @@ describe('ProjectsTableView', () => {
     expect(
       Array.from(table.querySelectorAll('[role="columnheader"]')).map((cell) => cell.textContent),
     ).toEqual(['Project', 'Estimate', 'Nested']);
-    expect(table.querySelector('[data-property-editor="estimate"]')).not.toBeNull();
+    expect(table.querySelector('[data-property-editor="estimate"]')).toBeNull();
+    const estimate = table.querySelector<HTMLElement>(
+      '[role="cell"][data-table-column="estimate"]',
+    )!;
+    expect(estimate.title).toBe('3');
+    expect(estimate.getAttribute('aria-label')).toBe('3');
+    estimate.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    const editor = table.querySelector<HTMLElement>('[data-property-editor="estimate"]')!;
+    expect(editor.title).toBe('3');
+    expect(editor.getAttribute('aria-label')).toContain('3');
     expect(table.textContent).toContain('{"preserve":true}');
     expect(table.querySelector('[data-property-editor="nested"]')).toBeNull();
   });
@@ -85,7 +95,40 @@ describe('ProjectsTableView', () => {
     expect(
       Array.from(root.querySelectorAll('[role="columnheader"]')).map((cell) => cell.textContent),
     ).toEqual(['Project', 'Client note']);
+    expect(root.querySelector('[data-property-editor="client"]')).toBeNull();
+    root
+      .querySelector<HTMLElement>('[role="cell"][data-table-column="client"]')!
+      .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     expect(root.querySelector('[data-property-editor="client"]')).not.toBeNull();
+  });
+
+  it('renders configured lifecycle carriers and specialised metadata as readable non-editable cells', () => {
+    const root = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.statuses[0] = {
+      ...settings.projects.statuses[0]!,
+      match: { kind: 'property', property: 'phase', value: 'active' },
+    };
+    settings.projects.view.table = {
+      version: 1,
+      columns: [
+        { propertyId: 'phase', visible: true },
+        { propertyId: 'tags', visible: true },
+        { propertyId: 'description', visible: true },
+        { propertyId: 'comments', visible: true },
+      ],
+      collapsedGroups: [],
+    };
+    const project = snapshot(1);
+    project.project.frontmatter = {
+      phase: 'active',
+      tags: ['project/active'],
+      description: 'Keep this',
+      comments: ['2026-08-31: Preserve this'],
+    };
+    renderProjectsTable(root, [project], { settings, onOpen: vi.fn() });
+    expect(root.querySelector('[data-property-editor]')).toBeNull();
+    expect(root.querySelector('[role="table"]')?.textContent).toContain('Preserve this');
   });
 
   it('commits a parsed custom-property edit and restores a conflicted editor to its settled carrier', async () => {
@@ -106,6 +149,8 @@ describe('ProjectsTableView', () => {
       .mockResolvedValueOnce({ type: 'ok', value: 4 })
       .mockResolvedValueOnce({ type: 'conflict', current: 9 });
     renderProjectsTable(root, [project], { settings, onOpen: vi.fn(), onWriteProperty: write });
+    const cell = root.querySelector<HTMLElement>('[role="cell"][data-table-column="estimate"]')!;
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     const editor = root.querySelector<HTMLInputElement>('[data-property-editor="estimate"]')!;
 
     editor.value = '4';
@@ -140,6 +185,8 @@ describe('ProjectsTableView', () => {
       collapsedGroups: [],
     };
     renderProjectsTable(root, [project], { settings, onOpen: vi.fn(), onWriteProperty: write });
+    const cell = root.querySelector<HTMLElement>('[role="cell"][data-table-column="title"]')!;
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     const editor = root.querySelector<HTMLInputElement>('[data-property-editor="title"]')!;
     editor.focus();
     editor.value = 'Draft';
@@ -170,6 +217,12 @@ describe('ProjectsTableView', () => {
       onSetPriority: priority,
       onSetRange: range,
     });
+    root
+      .querySelector<HTMLElement>('[role="cell"][data-table-column="priority"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    root
+      .querySelector<HTMLElement>('[role="cell"][data-table-column="start"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     const priorityEditor = root.querySelector<HTMLSelectElement>(
       '[data-property-editor="priority"]',
     )!;
@@ -181,6 +234,71 @@ describe('ProjectsTableView', () => {
     await flushMicrotasks();
     expect(priority).toHaveBeenCalledWith('Projects/1.md', 'A');
     expect(range).toHaveBeenCalledWith('Projects/1.md', 'start', '2026-09-01');
+  });
+
+  it('offers separate Open project and Open note actions before guarded Status and Priority menus', () => {
+    const root = freshContainer();
+    const openProject = vi.fn();
+    const openNote = vi.fn();
+    const items: Array<{ title: string; activate: () => void }> = [];
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      return this;
+    });
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      let title = '';
+      let activate = (): void => undefined;
+      let recorded = false;
+      const item = {
+        setTitle(value: string) {
+          title = value;
+          if (!recorded) {
+            recorded = true;
+            items.push({
+              get title() {
+                return title;
+              },
+              activate: () => activate(),
+            });
+          }
+          return this;
+        },
+        setIcon() {
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        onClick(callback: () => void) {
+          activate = callback;
+          return this;
+        },
+        setSubmenu() {
+          return new Menu();
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return item as unknown as Menu;
+    });
+    try {
+      renderProjectsTable(root, [snapshot(1)], {
+        settings: structuredClone(DEFAULT_SETTINGS),
+        onOpen: openProject,
+        onOpenNote: openNote,
+        onSetStatus: vi.fn().mockResolvedValue({ type: 'ok' }),
+        onSetPriority: vi.fn().mockResolvedValue({ type: 'ok' }),
+      });
+      root.querySelector<HTMLButtonElement>('[aria-label="Project actions"]')!.click();
+      const titles = items.map(({ title }) => title);
+      expect(titles.indexOf('Open project')).toBeLessThan(titles.indexOf('Open note'));
+      expect(titles.indexOf('Open note')).toBeLessThan(titles.indexOf('Status'));
+      expect(titles.indexOf('Status')).toBeLessThan(titles.indexOf('Priority'));
+      items.find(({ title }) => title === 'Open project')!.activate();
+      items.find(({ title }) => title === 'Open note')!.activate();
+      expect(openProject).toHaveBeenCalledWith('Projects/1.md');
+      expect(openNote).toHaveBeenCalledWith('Projects/1.md');
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('honors persisted custom order and width and commits keyboard resize without dropping unknown fields', () => {
