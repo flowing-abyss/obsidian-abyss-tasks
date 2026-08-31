@@ -1,3 +1,4 @@
+import { MarkdownRenderer, Menu, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type {
@@ -10,9 +11,11 @@ import type {
   TaskSnapshot,
 } from '../src/tasks';
 import { noInteractionOwnership } from '../src/ui/interactionOwnership';
+import { LinkEditModal } from '../src/ui/LinkEditModal';
 import { TaskModal } from '../src/ui/TaskModal';
 import {
   createAppWithFiles,
+  deferred,
   flushMicrotasks,
   task,
   taskComment,
@@ -1188,7 +1191,125 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.activeElement).toBe(repeatChip);
   });
 
-  it('closes once when Escape bubbles from an ordinary Task title editor', async () => {
+  it.each([
+    { label: 'conflict', type: 'conflict', restoresFocus: true },
+    { label: 'I/O error', type: 'io-error', restoresFocus: true },
+    { label: 'success', type: 'ok', restoresFocus: false },
+  ])(
+    'publishes title-link $label through the shared Relations field lifecycle',
+    async ({ type, restoresFocus }) => {
+      const app = await createAppWithFiles({ 'f.md': '- [ ] See [[Note]]\n' });
+      Object.assign(app.vault, { getConfig: () => [] });
+      const current = task({
+        title: 'See Note',
+        markdownTitle: 'See [[Note]]',
+        source: {
+          filePath: 'f.md',
+          line: 0,
+          originalMarkdown: '- [ ] See [[Note]]',
+          originalBlock: '- [ ] See [[Note]]',
+        },
+      });
+      let editLink!: () => unknown;
+      let linkModal!: LinkEditModal;
+      vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+        holder.createEl('a', { cls: 'internal-link', text: 'Note', attr: { href: 'Note' } });
+      });
+      vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+        const item = {
+          setTitle() {
+            return this;
+          },
+          setIcon() {
+            return this;
+          },
+          onClick(callback: () => unknown) {
+            editLink = callback;
+            return this;
+          },
+        } as unknown as MenuItem;
+        build(item);
+        return this;
+      });
+      vi.spyOn(LinkEditModal.prototype, 'onOpen').mockImplementation(function (
+        this: LinkEditModal,
+      ) {
+        linkModal = this;
+      });
+      const queries = taskQueryApi({ list: () => [current] });
+      const projection: DependencyProjectionPort = {
+        evaluateCompletion: () => ({ type: 'allowed' }),
+        inspect: () => ({ decision: { type: 'allowed' }, relations: [] }),
+        subscribe: () => () => undefined,
+      };
+      const result =
+        type === 'conflict'
+          ? { type: 'conflict' as const, current }
+          : type === 'io-error'
+            ? {
+                type: 'io-error' as const,
+                cause: 'repository-error',
+                contentState: 'unchanged' as const,
+              }
+            : {
+                type: 'ok' as const,
+                changed: false,
+                outcome: { type: 'task' as const, task: current },
+              };
+      const pending = deferred<Awaited<ReturnType<TaskApplicationApi['execute']>>>();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+      modal = new TaskModal(
+        app,
+        testStatusRegistry(),
+        DEFAULT_SETTINGS,
+        queries,
+        { queries, execute },
+        undefined,
+        noInteractionOwnership,
+        projection,
+      );
+      modal.open(current);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+      const initiatingLink = activeDocument.querySelector<HTMLElement>(
+        '.abyss-modal .abyss-right-title-view a',
+      )!;
+      initiatingLink.dispatchEvent(
+        new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+      );
+      editLink();
+      (linkModal as unknown as { onSave: (value: string) => void }).onSave('[[Updated Note]]');
+      await flushMicrotasks();
+
+      const pendingRelations = activeDocument.querySelector<HTMLElement>(
+        '.abyss-modal [data-inspector-field="relations"]',
+      )!;
+      expect(
+        pendingRelations.querySelector<HTMLElement>('[data-task-field-feedback="relations"]')
+          ?.dataset['resultType'],
+      ).toBe('pending');
+      expect(initiatingLink.getAttribute('aria-disabled')).toBe('true');
+      pending.resolve(result);
+      await flushMicrotasks();
+
+      const relations = activeDocument.querySelector<HTMLElement>(
+        '.abyss-modal [data-inspector-field="relations"]',
+      )!;
+      const feedback = relations.querySelector<HTMLElement>(
+        '[data-task-field-feedback="relations"]',
+      );
+      if (type === 'ok') {
+        expect(feedback).toBeNull();
+        expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+      } else {
+        expect(feedback?.dataset['resultType']).toBe(type);
+      }
+      expect(initiatingLink.getAttribute('aria-disabled')).toBeNull();
+      if (restoresFocus) expect(activeDocument.activeElement).toBe(initiatingLink);
+    },
+  );
+
+  it('closes once when Escape comes from ordinary focused Task content', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Modal title\n' });
     const current = task({
       title: 'Modal title',
@@ -1205,14 +1326,11 @@ describe('TaskModal with real RightPanel', () => {
       execute: vi.fn<TaskApplicationApi['execute']>(),
     });
     modal.open(current);
-    click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view')!);
-    const title = activeDocument.querySelector<HTMLTextAreaElement>(
-      '.abyss-modal .abyss-right-title-edit',
+    const ordinaryControl = activeDocument.querySelector<HTMLElement>(
+      '.abyss-modal .abyss-priority-chip',
     )!;
-    title.value = 'Unsaved modal title';
-    title.dispatchEvent(new Event('input', { bubbles: true }));
-
-    title.dispatchEvent(
+    ordinaryControl.focus();
+    ordinaryControl.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
     );
 
@@ -1432,19 +1550,19 @@ describe('TaskModal with real RightPanel', () => {
       surface: 'title editor',
       openSelector: '.abyss-right-title-view',
       ownedSelector: '.abyss-right-title-edit',
-      closesModal: true,
+      closesModal: false,
     },
     {
       surface: 'description editor',
       openSelector: '.abyss-right-desc-view',
       ownedSelector: '.abyss-right-desc-edit',
-      closesModal: true,
+      closesModal: false,
     },
     {
       surface: 'add-subtask editor',
       openSelector: '.abyss-subtask-add-row',
       ownedSelector: '.abyss-subtask-new-input',
-      closesModal: true,
+      closesModal: false,
     },
     {
       surface: 'inline comment editor',

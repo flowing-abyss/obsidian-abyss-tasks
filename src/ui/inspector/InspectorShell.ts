@@ -7,8 +7,6 @@ export interface InspectorShellOptions {
   readonly onRequestClose?: () => void;
   /** Narrow inspectors deliberately stay open while an editor contains an unsaved draft. */
   readonly isDirty?: () => boolean;
-  /** Modal owners can elect to close for an editor-consumed Escape. */
-  readonly closeOnHandledEscape?: boolean;
 }
 
 export interface InspectorShellHandle {
@@ -56,10 +54,9 @@ function handleShellKeydown(
   element: HTMLElement,
   narrow: boolean,
   requestClose: () => void,
-  closeOnHandledEscape = false,
 ): void {
   if (event.key === 'Escape') {
-    if (event.defaultPrevented && !closeOnHandledEscape) return;
+    if (event.defaultPrevented) return;
     event.preventDefault();
     requestClose();
     return;
@@ -151,7 +148,7 @@ export function mountInspectorShell(
     if (shouldRestoreFocus) restoreInspectorFocus(options);
   };
   const onKeyDown = (event: KeyboardEvent): void =>
-    handleShellKeydown(event, element, options.narrow, requestClose, options.closeOnHandledEscape);
+    handleShellKeydown(event, element, options.narrow, requestClose);
   const onOutsidePointer = (event: PointerEvent): void =>
     handleShellOutsidePointer(event, element, options, requestClose);
   element.addEventListener('keydown', onKeyDown);
@@ -200,7 +197,7 @@ export function bindInspectorShell(
     restoreInspectorFocus(options);
   };
   const onKeyDown = (event: KeyboardEvent): void =>
-    handleShellKeydown(event, element, options.narrow, requestClose, options.closeOnHandledEscape);
+    handleShellKeydown(event, element, options.narrow, requestClose);
   const onOutsidePointer = (event: PointerEvent): void =>
     handleShellOutsidePointer(event, element, options, requestClose);
   element.addEventListener('keydown', onKeyDown);

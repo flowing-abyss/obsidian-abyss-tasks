@@ -62,6 +62,7 @@ describe('renderTaskText link occurrence pairing', () => {
     expect(onEditLink).toHaveBeenCalledWith(
       0,
       expect.objectContaining({ raw, index: source.lastIndexOf(raw) }),
+      host.querySelector('a'),
     );
   });
 });

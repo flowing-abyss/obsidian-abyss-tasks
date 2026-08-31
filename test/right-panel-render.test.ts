@@ -783,6 +783,47 @@ describe('RightPanel.renderTask', () => {
     el.remove();
   });
 
+  it.each([
+    { label: 'Plan', trigger: '.abyss-chip-scheduled', instance: 'date-plan' },
+    { label: 'Start', trigger: '.abyss-chip-start', instance: 'date-start' },
+  ])(
+    'keeps $label failure feedback and focus on its initiating date row',
+    async ({ trigger, instance }) => {
+      const selected = task({
+        title: 'Bound dates',
+        planning: { due: '2026-08-01', scheduled: '2026-08-02', start: '2026-08-03' },
+      });
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockResolvedValue({
+        type: 'conflict',
+        current: selected,
+      });
+      const { panel, state, el } = await makePanel({}, {
+        queries: taskQueryApi(),
+        execute,
+      } as unknown as TaskApplicationApi);
+      activeDocument.body.append(el);
+      state.set('taskStack', [selected]);
+
+      const initiatingControl = el.querySelector<HTMLButtonElement>(trigger)!;
+      click(initiatingControl);
+      const input = el.querySelector<HTMLInputElement>('.abyss-date-popover .abyss-date-input')!;
+      input.value = '2026-08-11';
+      input.dispatchEvent(new Event('change'));
+      await flushMicrotasks();
+
+      const row = el.querySelector<HTMLElement>(`[data-inspector-field-instance="${instance}"]`)!;
+      const feedback = row.querySelector<HTMLElement>('[data-task-field-feedback="date"]')!;
+      expect(feedback.dataset['resultType']).toBe('conflict');
+      expect(feedback.parentElement).toBe(row);
+      expect(activeDocument.activeElement).toBe(initiatingControl);
+      expect(
+        el.querySelector('[data-inspector-field-instance="date-due"] [data-task-field-feedback]'),
+      ).toBeNull();
+      panel.destroy();
+      el.remove();
+    },
+  );
+
   it('joins the common inspector entity and field contract without removing Task-only sections', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Contract task', recurrence: 'every week' })]);
@@ -813,6 +854,12 @@ describe('RightPanel.renderTask', () => {
         ({ textContent }) => textContent,
       ),
     ).toContain('Sub-tasks');
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLElement>('[data-inspector-field="date"]'),
+        (row) => row.dataset['inspectorFieldInstance'],
+      ),
+    ).toEqual(['date-due', 'date-time', 'date-plan', 'date-start']);
   });
 
   it('keeps semantic section headings without a decorative divider element', async () => {
@@ -823,7 +870,7 @@ describe('RightPanel.renderTask', () => {
       (element) => element.textContent,
     );
 
-    expect(headings).toEqual(['Progress', 'Description', 'Sub-tasks', 'Comments']);
+    expect(headings).toEqual(['Progress', 'Relations', 'Description', 'Sub-tasks', 'Comments']);
     expect(el.querySelector('.abyss-right-divider')).toBeNull();
   });
 

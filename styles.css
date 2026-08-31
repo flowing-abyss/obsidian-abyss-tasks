@@ -4338,6 +4338,7 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   resize: vertical; /* user can stretch the block */
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 .abyss-right-title-view:hover {
   background: var(--background-modifier-hover);
@@ -8432,10 +8433,11 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   font-size: var(--font-ui-smaller);
 }
 
-.abyss-right-status-field,
-.abyss-right-title-field,
-.abyss-task-chip-field {
+.abyss-entity-inspector .abyss-inspector-field-row.abyss-right-status-field,
+.abyss-entity-inspector .abyss-inspector-field-row.abyss-right-title-field,
+.abyss-entity-inspector .abyss-inspector-field-row.abyss-task-chip-field {
   display: contents;
+  margin: 0;
 }
 
 /* Field rows are deliberately semantic, not card-within-card decoration. */

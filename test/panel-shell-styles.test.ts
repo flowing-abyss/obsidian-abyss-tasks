@@ -225,6 +225,44 @@ describe('Panel shell top rhythm', () => {
   });
 });
 
+describe('Task inspector semantic wrapper layout', () => {
+  it('keeps header and chip wrappers layout-neutral at 440px with a long title', () => {
+    const style = activeDocument.createElement('style');
+    style.textContent = css;
+    const shell = activeDocument.createElement('section');
+    shell.className = 'abyss-entity-inspector abyss-inspector-shell';
+    shell.style.width = '440px';
+    shell.style.fontSize = '200%';
+    shell.innerHTML = `
+      <header class="abyss-right-header">
+        <div class="abyss-inspector-field-row abyss-right-status-field"><span>Status</span><div><button>Status</button></div></div>
+        <div class="abyss-inspector-field-row abyss-right-title-field"><span>Title</span><div><div class="abyss-right-title abyss-right-title-view">${'A long Task title '.repeat(40)}</div></div></div>
+        <div class="abyss-right-header-actions"><button>More</button></div>
+      </header>
+      <div class="abyss-chips-row"><div class="abyss-inspector-field-row abyss-task-chip-field"><span>Date</span><div><button class="abyss-chip">Date</button></div></div></div>`;
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(shell);
+    try {
+      for (const wrapper of shell.querySelectorAll<HTMLElement>(
+        '.abyss-right-status-field, .abyss-right-title-field, .abyss-task-chip-field',
+      )) {
+        const computed = getComputedStyle(wrapper);
+        expect(computed.display).toBe('contents');
+        expect(computed.marginTop).toBe('0px');
+      }
+      const title = shell.querySelector<HTMLElement>('.abyss-right-title-view')!;
+      const actions = shell.querySelector<HTMLElement>('.abyss-right-header-actions')!;
+      expect(getComputedStyle(title).flexGrow).toBe('1');
+      expect(getComputedStyle(actions).flexShrink).toBe('0');
+      expect(getComputedStyle(title).overflowWrap).toBe('anywhere');
+      expect(getComputedStyle(shell).fontSize).toBe('200%');
+    } finally {
+      shell.remove();
+      style.remove();
+    }
+  });
+});
+
 describe('Portfolio Board density contract', () => {
   it('bounds high-volume Board columns inside the available Projects workspace height', () => {
     const host = declarationsFor('.abyss-projects-board-host');

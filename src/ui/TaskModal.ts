@@ -101,7 +101,6 @@ export class TaskModal {
           this.modalEl?.querySelector<HTMLElement>('.abyss-modal-close-btn') ?? null,
         onRequestClose: () => this.close(),
         isDirty: () => false,
-        closeOnHandledEscape: true,
       },
     );
     this.innerPanel.mount(panelEl);

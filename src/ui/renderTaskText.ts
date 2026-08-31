@@ -6,7 +6,7 @@ export interface RenderTaskTextOptions {
   app: App;
   sourcePath: string;
   component: Component;
-  onEditLink?: (occurrenceIndex: number, token: LinkToken) => void;
+  onEditLink?: (occurrenceIndex: number, token: LinkToken, initiator: HTMLElement) => void;
 }
 
 export function renderTaskText(
@@ -81,7 +81,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       e.preventDefault();
       e.stopPropagation();
       const menu = new Menu();
-      menu.addItem(buildEditLinkItem(occurrenceIndex, token, opts));
+      menu.addItem(buildEditLinkItem(occurrenceIndex, token, a, opts));
       showMenuAtMouseEventWithFocus(menu, e);
     });
   });
@@ -90,11 +90,12 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
 function buildEditLinkItem(
   occurrenceIndex: number,
   token: LinkToken,
+  initiator: HTMLElement,
   opts: RenderTaskTextOptions,
 ): (item: MenuItem) => void {
   return (item: MenuItem) =>
     item
       .setTitle('Edit link…')
       .setIcon('pencil')
-      .onClick(() => opts.onEditLink!(occurrenceIndex, token));
+      .onClick(() => opts.onEditLink!(occurrenceIndex, token, initiator));
 }

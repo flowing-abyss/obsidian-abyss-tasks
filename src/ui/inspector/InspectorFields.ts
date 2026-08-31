@@ -84,7 +84,11 @@ export function createInspectorFieldPresenter(feedback: HTMLElement): InspectorF
     ): Promise<T | { readonly type: 'io-error' }> {
       feedback.dataset['resultType'] = 'pending';
       feedback.setText(`Saving ${field}…`);
-      (control as HTMLButtonElement).disabled = true;
+      const disableable = control as HTMLElement & { disabled?: boolean };
+      const usesNativeDisabled = 'disabled' in disableable;
+      const previousAriaDisabled = control.getAttribute('aria-disabled');
+      if (usesNativeDisabled) disableable.disabled = true;
+      else control.setAttribute('aria-disabled', 'true');
       let result: T | { readonly type: 'io-error' };
       try {
         result = await command();
@@ -94,7 +98,9 @@ export function createInspectorFieldPresenter(feedback: HTMLElement): InspectorF
       const type = resultType(result);
       feedback.dataset['resultType'] = type;
       feedback.setText(formatResult?.(result) ?? resultMessage(field, type));
-      (control as HTMLButtonElement).disabled = false;
+      if (usesNativeDisabled) disableable.disabled = false;
+      else if (previousAriaDisabled === null) control.removeAttribute('aria-disabled');
+      else control.setAttribute('aria-disabled', previousAriaDisabled);
       if (type !== 'ok' && type !== 'unchanged' && control.isConnected) {
         control.focus({ preventScroll: true });
       }
@@ -119,11 +125,13 @@ export function renderInspectorField(
   field: InspectorFieldKind,
   label: string,
   className = '',
+  instanceKey: string = field,
 ): InspectorFieldHandle {
   const row = markInspectorField(
     host.createDiv({ cls: ['abyss-inspector-field-row', className].filter(Boolean).join(' ') }),
     field,
   );
+  row.dataset['inspectorFieldInstance'] = instanceKey;
   const fieldLabel = row.createSpan({ cls: 'abyss-inspector-field-label', text: label });
   const content = row.createDiv({ cls: 'abyss-inspector-field-content' });
   return { row, label: fieldLabel, content };
@@ -135,8 +143,9 @@ export function renderInspectorControlField(
   field: InspectorFieldKind,
   label: string,
   className = '',
+  instanceKey: string = field,
 ): InspectorFieldHandle {
-  const handle = renderInspectorField(host, field, label, className);
+  const handle = renderInspectorField(host, field, label, className, instanceKey);
   handle.row.addClass('abyss-inspector-control-field');
   handle.label.addClass('abyss-sr-only');
   return handle;

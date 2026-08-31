@@ -101,7 +101,6 @@ export interface TaskInspectorShellPort {
   readonly onRequestClose: () => void;
   /** Modal owners may deliberately close instead of retaining their private draft. */
   readonly isDirty?: () => boolean;
-  readonly closeOnHandledEscape?: boolean;
 }
 
 interface SubmittedDraft {
@@ -110,6 +109,13 @@ interface SubmittedDraft {
   readonly draft?: RightPanelDraftState;
   readonly origin: RightPanelDraftBundle['origin'];
   consumed: boolean;
+}
+
+interface TaskFieldBinding {
+  readonly field: InspectorFieldKind;
+  readonly instanceKey: string;
+  readonly row?: HTMLElement;
+  readonly control?: HTMLElement;
 }
 
 function rootRefForPlanningTarget(target: PlanningTarget): TaskRef {
@@ -759,14 +765,19 @@ export class RightPanel {
     });
   }
 
-  private editLink(task: TaskLike, occ: number, token: LinkToken): void {
+  private editLink(task: TaskLike, occ: number, token: LinkToken, initiator?: HTMLElement): void {
     const target = this.planningTarget(task);
     if (!target) return;
     new LinkEditModal(
       this.app,
       token,
       (newRaw) => {
-        void this.executeLinkEdit({ type: 'title', target }, occ, newRaw);
+        void this.executeLinkEdit(
+          { type: 'title', target },
+          occ,
+          newRaw,
+          this.taskFieldBinding('relations', 'relations', initiator),
+        );
       },
       rootTaskRef(task).filePath,
       this.interactionOwnership,
@@ -779,11 +790,18 @@ export class RightPanel {
     occ: number,
     token: LinkToken,
     sourcePath: string,
+    initiator?: HTMLElement,
   ): void {
     new LinkEditModal(
       this.app,
       token,
-      (newRaw) => void this.executeLinkEdit(target, occ, newRaw),
+      (newRaw) =>
+        void this.executeLinkEdit(
+          target,
+          occ,
+          newRaw,
+          this.taskFieldBinding('relations', 'relations', initiator),
+        ),
       sourcePath,
       this.interactionOwnership,
     ).open();
@@ -793,9 +811,12 @@ export class RightPanel {
     target: TaskTextTarget,
     occurrence: number,
     replacement: string,
+    binding: TaskFieldBinding,
   ): Promise<void> {
     if (!this.tasks) return;
-    const result = await this.tasks.execute({ type: 'edit-link', target, occurrence, replacement });
+    const result = await this.runTaskFieldCommand(binding, () =>
+      this.tasks!.execute({ type: 'edit-link', target, occurrence, replacement }),
+    );
     const node = target.type === 'comment' ? target.ref.parent : target.target;
     this.applyPlanningResult(result, node);
   }
@@ -859,7 +880,7 @@ export class RightPanel {
           app: this.app,
           sourcePath: rootTaskRef(task).filePath,
           component: this.md,
-          onEditLink: (occ, token) => {
+          onEditLink: (occ, token, initiator) => {
             const target = this.planningTarget(task);
             if (target) {
               this.editLinkInString(
@@ -867,6 +888,7 @@ export class RightPanel {
                 occ,
                 token,
                 rootTaskRef(task).filePath,
+                initiator,
               );
             }
           },
@@ -906,7 +928,6 @@ export class RightPanel {
         this.taskInspectorShell?.isDirty?.() ??
         this.captureDraftState()?.entries.some((entry) => isDirtyDraft(entry)) ??
         false,
-      closeOnHandledEscape: this.taskInspectorShell?.closeOnHandledEscape,
     };
     return bindInspectorShell(this.el, shell);
   }
@@ -928,7 +949,7 @@ export class RightPanel {
           app: this.app,
           sourcePath: rootTaskRef(item).filePath,
           component: this.md,
-          onEditLink: (occ, token) => this.editLink(item, occ, token),
+          onEditLink: (occ, token, initiator) => this.editLink(item, occ, token, initiator),
         });
         crumb.addEventListener('click', () => {
           this.state.set('taskStack', stack.slice(0, idx + 1));
@@ -986,7 +1007,8 @@ export class RightPanel {
       // Date chip (due-first display; if scheduled is set, prefer showing scheduled as the
       // "when this sits on the calendar" chip, matching the due-centric anchor-priority rule)
       this.renderDateChip(
-        renderInspectorControlField(chips, 'date', 'Date', 'abyss-task-chip-field').content,
+        renderInspectorControlField(chips, 'date', 'Date', 'abyss-task-chip-field', 'date-due')
+          .content,
         task,
       );
 
@@ -1007,6 +1029,7 @@ export class RightPanel {
         'date',
         'Time',
         'abyss-task-chip-field',
+        'date-time',
       ).content.createEl('button', {
         cls: `abyss-chip abyss-chip-time${task.planning.time ? '' : ' abyss-chip-empty'}`,
         text: timeChipText,
@@ -1019,12 +1042,18 @@ export class RightPanel {
       });
       timeChip.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.showTimePopover(timeChip, task);
+        this.showTimePopover(timeChip, task, this.taskFieldBinding('date', 'date-time', timeChip));
       });
 
       // Priority chip
       this.renderPriorityChip(
-        renderInspectorControlField(chips, 'priority', 'Priority', 'abyss-task-chip-field').content,
+        renderInspectorControlField(
+          chips,
+          'priority',
+          'Priority',
+          'abyss-task-chip-field',
+          'priority',
+        ).content,
         task,
       );
 
@@ -1035,6 +1064,7 @@ export class RightPanel {
             'dependencies',
             'Dependencies',
             'abyss-task-chip-field',
+            'dependencies',
           ).content,
           task,
         );
@@ -1042,8 +1072,13 @@ export class RightPanel {
 
       // Repeat chip and its one shared editor. TaskModal inherits this through RightPanel reuse.
       this.renderRecurrenceChip(
-        renderInspectorControlField(chips, 'recurrence', 'Recurrence', 'abyss-task-chip-field')
-          .content,
+        renderInspectorControlField(
+          chips,
+          'recurrence',
+          'Recurrence',
+          'abyss-task-chip-field',
+          'recurrence',
+        ).content,
         task,
         stack,
       );
@@ -1056,16 +1091,22 @@ export class RightPanel {
       // add whichever of Start/Plan are currently unset; picking one opens the exact same
       // popover. This intentionally reverses the "always-visible placeholder pill" unset
       // treatment from the previous round after live testing showed it cluttered the row.
-      if (task.planning.scheduled)
-        this.renderScheduledChip(
-          renderInspectorControlField(chips, 'date', 'Plan', 'abyss-task-chip-field').content,
-          task,
-        );
-      if (task.planning.start)
-        this.renderStartChip(
-          renderInspectorControlField(chips, 'date', 'Start', 'abyss-task-chip-field').content,
-          task,
-        );
+      const planField = renderInspectorControlField(
+        chips,
+        'date',
+        'Plan',
+        'abyss-task-chip-field',
+        'date-plan',
+      );
+      if (task.planning.scheduled) this.renderScheduledChip(planField.content, task);
+      const startField = renderInspectorControlField(
+        chips,
+        'date',
+        'Start',
+        'abyss-task-chip-field',
+        'date-start',
+      );
+      if (task.planning.start) this.renderStartChip(startField.content, task);
       this.renderAddDateMenu(chips, task);
 
       // Tag chips
@@ -1099,16 +1140,18 @@ export class RightPanel {
         : `${String(completedSubtasks)} of ${String(totalSubtasks)} sub-tasks complete`,
     );
 
+    const relations = renderInspectorField(
+      this.el,
+      'relations',
+      'Relations',
+      'abyss-right-section',
+    );
+    relations.label.addClass('abyss-right-section-label');
     if ('source' in task && this.dependencyProjection) {
-      const relations = renderInspectorField(
-        this.el,
-        'relations',
-        'Relations',
-        'abyss-right-section',
-      );
-      relations.label.addClass('abyss-right-section-label');
       const count = this.dependencyInspection(task).relations.length;
       relations.content.setText(count === 0 ? 'No dependencies' : `${String(count)} dependencies`);
+    } else {
+      relations.content.setText('No relations');
     }
 
     // Description
@@ -1240,7 +1283,7 @@ export class RightPanel {
         app: this.app,
         sourcePath: rootTaskRef(task).filePath,
         component: this.md,
-        onEditLink: (occ, token) => this.editLink(task, occ, token),
+        onEditLink: (occ, token, initiator) => this.editLink(task, occ, token, initiator),
       });
     };
     renderView();
@@ -1383,7 +1426,7 @@ export class RightPanel {
       app: this.app,
       sourcePath: rootTaskRef(sub).filePath,
       component: this.md,
-      onEditLink: (occ, token) => this.editLink(sub, occ, token),
+      onEditLink: (occ, token, initiator) => this.editLink(sub, occ, token, initiator),
     });
     label.addEventListener('click', () => {
       const stack = this.state.get('taskStack');
@@ -1483,10 +1526,16 @@ export class RightPanel {
         app: this.app,
         sourcePath: rootTaskRef(task).filePath,
         component: this.md,
-        onEditLink: (occ, token) => {
+        onEditLink: (occ, token, initiator) => {
           const ref = commentRefOf(comment);
           if (ref)
-            this.editLinkInString({ type: 'comment', ref }, occ, token, rootTaskRef(task).filePath);
+            this.editLinkInString(
+              { type: 'comment', ref },
+              occ,
+              token,
+              rootTaskRef(task).filePath,
+              initiator,
+            );
         },
       });
       textEl.addEventListener('click', (e) => {
@@ -1508,7 +1557,7 @@ export class RightPanel {
     });
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.showDatePopover(chip, task, field);
+      this.showDatePopover(chip, task, field, this.taskFieldBinding('date', 'date-due', chip));
     });
   }
 
@@ -1522,7 +1571,12 @@ export class RightPanel {
     });
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.showDatePopover(chip, task, 'scheduled');
+      this.showDatePopover(
+        chip,
+        task,
+        'scheduled',
+        this.taskFieldBinding('date', 'date-plan', chip),
+      );
     });
   }
 
@@ -1536,7 +1590,7 @@ export class RightPanel {
     });
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
-      this.showDatePopover(chip, task, 'start');
+      this.showDatePopover(chip, task, 'start', this.taskFieldBinding('date', 'date-start', chip));
     });
   }
 
@@ -1597,7 +1651,16 @@ export class RightPanel {
         opt.label,
         () => {
           this.removeAnchoredSurface(menu);
-          this.showDatePopover(anchor, task, opt.field);
+          this.showDatePopover(
+            anchor,
+            task,
+            opt.field,
+            this.taskFieldBinding(
+              'date',
+              opt.field === 'scheduled' ? 'date-plan' : 'date-start',
+              anchor,
+            ),
+          );
         },
       );
     }
@@ -1887,8 +1950,9 @@ export class RightPanel {
       setIcon(clear, 'x');
       clear.addEventListener('click', () => {
         if (!this.tasks?.clearDependency) return;
-        void this.runTaskFieldCommand('dependencies', () =>
-          this.tasks!.clearDependency!({ dependent: task.ref, dependencyId: relation.id }),
+        void this.runTaskFieldCommand(
+          this.taskFieldBinding('dependencies', 'dependencies', clear),
+          () => this.tasks!.clearDependency!({ dependent: task.ref, dependencyId: relation.id }),
         ).then((result) => {
           if (result.type === 'ok') {
             this.removeAnchoredSurface(editor);
@@ -2026,13 +2090,15 @@ export class RightPanel {
             const dependencyId =
               repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
             if (dependencyId === undefined) return;
-            void this.runTaskFieldCommand('dependencies', () =>
-              this.tasks!.setDependency!({
-                prerequisite: candidate.ref,
-                dependent: task.ref,
-                dependencyId,
-                enabled: true,
-              }),
+            void this.runTaskFieldCommand(
+              this.taskFieldBinding('dependencies', 'dependencies', button),
+              () =>
+                this.tasks!.setDependency!({
+                  prerequisite: candidate.ref,
+                  dependent: task.ref,
+                  dependencyId,
+                  enabled: true,
+                }),
             ).then((result) => {
               if (result.type === 'ok') {
                 this.removeAnchoredSurface(editor);
@@ -2131,6 +2197,7 @@ export class RightPanel {
     anchor: HTMLElement,
     task: TaskLike,
     field: 'due' | 'scheduled' | 'start' = 'due',
+    binding = this.taskFieldBinding('date', 'date-due', anchor),
   ): void {
     const already = this.el.querySelector('.abyss-date-popover');
     this.clearPopovers();
@@ -2154,9 +2221,9 @@ export class RightPanel {
       attr: { type: 'date', value: currentValue ?? '' },
     });
     input.addEventListener('change', () => {
-      if (field === 'due') void this.updateDue(task, input.value);
-      else if (field === 'scheduled') void this.updateScheduled(task, input.value);
-      else void this.updateStart(task, input.value);
+      if (field === 'due') void this.updateDue(task, input.value, binding);
+      else if (field === 'scheduled') void this.updateScheduled(task, input.value, binding);
+      else void this.updateStart(task, input.value, binding);
       this.removeAnchoredSurface(pop);
     });
     this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
@@ -2168,9 +2235,9 @@ export class RightPanel {
     setIcon(clearBtn, 'x');
     clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
     clearBtn.addEventListener('click', () => {
-      if (field === 'due') void this.clearDate(task);
-      else if (field === 'scheduled') void this.clearScheduled(task);
-      else void this.clearStart(task);
+      if (field === 'due') void this.clearDate(task, binding);
+      else if (field === 'scheduled') void this.clearScheduled(task, binding);
+      else void this.clearStart(task, binding);
       this.removeAnchoredSurface(pop);
     });
     this.positionAnchoredSurface(pop, anchor, 'below-start');
@@ -2375,7 +2442,7 @@ export class RightPanel {
   // ---- Write-back helpers ----
 
   private async runTaskFieldCommand(
-    field: InspectorFieldKind,
+    binding: TaskFieldBinding,
     command: () => Promise<TaskCommandResult> | TaskCommandResult,
   ): Promise<TaskCommandResult> {
     // Command-only callers (including task command tests) have no inspector
@@ -2387,31 +2454,49 @@ export class RightPanel {
         return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
       }
     }
-    const row = this.el.querySelector<HTMLElement>(
-      `.abyss-inspector-field-row[data-inspector-field="${field}"]`,
+    const { control, field, instanceKey, row } = binding;
+    if (!row || !control) {
+      try {
+        return await command();
+      } catch {
+        return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+      }
+    }
+    let feedback = row.querySelector<HTMLElement>(
+      `[data-task-field-feedback="${field}"][data-task-field-instance="${instanceKey}"]`,
     );
-    let feedback = row?.querySelector<HTMLElement>(`[data-task-field-feedback="${field}"]`);
     if (!feedback) {
-      feedback = (row ?? this.el).createDiv({
+      feedback = row.createDiv({
         cls: 'abyss-task-inspector-result',
-        attr: { 'data-task-field-feedback': field },
+        attr: {
+          'data-task-field-feedback': field,
+          'data-task-field-instance': instanceKey,
+        },
       });
     }
-    const active = this.el.ownerDocument.activeElement;
-    const activeControl =
-      active instanceof HTMLElement &&
-      this.el.contains(active) &&
-      (active.matches('button, input, textarea, select') ||
-        active.closest(`[data-inspector-field="${field}"]`));
-    const control =
-      (activeControl ? active : undefined) ??
-      row?.querySelector<HTMLElement>('button, input, textarea, select') ??
-      row ??
-      this.el;
     return (await createInspectorFieldPresenter(feedback).run(
       { field, control },
       command,
     )) as TaskCommandResult;
+  }
+
+  private taskFieldBinding(
+    field: InspectorFieldKind,
+    instanceKey: string = field,
+    control?: HTMLElement,
+  ): TaskFieldBinding {
+    if (!this.el) return { field, instanceKey };
+    const selector = `.abyss-inspector-field-row[data-inspector-field="${field}"][data-inspector-field-instance="${instanceKey}"]`;
+    const row =
+      control?.closest<HTMLElement>(selector) ??
+      this.el.querySelector<HTMLElement>(selector) ??
+      this.el;
+    return {
+      field,
+      instanceKey,
+      row,
+      control: control ?? row.querySelector<HTMLElement>('button, input, textarea, select') ?? row,
+    };
   }
 
   private planningField(patch: TaskPatch): InspectorFieldKind {
@@ -2427,6 +2512,14 @@ export class RightPanel {
     if (patch.duration !== undefined) return 'progress';
     if (patch.tags !== undefined) return 'relations';
     return 'recurrence';
+  }
+
+  private planningFieldBinding(patch: TaskPatch): TaskFieldBinding {
+    if (patch.time !== undefined) return this.taskFieldBinding('date', 'date-time');
+    if (patch.scheduled !== undefined) return this.taskFieldBinding('date', 'date-plan');
+    if (patch.start !== undefined) return this.taskFieldBinding('date', 'date-start');
+    if (patch.due !== undefined) return this.taskFieldBinding('date', 'date-due');
+    return this.taskFieldBinding(this.planningField(patch));
   }
 
   private blockCommandField(command: TaskCommand): InspectorFieldKind {
@@ -2459,7 +2552,9 @@ export class RightPanel {
     if (!submission) return false;
     let result: TaskCommandResult;
     try {
-      result = await this.runTaskFieldCommand('title', () => this.tasks!.execute(command));
+      result = await this.runTaskFieldCommand(this.taskFieldBinding('title'), () =>
+        this.tasks!.execute(command),
+      );
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
@@ -2471,7 +2566,7 @@ export class RightPanel {
   private async appendToTitle(task: TaskLike, text: string): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.runTaskFieldCommand('title', () =>
+    const result = await this.runTaskFieldCommand(this.taskFieldBinding('title'), () =>
       this.tasks!.execute({ type: 'append-title', target, markdown: text }),
     );
     this.applyPlanningResult(result, target);
@@ -2512,7 +2607,7 @@ export class RightPanel {
   private async commitTaskToggle(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.runTaskFieldCommand('status', () =>
+    const result = await this.runTaskFieldCommand(this.taskFieldBinding('status'), () =>
       this.tasks!.execute({ type: 'toggle-completion', target }),
     );
     this.applyPlanningResult(result, target);
@@ -2575,50 +2670,76 @@ export class RightPanel {
       this.matchesBlockCommandDraft(draft, command),
     );
     if (!submission) return false;
-    const result = await this.runTaskFieldCommand(this.blockCommandField(command), () =>
-      this.tasks!.execute(command),
+    const result = await this.runTaskFieldCommand(
+      this.taskFieldBinding(this.blockCommandField(command)),
+      () => this.tasks!.execute(command),
     );
     this.applyPlanningResult(result, target, initiatingStack, submission);
     this.settleDraftSubmission(submission, result);
     return result.type === 'ok';
   }
 
-  private async updateDue(task: TaskLike, date: string): Promise<void> {
-    await this.executePlanningPatch(task, { due: { type: 'set', value: localDate(date) } });
+  private async updateDue(task: TaskLike, date: string, binding?: TaskFieldBinding): Promise<void> {
+    await this.executePlanningPatch(
+      task,
+      { due: { type: 'set', value: localDate(date) } },
+      binding,
+    );
   }
 
-  private async clearDate(task: TaskLike): Promise<void> {
+  private async clearDate(task: TaskLike, binding?: TaskFieldBinding): Promise<void> {
     await this.executePlanningPatch(
       task,
       task.planning.due || !task.planning.scheduled
         ? { due: { type: 'clear' } }
         : { scheduled: { type: 'clear' } },
+      binding,
     );
   }
 
-  private async updateScheduled(task: TaskLike, date: string): Promise<void> {
-    await this.executePlanningPatch(task, {
-      scheduled: { type: 'set', value: localDate(date) },
-    });
+  private async updateScheduled(
+    task: TaskLike,
+    date: string,
+    binding?: TaskFieldBinding,
+  ): Promise<void> {
+    await this.executePlanningPatch(
+      task,
+      {
+        scheduled: { type: 'set', value: localDate(date) },
+      },
+      binding,
+    );
   }
 
-  private async clearScheduled(task: TaskLike): Promise<void> {
-    await this.executePlanningPatch(task, { scheduled: { type: 'clear' } });
+  private async clearScheduled(task: TaskLike, binding?: TaskFieldBinding): Promise<void> {
+    await this.executePlanningPatch(task, { scheduled: { type: 'clear' } }, binding);
   }
 
-  private async updateStart(task: TaskLike, date: string): Promise<void> {
-    await this.executePlanningPatch(task, { start: { type: 'set', value: localDate(date) } });
+  private async updateStart(
+    task: TaskLike,
+    date: string,
+    binding?: TaskFieldBinding,
+  ): Promise<void> {
+    await this.executePlanningPatch(
+      task,
+      { start: { type: 'set', value: localDate(date) } },
+      binding,
+    );
   }
 
-  private async clearStart(task: TaskLike): Promise<void> {
-    await this.executePlanningPatch(task, { start: { type: 'clear' } });
+  private async clearStart(task: TaskLike, binding?: TaskFieldBinding): Promise<void> {
+    await this.executePlanningPatch(task, { start: { type: 'clear' } }, binding);
   }
 
   private planningTarget(task: TaskLike): PlanningTarget | undefined {
     return taskNodeRef(task);
   }
 
-  private async executePlanningPatch(task: TaskLike, patch: TaskPatch): Promise<TaskCommandResult> {
+  private async executePlanningPatch(
+    task: TaskLike,
+    patch: TaskPatch,
+    binding?: TaskFieldBinding,
+  ): Promise<TaskCommandResult> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) {
       return { type: 'io-error', cause: 'application-unavailable', contentState: 'unchanged' };
@@ -2630,14 +2751,17 @@ export class RightPanel {
     if (!submission) {
       return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
     }
-    const result = await this.runTaskFieldCommand(this.planningField(patch), () => {
-      if (target.type === 'task') return this.tasks!.execute({ type: 'patch', target, patch });
-      if (patch.duration !== undefined) {
-        return { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
-      }
-      const subtaskPatch: SubtaskPatch = patch;
-      return this.tasks!.execute({ type: 'patch', target, patch: subtaskPatch });
-    });
+    const result = await this.runTaskFieldCommand(
+      binding ?? this.planningFieldBinding(patch),
+      () => {
+        if (target.type === 'task') return this.tasks!.execute({ type: 'patch', target, patch });
+        if (patch.duration !== undefined) {
+          return { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
+        }
+        const subtaskPatch: SubtaskPatch = patch;
+        return this.tasks!.execute({ type: 'patch', target, patch: subtaskPatch });
+      },
+    );
     this.applyPlanningResult(result, target, undefined, submission);
     this.settleDraftSubmission(submission, result);
     return result;
@@ -2703,7 +2827,7 @@ export class RightPanel {
   private async commitStatus(task: TaskLike, symbol: string): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.runTaskFieldCommand('status', () =>
+    const result = await this.runTaskFieldCommand(this.taskFieldBinding('status'), () =>
       this.tasks!.execute({ type: 'set-status', target, symbol }),
     );
     this.applyPlanningResult(result, target);
@@ -2728,7 +2852,11 @@ export class RightPanel {
     await this.executePlanningPatch(task, { tags: { add: [tag] } });
   }
 
-  private showTimePopover(anchor: HTMLElement, task: TaskLike): void {
+  private showTimePopover(
+    anchor: HTMLElement,
+    task: TaskLike,
+    binding = this.taskFieldBinding('date', 'date-time', anchor),
+  ): void {
     const already = this.el.querySelector('.abyss-time-popover');
     this.clearPopovers();
     if (already) return;
@@ -2745,7 +2873,7 @@ export class RightPanel {
     });
     this.el.ownerDocument.defaultView?.setTimeout(() => input.focus(), 0);
     input.addEventListener('change', () => {
-      void this.updateTime(task, input.value).then(() => this.removeAnchoredSurface(pop));
+      void this.updateTime(task, input.value, binding).then(() => this.removeAnchoredSurface(pop));
     });
 
     const clearBtn = inputRow.createEl('button', {
@@ -2755,7 +2883,7 @@ export class RightPanel {
     setIcon(clearBtn, 'x');
     clearBtn.addEventListener('mousedown', (e) => e.preventDefault());
     clearBtn.addEventListener('click', () => {
-      void this.updateTime(task, '').then(() => this.removeAnchoredSurface(pop));
+      void this.updateTime(task, '', binding).then(() => this.removeAnchoredSurface(pop));
     });
 
     // Duration only applies to top-level TaskSnapshot (SubtaskSnapshot has no duration field) —
@@ -2791,11 +2919,19 @@ export class RightPanel {
     this.dismissMenuOnOutsideClick(pop, anchor, undefined, { focusLeaveDelay: 200 });
   }
 
-  private async updateTime(task: TaskLike, time: string): Promise<void> {
+  private async updateTime(
+    task: TaskLike,
+    time: string,
+    binding?: TaskFieldBinding,
+  ): Promise<void> {
     try {
-      await this.executePlanningPatch(task, {
-        time: time ? { type: 'set', value: localTime(time) } : { type: 'clear' },
-      });
+      await this.executePlanningPatch(
+        task,
+        {
+          time: time ? { type: 'set', value: localTime(time) } : { type: 'clear' },
+        },
+        binding,
+      );
     } catch {
       // Invalid input leaves the existing time unchanged.
     }
