@@ -748,6 +748,36 @@ describe('RightPanel render lifecycle', () => {
 });
 
 describe('RightPanel.renderTask', () => {
+  it('uses the shared field lifecycle for a deferred Task priority conflict', async () => {
+    const selected = task({ title: 'Lifecycle', priority: 'B' });
+    let settle!: (result: Awaited<ReturnType<TaskApplicationApi['execute']>>) => void;
+    const pending = new Promise<Awaited<ReturnType<TaskApplicationApi['execute']>>>((resolve) => {
+      settle = resolve;
+    });
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending);
+    const { panel, state, el } = await makePanel({}, { execute } as unknown as TaskApplicationApi);
+    el.ownerDocument.body.append(el);
+    state.set('taskStack', [selected]);
+    const priority = el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!;
+    priority.focus();
+
+    const update = (
+      panel as unknown as { updatePriority(task: TaskSnapshot, value: string): Promise<void> }
+    ).updatePriority(selected, 'A');
+    const feedback = el.querySelector<HTMLElement>('[data-task-field-feedback="priority"]')!;
+    expect(feedback.dataset['resultType']).toBe('pending');
+    expect(priority.disabled).toBe(true);
+
+    settle({ type: 'conflict', current: selected });
+    await update;
+    expect(feedback.dataset['resultType']).toBe('conflict');
+    expect(feedback.textContent).toContain('Draft kept');
+    expect(priority.disabled).toBe(false);
+    expect(el.ownerDocument.activeElement).toBe(priority);
+    panel.destroy();
+    el.remove();
+  });
+
   it('joins the common inspector entity and field contract without removing Task-only sections', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Contract task', recurrence: 'every week' })]);
@@ -760,7 +790,7 @@ describe('RightPanel.renderTask', () => {
         (field) => field.dataset['inspectorField'],
       ),
     ).toEqual(expect.arrayContaining(['description', 'subtasks', 'comments']));
-    expect(el.querySelector('.abyss-right-section-label')?.textContent).toBe('Description');
+    expect(el.querySelector('.abyss-right-section-label')?.textContent).toBe('Progress');
     expect(
       Array.from(
         el.querySelectorAll('.abyss-right-section-label'),
@@ -777,7 +807,7 @@ describe('RightPanel.renderTask', () => {
       (element) => element.textContent,
     );
 
-    expect(headings).toEqual(['Description', 'Sub-tasks', 'Comments']);
+    expect(headings).toEqual(['Progress', 'Description', 'Sub-tasks', 'Comments']);
     expect(el.querySelector('.abyss-right-divider')).toBeNull();
   });
 

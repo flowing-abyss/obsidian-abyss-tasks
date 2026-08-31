@@ -40,13 +40,18 @@ import {
 } from '../ui/attachmentDrop';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import {
+  createInspectorFieldPresenter,
   markInspectorEntity,
   markInspectorField,
   renderInspectorField,
+  type InspectorFieldKind,
 } from '../ui/inspector/InspectorFields';
 import type { InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { deriveInspectorSelection } from '../ui/inspector/InspectorSelection';
-import { applyInspectorShellContract } from '../ui/inspector/InspectorShell';
+import {
+  bindInspectorShell,
+  type PersistentInspectorShellOptions,
+} from '../ui/inspector/InspectorShell';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import {
@@ -87,6 +92,13 @@ export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
   readonly ref: TaskRef;
   readonly token: object;
+}
+
+/** PanelView owns compact-pane visibility; RightPanel owns Task draft inspection. */
+export interface TaskInspectorShellPort {
+  readonly narrow: () => boolean;
+  readonly returnFocus: () => HTMLElement | null;
+  readonly onRequestClose: () => void;
 }
 
 interface SubmittedDraft {
@@ -206,6 +218,7 @@ export class RightPanel {
       host: HTMLElement,
       selection: InspectorSelection,
     ) => (() => void) | undefined,
+    private readonly taskInspectorShell?: TaskInspectorShellPort,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -683,8 +696,10 @@ export class RightPanel {
     this.el.removeClass('abyss-inspector-shell', 'abyss-entity-inspector');
     delete this.el.dataset['inspectorEntity'];
     delete this.el.dataset['inspectorShell'];
+    delete this.el.dataset['inspectorLayout'];
     this.el.removeAttribute('role');
     this.el.removeAttribute('aria-label');
+    this.el.removeAttribute('aria-modal');
     const stack = this.state.get('taskStack');
     const activeInspector =
       inspector?.type === 'work-note'
@@ -714,6 +729,7 @@ export class RightPanel {
     }
     const task = stack[stack.length - 1]!;
     this.renderTask(task, stack, this.commentTimeContext?.());
+    this.inspectorCleanup = this.bindTaskInspectorShell();
     this.renderedTaskStack = [...stack];
     const root = stack[0];
     if (
@@ -877,12 +893,23 @@ export class RightPanel {
     });
   }
 
+  private bindTaskInspectorShell(): () => void {
+    const shell: PersistentInspectorShellOptions = {
+      label: 'Task details',
+      narrow: this.taskInspectorShell?.narrow() ?? false,
+      returnFocus: () => this.taskInspectorShell?.returnFocus() ?? null,
+      onRequestClose: () => this.taskInspectorShell?.onRequestClose(),
+      isDirty: () =>
+        this.captureDraftState()?.entries.some((entry) => isDirtyDraft(entry)) ?? false,
+    };
+    return bindInspectorShell(this.el, shell);
+  }
+
   private renderTask(
     task: TaskLike,
     stack: TaskLike[],
     commentTimeContext?: CommentTimeContext,
   ): void {
-    applyInspectorShellContract(this.el, 'Task details', false);
     markInspectorEntity(this.el, 'task');
     // Breadcrumb — shows only the parent path (current task is in the title input)
     if (stack.length > 1) {
@@ -1016,6 +1043,28 @@ export class RightPanel {
         event.stopPropagation();
         this.showTagInput(chips, task, addTagBtn);
       });
+    }
+
+    const progress = renderInspectorField(this.el, 'progress', 'Progress', 'abyss-right-section');
+    progress.label.addClass('abyss-right-section-label');
+    const totalSubtasks = task.subtasks.length;
+    const completedSubtasks = task.subtasks.filter((subtask) => subtask.status === 'done').length;
+    progress.content.setText(
+      totalSubtasks === 0
+        ? 'No sub-tasks'
+        : `${String(completedSubtasks)} of ${String(totalSubtasks)} sub-tasks complete`,
+    );
+
+    if ('source' in task && this.dependencyProjection) {
+      const relations = renderInspectorField(
+        this.el,
+        'relations',
+        'Relations',
+        'abyss-right-section',
+      );
+      relations.label.addClass('abyss-right-section-label');
+      const count = this.dependencyInspection(task).relations.length;
+      relations.content.setText(count === 0 ? 'No dependencies' : `${String(count)} dependencies`);
     }
 
     // Description
@@ -2269,6 +2318,75 @@ export class RightPanel {
 
   // ---- Write-back helpers ----
 
+  private async runTaskFieldCommand(
+    field: InspectorFieldKind,
+    command: () => Promise<TaskCommandResult> | TaskCommandResult,
+  ): Promise<TaskCommandResult> {
+    // Command-only callers (including task command tests) have no inspector
+    // surface. They retain the same structured I/O result without inventing DOM.
+    if (!this.el) {
+      try {
+        return await command();
+      } catch {
+        return { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
+      }
+    }
+    const row = this.el.querySelector<HTMLElement>(
+      `.abyss-inspector-field-row[data-inspector-field="${field}"]`,
+    );
+    let feedback = row?.querySelector<HTMLElement>(`[data-task-field-feedback="${field}"]`);
+    if (!feedback) {
+      feedback = (row ?? this.el).createDiv({
+        cls: 'abyss-task-inspector-result',
+        attr: { 'data-task-field-feedback': field },
+      });
+    }
+    const active = this.el.ownerDocument.activeElement;
+    const activeControl =
+      active instanceof HTMLElement &&
+      this.el.contains(active) &&
+      (active.matches('button, input, textarea, select') ||
+        active.closest(`[data-inspector-field="${field}"]`));
+    const control =
+      (activeControl ? active : undefined) ??
+      row?.querySelector<HTMLElement>('button, input, textarea, select') ??
+      row ??
+      this.el;
+    return (await createInspectorFieldPresenter(feedback).run(
+      { field, control },
+      command,
+    )) as TaskCommandResult;
+  }
+
+  private planningField(patch: TaskPatch): InspectorFieldKind {
+    if (patch.priority !== undefined) return 'priority';
+    if (
+      patch.due !== undefined ||
+      patch.scheduled !== undefined ||
+      patch.start !== undefined ||
+      patch.time !== undefined
+    ) {
+      return 'date';
+    }
+    if (patch.duration !== undefined) return 'progress';
+    if (patch.tags !== undefined) return 'relations';
+    return 'recurrence';
+  }
+
+  private blockCommandField(command: TaskCommand): InspectorFieldKind {
+    if (command.type === 'set-description') return 'description';
+    if (
+      command.type === 'add-comment' ||
+      command.type === 'update-comment' ||
+      command.type === 'delete-comment'
+    ) {
+      return 'comments';
+    }
+    return command.type === 'add-subtask' || command.type === 'delete-subtask'
+      ? 'progress'
+      : 'subtasks';
+  }
+
   private async updateTaskTitle(task: TaskLike, newText: string): Promise<void> {
     await this.saveTaskTitle(task, newText);
   }
@@ -2285,7 +2403,7 @@ export class RightPanel {
     if (!submission) return false;
     let result: TaskCommandResult;
     try {
-      result = await this.tasks.execute(command);
+      result = await this.runTaskFieldCommand('title', () => this.tasks!.execute(command));
     } catch {
       result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
     }
@@ -2297,7 +2415,9 @@ export class RightPanel {
   private async appendToTitle(task: TaskLike, text: string): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.tasks.execute({ type: 'append-title', target, markdown: text });
+    const result = await this.runTaskFieldCommand('title', () =>
+      this.tasks!.execute({ type: 'append-title', target, markdown: text }),
+    );
     this.applyPlanningResult(result, target);
   }
 
@@ -2336,7 +2456,9 @@ export class RightPanel {
   private async commitTaskToggle(task: TaskLike): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.tasks.execute({ type: 'toggle-completion', target });
+    const result = await this.runTaskFieldCommand('status', () =>
+      this.tasks!.execute({ type: 'toggle-completion', target }),
+    );
     this.applyPlanningResult(result, target);
   }
 
@@ -2397,12 +2519,9 @@ export class RightPanel {
       this.matchesBlockCommandDraft(draft, command),
     );
     if (!submission) return false;
-    let result: TaskCommandResult;
-    try {
-      result = await this.tasks.execute(command);
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+    const result = await this.runTaskFieldCommand(this.blockCommandField(command), () =>
+      this.tasks!.execute(command),
+    );
     this.applyPlanningResult(result, target, initiatingStack, submission);
     this.settleDraftSubmission(submission, result);
     return result.type === 'ok';
@@ -2455,21 +2574,14 @@ export class RightPanel {
     if (!submission) {
       return { type: 'io-error', cause: 'repository-error', contentState: 'unchanged' };
     }
-    let result: TaskCommandResult;
-    try {
-      if (target.type === 'task') {
-        result = await this.tasks.execute({ type: 'patch', target, patch });
-      } else {
-        if (patch.duration !== undefined) {
-          result = { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
-        } else {
-          const subtaskPatch: SubtaskPatch = patch;
-          result = await this.tasks.execute({ type: 'patch', target, patch: subtaskPatch });
-        }
+    const result = await this.runTaskFieldCommand(this.planningField(patch), () => {
+      if (target.type === 'task') return this.tasks!.execute({ type: 'patch', target, patch });
+      if (patch.duration !== undefined) {
+        return { type: 'io-error', cause: 'unsupported-field', contentState: 'unchanged' };
       }
-    } catch {
-      result = { type: 'io-error', cause: 'repository-error', contentState: 'unknown' };
-    }
+      const subtaskPatch: SubtaskPatch = patch;
+      return this.tasks!.execute({ type: 'patch', target, patch: subtaskPatch });
+    });
     this.applyPlanningResult(result, target, undefined, submission);
     this.settleDraftSubmission(submission, result);
     return result;
@@ -2536,7 +2648,9 @@ export class RightPanel {
   private async commitStatus(task: TaskLike, symbol: string): Promise<void> {
     const target = this.planningTarget(task);
     if (!target || !this.tasks) return;
-    const result = await this.tasks.execute({ type: 'set-status', target, symbol });
+    const result = await this.runTaskFieldCommand('status', () =>
+      this.tasks!.execute({ type: 'set-status', target, symbol }),
+    );
     this.applyPlanningResult(result, target);
   }
 

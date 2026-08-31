@@ -6,6 +6,7 @@
 export type InspectorEntityKind = 'task' | 'project' | 'work-note';
 
 export type InspectorFieldKind =
+  | 'title'
   | 'status'
   | 'priority'
   | 'date'
@@ -27,13 +28,92 @@ export interface InspectorFieldHandle {
   readonly content: HTMLElement;
 }
 
+type InspectorFieldResultType =
+  | 'ok'
+  | 'unchanged'
+  | 'conflict'
+  | 'invalid'
+  | 'unsupported'
+  | 'io-error';
+
+export interface InspectorFieldPresenter {
+  run<T extends { readonly type: string }>(
+    input: {
+      readonly field: string;
+      readonly control: HTMLElement;
+      readonly resultMessage?: (result: T | { readonly type: 'io-error' }) => string;
+    },
+    command: () => Promise<T> | T,
+  ): Promise<T | { readonly type: 'io-error' }>;
+}
+
+function resultType(result: { readonly type: string }): InspectorFieldResultType {
+  if (
+    result.type === 'ok' ||
+    result.type === 'unchanged' ||
+    result.type === 'conflict' ||
+    result.type === 'invalid' ||
+    result.type === 'unsupported'
+  )
+    return result.type;
+  return 'io-error';
+}
+
+function resultMessage(field: string, type: InspectorFieldResultType): string {
+  if (type === 'ok' || type === 'unchanged') return `${field} updated.`;
+  if (type === 'conflict') return 'This field changed outside calendar. Draft kept.';
+  return `Could not save ${field}. Draft kept.`;
+}
+
+/** Shared pending/result presentation; entity command services remain the sole writers. */
+export function createInspectorFieldPresenter(feedback: HTMLElement): InspectorFieldPresenter {
+  feedback.setAttr('role', 'status');
+  feedback.setAttr('aria-live', 'polite');
+  return {
+    async run<T extends { readonly type: string }>(
+      {
+        field,
+        control,
+        resultMessage: formatResult,
+      }: {
+        readonly field: string;
+        readonly control: HTMLElement;
+        readonly resultMessage?: (result: T | { readonly type: 'io-error' }) => string;
+      },
+      command: () => Promise<T> | T,
+    ): Promise<T | { readonly type: 'io-error' }> {
+      feedback.dataset['resultType'] = 'pending';
+      feedback.setText(`Saving ${field}…`);
+      (control as HTMLButtonElement).disabled = true;
+      let result: T | { readonly type: 'io-error' };
+      try {
+        result = await command();
+      } catch {
+        result = { type: 'io-error' };
+      }
+      const type = resultType(result);
+      feedback.dataset['resultType'] = type;
+      feedback.setText(formatResult?.(result) ?? resultMessage(field, type));
+      (control as HTMLButtonElement).disabled = false;
+      if (type !== 'ok' && type !== 'unchanged' && control.isConnected) {
+        control.focus({ preventScroll: true });
+      }
+      return result;
+    },
+  };
+}
+
 export function markInspectorEntity(host: HTMLElement, kind: InspectorEntityKind): void {
   host.addClass('abyss-entity-inspector');
   host.dataset['inspectorEntity'] = kind;
 }
 
 export function markInspectorField(host: HTMLElement, field: InspectorFieldKind): HTMLElement {
-  host.addClass('abyss-inspector-field');
+  // Some task controls predate the shared inspector markup. Giving those
+  // controls the row contract keeps their established command wiring intact
+  // while making their field identity and lifecycle discoverable like every
+  // rendered Project/Work Note row.
+  host.addClass('abyss-inspector-field', 'abyss-inspector-field-row');
   host.dataset['inspectorField'] = field;
   return host;
 }

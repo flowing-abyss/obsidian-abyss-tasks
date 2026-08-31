@@ -1,4 +1,5 @@
 import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
+import { createInspectorFieldPresenter } from '../../ui/inspector/InspectorFields';
 
 export interface WorkNoteResultPresenter {
   run(
@@ -41,12 +42,10 @@ export function createWorkNoteResultPresenter(container: HTMLElement): WorkNoteR
   };
   return {
     async run(command, initiator) {
-      let result: WorkNoteCommandResult;
-      try {
-        result = await command();
-      } catch {
-        result = { type: 'io-error' };
-      }
+      const result = (await createInspectorFieldPresenter(feedbackElement()).run(
+        { field: 'status', control: initiator },
+        command,
+      )) as WorkNoteCommandResult;
       if (result.type === 'ok' || result.type === 'unchanged') {
         feedback?.empty();
         if (feedback) delete feedback.dataset['resultType'];

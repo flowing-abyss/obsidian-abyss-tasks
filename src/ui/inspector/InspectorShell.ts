@@ -14,12 +14,11 @@ export interface InspectorShellHandle {
   close(restoreFocus?: boolean): void;
 }
 
+/** Options for a shell applied to a pane the caller owns and re-renders. */
+export type PersistentInspectorShellOptions = Omit<InspectorShellOptions, 'render'>;
+
 /** Applies the one inspector host contract to mounted and persistent pane hosts alike. */
-export function applyInspectorShellContract(
-  element: HTMLElement,
-  label: string,
-  narrow: boolean,
-): void {
+function applyInspectorShellContract(element: HTMLElement, label: string, narrow: boolean): void {
   element.addClass('abyss-inspector-shell');
   element.dataset['inspectorShell'] = 'entity';
   element.dataset['inspectorLayout'] = narrow ? 'drawer' : 'panel';
@@ -39,6 +38,64 @@ function focusableControls(host: HTMLElement): HTMLElement[] {
   );
 }
 
+function inspectorReturnTarget(options: PersistentInspectorShellOptions): HTMLElement | null {
+  return typeof options.returnFocus === 'function'
+    ? options.returnFocus()
+    : (options.returnFocus ?? null);
+}
+
+function restoreInspectorFocus(options: PersistentInspectorShellOptions): void {
+  const target = inspectorReturnTarget(options);
+  if (target?.isConnected) target.focus({ preventScroll: true });
+}
+
+function handleShellKeydown(
+  event: KeyboardEvent,
+  element: HTMLElement,
+  narrow: boolean,
+  requestClose: () => void,
+): void {
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    requestClose();
+    return;
+  }
+  if (!narrow || event.key !== 'Tab') return;
+  const controls = focusableControls(element);
+  if (controls.length === 0) return;
+  const activeIndex = controls.indexOf(element.ownerDocument.activeElement as HTMLElement);
+  const backwards = event.shiftKey && activeIndex <= 0;
+  const forwards = !event.shiftKey && activeIndex === controls.length - 1;
+  if (!backwards && !forwards) return;
+  event.preventDefault();
+  controls[backwards ? controls.length - 1 : 0]?.focus({ preventScroll: true });
+}
+
+function isOutsideShell(
+  event: PointerEvent,
+  element: HTMLElement,
+  returnTarget: HTMLElement | null,
+): boolean {
+  const target = event.target;
+  return Boolean(
+    target &&
+    !element.contains(target as Node) &&
+    !(target instanceof Node && returnTarget?.contains(target)),
+  );
+}
+
+function handleShellOutsidePointer(
+  event: PointerEvent,
+  element: HTMLElement,
+  options: PersistentInspectorShellOptions,
+  requestClose: () => void,
+): void {
+  if (!isOutsideShell(event, element, inspectorReturnTarget(options))) return;
+  event.preventDefault();
+  event.stopPropagation();
+  requestClose();
+}
+
 /**
  * Shared semantic host for Project and Work Note inspectors. Desktop is a normal region;
  * narrow mode alone becomes a dialog and owns a small focus trap.
@@ -49,23 +106,22 @@ export function mountInspectorShell(
 ): InspectorShellHandle {
   const element = host.ownerDocument.createElement('section');
   applyInspectorShellContract(element, options.label, options.narrow);
-  const closeNotice = element.createDiv({
-    cls: 'abyss-inspector-shell-close-notice',
-    attr: { role: 'status', 'aria-live': 'polite' },
-  });
-  const closeButton = element.createEl('button', {
-    cls: 'abyss-inspector-shell-close',
-    text: 'Close',
-    attr: { type: 'button', 'aria-label': `Close ${options.label}` },
-  });
+  const closeNotice = options.narrow
+    ? element.createDiv({
+        cls: 'abyss-inspector-shell-close-notice',
+        attr: { role: 'status', 'aria-live': 'polite' },
+      })
+    : undefined;
+  const closeButton = options.narrow
+    ? element.createEl('button', {
+        cls: 'abyss-inspector-shell-close',
+        text: '×',
+        attr: { type: 'button', 'aria-label': `Close ${options.label}`, title: 'Close' },
+      })
+    : undefined;
   const content = element.createDiv({ cls: 'abyss-inspector-shell-content' });
   options.render(content);
   host.append(element);
-
-  const returnTarget = (): HTMLElement | null =>
-    typeof options.returnFocus === 'function'
-      ? options.returnFocus()
-      : (options.returnFocus ?? null);
 
   const cleanup = (): void => {
     element.removeEventListener('keydown', onKeyDown);
@@ -74,60 +130,96 @@ export function mountInspectorShell(
     }
   };
 
-  const restoreFocus = (): void => {
-    const target = returnTarget();
-    if (target?.isConnected) target.focus({ preventScroll: true });
-  };
-
   const requestClose = (): void => {
     if (options.isDirty?.()) {
-      closeNotice.setText('Draft kept. Finish or revert the edited field before closing.');
+      closeNotice?.setText('Draft kept. Finish or revert the edited field before closing.');
       return;
     }
     cleanup();
     options.onRequestClose?.();
     element.remove();
-    restoreFocus();
+    restoreInspectorFocus(options);
   };
 
   const close = (shouldRestoreFocus = true): void => {
     cleanup();
     element.remove();
-    if (shouldRestoreFocus) restoreFocus();
+    if (shouldRestoreFocus) restoreInspectorFocus(options);
   };
-  const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      requestClose();
-      return;
-    }
-    if (!options.narrow || event.key !== 'Tab') return;
-    const controls = focusableControls(element);
-    if (controls.length === 0) return;
-    const activeIndex = controls.indexOf(element.ownerDocument.activeElement as HTMLElement);
-    const backwards = event.shiftKey && activeIndex <= 0;
-    const forwards = !event.shiftKey && activeIndex === controls.length - 1;
-    if (!backwards && !forwards) return;
-    event.preventDefault();
-    controls[backwards ? controls.length - 1 : 0]?.focus({ preventScroll: true });
-  };
-  const onOutsidePointer = (event: PointerEvent): void => {
-    const target = event.target;
-    if (!target || element.contains(target as Node)) return;
-    const origin = returnTarget();
-    if (target instanceof Node && origin?.contains(target)) return;
-    event.preventDefault();
-    event.stopPropagation();
-    requestClose();
-  };
+  const onKeyDown = (event: KeyboardEvent): void =>
+    handleShellKeydown(event, element, options.narrow, requestClose);
+  const onOutsidePointer = (event: PointerEvent): void =>
+    handleShellOutsidePointer(event, element, options, requestClose);
   element.addEventListener('keydown', onKeyDown);
-  closeButton.addEventListener('click', requestClose);
+  closeButton?.addEventListener('click', requestClose);
   if (options.narrow) {
     element.ownerDocument.addEventListener('pointerdown', onOutsidePointer, true);
-    const initialFocus = focusableControls(content)[0] ?? closeButton;
+    const initialFocus = focusableControls(content)[0] ?? closeButton ?? content;
     queueMicrotask(() => {
       if (initialFocus.isConnected) initialFocus.focus({ preventScroll: true });
     });
   }
   return { element, close };
+}
+
+/**
+ * Gives a persistent right-pane host the exact same narrow-dialog contract as
+ * mounted inspectors. The owner remains responsible for clearing the pane.
+ */
+export function bindInspectorShell(
+  element: HTMLElement,
+  options: PersistentInspectorShellOptions,
+): () => void {
+  applyInspectorShellContract(element, options.label, options.narrow);
+  const closeNotice = options.narrow
+    ? element.createDiv({
+        cls: 'abyss-inspector-shell-close-notice',
+        attr: { role: 'status', 'aria-live': 'polite' },
+      })
+    : undefined;
+  const closeButton = options.narrow
+    ? element.createEl('button', {
+        cls: 'abyss-inspector-shell-close',
+        text: '×',
+        attr: { type: 'button', 'aria-label': `Close ${options.label}`, title: 'Close' },
+      })
+    : undefined;
+  if (closeButton) element.prepend(closeButton);
+  if (closeNotice) element.prepend(closeNotice);
+
+  const requestClose = (): void => {
+    if (options.isDirty?.()) {
+      closeNotice?.setText('Draft kept. Finish or revert the edited field before closing.');
+      return;
+    }
+    options.onRequestClose?.();
+    restoreInspectorFocus(options);
+  };
+  const onKeyDown = (event: KeyboardEvent): void =>
+    handleShellKeydown(event, element, options.narrow, requestClose);
+  const onOutsidePointer = (event: PointerEvent): void =>
+    handleShellOutsidePointer(event, element, options, requestClose);
+  element.addEventListener('keydown', onKeyDown);
+  closeButton?.addEventListener('click', requestClose);
+  if (options.narrow) {
+    element.ownerDocument.addEventListener('pointerdown', onOutsidePointer, true);
+    const initialFocus =
+      focusableControls(element).find(
+        (control) => !control.classList.contains('abyss-inspector-shell-close'),
+      ) ??
+      closeButton ??
+      element;
+    queueMicrotask(() => {
+      if (initialFocus.isConnected) initialFocus.focus({ preventScroll: true });
+    });
+  }
+  return () => {
+    element.removeEventListener('keydown', onKeyDown);
+    closeButton?.removeEventListener('click', requestClose);
+    if (options.narrow) {
+      element.ownerDocument.removeEventListener('pointerdown', onOutsidePointer, true);
+    }
+    closeNotice?.remove();
+    closeButton?.remove();
+  };
 }

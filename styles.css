@@ -8410,6 +8410,16 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 .abyss-inspector-shell-close {
   display: block;
   margin-inline-start: auto;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  font-size: var(--font-ui-large);
+  line-height: 1;
+}
+
+.abyss-chip.abyss-inspector-field-row,
+.abyss-status-marker.abyss-inspector-field-row {
+  display: inline-flex;
+  margin-block-start: 0;
 }
 
 .abyss-inspector-shell-close-notice:empty {

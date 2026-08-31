@@ -12,6 +12,7 @@ import {
   type CommentTimeContextProvider,
 } from '../../tasks';
 import {
+  createInspectorFieldPresenter,
   markInspectorEntity,
   markInspectorField,
   renderInspectorField,
@@ -303,18 +304,13 @@ export function renderProjectInspector(
       baseline,
       hadFocus || restoreFocusOnFailure,
     );
-    feedback.dataset['resultType'] = 'pending';
-    feedback.setText(`Saving ${field}…`);
-    control.disabled = true;
     let commandResult: ProjectInspectorCommandResult;
-    try {
-      commandResult = (await command) ?? { type: 'unchanged' };
-    } catch {
-      commandResult = { type: 'io-error' };
-    }
+    commandResult = await createInspectorFieldPresenter(feedback).run(
+      { field, control, resultMessage: (result) => resultMessage(result, field) },
+      () => command ?? { type: 'unchanged' },
+    );
     const resultType = knownResult(commandResult.type);
     feedback.dataset['resultType'] = resultType;
-    feedback.setText(resultMessage({ type: resultType }, field));
     control.disabled = false;
     if (failureResult(commandResult)) {
       if (pendingEntry) draftRegistry?.settlePending(pendingEntry, resultType);

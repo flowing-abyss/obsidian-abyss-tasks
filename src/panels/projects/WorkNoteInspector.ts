@@ -186,13 +186,23 @@ export function renderWorkNoteInspector(
   const metadata = container.createDiv({ cls: 'abyss-work-note-inspector-metadata' });
   metadataRow(metadata, 'Kind', note.kind === 'ordinary' ? 'Ordinary' : 'Milestone');
   metadataRow(metadata, 'Project', basename(note.projectPath));
+  renderInspectorField(metadata, 'range-start', 'Start').content.setText(
+    note.range.start?.raw ?? 'Not set',
+  );
+  renderInspectorField(metadata, 'range-end', 'End').content.setText(
+    note.range.end?.raw ?? 'Not set',
+  );
   if (note.priority) {
     renderInspectorField(metadata, 'priority', 'Priority').content.setText(note.priority);
+  } else {
+    renderInspectorField(metadata, 'priority', 'Priority').content.setText('Unavailable');
   }
   if (note.description) {
     const description = renderInspectorField(metadata, 'description', 'Description').content;
     description.setText(note.description);
     description.dataset['workNoteDescription'] = '';
+  } else {
+    renderInspectorField(metadata, 'description', 'Description').content.setText('Unavailable');
   }
   if (note.milestonePath || note.blockedByPaths.length > 0 || note.relatedPaths.length > 0) {
     const relations = renderInspectorField(metadata, 'relations', 'Relations').content;
@@ -203,6 +213,8 @@ export function renderWorkNoteInspector(
     if (note.relatedPaths.length > 0) {
       metadataRow(relations, 'Related', note.relatedPaths.map(basename).join(', '));
     }
+  } else {
+    renderInspectorField(metadata, 'relations', 'Relations').content.setText('None');
   }
   if (note.diagnostics.length > 0) {
     const diagnostics = renderInspectorField(container, 'diagnostics', 'Diagnostics').content;
@@ -210,5 +222,9 @@ export function renderWorkNoteInspector(
     for (const diagnostic of note.diagnostics) {
       diagnostics.createDiv({ text: diagnosticLabel(diagnostic.type) });
     }
+  } else {
+    renderInspectorField(container, 'diagnostics', 'Diagnostics').content.setText('None');
   }
+  renderInspectorField(container, 'comments', 'Comments').content.setText('Unavailable');
+  renderInspectorField(container, 'progress', 'Progress').content.setText('Unavailable');
 }

@@ -521,7 +521,7 @@ describe('PanelView', () => {
       expect(activeDocument.activeElement).toBe(details);
 
       internals.state.set('taskStack', []);
-      setGeometry(layout, rect(0, 0, 390, 480));
+      setGeometry(layout, rect(0, 0, 440, 480));
       window.dispatchEvent(new Event('resize'));
 
       lists.click();
@@ -586,6 +586,16 @@ describe('PanelView', () => {
       internals.state.set('taskStack', [task()]);
       expect(right.classList.contains('is-compact-open')).toBe(true);
       expect(details.getAttribute('aria-expanded')).toBe('true');
+      expect(right.getAttribute('role')).toBe('dialog');
+      expect(right.getAttribute('aria-modal')).toBe('true');
+      const taskClose = right.querySelector<HTMLButtonElement>('.abyss-inspector-shell-close')!;
+      expect(taskClose.getAttribute('aria-label')).toBe('Close Task details');
+      taskClose.click();
+      expect(internals.state.get('taskStack')).toEqual([]);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(activeDocument.activeElement).toBe(details);
+      expect(right.getAttribute('aria-modal')).toBeNull();
+      expect(right.dataset['inspectorLayout']).toBeUndefined();
 
       internals.panelNavigation.openCalendar();
       expect(left.classList.contains('is-compact-open')).toBe(false);

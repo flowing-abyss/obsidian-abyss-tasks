@@ -803,4 +803,11 @@ describe('Projects hardening styles', () => {
       style.remove();
     }
   });
+
+  it('reserves a 44px coarse target for the narrow inspector close icon only', () => {
+    const close = declarationsFor('.abyss-inspector-shell-close');
+    expect(close).toContain('min-inline-size: 44px');
+    expect(close).toContain('min-block-size: 44px');
+    expect(close).not.toContain('text: Close');
+  });
 });

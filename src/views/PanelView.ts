@@ -575,6 +575,14 @@ export class PanelView extends ItemView {
         });
         return preserveAndCloseShell(shell);
       },
+      {
+        narrow: () => Platform.isMobile || this.compactRightCollapsed,
+        returnFocus: () => this.compactPaneElements?.rightButton ?? null,
+        onRequestClose: () => {
+          this.state.set('taskStack', []);
+          this.closeCompactPane(false);
+        },
+      },
     );
 
     // Keep panels fresh when the project set / stats change. Only the left

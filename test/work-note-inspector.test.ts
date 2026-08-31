@@ -41,7 +41,17 @@ describe('renderWorkNoteInspector', () => {
         root.querySelectorAll<HTMLElement>('.abyss-inspector-field-row'),
         (field) => field.dataset['inspectorField'],
       ),
-    ).toEqual(['status', 'priority', 'description', 'relations', 'diagnostics']);
+    ).toEqual([
+      'status',
+      'range-start',
+      'range-end',
+      'priority',
+      'description',
+      'relations',
+      'diagnostics',
+      'comments',
+      'progress',
+    ]);
     expect(root.querySelector('[aria-label="Close Work Note details"]')).toBeNull();
   });
 
