@@ -141,6 +141,41 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
+  it('pins a main list identity while its write waits behind another scope save', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const portfolioSave = deferred<void>();
+    const mainSave = deferred<void>();
+    const save = vi
+      .fn()
+      .mockReturnValueOnce(portfolioSave.promise)
+      .mockReturnValueOnce(mainSave.promise);
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, save);
+
+    const portfolio = registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'board',
+    }));
+    await flushAsyncQueue();
+    registry.activateMainTaskCollection('today');
+    const main = registry.updateMainTaskPreference((current) => ({
+      ...current,
+      group: 'priority',
+    }));
+    registry.activateMainTaskCollection('inbox');
+
+    portfolioSave.resolve();
+    await expect(portfolio).resolves.toMatchObject({ revision: 1 });
+    await flushAsyncQueue();
+    expect(settings.listViewStates?.['today']?.groupBy).toBe('priority');
+    expect(settings.listViewStates?.['inbox']?.groupBy).not.toBe('priority');
+    mainSave.resolve();
+    await expect(main).resolves.toMatchObject({ revision: 1 });
+    expect(registry.mainTaskView().groupBy).toBe('none');
+    registry.activateMainTaskCollection('today');
+    expect(registry.mainTaskView().groupBy).toBe('priority');
+  });
+
   it('constructs one coordinator-backed session per exact Project scope without persisting interaction state', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const registry = new ProjectWorkspaceSessionRegistry();

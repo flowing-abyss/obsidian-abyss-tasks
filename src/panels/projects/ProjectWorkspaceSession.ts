@@ -423,7 +423,7 @@ function scopeParts(
 class ProjectWorkspacePreferencePort implements CollectionPreferencePort<WorkspacePreference> {
   private settings: CalendarSettings | null = null;
   private onSaveSettings: (() => Promise<void>) | undefined;
-  private readonly fallback = new Map<CollectionScopeKey, WorkspacePreference>();
+  private readonly fallback = new Map<string, WorkspacePreference>();
   private readonly revisions = new Map<string, number>();
   private readonly listeners = new Map<
     CollectionScopeKey,
@@ -431,6 +431,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   >();
   private saveQueue: Promise<void> = Promise.resolve();
   private mainTaskListKey = 'today';
+  private readonly mainTaskTargets = new WeakMap<object, string>();
 
   bind(settings: CalendarSettings, onSaveSettings?: () => Promise<void>): void {
     normalizeProjectCollectionPreferences(
@@ -445,8 +446,16 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     this.mainTaskListKey = listKey;
   }
 
-  private revisionKey(scope: CollectionScopeKey): string {
-    return scope === 'tasks:main' ? `${scope}:${this.mainTaskListKey}` : scope;
+  activeMainTaskList(): string {
+    return this.mainTaskListKey;
+  }
+
+  targetMainTaskPreference(preference: MainTasksCollectionPreference, listKey: string): void {
+    this.mainTaskTargets.set(preference, listKey);
+  }
+
+  private revisionKey(scope: CollectionScopeKey, mainTaskListKey = this.mainTaskListKey): string {
+    return scope === 'tasks:main' ? `${scope}:${mainTaskListKey}` : scope;
   }
 
   private taskBaseline(settings: CalendarSettings): ProjectTasksCollectionPreference {
@@ -518,7 +527,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   }
 
   private stored(scope: CollectionScopeKey): WorkspacePreference | undefined {
-    const fallback = this.fallback.get(scope);
+    const fallback = this.fallback.get(this.revisionKey(scope));
     if (fallback) return fallback;
     const settings = this.settings;
     if (!settings) return undefined;
@@ -551,7 +560,14 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     expectedRevision: number,
     next: WorkspacePreference,
   ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
-    const operation = this.saveQueue.then(() => this.commit(scope, expectedRevision, next));
+    const mainTaskListKey =
+      scope === 'tasks:main'
+        ? (this.mainTaskTargets.get(next) ?? this.mainTaskListKey)
+        : this.mainTaskListKey;
+    const revisionKey = this.revisionKey(scope, mainTaskListKey);
+    const operation = this.saveQueue.then(() =>
+      this.commit(scope, expectedRevision, next, revisionKey, mainTaskListKey),
+    );
     this.saveQueue = operation.then(
       () => undefined,
       () => undefined,
@@ -578,17 +594,18 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     scope: CollectionScopeKey,
     expectedRevision: number,
     next: WorkspacePreference,
+    revisionKey: string,
+    mainTaskListKey: string,
   ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
-    const revisionKey = this.revisionKey(scope);
     const revision = this.revisions.get(revisionKey) ?? 0;
     if (revision !== expectedRevision) throw new CollectionPreferenceConflictError();
     const settings = this.settings;
     if (!settings || !this.onSaveSettings) {
-      this.fallback.set(scope, structuredClone(next));
+      this.fallback.set(revisionKey, structuredClone(next));
       return this.publish(scope, revisionKey, revision, next);
     }
 
-    const restore = this.stage(settings, scope, next);
+    const restore = this.stage(settings, scope, next, mainTaskListKey);
     try {
       await this.onSaveSettings();
     } catch (error) {
@@ -602,6 +619,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     settings: CalendarSettings,
     scope: CollectionScopeKey,
     next: WorkspacePreference,
+    mainTaskListKey: string,
   ): () => void {
     if (scope === 'tasks:main') {
       const prior = settings.listViewStates;
@@ -613,7 +631,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
         filters: [...preference.filters],
         ...(statusGroups && { statusGroups: [...statusGroups] }),
       };
-      settings.listViewStates = { ...(prior ?? {}), [this.mainTaskListKey]: view };
+      settings.listViewStates = { ...(prior ?? {}), [mainTaskListKey]: view };
       return () => {
         if (prior) settings.listViewStates = prior;
         else delete settings.listViewStates;
@@ -739,12 +757,19 @@ export class ProjectWorkspaceSession {
   updateMainTaskPreference(
     mutate: (current: MainTasksCollectionPreference) => MainTasksCollectionPreference,
   ): Promise<CollectionPreferenceSnapshot<MainTasksCollectionPreference>> {
+    const listKey = this.preferencePort.activeMainTaskList();
     const current = this.mainTaskPreferenceSnapshot();
-    return this.coordinator.updatePreference(
-      'tasks:main',
-      current.revision,
-      mutate(current.preference),
-    ) as Promise<CollectionPreferenceSnapshot<MainTasksCollectionPreference>>;
+    const next = mutate(current.preference);
+    this.preferencePort.targetMainTaskPreference(next, listKey);
+    return (
+      this.coordinator.updatePreference('tasks:main', current.revision, next) as Promise<
+        CollectionPreferenceSnapshot<MainTasksCollectionPreference>
+      >
+    ).then((settled) => {
+      if (this.preferencePort.activeMainTaskList() !== listKey)
+        this.coordinator.invalidatePreference('tasks:main');
+      return settled;
+    });
   }
 
   mainTaskSession(): CollectionSessionState {
