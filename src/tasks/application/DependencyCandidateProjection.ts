@@ -43,6 +43,7 @@ function disabledReason(validation: DependencyLinkValidation): string | undefine
   if (diagnostic.type === 'cycle') return 'Would create a cycle';
   if (diagnostic.type === 'self-edge') return 'Task cannot block itself';
   if (diagnostic.type === 'duplicate-id') return 'Duplicate ID';
+  if (diagnostic.type === 'missing-prerequisite') return 'Missing prerequisite';
   return 'Dependency data unavailable';
 }
 

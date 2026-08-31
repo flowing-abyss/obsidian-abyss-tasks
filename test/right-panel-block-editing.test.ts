@@ -948,6 +948,52 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
+  it('keeps an ID-less candidate with a missing existing prerequisite unavailable without generating', async () => {
+    const generateId = vi.fn(() => 'generated-id');
+    const source = [
+      '- [ ] Dependent 🆔 dependent',
+      '',
+      '- [ ] Candidate without ID ⛔ missing',
+      '',
+    ].join('\n');
+    const harness = await realDependencyApplication(source, generateId);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const process = vi.spyOn(harness.app.vault, 'process');
+    panel.mount(container);
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    const button = container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.textContent).toContain('Missing prerequisite');
+    button.click();
+    await flushMicrotasks();
+
+    expect(generateId).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
   it.each(['click', 'Enter', ' '] as const)(
     'keeps a duplicate-ID candidate focusable and non-dispatchable on %s',
     async (activation) => {

@@ -163,4 +163,29 @@ describe('DependencyCandidateProjection', () => {
       reason: 'Would create a cycle',
     });
   });
+
+  it('keeps an ID-less candidate with an invalid existing prerequisite disabled', () => {
+    const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
+    const idless = task({
+      title: 'Candidate with missing prerequisite',
+      source: { filePath: 'Tasks.md', line: 1 },
+      dependency: { dependsOn: ['missing'] },
+    });
+
+    const candidates = projectDependencyCandidates({
+      dependent,
+      tasks: [idless],
+      projectTasks: [],
+      preflightIdentityLink: () => ({
+        type: 'invalid',
+        diagnostics: [{ type: 'missing-prerequisite', id: 'missing' }],
+      }),
+      validateLink: () => ({ type: 'allowed' }),
+    });
+
+    expect(candidates[0]?.availability).toEqual({
+      type: 'disabled',
+      reason: 'Missing prerequisite',
+    });
+  });
 });

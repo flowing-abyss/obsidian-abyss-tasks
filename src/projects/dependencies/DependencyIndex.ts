@@ -205,6 +205,10 @@ export class DependencyIndex {
     if (!prerequisiteNode || !dependentNode) {
       return { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] };
     }
+    const prerequisiteProjection = this.projections.get(prerequisiteNode.key);
+    if (prerequisiteProjection?.type === 'invalid') {
+      return { type: 'invalid', diagnostics: prerequisiteProjection.diagnostics };
+    }
     if (prerequisiteNode.key === dependentNode.key) {
       return { type: 'invalid', diagnostics: [{ type: 'self-edge', id: '' }] };
     }
