@@ -43,6 +43,36 @@ describe('ProjectsTableView', () => {
     expect(table.querySelectorAll('[role="row"]').length).toBeLessThan(120);
   });
 
+  it('projects renderer-owned Project semantic slots into the corresponding Table cells', () => {
+    const root = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const project = snapshot(1);
+    project.project.statusId = settings.projects.statuses[0]!.id;
+    project.project.priority = 'A';
+    project.project.range = { start: { raw: '2026-09-01', precision: 'date', instantMs: 0 } };
+    const configured: ProjectWorkspaceSnapshot = {
+      ...project,
+      taskRollup: {
+        total: 2,
+        done: 1,
+        cancelled: 0,
+        inProgress: 0,
+        open: 1,
+        progress: 0.5,
+      },
+    };
+    renderProjectsTable(root, [configured], { settings, onOpen: vi.fn() });
+    const slotIn = (column: string, slot: string): HTMLElement | null =>
+      root.querySelector(
+        `[role="cell"][data-table-column="${column}"] [data-entity-slot="${slot}"]`,
+      );
+    expect(slotIn('project', 'identity')?.textContent).toBe('Project 1');
+    expect(slotIn('status', 'status')?.textContent).toBe(settings.projects.statuses[0]!.label);
+    expect(slotIn('priority', 'priority')?.textContent).toBe('A');
+    expect(slotIn('progress', 'progress')?.textContent).toBe('50%');
+    expect(slotIn('start', 'date')?.textContent).toBe('2026-09-01');
+  });
+
   it('keeps custom property cells presentational until explicit edit activation without normalizing unsupported values', () => {
     const root = freshContainer();
     const settings = structuredClone(DEFAULT_SETTINGS);

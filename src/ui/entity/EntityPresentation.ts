@@ -1,12 +1,6 @@
 import { setIcon } from 'obsidian';
 
-interface EntityPresentationAction {
-  readonly label: string;
-  readonly icon: string;
-  readonly onClick: (event: MouseEvent) => void;
-}
-
-type EntityPresentationSlot =
+export type EntityPresentationSlotName =
   | 'identity'
   | 'status'
   | 'priority'
@@ -14,56 +8,126 @@ type EntityPresentationSlot =
   | 'date'
   | 'health'
   | 'relations'
-  | 'secondary'
-  | 'actions';
+  | 'secondary';
 
-export type EntityPresentationTargets = Partial<Record<EntityPresentationSlot, HTMLElement>>;
-
-export interface EntityPresentationOptions {
-  readonly identity?: string;
-  readonly status?: string;
-  readonly priority?: string | null;
-  readonly progress?: string;
-  readonly date?: string;
-  readonly health?: string;
-  readonly relations?: string;
-  readonly secondary?: string;
-  readonly actions?: readonly EntityPresentationAction[];
+export interface EntityPresentationSlot {
+  readonly value: string;
+  readonly text?: string;
+  readonly element?: 'span' | 'div' | 'button';
+  readonly className?: string;
+  readonly attributes?: Readonly<Record<string, string>>;
+  readonly onClick?: (event: MouseEvent) => void;
+  readonly onKeydown?: (event: KeyboardEvent) => void;
+  readonly onFocus?: () => void;
+  readonly content?: (slot: HTMLElement) => void;
 }
 
-/** Shared semantic slots for Project cards and table identities. */
+interface EntityPresentationAction {
+  readonly label: string;
+  readonly icon: string;
+  readonly onClick: (event: MouseEvent) => void;
+}
+
+type EntityPresentationSlotValue = string | EntityPresentationSlot;
+
+export interface EntityPresentationOptions {
+  readonly identity?: EntityPresentationSlotValue;
+  readonly status?: EntityPresentationSlotValue;
+  readonly priority?: EntityPresentationSlotValue | null;
+  readonly progress?: EntityPresentationSlotValue;
+  readonly date?: EntityPresentationSlotValue;
+  readonly health?: EntityPresentationSlotValue;
+  readonly relations?: EntityPresentationSlotValue;
+  readonly secondary?: EntityPresentationSlotValue;
+  readonly actions?: readonly EntityPresentationAction[];
+  readonly className?: string;
+  readonly actionsClassName?: string;
+  readonly primarySlots?: readonly EntityPresentationSlotName[];
+  readonly secondarySlots?: readonly EntityPresentationSlotName[];
+  readonly primaryClassName?: string;
+  readonly secondaryClassName?: string;
+}
+
+const SLOT_ORDER: readonly EntityPresentationSlotName[] = [
+  'identity',
+  'status',
+  'priority',
+  'progress',
+  'date',
+  'health',
+  'relations',
+  'secondary',
+];
+
+export interface EntityPresentationRenderOptions {
+  readonly actionsParent?: HTMLElement;
+}
+
+/** Shared owner of concrete Project card and Table semantic slot DOM. */
 export class EntityPresentation {
   constructor(private readonly options: EntityPresentationOptions) {}
 
-  render(parent: HTMLElement, targets: EntityPresentationTargets = {}): HTMLElement {
-    const root = parent.createDiv({ cls: 'abyss-entity-presentation' });
-    if (this.options.identity) {
-      (targets.identity ?? root).createSpan({
-        cls: 'abyss-entity-identity',
-        text: this.options.identity,
-        attr: { 'data-entity-slot': 'identity', title: this.options.identity },
-      });
+  render(parent: HTMLElement, options: EntityPresentationRenderOptions = {}): HTMLElement {
+    const root = parent.createDiv({
+      cls: ['abyss-entity-presentation', this.options.className].filter(Boolean).join(' '),
+    });
+    const grouped = new Set([
+      ...(this.options.primarySlots ?? []),
+      ...(this.options.secondarySlots ?? []),
+    ]);
+    if (this.options.primarySlots) {
+      const primary = root.createDiv({ cls: this.options.primaryClassName ?? '' });
+      for (const name of this.options.primarySlots) this.renderSlot(primary, name);
     }
-    this.slot(targets.status ?? root, 'status', this.options.status);
-    this.slot(targets.priority ?? root, 'priority', this.options.priority ?? undefined);
-    this.slot(targets.progress ?? root, 'progress', this.options.progress);
-    this.slot(targets.date ?? root, 'date', this.options.date);
-    this.slot(targets.health ?? root, 'health', this.options.health);
-    this.slot(targets.relations ?? root, 'relations', this.options.relations);
-    this.slot(targets.secondary ?? root, 'secondary', this.options.secondary);
-    this.renderActions(targets.actions ?? root);
+    if (this.options.secondarySlots?.some((name) => this.options[name] !== undefined) === true) {
+      const secondary = root.createDiv({ cls: this.options.secondaryClassName ?? '' });
+      for (const name of this.options.secondarySlots) this.renderSlot(secondary, name);
+    }
+    for (const name of SLOT_ORDER) {
+      if (!grouped.has(name)) this.renderSlot(root, name);
+    }
+    this.renderActions(options.actionsParent ?? root);
     return root;
+  }
+
+  /** Projects a renderer-owned slot into a Table cell without duplicating its markup contract. */
+  renderSlot(parent: HTMLElement, name: EntityPresentationSlotName): HTMLElement | undefined {
+    const raw = this.options[name];
+    if (!raw) return undefined;
+    const slot = typeof raw === 'string' ? { value: raw } : raw;
+    const element = parent.createEl(slot.element ?? 'span', {
+      cls: [
+        `abyss-entity-${name}`,
+        name === 'priority' ? 'abyss-project-priority' : '',
+        slot.className,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      text: slot.text ?? slot.value,
+      attr: {
+        'data-entity-slot': name,
+        title: slot.value,
+        ...(name === 'priority'
+          ? { 'data-priority': slot.value, 'aria-label': `Priority ${slot.value}` }
+          : {}),
+        ...slot.attributes,
+      },
+    });
+    slot.content?.(element);
+    if (slot.onClick)
+      element.addEventListener('click', (event) => slot.onClick?.(event as MouseEvent));
+    if (slot.onKeydown)
+      element.addEventListener('keydown', (event) => slot.onKeydown?.(event as KeyboardEvent));
+    if (slot.onFocus) element.addEventListener('focus', slot.onFocus);
+    return element;
   }
 
   renderActions(parent: HTMLElement): void {
     if (!this.options.actions?.length) return;
-    const actions =
-      parent.dataset['entitySlot'] === 'actions'
-        ? parent
-        : parent.createDiv({
-            cls: 'abyss-entity-actions',
-            attr: { 'data-entity-slot': 'actions' },
-          });
+    const actions = parent.createDiv({
+      cls: ['abyss-entity-actions', this.options.actionsClassName].filter(Boolean).join(' '),
+      attr: { 'data-entity-slot': 'actions' },
+    });
     for (const action of this.options.actions) {
       const button = actions.createEl('button', {
         cls: 'abyss-project-overflow-btn',
@@ -72,43 +136,5 @@ export class EntityPresentation {
       setIcon(button, action.icon);
       button.addEventListener('click', action.onClick);
     }
-  }
-
-  /** Applies the same semantic slot contract when a host owns an interactive card's markup. */
-  bind(targets: EntityPresentationTargets): void {
-    const values: Readonly<Record<Exclude<EntityPresentationSlot, 'actions'>, string | undefined>> =
-      {
-        identity: this.options.identity,
-        status: this.options.status,
-        priority: this.options.priority ?? undefined,
-        progress: this.options.progress,
-        date: this.options.date,
-        health: this.options.health,
-        relations: this.options.relations,
-        secondary: this.options.secondary,
-      };
-    for (const [slot, value] of Object.entries(values)) {
-      const target = targets[slot as Exclude<EntityPresentationSlot, 'actions'>];
-      if (!target || !value) continue;
-      target.dataset['entitySlot'] = slot;
-      target.title ||= value;
-    }
-    if (targets.actions && this.options.actions?.length)
-      targets.actions.dataset['entitySlot'] = 'actions';
-  }
-
-  private slot(parent: HTMLElement, name: string, value: string | undefined): void {
-    if (!value) return;
-    parent.createSpan({
-      cls: `abyss-entity-${name}${name === 'priority' ? ' abyss-project-priority' : ''}`,
-      text: value,
-      attr: {
-        'data-entity-slot': name,
-        title: value,
-        ...(name === 'priority'
-          ? { 'data-priority': value, 'aria-label': `Priority ${value}` }
-          : {}),
-      },
-    });
   }
 }

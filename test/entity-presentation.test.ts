@@ -52,4 +52,33 @@ describe('EntityPresentation', () => {
       'secondary',
     ]);
   });
+
+  it('owns concrete slot containers and values without an annotation-only binding API', () => {
+    const root = freshContainer();
+    const presentation = new EntityPresentation({
+      identity: 'Project',
+      status: 'Active',
+      priority: 'A',
+      progress: '1/2',
+      date: '2026-09-01',
+      health: 'At risk',
+      relations: '2 Work Notes',
+      secondary: 'Next action',
+    });
+    const hierarchy = presentation.render(root);
+    expect(hierarchy.classList.contains('abyss-entity-presentation')).toBe(true);
+    for (const [slot, value] of Object.entries({
+      identity: 'Project',
+      status: 'Active',
+      priority: 'A',
+      progress: '1/2',
+      date: '2026-09-01',
+      health: 'At risk',
+      relations: '2 Work Notes',
+      secondary: 'Next action',
+    })) {
+      expect(hierarchy.querySelector(`[data-entity-slot="${slot}"]`)?.textContent).toBe(value);
+    }
+    expect((EntityPresentation.prototype as { bind?: unknown }).bind).toBeUndefined();
+  });
 });

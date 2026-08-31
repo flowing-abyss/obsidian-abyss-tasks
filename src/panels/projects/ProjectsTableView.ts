@@ -198,6 +198,7 @@ function makeEditableCell(
   cell: HTMLElement,
   value: string,
   renderEditor: (cancel: (nextValue?: string) => void) => void,
+  renderPresent?: () => void,
 ): void {
   let presentValue = value;
   const present = (): void => {
@@ -205,7 +206,8 @@ function makeEditableCell(
     cell.title = presentValue;
     if (presentValue) cell.setAttribute('aria-label', presentValue);
     else cell.removeAttribute('aria-label');
-    if (presentValue) cell.createSpan({ text: presentValue, attr: { title: presentValue } });
+    if (renderPresent) renderPresent();
+    else if (presentValue) cell.createSpan({ text: presentValue, attr: { title: presentValue } });
   };
   const activate = (): void => {
     cell.empty();
@@ -702,6 +704,35 @@ export function renderProjectsTable(
           open();
         }
       });
+      const statusValue =
+        options.settings.projects.statuses.find(({ id }) => id === snapshot.project.statusId)
+          ?.label ??
+        snapshot.project.rawStatus ??
+        '';
+      const progressValue =
+        snapshot.taskRollup.progress === null
+          ? ''
+          : `${Math.round(snapshot.taskRollup.progress * 100)}%`;
+      const nextActionValue = snapshot.tasks.some(({ task }) =>
+        task.tags?.includes('#task/next_action'),
+      )
+        ? 'Next action'
+        : '';
+      const presentation = new EntityPresentation({
+        identity: snapshot.project.name,
+        status: statusValue || undefined,
+        priority: snapshot.project.priority,
+        progress: progressValue || undefined,
+        date: snapshot.project.range.start?.raw ?? snapshot.project.range.end?.raw,
+        secondary: nextActionValue || undefined,
+        actions: [
+          {
+            label: 'Project actions',
+            icon: 'ellipsis',
+            onClick: (event) => showProjectMenu(event, snapshot, options),
+          },
+        ],
+      });
       for (const column of tableColumns) {
         const cell = row.createDiv({
           cls: 'abyss-virtual-table-cell',
@@ -710,17 +741,8 @@ export function renderProjectsTable(
         let value: string;
         switch (column.id) {
           case 'project': {
-            new EntityPresentation({
-              identity: snapshot.project.name,
-              priority: snapshot.project.priority,
-              actions: [
-                {
-                  label: 'Project actions',
-                  icon: 'ellipsis',
-                  onClick: (event) => showProjectMenu(event, snapshot, options),
-                },
-              ],
-            }).render(cell);
+            presentation.renderSlot(cell, 'identity');
+            presentation.renderActions(cell);
             cell.addEventListener('contextmenu', (event) =>
               showProjectMenu(event, snapshot, options),
             );
@@ -728,65 +750,66 @@ export function renderProjectsTable(
             continue;
           }
           case 'status': {
-            const value =
-              options.settings.projects.statuses.find(({ id }) => id === snapshot.project.statusId)
-                ?.label ??
-              snapshot.project.rawStatus ??
-              '';
-            makeEditableCell(cell, value, (cancel) =>
-              renderOwnedSelect(
-                cell,
-                'Status',
-                snapshot.project.statusId,
-                options.settings.projects.statuses.map((status) => ({
-                  value: status.id,
-                  label: status.label,
-                })),
-                options.onSetStatus
-                  ? (next) =>
-                      next
-                        ? options.onSetStatus!(snapshot.project.path, next)
-                        : Promise.resolve({ type: 'invalid' })
-                  : undefined,
-                cancel,
-              ),
+            const value = statusValue;
+            makeEditableCell(
+              cell,
+              value,
+              (cancel) =>
+                renderOwnedSelect(
+                  cell,
+                  'Status',
+                  snapshot.project.statusId,
+                  options.settings.projects.statuses.map((status) => ({
+                    value: status.id,
+                    label: status.label,
+                  })),
+                  options.onSetStatus
+                    ? (next) =>
+                        next
+                          ? options.onSetStatus!(snapshot.project.path, next)
+                          : Promise.resolve({ type: 'invalid' })
+                    : undefined,
+                  cancel,
+                ),
+              () => presentation.renderSlot(cell, 'status'),
             );
             continue;
           }
           case 'priority': {
             const value = snapshot.project.priority ?? '';
-            makeEditableCell(cell, value, (cancel) =>
-              renderOwnedSelect(
-                cell,
-                'Priority',
-                snapshot.project.priority ?? null,
-                ['A', 'B', 'C', 'D', 'E', 'F'].map((priority) => ({
-                  value: priority,
-                  label: priority,
-                })),
-                options.onSetPriority
-                  ? (next) =>
-                      options.onSetPriority!(
-                        snapshot.project.path,
-                        next as ProjectWorkspaceSnapshot['project']['priority'],
-                      )
-                  : undefined,
-                cancel,
-              ),
+            makeEditableCell(
+              cell,
+              value,
+              (cancel) =>
+                renderOwnedSelect(
+                  cell,
+                  'Priority',
+                  snapshot.project.priority ?? null,
+                  ['A', 'B', 'C', 'D', 'E', 'F'].map((priority) => ({
+                    value: priority,
+                    label: priority,
+                  })),
+                  options.onSetPriority
+                    ? (next) =>
+                        options.onSetPriority!(
+                          snapshot.project.path,
+                          next as ProjectWorkspaceSnapshot['project']['priority'],
+                        )
+                    : undefined,
+                  cancel,
+                ),
+              () => presentation.renderSlot(cell, 'priority'),
             );
             continue;
           }
           case 'progress':
-            value =
-              snapshot.taskRollup.progress === null
-                ? ''
-                : `${Math.round(snapshot.taskRollup.progress * 100)}%`;
-            break;
+            presentation.renderSlot(cell, 'progress');
+            makeCellFocusable(cell, progressValue, open);
+            continue;
           case 'nextAction':
-            value = snapshot.tasks.some(({ task }) => task.tags?.includes('#task/next_action'))
-              ? 'Next action'
-              : '';
-            break;
+            presentation.renderSlot(cell, 'secondary');
+            makeCellFocusable(cell, nextActionValue, open);
+            continue;
           case 'description': {
             value = adapter.display(snapshot.project.frontmatter['description']);
             const rawDescription = snapshot.project.frontmatter['description'];
@@ -814,28 +837,44 @@ export function renderProjectsTable(
             break;
           }
           case 'start':
-            makeEditableCell(cell, snapshot.project.range.start?.raw ?? '', (cancel) =>
-              renderRangeEditor(
+            {
+              const value = snapshot.project.range.start?.raw ?? '';
+              const rangePresentation = new EntityPresentation({ date: value || undefined });
+              makeEditableCell(
                 cell,
-                'start',
-                snapshot.project.range.start?.raw,
-                options,
-                snapshot.project.path,
-                cancel,
-              ),
-            );
+                value,
+                (cancel) =>
+                  renderRangeEditor(
+                    cell,
+                    'start',
+                    snapshot.project.range.start?.raw,
+                    options,
+                    snapshot.project.path,
+                    cancel,
+                  ),
+                () => rangePresentation.renderSlot(cell, 'date'),
+              );
+            }
             continue;
           case 'end':
-            makeEditableCell(cell, snapshot.project.range.end?.raw ?? '', (cancel) =>
-              renderRangeEditor(
+            {
+              const value = snapshot.project.range.end?.raw ?? '';
+              const rangePresentation = new EntityPresentation({ date: value || undefined });
+              makeEditableCell(
                 cell,
-                'end',
-                snapshot.project.range.end?.raw,
-                options,
-                snapshot.project.path,
-                cancel,
-              ),
-            );
+                value,
+                (cancel) =>
+                  renderRangeEditor(
+                    cell,
+                    'end',
+                    snapshot.project.range.end?.raw,
+                    options,
+                    snapshot.project.path,
+                    cancel,
+                  ),
+                () => rangePresentation.renderSlot(cell, 'date'),
+              );
+            }
             continue;
           default: {
             const descriptor = propertyDescriptor(

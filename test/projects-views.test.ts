@@ -13,6 +13,7 @@ import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
+import { renderProjectsTable } from '../src/panels/projects/ProjectsTableView';
 import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectChildRenderHandle } from '../src/panels/projects/viewContext';
 import { selectWorkNotes } from '../src/panels/projects/WorkNotesView';
@@ -293,6 +294,9 @@ describe('renderProjectsList', () => {
       onUndoStatus: vi.fn(),
     });
     const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+    const hierarchy = card.querySelector<HTMLElement>('.abyss-entity-presentation')!;
+    expect(hierarchy).not.toBeNull();
+    expect(hierarchy.parentElement).toBe(card);
     const slots = Array.from(card.querySelectorAll<HTMLElement>('[data-entity-slot]')).map(
       ({ dataset }) => dataset['entitySlot'],
     );
@@ -306,6 +310,7 @@ describe('renderProjectsList', () => {
       'actions',
     ])
       expect(slots).toContain(slot);
+    expect(hierarchy.querySelector('[data-entity-slot="identity"]')?.textContent).toBe('A');
   });
 
   it('marks the current shared Project priority action disabled', () => {
@@ -313,6 +318,105 @@ describe('renderProjectsList', () => {
       { label: 'A', checked: false, disabled: false },
       { label: 'B', checked: true, disabled: true },
     ]);
+  });
+
+  it('publishes settled guarded Status and Priority writes to mounted Table and Board projections', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const [active, planned] = settings.projects.statuses;
+    settings.projects.view.visibleStatusIds = [active!.id, planned!.id];
+    let current = workspace(proj({ priority: 'C', statusId: active!.id }));
+    const tableHost = freshContainer();
+    const boardHost = freshContainer();
+    let tableDestroy = (): void => undefined;
+    let boardDestroy = (): void => undefined;
+    const publish = (): void => {
+      tableDestroy();
+      boardDestroy();
+      tableHost.empty();
+      boardHost.empty();
+      tableDestroy = renderProjectsTable(tableHost, [current], {
+        settings,
+        onOpen: vi.fn(),
+        onSetStatus,
+        onSetPriority,
+      }).destroy;
+      boardDestroy = renderProjectsBoard(boardHost, {
+        ...ctx,
+        settings,
+        snapshots: [current],
+        onMoveStatus: onSetStatus,
+        onUndoStatus: vi.fn(),
+        onSetPriority,
+      }).destroy;
+    };
+    const statusDeferred = deferred<{
+      readonly type: 'ok';
+      readonly previousStatusId: string | null;
+      readonly nextStatusId: string;
+    }>();
+    const onSetStatus = vi.fn(async (_path: string, statusId: string) => {
+      const result = await statusDeferred.promise;
+      current = workspace(proj({ priority: current.project.priority, statusId }));
+      publish();
+      return result;
+    });
+    const priorityDeferred = deferred<{ readonly type: 'ok' }>();
+    const onSetPriority = vi.fn(async (_path: string, priority: Project['priority']) => {
+      const result = await priorityDeferred.promise;
+      current = workspace(proj({ priority, statusId: current.project.statusId }));
+      publish();
+      return result;
+    });
+    publish();
+    try {
+      const statusCell = tableHost.querySelector<HTMLElement>(
+        '[role="cell"][data-table-column="status"]',
+      )!;
+      statusCell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const statusEditor = tableHost.querySelector<HTMLSelectElement>(
+        '[data-property-editor="status"]',
+      )!;
+      statusEditor.value = planned!.id;
+      statusEditor.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      expect(current.project.statusId).toBe(active!.id);
+      expect(
+        boardHost.querySelector(`[data-board-column="${active!.id}"] [data-board-item]`),
+      ).not.toBeNull();
+      statusDeferred.resolve({
+        type: 'ok',
+        previousStatusId: active!.id,
+        nextStatusId: planned!.id,
+      });
+      await flushMicrotasks();
+      expect(
+        tableHost.querySelector('[role="cell"][data-table-column="status"]')?.textContent,
+      ).toContain(planned!.label);
+      expect(
+        boardHost.querySelector(`[data-board-column="${planned!.id}"] [data-board-item]`),
+      ).not.toBeNull();
+
+      const priorityCell = tableHost.querySelector<HTMLElement>(
+        '[role="cell"][data-table-column="priority"]',
+      )!;
+      priorityCell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const priorityEditor = tableHost.querySelector<HTMLSelectElement>(
+        '[data-property-editor="priority"]',
+      )!;
+      priorityEditor.value = 'A';
+      priorityEditor.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+      expect(current.project.priority).toBe('C');
+      priorityDeferred.resolve({ type: 'ok' });
+      await flushMicrotasks();
+      expect(
+        tableHost.querySelector('[role="cell"][data-table-column="priority"]')?.textContent,
+      ).toContain('A');
+      expect(boardHost.querySelector('[data-entity-slot="priority"]')?.textContent).toBe('A');
+    } finally {
+      tableDestroy();
+      boardDestroy();
+    }
   });
 
   it('renders terminal and regular collapsed rails while removing hidden columns from the DOM', () => {

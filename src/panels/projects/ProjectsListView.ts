@@ -7,7 +7,10 @@ import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import { orderedGroups, type StatusGroup } from '../../projects/status';
 import type { Project, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
-import { EntityPresentation } from '../../ui/entity/EntityPresentation';
+import {
+  EntityPresentation,
+  type EntityPresentationSlot,
+} from '../../ui/entity/EntityPresentation';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { BoundedWindow } from './BoundedWindow';
 import type { ProjectCaptureSession } from './ProjectWorkspaceSession';
@@ -512,45 +515,6 @@ export function renderProjectRow(
     today: ctx.today?.() ?? currentLocalDate(),
   });
   const reason = healthReason(health);
-  const firstLine = row.createDiv({
-    cls: 'abyss-project-row-line abyss-project-row-line--primary',
-  });
-  const priorityElement =
-    project.priority === 'D'
-      ? undefined
-      : firstLine.createSpan({ cls: 'abyss-project-priority', text: project.priority ?? '' });
-  const healthElement = firstLine.createSpan({
-    cls: `abyss-project-health abyss-project-health--${health.severity}`,
-    attr: {
-      role: 'img',
-      title: reason,
-      'aria-label': `Project health: ${titleCaseHealth(health.severity)} — ${reason}`,
-    },
-  });
-  const nameWrap = firstLine.createEl('button', {
-    cls: 'abyss-project-row-name abyss-project-identity-control',
-    attr: {
-      type: 'button',
-      'data-project-identity-control': '',
-      'aria-label': `Open project ${project.name}; status ${status?.label ?? project.rawStatus ?? 'No status'}`,
-    },
-  });
-  nameWrap.createSpan({ cls: 'abyss-project-name', text: project.name });
-  if ((nameCounts.get(project.name) ?? 0) > 1) {
-    nameWrap.setAttribute('title', `${project.name} — ${parentFolder(project.path)}`);
-  }
-  let progressElement: HTMLElement | undefined;
-  if (snapshot.taskRollup.total > 0) {
-    const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });
-    progressElement = taskProgress;
-    renderProgressBar(
-      taskProgress,
-      snapshot.taskRollup.done,
-      snapshot.taskRollup.total,
-      `${project.name} task progress`,
-    );
-  }
-
   const nextAction = health.selectedNextAction;
   const date = dateSignal(health);
   const workNoteCount =
@@ -565,85 +529,128 @@ export function renderProjectRow(
     Number(health.flags.malformedNextAction) +
     Number(health.flags.rangeIssue !== undefined);
   const meaningfulReason = health.reason.type !== 'insufficient-actionable-evidence';
-  let dateElement: HTMLElement | undefined;
-  let relationsElement: HTMLElement | undefined;
-  let secondaryElement: HTMLElement | undefined;
-  if (nextAction || meaningfulReason || date || workNoteCount > 0 || diagnosticCount > 0) {
-    const secondLine = row.createDiv({
-      cls: 'abyss-project-row-line abyss-project-row-line--secondary',
-    });
-    if (nextAction) {
-      /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
-      const next = secondLine.createEl('button', {
-        cls: 'abyss-project-next-action',
-        attr: {
-          type: 'button',
-          'aria-label': 'Open Next Action',
-          title: 'Open Next Action',
-        },
-      });
-      /* eslint-enable obsidianmd/ui/sentence-case */
-      setIcon(next, 'list-checks');
-      next.createSpan({ cls: 'abyss-project-next-action-title', text: nextAction.task.title });
-      next.addEventListener('click', (event) => {
+  if (!nextAction && !meaningfulReason && !date && workNoteCount === 0 && diagnosticCount === 0)
+    row.addClass('is-single-line');
+
+  let secondary: EntityPresentationSlot | undefined;
+  if (nextAction) {
+    secondary = {
+      value: nextAction.task.title,
+      text: '',
+      element: 'button',
+      className: 'abyss-project-next-action',
+      attributes: { type: 'button', 'aria-label': 'Open Next Action', title: 'Open Next Action' },
+      content: (slot) => {
+        setIcon(slot, 'list-checks');
+        slot.createSpan({ cls: 'abyss-project-next-action-title', text: nextAction.task.title });
+      },
+      onClick: (event) => {
         event.stopPropagation();
         ctx.state.set('taskStack', [nextAction.task]);
-      });
-      secondaryElement = next;
-    } else if (meaningfulReason) {
-      secondaryElement = secondLine.createSpan({
-        cls: 'abyss-project-health-reason',
-        text: reason,
-      });
-    }
-    if (date) dateElement = secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
-    if (workNoteCount > 0 || diagnosticCount > 0) {
-      const exceptions = secondLine.createSpan({ cls: 'abyss-project-exceptions' });
-      relationsElement = exceptions;
-      if (workNoteCount > 0) {
-        exceptions.createSpan({
-          cls: 'abyss-project-work-note-count',
-          text: String(workNoteCount),
-          attr: { 'aria-label': `${String(workNoteCount)} Work Notes`, title: 'Work Notes' },
-        });
-      }
-      if (diagnosticCount > 0) {
-        exceptions.createSpan({
-          cls: 'abyss-project-diagnostic-count',
-          text: String(diagnosticCount),
-          attr: {
-            'aria-label': `${String(diagnosticCount)} project diagnostics`,
-            title: 'Project diagnostics',
-          },
-        });
-      }
-      exceptions.createSpan({
-        cls: 'abyss-project-exception-summary',
-        text: '!',
-        attr: {
-          'aria-label': `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
-        },
-      });
-    }
-  } else {
-    row.addClass('is-single-line');
+      },
+    };
+  } else if (meaningfulReason) {
+    secondary = { value: reason, className: 'abyss-project-health-reason' };
   }
 
-  const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
   const presentation = new EntityPresentation({
-    identity: project.name,
+    actionsClassName: 'abyss-project-row-actions',
+    primarySlots: ['health', 'identity', 'priority', 'progress'],
+    secondarySlots: ['secondary', 'date', 'relations'],
+    primaryClassName: 'abyss-project-row-line abyss-project-row-line--primary',
+    secondaryClassName: 'abyss-project-row-line abyss-project-row-line--secondary',
+    identity: {
+      value: project.name,
+      text: '',
+      element: 'button',
+      className: 'abyss-project-row-name abyss-project-identity-control',
+      attributes: {
+        type: 'button',
+        'data-project-identity-control': '',
+        'aria-label': `Open project ${project.name}; status ${status?.label ?? project.rawStatus ?? 'No status'}`,
+        ...((nameCounts.get(project.name) ?? 0) > 1
+          ? { title: `${project.name} — ${parentFolder(project.path)}` }
+          : {}),
+      },
+      content: (slot) => slot.createSpan({ cls: 'abyss-project-name', text: project.name }),
+      onClick: () => ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path }),
+      onKeydown: (event) => {
+        if (ownsArrowNavigation && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+          event.preventDefault();
+          onMoveFocus(project.path, event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (event.key !== 'Enter' && (event.key !== ' ' || !spaceActivates)) return;
+        event.preventDefault();
+        ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
+      },
+      onFocus: () => onFocus(project.path),
+    },
     priority: project.priority === 'D' ? undefined : project.priority,
-    health: reason,
+    health: {
+      value: reason,
+      text: '',
+      className: `abyss-project-health abyss-project-health--${health.severity}`,
+      attributes: {
+        role: 'img',
+        'aria-label': `Project health: ${titleCaseHealth(health.severity)} — ${reason}`,
+      },
+    },
     progress:
       snapshot.taskRollup.total > 0
-        ? `${String(snapshot.taskRollup.done)}/${String(snapshot.taskRollup.total)}`
+        ? {
+            value: `${String(snapshot.taskRollup.done)}/${String(snapshot.taskRollup.total)}`,
+            text: '',
+            element: 'div',
+            className: 'abyss-project-task-progress',
+            content: (slot) =>
+              renderProgressBar(
+                slot,
+                snapshot.taskRollup.done,
+                snapshot.taskRollup.total,
+                `${project.name} task progress`,
+              ),
+          }
         : undefined,
-    date,
+    date: date ? { value: date, className: 'abyss-project-date-signal' } : undefined,
     relations:
       workNoteCount > 0 || diagnosticCount > 0
-        ? `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`
+        ? {
+            value: `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
+            text: '',
+            className: 'abyss-project-exceptions',
+            content: (slot) => {
+              if (workNoteCount > 0) {
+                slot.createSpan({
+                  cls: 'abyss-project-work-note-count',
+                  text: String(workNoteCount),
+                  attr: {
+                    'aria-label': `${String(workNoteCount)} Work Notes`,
+                    title: 'Work Notes',
+                  },
+                });
+              }
+              if (diagnosticCount > 0) {
+                slot.createSpan({
+                  cls: 'abyss-project-diagnostic-count',
+                  text: String(diagnosticCount),
+                  attr: {
+                    'aria-label': `${String(diagnosticCount)} project diagnostics`,
+                    title: 'Project diagnostics',
+                  },
+                });
+              }
+              slot.createSpan({
+                cls: 'abyss-project-exception-summary',
+                text: '!',
+                attr: {
+                  'aria-label': `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`,
+                },
+              });
+            },
+          }
         : undefined,
-    secondary: nextAction?.task.title ?? (meaningfulReason ? reason : undefined),
+    secondary,
     actions: [
       {
         label: 'Project actions',
@@ -699,37 +706,7 @@ export function renderProjectRow(
       },
     ],
   });
-  presentation.bind({
-    identity: nameWrap,
-    priority: priorityElement,
-    health: healthElement,
-    progress: progressElement,
-    date: dateElement,
-    relations: relationsElement,
-    secondary: secondaryElement,
-    actions,
-  });
-  presentation.renderActions(actions);
-
-  nameWrap.addEventListener('click', () => {
-    ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
-  });
-  nameWrap.addEventListener('keydown', (event) => {
-    if (
-      ownsArrowNavigation &&
-      event.target === nameWrap &&
-      (event.key === 'ArrowDown' || event.key === 'ArrowUp')
-    ) {
-      event.preventDefault();
-      onMoveFocus(project.path, event.key === 'ArrowDown' ? 1 : -1);
-      return;
-    }
-    if (event.key !== 'Enter' && (event.key !== ' ' || !spaceActivates)) return;
-    if (event.target !== nameWrap) return;
-    event.preventDefault();
-    ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
-  });
-  nameWrap.addEventListener('focus', () => onFocus(project.path));
+  presentation.render(row, { actionsParent: row });
   row.addEventListener('click', (event) => {
     if ((event.target as Element | null)?.closest('button, a, input, select, textarea')) return;
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });
