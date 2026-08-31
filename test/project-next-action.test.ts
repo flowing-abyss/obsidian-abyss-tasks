@@ -64,7 +64,7 @@ describe('Project Next Action', () => {
       projectedNextActionToken(application, 'Project.md'),
     );
     expect(projectedNextAction(application, target)).toBeUndefined();
-    expect(published.mock.calls.length).toBeGreaterThanOrEqual(3);
+    expect(published).toHaveBeenCalledTimes(2);
     stop();
   });
 

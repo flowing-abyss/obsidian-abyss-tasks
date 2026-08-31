@@ -173,10 +173,23 @@ export class ProjectWorkspaceCoordinator {
   }
 
   /** Wait until task-settlement has rebuilt the joined Project/Work Note read model. */
-  async awaitTaskPublication(event: TaskIndexSettledEvent): Promise<void> {
-    if (!event.files.some(({ path }) => this.pending.has(path))) return;
-    const after = this.publicationVersion;
-    await new Promise<void>((resolve) => this.publicationWaiters.push({ after, resolve }));
+  awaitTaskPublication(_event: TaskIndexSettledEvent): Promise<void> {
+    if (!this.started || this.awaitingInitialization) return Promise.resolve();
+    // A full TaskIndex rescan may enumerate unchanged files without producing
+    // matching ProjectStore/WorkNote generations. Rebuild from all current
+    // settled sources instead of waiting for a hypothetical future event.
+    const snapshots = this.readModel.rebuild();
+    this.captureOwnership();
+    this.signature = snapshotSignature(snapshots);
+    this.publicationVersion += 1;
+    for (const waiter of this.publicationWaiters) waiter.resolve();
+    this.publicationWaiters = [];
+    const event: ProjectWorkspacePublication = {
+      snapshots,
+      projectPaths: snapshots.map(({ project }) => project.path).sort((a, b) => a.localeCompare(b)),
+    };
+    for (const listener of this.listeners) listener(snapshots, event);
+    return Promise.resolve();
   }
 
   absorbOwnCommit(paths: readonly string[]): void {

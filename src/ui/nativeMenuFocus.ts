@@ -44,9 +44,16 @@ export function showMenuAtMouseEventWithFocus(
       const current = keyboardEvent.target as HTMLElement;
       const index = items.indexOf(current);
       if (index < 0) return;
-      if (keyboardEvent.key === 'ArrowDown' || keyboardEvent.key === 'ArrowUp') {
+      if (
+        keyboardEvent.key === 'ArrowDown' ||
+        keyboardEvent.key === 'ArrowUp' ||
+        keyboardEvent.key === 'Tab'
+      ) {
         keyboardEvent.preventDefault();
-        const delta = keyboardEvent.key === 'ArrowDown' ? 1 : -1;
+        const delta =
+          keyboardEvent.key === 'ArrowDown' || (keyboardEvent.key === 'Tab' && !keyboardEvent.shiftKey)
+            ? 1
+            : -1;
         focusItem(items[(index + delta + items.length) % items.length]!);
       } else if (keyboardEvent.key === 'Enter' || keyboardEvent.key === ' ') {
         keyboardEvent.preventDefault();

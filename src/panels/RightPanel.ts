@@ -2111,6 +2111,11 @@ export class RightPanel {
               }),
           ).then((result) => {
             if (result.type === 'ok') void this.refreshDependencyEditor(editor, anchor, task);
+            else {
+              this.proposedDependencyIds.delete(
+                `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`,
+              );
+            }
           });
         });
       }

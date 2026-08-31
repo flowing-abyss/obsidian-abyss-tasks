@@ -33,6 +33,7 @@ interface NextActionRegistry {
     { readonly token: symbol; readonly keys: ReadonlySet<string> }
   >;
   readonly listeners: Set<() => void>;
+  notificationQueued: boolean;
 }
 
 const registries = new WeakMap<object, NextActionRegistry>();
@@ -86,7 +87,12 @@ export function projectedNextActionToken(
 }
 
 function notify(registry: NextActionRegistry): void {
-  for (const listener of registry.listeners) listener();
+  if (registry.notificationQueued) return;
+  registry.notificationQueued = true;
+  queueMicrotask(() => {
+    registry.notificationQueued = false;
+    for (const listener of registry.listeners) listener();
+  });
 }
 
 function registryFor(application: TaskApplicationApi): NextActionRegistry {
@@ -100,6 +106,7 @@ function registryFor(application: TaskApplicationApi): NextActionRegistry {
     pendingKeys: new Map(),
     bridgedProjects: new Map(),
     listeners: new Set(),
+    notificationQueued: false,
   };
   // The projection belongs to the application, not to a transient panel/service.
   // One listener is enough to retire settled bridges, and avoids remounts leaving
@@ -261,7 +268,6 @@ export class NextActionService {
     this.registry.pendingKeys.delete(token);
     // Both legacy adapters and a verified Project render need the bridge until
     // the application-owned acknowledgement/next settled publication retires it.
-    notify(this.registry);
     notify(this.registry);
   }
 
