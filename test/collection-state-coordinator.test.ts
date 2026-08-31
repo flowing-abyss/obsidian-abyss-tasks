@@ -20,6 +20,16 @@ const preference = (layout: Preference['layout'] = 'list'): Preference => ({
   layoutPreferences: {},
 });
 
+const snapshot = (
+  persistenceIdentity: string,
+  revision: number,
+  value: Preference = preference(),
+): CollectionPreferenceSnapshot<Preference> => ({
+  persistenceIdentity,
+  revision,
+  preference: value,
+});
+
 function preferences(
   initial: Readonly<Record<string, Preference>>,
 ): CollectionPreferencePort<Preference> {
@@ -31,15 +41,17 @@ function preferences(
   >();
   return {
     read: (scope) => ({
+      persistenceIdentity: scope,
       revision: revisions.get(scope) ?? 0,
       preference: values.get(scope) ?? preference(),
     }),
-    update: async (scope, expectedRevision, next) => {
+    update: async (scope, expected, next) => {
       const current = values.get(scope) ?? preference();
       const revision = revisions.get(scope) ?? 0;
-      if (revision !== expectedRevision) throw new CollectionPreferenceConflictError();
+      if (expected.persistenceIdentity !== scope || revision !== expected.revision)
+        throw new CollectionPreferenceConflictError();
       values.set(scope, next);
-      const settled = { revision: revision + 1, preference: next };
+      const settled = snapshot(scope, revision + 1, next);
       revisions.set(scope, settled.revision);
       for (const listener of listeners.get(scope) ?? []) listener(settled);
       return settled;
@@ -124,9 +136,27 @@ describe('CollectionStateCoordinator', () => {
     coordinator.subscribePreference('tasks:main', listener);
 
     await expect(
-      coordinator.updatePreference('tasks:main', 2, preference('board')),
+      coordinator.updatePreference('tasks:main', snapshot('tasks:main', 2), preference('board')),
     ).rejects.toThrow('revision conflict');
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('rejects a persistence identity token captured from another collection', async () => {
+    const coordinator = new CollectionStateCoordinator({
+      preferences: preferences({ 'tasks:main': preference() }),
+      sessions: new InMemoryCollectionSessionPort(),
+      migratePreference: (current) => current,
+    });
+    const captured = coordinator.preferenceSnapshot('tasks:main');
+
+    await expect(
+      coordinator.updatePreference(
+        'tasks:main',
+        { ...captured, persistenceIdentity: 'projects:portfolio' },
+        preference('board'),
+      ),
+    ).rejects.toBeInstanceOf(CollectionPreferenceConflictError);
+    expect(coordinator.preference('tasks:main').layout).toBe('list');
   });
 
   it('publishes each settled preference once and never forwards session state to settings', async () => {
@@ -147,11 +177,16 @@ describe('CollectionStateCoordinator', () => {
       scrollAnchor: 'anchor',
       openSurface: 'capture',
     });
-    await coordinator.updatePreference('tasks:main', 0, preference('board'));
+    await coordinator.updatePreference(
+      'tasks:main',
+      coordinator.preferenceSnapshot('tasks:main'),
+      preference('board'),
+    );
 
     expect(update).toHaveBeenCalledOnce();
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenLastCalledWith({
+      persistenceIdentity: 'tasks:main',
       revision: 1,
       preference: preference('board'),
     });
@@ -165,8 +200,12 @@ describe('CollectionStateCoordinator', () => {
       migratePreference: (current) => current,
     });
 
-    const first = await coordinator.updatePreference('tasks:main', 0, preference('board'));
-    const second = await coordinator.updatePreference('tasks:main', 1, preference('list'));
+    const first = await coordinator.updatePreference(
+      'tasks:main',
+      coordinator.preferenceSnapshot('tasks:main'),
+      preference('board'),
+    );
+    const second = await coordinator.updatePreference('tasks:main', first, preference('list'));
 
     expect(first).toMatchObject({ revision: 1, preference: { version: 1, layout: 'board' } });
     expect(second).toMatchObject({ revision: 2, preference: { version: 1, layout: 'list' } });
@@ -177,15 +216,17 @@ describe('CollectionStateCoordinator', () => {
     const save = deferred<void>();
     let revision = 0;
     let current = preference();
+    const persistenceIdentity = 'tasks:main:today';
     const publications: CollectionPreferenceSnapshot<Preference>[] = [];
     const port: CollectionPreferencePort<Preference> = {
-      read: () => ({ revision, preference: current }),
-      update: async (_scope, expectedRevision, next) => {
-        if (revision !== expectedRevision) throw new CollectionPreferenceConflictError();
+      read: () => snapshot(persistenceIdentity, revision, current),
+      update: async (_scope, expected, next) => {
+        if (expected.persistenceIdentity !== persistenceIdentity || revision !== expected.revision)
+          throw new CollectionPreferenceConflictError();
         await save.promise;
         current = next;
         revision += 1;
-        const settled = { revision, preference: current };
+        const settled = snapshot(persistenceIdentity, revision, current);
         publications.push(settled);
         return settled;
       },
@@ -197,9 +238,11 @@ describe('CollectionStateCoordinator', () => {
       migratePreference: (value) => value,
     });
 
-    const first = coordinator.updatePreference('tasks:main', 0, preference('board'));
-    const stale = coordinator.updatePreference('tasks:main', 0, preference('list'));
+    const expected = coordinator.preferenceSnapshot('tasks:main');
+    const first = coordinator.updatePreference('tasks:main', expected, preference('board'));
+    const stale = coordinator.updatePreference('tasks:main', expected, preference('list'));
     expect(coordinator.preferenceSnapshot('tasks:main')).toEqual({
+      persistenceIdentity,
       revision: 0,
       preference: preference('list'),
     });
@@ -216,7 +259,7 @@ describe('CollectionStateCoordinator', () => {
 
   it('does not publish or expose a staged preference when persistence rejects', async () => {
     const save = deferred<CollectionPreferenceSnapshot<Preference>>();
-    const initial = { revision: 7, preference: preference('list') };
+    const initial = snapshot('tasks:main:today', 7, preference('list'));
     const port: CollectionPreferencePort<Preference> = {
       read: () => initial,
       update: () => save.promise,
@@ -230,7 +273,7 @@ describe('CollectionStateCoordinator', () => {
     const listener = vi.fn();
     coordinator.subscribePreference('tasks:main', listener);
 
-    const pending = coordinator.updatePreference('tasks:main', 7, preference('board'));
+    const pending = coordinator.updatePreference('tasks:main', initial, preference('board'));
     expect(coordinator.preferenceSnapshot('tasks:main')).toEqual(initial);
     save.reject(new Error('disk full'));
 

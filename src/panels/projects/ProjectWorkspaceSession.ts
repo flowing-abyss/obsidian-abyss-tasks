@@ -222,7 +222,7 @@ function scopeSession<TViewState>(
       const scope = instanceKey as CollectionScopeKey;
       const current = coordinator.preferenceSnapshot(scope);
       void coordinator
-        .updatePreference(scope, current.revision, {
+        .updatePreference(scope, current, {
           ...current.preference,
           layout: next,
         } as WorkspacePreference)
@@ -431,7 +431,6 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   >();
   private saveQueue: Promise<void> = Promise.resolve();
   private mainTaskListKey = 'today';
-  private readonly mainTaskTargets = new WeakMap<object, string>();
 
   bind(settings: CalendarSettings, onSaveSettings?: () => Promise<void>): void {
     normalizeProjectCollectionPreferences(
@@ -450,12 +449,13 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     return this.mainTaskListKey;
   }
 
-  targetMainTaskPreference(preference: MainTasksCollectionPreference, listKey: string): void {
-    this.mainTaskTargets.set(preference, listKey);
-  }
-
   private revisionKey(scope: CollectionScopeKey, mainTaskListKey = this.mainTaskListKey): string {
     return scope === 'tasks:main' ? `${scope}:${mainTaskListKey}` : scope;
+  }
+
+  private mainTaskListFromIdentity(identity: string): string | null {
+    const prefix = 'tasks:main:';
+    return identity.startsWith(prefix) ? identity.slice(prefix.length) : null;
   }
 
   private taskBaseline(settings: CalendarSettings): ProjectTasksCollectionPreference {
@@ -550,6 +550,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     else if (parts.kind === 'tasks') preference = this.taskBaseline(settings);
     else preference = this.workNotesBaseline(settings);
     return {
+      persistenceIdentity: this.revisionKey(scope),
       revision: this.revisions.get(this.revisionKey(scope)) ?? 0,
       preference,
     };
@@ -557,16 +558,12 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
 
   update(
     scope: CollectionScopeKey,
-    expectedRevision: number,
+    expected: CollectionPreferenceSnapshot<WorkspacePreference>,
     next: WorkspacePreference,
   ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
-    const mainTaskListKey =
-      scope === 'tasks:main'
-        ? (this.mainTaskTargets.get(next) ?? this.mainTaskListKey)
-        : this.mainTaskListKey;
-    const revisionKey = this.revisionKey(scope, mainTaskListKey);
+    const mainTaskListKey = this.mainTaskListFromIdentity(expected.persistenceIdentity);
     const operation = this.saveQueue.then(() =>
-      this.commit(scope, expectedRevision, next, revisionKey, mainTaskListKey),
+      this.commit(scope, expected, next, mainTaskListKey),
     );
     this.saveQueue = operation.then(
       () => undefined,
@@ -592,20 +589,23 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
 
   private async commit(
     scope: CollectionScopeKey,
-    expectedRevision: number,
+    expected: CollectionPreferenceSnapshot<WorkspacePreference>,
     next: WorkspacePreference,
-    revisionKey: string,
-    mainTaskListKey: string,
+    mainTaskListKey: string | null,
   ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
+    const revisionKey = expected.persistenceIdentity;
+    const identityMatchesScope =
+      scope === 'tasks:main' ? mainTaskListKey !== null : revisionKey === scope;
+    if (!identityMatchesScope) throw new CollectionPreferenceConflictError();
     const revision = this.revisions.get(revisionKey) ?? 0;
-    if (revision !== expectedRevision) throw new CollectionPreferenceConflictError();
+    if (revision !== expected.revision) throw new CollectionPreferenceConflictError();
     const settings = this.settings;
     if (!settings || !this.onSaveSettings) {
       this.fallback.set(revisionKey, structuredClone(next));
       return this.publish(scope, revisionKey, revision, next);
     }
 
-    const restore = this.stage(settings, scope, next, mainTaskListKey);
+    const restore = this.stage(settings, scope, next, mainTaskListKey ?? this.mainTaskListKey);
     try {
       await this.onSaveSettings();
     } catch (error) {
@@ -679,7 +679,11 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     revision: number,
     preference: WorkspacePreference,
   ): CollectionPreferenceSnapshot<WorkspacePreference> {
-    const settled = { revision: revision + 1, preference: structuredClone(preference) };
+    const settled = {
+      persistenceIdentity: revisionKey,
+      revision: revision + 1,
+      preference: structuredClone(preference),
+    };
     this.revisions.set(revisionKey, settled.revision);
     for (const listener of this.listeners.get(scope) ?? []) listener(settled);
     return settled;
@@ -760,9 +764,8 @@ export class ProjectWorkspaceSession {
     const listKey = this.preferencePort.activeMainTaskList();
     const current = this.mainTaskPreferenceSnapshot();
     const next = mutate(current.preference);
-    this.preferencePort.targetMainTaskPreference(next, listKey);
     return (
-      this.coordinator.updatePreference('tasks:main', current.revision, next) as Promise<
+      this.coordinator.updatePreference('tasks:main', current, next) as Promise<
         CollectionPreferenceSnapshot<MainTasksCollectionPreference>
       >
     ).then((settled) => {
@@ -796,7 +799,7 @@ export class ProjectWorkspaceSession {
     const current = this.portfolioPreferenceSnapshot();
     return this.coordinator.updatePreference(
       'projects:portfolio',
-      current.revision,
+      current,
       mutate(current.preference),
     ) as Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>>;
   }
@@ -847,7 +850,7 @@ export class ProjectWorkspaceSession {
       WorkspacePreferenceFor<S>
     >;
     return this.coordinator
-      .updatePreference(key, current.revision, mutate(current.preference))
+      .updatePreference(key, current, mutate(current.preference))
       .then((next) => next.preference as WorkspacePreferenceFor<S>);
   }
 

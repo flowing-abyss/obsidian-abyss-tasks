@@ -7,6 +7,8 @@ export type CollectionScopeKey =
   | `project:${string}:work-notes`;
 
 export interface CollectionPreferenceSnapshot<TPreference> {
+  /** Opaque persistence identity pinned when this snapshot was read. */
+  readonly persistenceIdentity: string;
   readonly revision: number;
   readonly preference: TPreference;
 }
@@ -22,7 +24,7 @@ export interface CollectionPreferencePort<TPreference> {
   read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<TPreference>;
   update(
     scope: CollectionScopeKey,
-    expectedRevision: number,
+    expected: CollectionPreferenceSnapshot<TPreference>,
     next: TPreference,
   ): Promise<CollectionPreferenceSnapshot<TPreference>>;
   subscribe(
@@ -118,6 +120,7 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     if (cached) return cached;
     const current = this.ports.preferences.read(scope);
     const next = {
+      persistenceIdentity: current.persistenceIdentity,
       revision: current.revision,
       preference: this.ports.migratePreference(current.preference),
     };
@@ -136,19 +139,19 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
 
   async updatePreference(
     scope: CollectionScopeKey,
-    expectedRevision: number,
+    expected: CollectionPreferenceSnapshot<TPreference>,
     next: TPreference,
   ): Promise<CollectionPreferenceSnapshot<TPreference>> {
     const previousWrite = this.writeQueues.get(scope) ?? Promise.resolve();
     const result = previousWrite.then(async () => {
-      const current = this.preferenceSnapshot(scope);
-      if (current.revision !== expectedRevision) throw new CollectionPreferenceConflictError();
-      const settled = await this.ports.preferences.update(scope, expectedRevision, next);
+      const settled = await this.ports.preferences.update(scope, expected, next);
       const migrated = {
+        persistenceIdentity: settled.persistenceIdentity,
         revision: settled.revision,
         preference: this.ports.migratePreference(settled.preference),
       };
-      this.migrated.set(scope, migrated);
+      if (this.migrated.get(scope)?.persistenceIdentity === expected.persistenceIdentity)
+        this.migrated.set(scope, migrated);
       return migrated;
     });
     const queue = result.then(
@@ -168,10 +171,12 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
   ): () => void {
     return this.ports.preferences.subscribe(scope, (next) => {
       const migrated = {
+        persistenceIdentity: next.persistenceIdentity,
         revision: next.revision,
         preference: this.ports.migratePreference(next.preference),
       };
-      this.migrated.set(scope, migrated);
+      if (this.migrated.get(scope)?.persistenceIdentity === next.persistenceIdentity)
+        this.migrated.set(scope, migrated);
       listener(migrated);
     });
   }

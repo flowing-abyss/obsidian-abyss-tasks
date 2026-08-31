@@ -147,17 +147,24 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     const mainSave = deferred<void>();
     const save = vi
       .fn()
+      .mockResolvedValueOnce(undefined)
       .mockReturnValueOnce(portfolioSave.promise)
       .mockReturnValueOnce(mainSave.promise);
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.bindCollectionPreferences(settings, save);
+
+    registry.activateMainTaskCollection('inbox');
+    await registry.updateMainTaskPreference((current) => ({
+      ...current,
+      group: 'status',
+    }));
+    registry.activateMainTaskCollection('today');
 
     const portfolio = registry.updatePortfolioPreference((current) => ({
       ...current,
       layout: 'board',
     }));
     await flushAsyncQueue();
-    registry.activateMainTaskCollection('today');
     const main = registry.updateMainTaskPreference((current) => ({
       ...current,
       group: 'priority',
@@ -168,10 +175,10 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     await expect(portfolio).resolves.toMatchObject({ revision: 1 });
     await flushAsyncQueue();
     expect(settings.listViewStates?.['today']?.groupBy).toBe('priority');
-    expect(settings.listViewStates?.['inbox']?.groupBy).not.toBe('priority');
+    expect(settings.listViewStates?.['inbox']?.groupBy).toBe('status');
     mainSave.resolve();
     await expect(main).resolves.toMatchObject({ revision: 1 });
-    expect(registry.mainTaskView().groupBy).toBe('none');
+    expect(registry.mainTaskView().groupBy).toBe('status');
     registry.activateMainTaskCollection('today');
     expect(registry.mainTaskView().groupBy).toBe('priority');
   });
