@@ -37,7 +37,11 @@ describe('showMenuAtMouseEventWithFocus', () => {
     const first = surface!.querySelector<HTMLElement>('.menu-item')!;
     const next = surface!.querySelectorAll<HTMLElement>('.menu-item')[1]!;
     expect(activeDocument.activeElement).toBe(first);
-    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(next);
+    next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+    expect(activeDocument.activeElement).toBe(first);
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
     expect(activeDocument.activeElement).toBe(next);
     next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(activated).toHaveBeenCalledOnce();
