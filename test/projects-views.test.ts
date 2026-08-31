@@ -1169,6 +1169,9 @@ describe('renderProjectsList', () => {
       const lines = row.querySelectorAll<HTMLElement>('.abyss-project-row-line');
       expect(lines).toHaveLength(2);
       expect(presentation.classList.contains('abyss-entity-presentation--project-row')).toBe(true);
+      expect(
+        presentation.classList.contains('abyss-entity-presentation--project-row-two-line'),
+      ).toBe(true);
       expect(getComputedStyle(presentation).display).toBe('grid');
       expect(getComputedStyle(presentation).gridRow).toBe('1 / -1');
       expect(Array.from(lines).every((line) => getComputedStyle(line).overflow === 'hidden')).toBe(
@@ -1485,10 +1488,20 @@ describe('renderProjectsList', () => {
       expect(compact.querySelector('.abyss-next-action-slot')).toBeNull();
       const unsetRow = overview.querySelector<HTMLElement>('.abyss-project-row')!;
       const setRow = overviewBaseline.querySelector<HTMLElement>('.abyss-project-row')!;
+      const unsetPresentation = unsetRow.querySelector<HTMLElement>('.abyss-entity-presentation')!;
+      const setPresentation = setRow.querySelector<HTMLElement>('.abyss-entity-presentation')!;
       const unsetActions = unsetRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
       const setActions = setRow.querySelector<HTMLElement>('.abyss-project-row-actions')!;
       expect(unsetRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(1);
       expect(setRow.querySelectorAll('.abyss-project-row-line')).toHaveLength(2);
+      expect(
+        unsetPresentation.classList.contains('abyss-entity-presentation--project-row-single-line'),
+      ).toBe(true);
+      expect(getComputedStyle(unsetPresentation).gridRow).toBe('1 / -1');
+      expect(getComputedStyle(unsetPresentation).gridTemplateRows).toContain('1fr');
+      expect(
+        setPresentation.classList.contains('abyss-entity-presentation--project-row-single-line'),
+      ).toBe(false);
       expect(unsetRow.querySelector('.abyss-project-row-meta')).toBeNull();
       expect(setRow.querySelector('.abyss-project-row-meta')).toBeNull();
       expect(getComputedStyle(unsetActions).position).toBe('absolute');

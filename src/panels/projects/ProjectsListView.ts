@@ -529,8 +529,10 @@ export function renderProjectRow(
     Number(health.flags.malformedNextAction) +
     Number(health.flags.rangeIssue !== undefined);
   const meaningfulReason = health.reason.type !== 'insufficient-actionable-evidence';
-  if (!nextAction && !meaningfulReason && !date && workNoteCount === 0 && diagnosticCount === 0)
-    row.addClass('is-single-line');
+  const hasSecondaryMetadata = Boolean(
+    nextAction || meaningfulReason || date || workNoteCount > 0 || diagnosticCount > 0,
+  );
+  if (!hasSecondaryMetadata) row.addClass('is-single-line');
 
   let secondary: EntityPresentationSlot | undefined;
   if (nextAction) {
@@ -554,7 +556,7 @@ export function renderProjectRow(
   }
 
   const presentation = new EntityPresentation({
-    layout: 'project-row',
+    layout: hasSecondaryMetadata ? 'project-row-two-line' : 'project-row-single-line',
     actionsClassName: 'abyss-project-row-actions',
     primarySlots: ['health', 'identity', 'priority', 'progress'],
     secondarySlots: ['secondary', 'date', 'relations'],

@@ -30,7 +30,7 @@ interface EntityPresentationAction {
 
 type EntityPresentationSlotValue = string | EntityPresentationSlot;
 
-type EntityPresentationLayout = 'inline' | 'project-row';
+type EntityPresentationLayout = 'inline' | 'project-row-two-line' | 'project-row-single-line';
 
 export interface EntityPresentationOptions {
   readonly identity?: EntityPresentationSlotValue;
@@ -75,7 +75,16 @@ export class EntityPresentation {
     const root = parent.createDiv({
       cls: [
         'abyss-entity-presentation',
-        this.options.layout === 'project-row' ? 'abyss-entity-presentation--project-row' : '',
+        this.options.layout === 'project-row-two-line' ||
+        this.options.layout === 'project-row-single-line'
+          ? 'abyss-entity-presentation--project-row'
+          : '',
+        this.options.layout === 'project-row-two-line'
+          ? 'abyss-entity-presentation--project-row-two-line'
+          : '',
+        this.options.layout === 'project-row-single-line'
+          ? 'abyss-entity-presentation--project-row-single-line'
+          : '',
         this.options.className,
       ]
         .filter(Boolean)

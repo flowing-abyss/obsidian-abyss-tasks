@@ -8638,9 +8638,14 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   display: grid;
   grid-row: 1 / -1;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: repeat(2, minmax(0, 1fr));
   min-height: 0;
   gap: 0;
+}
+.abyss-entity-presentation--project-row-two-line {
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+.abyss-entity-presentation--project-row-single-line {
+  grid-template-rows: minmax(0, 1fr);
 }
 .abyss-entity-identity {
   overflow: hidden;
