@@ -9,16 +9,49 @@ import type {
   CalendarSettings,
   ListViewState,
   ProjectsSettings,
+  ProjectsTablePreference,
   ProjectsViewSettings,
+  ProjectTasksTablePreference,
   TaskStatusDef,
   ViewConfig,
 } from './types';
+
+export function buildDefaultProjectsTablePreference(): ProjectsTablePreference {
+  return {
+    version: 1,
+    columns: [
+      { propertyId: 'project', visible: true },
+      { propertyId: 'status', visible: true },
+      { propertyId: 'priority', visible: true },
+      { propertyId: 'progress', visible: true },
+      { propertyId: 'nextAction', visible: true },
+      { propertyId: 'start', visible: true },
+      { propertyId: 'end', visible: true },
+    ],
+    collapsedGroups: [],
+  };
+}
+
+export function buildDefaultProjectTasksTablePreference(): ProjectTasksTablePreference {
+  return {
+    version: 1,
+    columns: [
+      { propertyId: 'task', visible: true },
+      { propertyId: 'status', visible: true },
+      { propertyId: 'priority', visible: true },
+      { propertyId: 'due', visible: true },
+      { propertyId: 'nextAction', visible: true },
+    ],
+    collapsedGroups: [],
+  };
+}
 
 export function buildDefaultProjectsView(statusIds: readonly string[]): ProjectsViewSettings {
   return {
     portfolioLayout: 'overview',
     visibleStatusIds: [...statusIds],
     includeUnmapped: true,
+    table: buildDefaultProjectsTablePreference(),
     board: buildProjectBoardPreference(statusIds),
     timeline: buildProjectTimelinePreferences(),
     tasks: {
@@ -26,6 +59,7 @@ export function buildDefaultProjectsView(statusIds: readonly string[]): Projects
       sortBy: { field: 'date', dir: 'asc' },
       filters: [],
       statusGroups: [...ACTIVE_STATUS_GROUPS],
+      table: buildDefaultProjectTasksTablePreference(),
     },
     workNotes: {
       groupBy: 'none',

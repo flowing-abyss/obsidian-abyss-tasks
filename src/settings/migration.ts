@@ -11,10 +11,13 @@ import {
 import { ACTIVE_STATUS_GROUPS, TYPE_ORDER } from '../status/statusConstants';
 import {
   buildDefaultProjectsSettings,
+  buildDefaultProjectsTablePreference,
   buildDefaultProjectsView,
+  buildDefaultProjectTasksTablePreference,
   buildDefaultTaskStatuses,
 } from './defaults';
 import { migrateShortcuts } from './shortcuts';
+import type { ProjectTableColumnPreference } from './types';
 
 const DONE_CANCELLED_STATUS_GROUPS = TYPE_ORDER.filter(
   (t) => !(ACTIVE_STATUS_GROUPS as string[]).includes(t),
@@ -119,6 +122,41 @@ function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
+function tableColumns(value: unknown): value is readonly ProjectTableColumnPreference[] {
+  return (
+    Array.isArray(value) &&
+    value.every((column) => {
+      const candidate = record(column);
+      return (
+        candidate !== undefined &&
+        typeof candidate['propertyId'] === 'string' &&
+        typeof candidate['visible'] === 'boolean' &&
+        (candidate['width'] === undefined || typeof candidate['width'] === 'number')
+      );
+    })
+  );
+}
+
+function migrateTablePreference(
+  value: unknown,
+  defaults: { readonly version: 1; readonly columns: readonly ProjectTableColumnPreference[] },
+): Record<string, unknown> {
+  const preference = record(value);
+  if (!preference) {
+    return {
+      ...defaults,
+      columns: defaults.columns.map((column) => ({ ...column })),
+      collapsedGroups: [],
+    };
+  }
+  if (preference['version'] !== 1) preference['version'] = 1;
+  if (!tableColumns(preference['columns'])) {
+    preference['columns'] = defaults.columns.map((column) => ({ ...column }));
+  }
+  if (!stringArray(preference['collapsedGroups'])) preference['collapsedGroups'] = [];
+  return preference;
+}
+
 function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?: unknown }): void {
   const ids = (projects.statuses ?? []).map(({ id }) => id);
   const defaults = buildDefaultProjectsView(ids);
@@ -137,6 +175,7 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
   if (typeof view['includeUnmapped'] !== 'boolean') {
     view['includeUnmapped'] = defaults.includeUnmapped;
   }
+  view['table'] = migrateTablePreference(view['table'], buildDefaultProjectsTablePreference());
   view['board'] = migrateProjectBoardPreference(view['board'], ids);
   view['timeline'] = migrateProjectTimelinePreferences(view['timeline']);
 
@@ -154,6 +193,10 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
     if ('statusGroups' in tasks && !stringArray(tasks['statusGroups'])) {
       tasks['statusGroups'] = [...(defaults.tasks.statusGroups ?? [])];
     }
+    tasks['table'] = migrateTablePreference(
+      tasks['table'],
+      buildDefaultProjectTasksTablePreference(),
+    );
   }
 
   const workNotes = record(view['workNotes']);

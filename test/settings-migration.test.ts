@@ -71,6 +71,121 @@ describe('migrateSettings', () => {
     });
   });
 
+  it('adds Table preferences without discarding unknown columns, dormant statuses, or Board/Timeline values', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'active', label: 'Active', behavior: 'regular' }],
+        defaultStatusId: 'active',
+        view: {
+          portfolioLayout: 'board',
+          visibleStatusIds: ['active', 'retired'],
+          includeUnmapped: false,
+          board: {
+            version: 1,
+            columnOrder: ['retired', 'active'],
+            collapsedColumnIds: ['retired'],
+            hiddenColumnIds: [],
+          },
+          timeline: {
+            version: 1,
+            portfolio: { scale: 'month', identityWidth: 280 },
+            tasks: { scale: 'day', identityWidth: 220 },
+            workNotes: { dateRange: 'year', identityWidth: 300 },
+          },
+          table: {
+            version: 1,
+            columns: [
+              { propertyId: 'project', visible: true, width: 260 },
+              { propertyId: 'legacy-property', visible: false },
+            ],
+            collapsedGroups: ['retired'],
+          },
+          tasks: {
+            groupBy: 'priority',
+            sortBy: { field: 'title', dir: 'desc' },
+            filters: [],
+            table: {
+              version: 1,
+              columns: [
+                { propertyId: 'task', visible: true, width: 300 },
+                { propertyId: 'legacy-column', visible: true },
+              ],
+              collapsedGroups: ['legacy-group'],
+            },
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['visibleStatusIds']).toEqual(['active', 'retired']);
+    expect(view['board']).toEqual({
+      version: 1,
+      columnOrder: ['active', 'retired'],
+      collapsedColumnIds: ['retired'],
+      hiddenColumnIds: [],
+    });
+    expect(view['timeline']).toEqual({
+      version: 1,
+      portfolio: { scale: 'month', identityWidth: 280 },
+      tasks: { scale: 'day', identityWidth: 220 },
+      workNotes: { dateRange: 'year', identityWidth: 300 },
+    });
+    expect(view['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'project', visible: true, width: 260 },
+        { propertyId: 'legacy-property', visible: false },
+      ],
+      collapsedGroups: ['retired'],
+    });
+    expect((view['tasks'] as Record<string, unknown>)['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'task', visible: true, width: 300 },
+        { propertyId: 'legacy-column', visible: true },
+      ],
+      collapsedGroups: ['legacy-group'],
+    });
+  });
+
+  it('defaults Project and Project Task Table columns for legacy settings', () => {
+    const raw: Record<string, unknown> = {};
+
+    migrateSettings(raw);
+
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'project', visible: true },
+        { propertyId: 'status', visible: true },
+        { propertyId: 'priority', visible: true },
+        { propertyId: 'progress', visible: true },
+        { propertyId: 'nextAction', visible: true },
+        { propertyId: 'start', visible: true },
+        { propertyId: 'end', visible: true },
+      ],
+      collapsedGroups: [],
+    });
+    expect((view['tasks'] as Record<string, unknown>)['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'task', visible: true },
+        { propertyId: 'status', visible: true },
+        { propertyId: 'priority', visible: true },
+        { propertyId: 'due', visible: true },
+        { propertyId: 'nextAction', visible: true },
+      ],
+      collapsedGroups: [],
+    });
+  });
+
   it('creates a complete shortcut collection when legacy settings have none', () => {
     const raw: Record<string, unknown> = {};
 

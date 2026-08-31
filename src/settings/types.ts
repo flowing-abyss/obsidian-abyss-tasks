@@ -66,11 +66,48 @@ export interface ProjectStatus {
 
 type ProjectsPortfolioLayout = 'overview' | 'board' | 'timeline';
 
+export interface ProjectTableColumnPreference {
+  readonly propertyId: string;
+  readonly visible: boolean;
+  readonly width?: number;
+}
+
+export interface ProjectsTablePreference {
+  readonly version: 1;
+  readonly columns: readonly ProjectTableColumnPreference[];
+  readonly collapsedGroups: readonly string[];
+}
+
+export interface ProjectTasksTablePreference {
+  readonly version: 1;
+  readonly columns: readonly ProjectTableColumnPreference[];
+  readonly collapsedGroups: readonly string[];
+}
+
+export interface PersistedCollectionPreference<TFilter, TGroup, TSort, TLayout, TLayoutPreference> {
+  readonly version: 1;
+  readonly layout: TLayout;
+  readonly filters: readonly TFilter[];
+  readonly group: TGroup;
+  readonly sort: TSort;
+  readonly visibleFields: readonly string[];
+  readonly layoutPreferences: Readonly<Record<string, TLayoutPreference>>;
+}
+
+export interface CollectionSessionState {
+  readonly query: string;
+  readonly selectionKey: string | null;
+  readonly focusedKey: string | null;
+  readonly scrollAnchor: string | null;
+  readonly openSurface: string | null;
+}
+
 export interface ProjectTasksViewState {
   readonly groupBy: ListViewState['groupBy'];
   readonly sortBy: ListViewState['sortBy'];
   readonly filters: readonly PropertyFilter[];
   readonly statusGroups?: readonly TaskStatusType[];
+  readonly table?: ProjectTasksTablePreference;
 }
 
 export interface WorkNotesViewState {
@@ -86,6 +123,7 @@ export interface ProjectsViewSettings {
   portfolioLayout: ProjectsPortfolioLayout;
   visibleStatusIds: string[];
   includeUnmapped: boolean;
+  table?: ProjectsTablePreference;
   board: ProjectBoardPreference;
   timeline: ProjectTimelinePreferences;
   tasks: ProjectTasksViewState;
