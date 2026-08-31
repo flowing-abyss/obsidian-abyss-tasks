@@ -14,6 +14,21 @@ export interface InspectorShellHandle {
   close(restoreFocus?: boolean): void;
 }
 
+/** Applies the one inspector host contract to mounted and persistent pane hosts alike. */
+export function applyInspectorShellContract(
+  element: HTMLElement,
+  label: string,
+  narrow: boolean,
+): void {
+  element.addClass('abyss-inspector-shell');
+  element.dataset['inspectorShell'] = 'entity';
+  element.dataset['inspectorLayout'] = narrow ? 'drawer' : 'panel';
+  element.setAttribute('role', narrow ? 'dialog' : 'region');
+  element.setAttribute('aria-label', label);
+  if (narrow) element.setAttribute('aria-modal', 'true');
+  else element.removeAttribute('aria-modal');
+}
+
 function focusableControls(host: HTMLElement): HTMLElement[] {
   return Array.from(host.querySelectorAll<HTMLElement>('*')).filter(
     (element) =>
@@ -33,11 +48,7 @@ export function mountInspectorShell(
   options: InspectorShellOptions,
 ): InspectorShellHandle {
   const element = host.ownerDocument.createElement('section');
-  element.className = 'abyss-inspector-shell';
-  element.dataset['inspectorLayout'] = options.narrow ? 'drawer' : 'panel';
-  element.setAttribute('role', options.narrow ? 'dialog' : 'region');
-  element.setAttribute('aria-label', options.label);
-  if (options.narrow) element.setAttribute('aria-modal', 'true');
+  applyInspectorShellContract(element, options.label, options.narrow);
   const closeNotice = element.createDiv({
     cls: 'abyss-inspector-shell-close-notice',
     attr: { role: 'status', 'aria-live': 'polite' },

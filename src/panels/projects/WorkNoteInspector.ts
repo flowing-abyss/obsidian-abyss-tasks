@@ -4,6 +4,7 @@ import type {
   WorkNoteSnapshot,
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
+import { markInspectorEntity, renderInspectorField } from '../../ui/inspector/InspectorFields';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { InspectorDraftRegistry, InspectorDraftResult } from '../../ui/projectDraftContinuity';
 import { workNoteStatusMenuModel } from './boardProjection';
@@ -21,6 +22,7 @@ export interface WorkNoteInspectorOptions {
     statusId: string,
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly openNote: (path: string) => void;
+  /** Compatibility-only: desktop closure belongs to the containing inspector shell. */
   readonly onClose?: () => void;
   readonly draftRegistry?: InspectorDraftRegistry;
   readonly onDraftSettled?: () => void;
@@ -110,6 +112,7 @@ export function renderWorkNoteInspector(
 ): void {
   container.empty();
   container.addClass('abyss-work-note-inspector');
+  markInspectorEntity(container, 'work-note');
   const presenter = options.resultPresenter ?? createWorkNoteResultPresenter(container);
   const header = container.createDiv({ cls: 'abyss-work-note-inspector-header' });
   header.createEl('h3', { text: basename(note.path) });
@@ -123,25 +126,11 @@ export function renderWorkNoteInspector(
   });
   setIcon(open, 'file-text');
   open.addEventListener('click', () => options.openNote(note.path));
-  if (options.onClose) {
-    /* eslint-disable obsidianmd/ui/sentence-case -- Work Note is a named product concept. */
-    const close = header.createEl('button', {
-      cls: 'abyss-work-note-inspector-close',
-      attr: {
-        type: 'button',
-        'aria-label': 'Close Work Note details',
-        title: 'Close Work Note details',
-      },
-    });
-    /* eslint-enable obsidianmd/ui/sentence-case */
-    setIcon(close, 'x');
-    close.addEventListener('click', options.onClose);
-  }
-
   const statusDefinition = note.statusId
     ? options.statuses.find(({ id }) => id === note.statusId)
     : undefined;
-  const status = container.createEl('button', {
+  const statusField = renderInspectorField(container, 'status', 'Status');
+  const status = statusField.content.createEl('button', {
     cls: 'abyss-work-note-status',
     text: statusDefinition?.label ?? note.rawStatus ?? 'No status',
     attr: {
@@ -162,7 +151,7 @@ export function renderWorkNoteInspector(
   status.disabled = options.commandsEnabled === false || statusDraft?.pending === true;
   if (statusDraft?.pending) status.dataset['resultType'] = 'pending';
   else if (statusDraft?.result) status.dataset['resultType'] = statusDraft.result;
-  const draftFeedback = container.createDiv({
+  const draftFeedback = statusField.row.createDiv({
     cls: 'abyss-work-note-draft-result',
     attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
   });
@@ -197,19 +186,27 @@ export function renderWorkNoteInspector(
   const metadata = container.createDiv({ cls: 'abyss-work-note-inspector-metadata' });
   metadataRow(metadata, 'Kind', note.kind === 'ordinary' ? 'Ordinary' : 'Milestone');
   metadataRow(metadata, 'Project', basename(note.projectPath));
-  if (note.priority) metadataRow(metadata, 'Priority', note.priority);
+  if (note.priority) {
+    renderInspectorField(metadata, 'priority', 'Priority').content.setText(note.priority);
+  }
   if (note.description) {
-    metadataRow(metadata, 'Description', note.description).dataset['workNoteDescription'] = '';
+    const description = renderInspectorField(metadata, 'description', 'Description').content;
+    description.setText(note.description);
+    description.dataset['workNoteDescription'] = '';
   }
-  if (note.milestonePath) metadataRow(metadata, 'Milestone', basename(note.milestonePath));
-  if (note.blockedByPaths.length > 0) {
-    metadataRow(metadata, 'Blocked by', note.blockedByPaths.map(basename).join(', '));
-  }
-  if (note.relatedPaths.length > 0) {
-    metadataRow(metadata, 'Related', note.relatedPaths.map(basename).join(', '));
+  if (note.milestonePath || note.blockedByPaths.length > 0 || note.relatedPaths.length > 0) {
+    const relations = renderInspectorField(metadata, 'relations', 'Relations').content;
+    if (note.milestonePath) metadataRow(relations, 'Milestone', basename(note.milestonePath));
+    if (note.blockedByPaths.length > 0) {
+      metadataRow(relations, 'Blocked by', note.blockedByPaths.map(basename).join(', '));
+    }
+    if (note.relatedPaths.length > 0) {
+      metadataRow(relations, 'Related', note.relatedPaths.map(basename).join(', '));
+    }
   }
   if (note.diagnostics.length > 0) {
-    const diagnostics = container.createDiv({ cls: 'abyss-work-note-inspector-diagnostics' });
+    const diagnostics = renderInspectorField(container, 'diagnostics', 'Diagnostics').content;
+    diagnostics.addClass('abyss-work-note-inspector-diagnostics');
     for (const diagnostic of note.diagnostics) {
       diagnostics.createDiv({ text: diagnosticLabel(diagnostic.type) });
     }

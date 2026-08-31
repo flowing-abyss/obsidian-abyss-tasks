@@ -12,6 +12,12 @@ import {
   type CommentTimeContextProvider,
 } from '../../tasks';
 import {
+  markInspectorEntity,
+  markInspectorField,
+  renderInspectorField,
+  type InspectorFieldKind,
+} from '../../ui/inspector/InspectorFields';
+import {
   type InspectorDraftEntry,
   type InspectorDraftField,
   type InspectorDraftIdentity,
@@ -245,6 +251,7 @@ export function renderProjectInspector(
 ): void {
   container.empty();
   container.addClass('abyss-project-inspector');
+  markInspectorEntity(container, 'project');
   const { project, draftRegistry } = options;
   const identity = { type: 'project' as const, path: project.path };
   const unsupported = new Set(
@@ -265,10 +272,18 @@ export function renderProjectInspector(
   const labeledField = (
     label: 'Status' | 'Priority' | 'Start' | 'End' | 'Description',
   ): { readonly row: HTMLElement; readonly controlLabel: HTMLLabelElement } => {
-    const row = fields.createDiv({ cls: 'abyss-project-inspector-field' });
-    const controlLabel = row.createEl('label', { cls: 'abyss-project-inspector-control-label' });
-    controlLabel.createSpan({ cls: 'abyss-project-inspector-field-label', text: label });
-    return { row, controlLabel };
+    let field: InspectorFieldKind = label.toLocaleLowerCase() as
+      | 'status'
+      | 'priority'
+      | 'description';
+    if (label === 'Start') field = 'range-start';
+    else if (label === 'End') field = 'range-end';
+    const shared = renderInspectorField(fields, field, label, 'abyss-project-inspector-field');
+    shared.label.addClass('abyss-project-inspector-field-label');
+    const controlLabel = shared.content.createEl('label', {
+      cls: 'abyss-project-inspector-control-label',
+    });
+    return { row: shared.row, controlLabel };
   };
   const run = async (
     field: InspectorDraftField,
@@ -524,7 +539,8 @@ export function renderProjectInspector(
     );
   });
 
-  const comment = fields.createEl('input', {
+  const commentsField = renderInspectorField(fields, 'comments', 'Comments');
+  const comment = commentsField.content.createEl('input', {
     attr: { type: 'text', 'aria-label': 'Add project comment', placeholder: 'Add comment' },
   });
   const observedComments =
@@ -539,7 +555,7 @@ export function renderProjectInspector(
     draftRegistry,
     observedComments,
   );
-  const commentFeedback = fieldFeedback(fields, 'comment', commentDraft);
+  const commentFeedback = fieldFeedback(commentsField.row, 'comment', commentDraft);
   comment.disabled = unsupported.has('comments') || commentDraft?.pending === true;
   comment.addEventListener('keydown', (event) => {
     if (
@@ -571,8 +587,7 @@ export function renderProjectInspector(
   });
 
   if ((project.comments?.length ?? 0) > 0) {
-    const comments = container.createDiv({ cls: 'abyss-project-inspector-comments' });
-    comments.createEl('h4', { text: 'Comments' });
+    const comments = commentsField.content.createDiv({ cls: 'abyss-project-inspector-comments' });
     for (const entry of project.comments ?? []) {
       const row = comments.createDiv({ cls: 'abyss-project-inspector-comment' });
       if (entry.kind === 'timestamp') {
@@ -597,27 +612,36 @@ export function renderProjectInspector(
   }
 
   for (const field of unsupported) {
-    container.createDiv({
-      cls: 'abyss-project-inspector-diagnostic',
-      text: `${field[0]!.toUpperCase()}${field.slice(1)} is read-only for this project note.`,
-    });
+    markInspectorField(
+      container.createDiv({
+        cls: 'abyss-project-inspector-diagnostic',
+        text: `${field[0]!.toUpperCase()}${field.slice(1)} is read-only for this project note.`,
+      }),
+      'diagnostics',
+    );
   }
   for (const diagnostic of project.metadataDiagnostics ?? []) {
     if (diagnostic.issue !== 'malformed') continue;
-    container.createDiv({
-      cls: 'abyss-project-inspector-diagnostic',
-      text: `Comment ${String(diagnostic.index + 1)} has a malformed timestamp and is read-only.`,
-    });
+    markInspectorField(
+      container.createDiv({
+        cls: 'abyss-project-inspector-diagnostic',
+        text: `Comment ${String(diagnostic.index + 1)} has a malformed timestamp and is read-only.`,
+      }),
+      'diagnostics',
+    );
   }
 
-  const progress = container.createDiv({ cls: 'abyss-project-inspector-progress' });
+  const progress = renderInspectorField(container, 'progress', 'Progress').content;
+  progress.addClass('abyss-project-inspector-progress');
   progress.setText(
     options.taskRollup.progress === null
       ? 'No tasks'
       : `${String(options.taskRollup.done)} of ${String(options.taskRollup.total)} tasks complete`,
   );
   if (options.healthReason) {
-    container.createDiv({ cls: 'abyss-project-inspector-health', text: options.healthReason });
+    const health = renderInspectorField(container, 'health', 'Health').content;
+    health.addClass('abyss-project-inspector-health');
+    health.setText(options.healthReason);
   }
   if (draftRegistry) {
     renderInspectorDraftRecovery(

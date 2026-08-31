@@ -39,8 +39,14 @@ import {
   whenPasteSettled,
 } from '../ui/attachmentDrop';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
+import {
+  markInspectorEntity,
+  markInspectorField,
+  renderInspectorField,
+} from '../ui/inspector/InspectorFields';
 import type { InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { deriveInspectorSelection } from '../ui/inspector/InspectorSelection';
+import { applyInspectorShellContract } from '../ui/inspector/InspectorShell';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { LinkEditModal } from '../ui/LinkEditModal';
 import {
@@ -674,6 +680,11 @@ export class RightPanel {
     this.md.load();
     this.clearAnchoredSurfaces();
     this.el.empty();
+    this.el.removeClass('abyss-inspector-shell', 'abyss-entity-inspector');
+    delete this.el.dataset['inspectorEntity'];
+    delete this.el.dataset['inspectorShell'];
+    this.el.removeAttribute('role');
+    this.el.removeAttribute('aria-label');
     const stack = this.state.get('taskStack');
     const activeInspector =
       inspector?.type === 'work-note'
@@ -871,6 +882,8 @@ export class RightPanel {
     stack: TaskLike[],
     commentTimeContext?: CommentTimeContext,
   ): void {
+    applyInspectorShellContract(this.el, 'Task details', false);
+    markInspectorEntity(this.el, 'task');
     // Breadcrumb — shows only the parent path (current task is in the title input)
     if (stack.length > 1) {
       const breadcrumb = this.el.createDiv({ cls: 'abyss-breadcrumb' });
@@ -892,7 +905,7 @@ export class RightPanel {
 
     // Header
     const header = this.el.createDiv({ cls: 'abyss-right-header' });
-    renderStatusMarker(header, {
+    const statusMarker = renderStatusMarker(header, {
       task,
       registry: this.statusRegistry,
       ...('source' in task && this.dependencyProjection
@@ -904,6 +917,7 @@ export class RightPanel {
         this.openStatusMenu(event, task);
       },
     });
+    markInspectorField(statusMarker, 'status');
     this.renderTitleBlock(header, task);
 
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
@@ -1005,15 +1019,20 @@ export class RightPanel {
     }
 
     // Description
-    const descSection = this.el.createDiv({ cls: 'abyss-right-section' });
-    const descHeader = descSection.createDiv({ cls: 'abyss-right-section-header' });
-    descHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Description' });
-    this.renderDescriptionBlock(descSection, task);
+    const description = renderInspectorField(
+      this.el,
+      'description',
+      'Description',
+      'abyss-right-section',
+    );
+    description.label.addClass('abyss-right-section-label');
+    this.renderDescriptionBlock(description.content, task);
 
     // Sub-tasks
-    const subSection = this.el.createDiv({ cls: 'abyss-right-section' });
+    const subtasks = renderInspectorField(this.el, 'subtasks', 'Sub-tasks', 'abyss-right-section');
+    subtasks.label.addClass('abyss-right-section-label');
+    const subSection = subtasks.content;
     const subHeader = subSection.createDiv({ cls: 'abyss-right-section-header' });
-    subHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Sub-tasks' });
     const totalSubs = task.subtasks?.length ?? 0;
     if (totalSubs > 0) {
       const doneSubs = task.subtasks.filter((s) => s.status === 'done').length;
@@ -1073,9 +1092,11 @@ export class RightPanel {
     });
 
     // Comments
-    const commentSection = this.el.createDiv({ cls: 'abyss-right-section' });
+    const comments = renderInspectorField(this.el, 'comments', 'Comments', 'abyss-right-section');
+    comments.label.addClass('abyss-right-section-label');
+    const commentSection = comments.content;
     const commentHeader = commentSection.createDiv({ cls: 'abyss-right-section-header' });
-    commentHeader.createEl('span', { cls: 'abyss-right-section-label', text: 'Comments' });
+    commentHeader.append(comments.label);
     const commentCount = task.comments?.length ?? 0;
     if (commentCount > 0) {
       commentHeader.createEl('span', {
@@ -1392,6 +1413,7 @@ export class RightPanel {
       cls: `abyss-chip${d ? '' : ' abyss-chip-empty'}`,
       text: d ? `📅 ${this.formatDate(d)}` : '📅 Date',
     });
+    markInspectorField(chip, 'date');
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover(chip, task, field);
@@ -1535,6 +1557,7 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
+    markInspectorField(chip, 'priority');
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showPriorityPopover(chip, task);
@@ -1550,6 +1573,7 @@ export class RightPanel {
       cls: `abyss-chip abyss-repeat-chip${task.recurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
       attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
     });
+    markInspectorField(chip, 'recurrence');
     if (task.recurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(task.recurrence));
       chip.createSpan({ cls: 'abyss-repeat-chip-label', text: task.recurrence });
@@ -1658,6 +1682,7 @@ export class RightPanel {
         'data-dependency-trigger': '',
       },
     });
+    markInspectorField(trigger, 'dependencies');
     setIcon(trigger, inspection.relations.length > 0 ? 'lock-keyhole' : 'link-2');
     if (inspection.decision.type !== 'allowed') {
       renderDependencyBadge(trigger, inspection.decision);

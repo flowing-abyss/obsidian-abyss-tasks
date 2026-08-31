@@ -748,6 +748,27 @@ describe('RightPanel render lifecycle', () => {
 });
 
 describe('RightPanel.renderTask', () => {
+  it('joins the common inspector entity and field contract without removing Task-only sections', async () => {
+    const { state, el } = await makePanel();
+    state.set('taskStack', [task({ title: 'Contract task', recurrence: 'every week' })]);
+
+    expect(el.dataset['inspectorEntity']).toBe('task');
+    expect(el.classList.contains('abyss-inspector-shell')).toBe(true);
+    expect(
+      Array.from(
+        el.querySelectorAll<HTMLElement>('[data-inspector-field]'),
+        (field) => field.dataset['inspectorField'],
+      ),
+    ).toEqual(expect.arrayContaining(['description', 'subtasks', 'comments']));
+    expect(el.querySelector('.abyss-right-section-label')?.textContent).toBe('Description');
+    expect(
+      Array.from(
+        el.querySelectorAll('.abyss-right-section-label'),
+        ({ textContent }) => textContent,
+      ),
+    ).toContain('Sub-tasks');
+  });
+
   it('keeps semantic section headings without a decorative divider element', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Task' })]);

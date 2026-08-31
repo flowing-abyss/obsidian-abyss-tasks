@@ -27,6 +27,24 @@ const snapshot: WorkNoteSnapshot = {
 };
 
 describe('renderWorkNoteInspector', () => {
+  it('uses the shared inspector field-row contract for its status, metadata, and relations', () => {
+    const root = freshContainer();
+    renderWorkNoteInspector(root, snapshot, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(root.dataset['inspectorEntity']).toBe('work-note');
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLElement>('.abyss-inspector-field-row'),
+        (field) => field.dataset['inspectorField'],
+      ),
+    ).toEqual(['status', 'priority', 'description', 'relations', 'diagnostics']);
+    expect(root.querySelector('[aria-label="Close Work Note details"]')).toBeNull();
+  });
+
   it('renders note identity and rich supporting metadata without task controls', () => {
     const root = freshContainer();
     renderWorkNoteInspector(root, snapshot, {

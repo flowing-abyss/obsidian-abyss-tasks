@@ -4,6 +4,47 @@ import { InspectorDraftRegistry } from '../src/ui/projectDraftContinuity';
 import { deferred, freshContainer } from './helpers';
 
 describe('ProjectInspector', () => {
+  it('uses the shared inspector field-row contract for Project metadata', () => {
+    const root = freshContainer();
+    renderProjectInspector(root, {
+      project: {
+        path: 'Projects/Atlas.md',
+        name: 'Atlas',
+        frontmatter: {},
+        tags: [],
+        statusId: 'active',
+        rawStatus: null,
+        range: {},
+        priority: 'B',
+        description: 'Ship safely',
+        comments: [],
+        stats: { total: 4, done: 2, cancelled: 0, inProgress: 1, open: 1, progress: 0.5 },
+      },
+      taskRollup: { total: 4, done: 2, cancelled: 0, inProgress: 1, open: 1, progress: 0.5 },
+      healthReason: 'One task is blocked',
+      openNote: () => undefined,
+      statuses: [{ id: 'active', label: 'Active' }],
+      onSetStatus: vi.fn(),
+    });
+
+    expect(root.dataset['inspectorEntity']).toBe('project');
+    expect(
+      Array.from(
+        root.querySelectorAll<HTMLElement>('.abyss-inspector-field-row'),
+        (field) => field.dataset['inspectorField'],
+      ),
+    ).toEqual([
+      'status',
+      'priority',
+      'range-start',
+      'range-end',
+      'description',
+      'comments',
+      'progress',
+      'health',
+    ]);
+  });
+
   it('routes priority, description, dates, and append-only comments through injected CAS commands', async () => {
     const root = freshContainer();
     const commands = {
@@ -122,7 +163,9 @@ describe('ProjectInspector', () => {
     ]) {
       const control = root.querySelector<HTMLElement>(`[aria-label="${ariaLabel}"]`)!;
       expect(
-        control.closest('label')?.querySelector('.abyss-project-inspector-field-label'),
+        control
+          .closest('.abyss-inspector-field-row')
+          ?.querySelector('.abyss-project-inspector-field-label'),
       ).not.toBeNull();
     }
   });

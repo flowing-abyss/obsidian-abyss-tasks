@@ -8422,6 +8422,47 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   font-size: var(--font-ui-smaller);
 }
 
+/* Field rows are deliberately semantic, not card-within-card decoration. */
+.abyss-entity-inspector .abyss-inspector-field-row {
+  display: grid;
+  min-width: 0;
+  gap: var(--size-4-1, 4px);
+  margin-block-start: var(--size-4-2, 8px);
+}
+
+.abyss-entity-inspector .abyss-inspector-field-label {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-medium);
+}
+
+.abyss-entity-inspector .abyss-inspector-field-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.abyss-entity-inspector .abyss-inspector-field-content :is(input, select, textarea, button) {
+  max-inline-size: 100%;
+}
+
+.abyss-inspector-field-content.abyss-project-inspector-progress,
+.abyss-inspector-field-content.abyss-project-inspector-health {
+  margin-block-start: 0;
+  padding-block-start: 0;
+  border-block-start: 0;
+}
+
+@container abyss-panel-layout (max-width: 440px) {
+  .abyss-inspector-shell[data-inspector-layout='drawer'] {
+    inline-size: 100%;
+    max-inline-size: 100%;
+  }
+
+  .abyss-entity-inspector .abyss-inspector-field-row {
+    min-inline-size: 0;
+  }
+}
+
 .abyss-project-inspector-header {
   display: flex;
   gap: var(--size-4-2, 8px);
