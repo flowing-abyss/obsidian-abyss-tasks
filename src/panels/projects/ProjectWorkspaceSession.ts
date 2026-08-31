@@ -622,54 +622,77 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     mainTaskListKey: string,
   ): () => void {
     if (scope === 'tasks:main') {
-      const prior = settings.listViewStates;
       const preference = next as MainTasksCollectionPreference;
       const statusGroups = preference.layoutPreferences['primary']?.statusGroups;
-      const view: ListViewState = {
+      const priorStates = settings.listViewStates;
+      const states = priorStates ?? {};
+      if (!priorStates) settings.listViewStates = states;
+      const hadPrior = Object.prototype.hasOwnProperty.call(states, mainTaskListKey);
+      const prior = states[mainTaskListKey];
+      const staged: ListViewState = {
+        ...prior,
         groupBy: preference.group,
         sortBy: { ...preference.sort },
         filters: [...preference.filters],
         ...(statusGroups && { statusGroups: [...statusGroups] }),
       };
-      settings.listViewStates = { ...(prior ?? {}), [mainTaskListKey]: view };
+      if (!statusGroups) delete staged.statusGroups;
+      states[mainTaskListKey] = staged;
       return () => {
-        if (prior) settings.listViewStates = prior;
-        else delete settings.listViewStates;
+        if (settings.listViewStates !== states || states[mainTaskListKey] !== staged) return;
+        if (hadPrior && prior) states[mainTaskListKey] = prior;
+        else delete states[mainTaskListKey];
+        if (!priorStates && Object.keys(states).length === 0 && settings.listViewStates === states)
+          delete settings.listViewStates;
       };
     }
 
-    const prior = settings.projects.view;
+    const view = settings.projects.view;
     if (scope === 'projects:portfolio') {
       const preference = next as PortfolioCollectionPreference;
       const filters = new Set(preference.filters);
-      settings.projects.view = {
-        ...prior,
-        portfolioLayout: preference.layout,
-        visibleStatusIds: preference.filters.filter((id) => id !== PORTFOLIO_UNMAPPED_FILTER),
-        includeUnmapped: filters.has(PORTFOLIO_UNMAPPED_FILTER),
-      };
+      const priorLayout = view.portfolioLayout;
+      const priorVisibleStatusIds = view.visibleStatusIds;
+      const priorIncludeUnmapped = view.includeUnmapped;
+      const stagedLayout = preference.layout;
+      const stagedVisibleStatusIds = preference.filters.filter(
+        (id) => id !== PORTFOLIO_UNMAPPED_FILTER,
+      );
+      const stagedIncludeUnmapped = filters.has(PORTFOLIO_UNMAPPED_FILTER);
+      view.portfolioLayout = stagedLayout;
+      view.visibleStatusIds = stagedVisibleStatusIds;
+      view.includeUnmapped = stagedIncludeUnmapped;
       return () => {
-        settings.projects.view = prior;
+        if (settings.projects.view !== view) return;
+        if (view.portfolioLayout === stagedLayout) view.portfolioLayout = priorLayout;
+        if (view.visibleStatusIds === stagedVisibleStatusIds)
+          view.visibleStatusIds = priorVisibleStatusIds;
+        if (view.includeUnmapped === stagedIncludeUnmapped)
+          view.includeUnmapped = priorIncludeUnmapped;
       };
     }
 
     const parts = scopeParts(scope);
     if (!parts) return () => undefined;
-    const current = prior.collectionPreferences[parts.path];
-    const nextRecord: ProjectScopedCollectionPreferences = {
-      tasks: current?.tasks ?? this.taskBaseline(settings),
-      workNotes: current?.workNotes ?? this.workNotesBaseline(settings),
+    const records = view.collectionPreferences;
+    const hadPrior = Object.prototype.hasOwnProperty.call(records, parts.path);
+    const prior = records[parts.path];
+    const staged: ProjectScopedCollectionPreferences = {
+      ...prior,
+      tasks: prior?.tasks ?? this.taskBaseline(settings),
+      workNotes: prior?.workNotes ?? this.workNotesBaseline(settings),
       [parts.kind === 'tasks' ? 'tasks' : 'workNotes']: structuredClone(next) as never,
     };
-    settings.projects.view = {
-      ...prior,
-      collectionPreferences: {
-        ...prior.collectionPreferences,
-        [parts.path]: nextRecord,
-      },
-    };
+    records[parts.path] = staged;
     return () => {
-      settings.projects.view = prior;
+      if (
+        settings.projects.view !== view ||
+        view.collectionPreferences !== records ||
+        records[parts.path] !== staged
+      )
+        return;
+      if (hadPrior && prior) records[parts.path] = prior;
+      else delete records[parts.path];
     };
   }
 

@@ -92,9 +92,14 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(listener).toHaveBeenCalledOnce();
   });
 
-  it('restores the exact prior settings object and emits nothing when a collection save rejects', async () => {
+  it('rolls back only unchanged Portfolio-owned fields when a collection save rejects', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const priorView = settings.projects.view;
+    const priorVisibleStatusIds = priorView.visibleStatusIds;
+    const laterTimeline = {
+      ...priorView.timeline,
+      portfolio: { ...priorView.timeline.portfolio, identityWidth: 777 },
+    };
     const save = deferred<void>();
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.bindCollectionPreferences(settings, vi.fn().mockReturnValue(save.promise));
@@ -104,17 +109,96 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     const pending = registry.updatePortfolioPreference((current) => ({
       ...current,
       layout: 'board',
+      filters: [],
     }));
+    await flushAsyncQueue();
+    settings.projects.view.timeline = laterTimeline;
+    settings.projects.view.portfolioLayout = 'timeline';
     save.reject(new Error('disk full'));
 
     await expect(pending).rejects.toThrow('disk full');
     expect(settings.projects.view).toBe(priorView);
-    expect(settings.projects.view.portfolioLayout).toBe('overview');
+    expect(settings.projects.view.portfolioLayout).toBe('timeline');
+    expect(settings.projects.view.visibleStatusIds).toBe(priorVisibleStatusIds);
+    expect(settings.projects.view.timeline).toBe(laterTimeline);
     expect(registry.portfolioPreferenceSnapshot()).toMatchObject({
       revision: 0,
       preference: { layout: 'overview' },
     });
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('preserves unrelated main-list and Timeline writes when a main preference save rejects', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.listViewStates = {};
+    const priorListStates = settings.listViewStates;
+    const laterInbox = {
+      groupBy: 'status' as const,
+      sortBy: { field: 'title' as const, dir: 'desc' as const },
+      filters: [],
+    };
+    const laterTimeline = {
+      ...settings.projects.view.timeline,
+      portfolio: { ...settings.projects.view.timeline.portfolio, identityWidth: 678 },
+    };
+    const save = deferred<void>();
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockReturnValue(save.promise));
+    registry.activateMainTaskCollection('today');
+
+    const pending = registry.updateMainTaskPreference((current) => ({
+      ...current,
+      group: 'priority',
+    }));
+    await flushAsyncQueue();
+    const laterToday = { ...settings.listViewStates.today!, groupBy: 'status' as const };
+    settings.listViewStates.today = laterToday;
+    settings.listViewStates.inbox = laterInbox;
+    settings.projects.view.timeline = laterTimeline;
+    save.reject(new Error('disk full'));
+
+    await expect(pending).rejects.toThrow('disk full');
+    expect(settings.listViewStates).toBe(priorListStates);
+    expect(settings.listViewStates.today).toBe(laterToday);
+    expect(settings.listViewStates.inbox).toBe(laterInbox);
+    expect(settings.projects.view.timeline).toBe(laterTimeline);
+    expect(registry.mainTaskPreferenceSnapshot()).toMatchObject({ revision: 0 });
+  });
+
+  it('preserves unrelated Project-scope and Timeline writes when a scoped save rejects', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const laterTimeline = {
+      ...settings.projects.view.timeline,
+      portfolio: { ...settings.projects.view.timeline.portfolio, identityWidth: 579 },
+    };
+    const save = deferred<void>();
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockReturnValue(save.promise));
+
+    const pending = registry.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      group: 'priority',
+    }));
+    await flushAsyncQueue();
+    const laterProject = structuredClone(
+      settings.projects.view.collectionPreferences['Projects/A.md']!,
+    );
+    const laterSameProject = {
+      ...laterProject,
+      tasks: { ...laterProject.tasks, group: 'status' as const },
+    };
+    settings.projects.view.collectionPreferences['Projects/A.md'] = laterSameProject;
+    settings.projects.view.collectionPreferences['Projects/B.md'] = laterProject;
+    settings.projects.view.timeline = laterTimeline;
+    save.reject(new Error('disk full'));
+
+    await expect(pending).rejects.toThrow('disk full');
+    expect(settings.projects.view.collectionPreferences['Projects/A.md']).toBe(laterSameProject);
+    expect(settings.projects.view.collectionPreferences['Projects/B.md']).toBe(laterProject);
+    expect(settings.projects.view.timeline).toBe(laterTimeline);
+    expect(registry.collectionPreference('Projects/A.md', 'tasks')).toMatchObject({
+      group: 'none',
+    });
   });
 
   it('settles exactly one of two portfolio writes issued from the same revision', async () => {
