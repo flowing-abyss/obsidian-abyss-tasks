@@ -764,6 +764,7 @@ export class CenterPanel {
     this.destroyCalendarView();
     this.destroyProjectTaskList();
     this.destroyProjectsPanel();
+    this.projectWorkspaceSession.destroy();
     this.md.unload();
     this.el?.empty();
     this.selectionLiveEl = null;

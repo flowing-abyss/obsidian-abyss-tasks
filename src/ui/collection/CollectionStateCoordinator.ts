@@ -98,6 +98,11 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     return next;
   }
 
+  /** Settings owners call this after their backing object is replaced externally. */
+  invalidatePreferences(): void {
+    this.migrated.clear();
+  }
+
   async updatePreference(
     scope: CollectionScopeKey,
     expectedVersion: number,

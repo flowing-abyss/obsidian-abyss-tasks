@@ -1,5 +1,17 @@
 import type { ProjectCreateResult } from '../../projects/ProjectManager';
-import type { ProjectTasksViewState, WorkNotesViewState } from '../../settings/types';
+import type {
+  CalendarSettings,
+  CollectionSessionState,
+  PersistedCollectionPreference,
+  ProjectTasksViewState,
+  WorkNotesViewState,
+} from '../../settings/types';
+import {
+  CollectionStateCoordinator,
+  InMemoryCollectionSessionPort,
+  type CollectionPreferencePort,
+  type CollectionScopeKey,
+} from '../../ui/collection/CollectionStateCoordinator';
 import type { BoardViewPreference } from './boardPreferences';
 import { MeasuredWindow } from './BoundedWindow';
 import type { ProjectWorkspaceLayout, ProjectWorkspaceScope } from './ProjectsDashboardView';
@@ -46,7 +58,22 @@ export interface ProjectWorkspaceScopeSession<TViewState> {
   readonly selection: ScopeSelectionSession;
   inspectorDirty: boolean;
   captureDraft: string | null;
+  openSurface: string | null;
   effectiveView(defaultView: TViewState): TViewState;
+}
+
+type WorkspacePreference = PersistedCollectionPreference<
+  unknown,
+  unknown,
+  unknown,
+  string,
+  unknown
+>;
+
+interface ManagedProjectWorkspaceScopeSession<
+  TViewState,
+> extends ProjectWorkspaceScopeSession<TViewState> {
+  rebindCollectionInstance(instanceKey: string): void;
 }
 
 export interface WorkNoteBoardSession {
@@ -85,8 +112,8 @@ export interface ProjectWorkspaceRecoveryEntry {
 
 interface ProjectWorkspaceEntry {
   scope: ProjectWorkspaceScope;
-  readonly tasksScope: ProjectWorkspaceScopeSession<ProjectTasksViewState>;
-  readonly workNotesScope: ProjectWorkspaceScopeSession<WorkNotesViewState>;
+  readonly tasksScope: ManagedProjectWorkspaceScopeSession<ProjectTasksViewState>;
+  readonly workNotesScope: ManagedProjectWorkspaceScopeSession<WorkNotesViewState>;
   readonly tasks: ProjectTaskCollectionSession;
   readonly taskBoard: WorkNoteBoardSession;
   readonly taskListGeometry: MeasuredWindow<string>;
@@ -113,30 +140,116 @@ function timelineViewport<S extends TimelineScope>(scope: S): TimelinePresentati
   };
 }
 
-function selection(): ScopeSelectionSession {
-  return { selectedKeys: [], focusedKey: null, inspectorKey: null };
+function updateCollectionSession(
+  coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  instanceKey: () => string,
+  changes: Partial<CollectionSessionState>,
+): void {
+  coordinator.updateSession(instanceKey(), { ...coordinator.session(instanceKey()), ...changes });
 }
 
-function scopeSession<TViewState>(): ProjectWorkspaceScopeSession<TViewState> {
-  return {
-    layout: 'list',
-    textQuery: '',
-    viewOverride: undefined,
-    viewport: viewport(),
-    selection: selection(),
+function scopeSession<TViewState>(
+  coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  initialInstanceKey: string,
+): ManagedProjectWorkspaceScopeSession<TViewState> {
+  let instanceKey = initialInstanceKey;
+  const selectionState: ScopeSelectionSession = {
+    get selectedKeys(): string[] {
+      const selected = coordinator.session(instanceKey).selectionKey;
+      return selected ? [selected] : [];
+    },
+    set selectedKeys(next: string[]) {
+      updateCollectionSession(coordinator, () => instanceKey, { selectionKey: next[0] ?? null });
+    },
+    get focusedKey(): string | null {
+      return coordinator.session(instanceKey).focusedKey;
+    },
+    set focusedKey(next: string | null) {
+      updateCollectionSession(coordinator, () => instanceKey, { focusedKey: next });
+    },
+    get inspectorKey(): string | null {
+      return coordinator.session(instanceKey).selectionKey;
+    },
+    set inspectorKey(next: string | null) {
+      updateCollectionSession(coordinator, () => instanceKey, { selectionKey: next });
+    },
+  };
+  const localViewport = viewport();
+  const viewportState: LogicalViewportSession = {
+    get firstKey(): string | null {
+      return coordinator.session(instanceKey).scrollAnchor;
+    },
+    set firstKey(next: string | null) {
+      updateCollectionSession(coordinator, () => instanceKey, { scrollAnchor: next });
+    },
+    get focusedKey(): string | null {
+      return coordinator.session(instanceKey).focusedKey;
+    },
+    set focusedKey(next: string | null) {
+      updateCollectionSession(coordinator, () => instanceKey, { focusedKey: next });
+    },
+    get firstIndex(): number {
+      return localViewport.firstIndex;
+    },
+    set firstIndex(next: number) {
+      localViewport.firstIndex = next;
+    },
+    get restoreFocus(): boolean {
+      return localViewport.restoreFocus;
+    },
+    set restoreFocus(next: boolean) {
+      localViewport.restoreFocus = next;
+    },
+  };
+  const managed = {
+    viewOverride: undefined as TViewState | undefined,
+    viewport: viewportState,
+    selection: selectionState,
     inspectorDirty: false,
     captureDraft: null,
+    get layout(): ProjectWorkspaceLayout {
+      const layout = coordinator.session(instanceKey).layout;
+      return layout === 'board' || layout === 'timeline' ? layout : 'list';
+    },
+    set layout(next: ProjectWorkspaceLayout) {
+      updateCollectionSession(coordinator, () => instanceKey, { layout: next });
+    },
+    get textQuery(): string {
+      return coordinator.session(instanceKey).query;
+    },
+    set textQuery(next: string) {
+      updateCollectionSession(coordinator, () => instanceKey, { query: next });
+    },
+    get openSurface(): string | null {
+      return coordinator.session(instanceKey).openSurface;
+    },
+    set openSurface(next: string | null) {
+      updateCollectionSession(coordinator, () => instanceKey, { openSurface: next });
+    },
     effectiveView(defaultView: TViewState): TViewState {
       return this.viewOverride ?? defaultView;
     },
-  };
+    rebindCollectionInstance(nextInstanceKey: string): void {
+      const current = coordinator.session(instanceKey);
+      coordinator.updateSession(nextInstanceKey, current);
+      coordinator.release(instanceKey);
+      instanceKey = nextInstanceKey;
+    },
+  } satisfies ManagedProjectWorkspaceScopeSession<TViewState>;
+  return managed;
 }
 
-function workspaceEntry(): ProjectWorkspaceEntry {
-  const workNotesScope = scopeSession<WorkNotesViewState>();
+function workspaceEntry(
+  coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  projectPath: string,
+): ProjectWorkspaceEntry {
+  const workNotesScope = scopeSession<WorkNotesViewState>(
+    coordinator,
+    `project:${projectPath}:work-notes`,
+  );
   return {
     scope: 'tasks',
-    tasksScope: scopeSession<ProjectTasksViewState>(),
+    tasksScope: scopeSession<ProjectTasksViewState>(coordinator, `project:${projectPath}:tasks`),
     workNotesScope,
     tasks: new ProjectTaskCollectionSession(),
     taskBoard: {
@@ -166,17 +279,23 @@ function workspaceEntry(): ProjectWorkspaceEntry {
 function copyScope<TViewState>(
   source: ProjectWorkspaceScopeSession<TViewState>,
 ): ProjectWorkspaceScopeSession<TViewState> {
-  const copy = scopeSession<TViewState>();
-  copy.layout = source.layout;
-  copy.textQuery = source.textQuery;
-  copy.viewOverride = source.viewOverride && structuredClone(source.viewOverride);
-  Object.assign(copy.viewport, source.viewport);
-  copy.selection.selectedKeys.push(...source.selection.selectedKeys);
-  copy.selection.focusedKey = source.selection.focusedKey;
-  copy.selection.inspectorKey = source.selection.inspectorKey;
-  copy.inspectorDirty = source.inspectorDirty;
-  copy.captureDraft = source.captureDraft;
-  return copy;
+  return {
+    layout: source.layout,
+    textQuery: source.textQuery,
+    viewOverride: source.viewOverride && structuredClone(source.viewOverride),
+    viewport: { ...source.viewport },
+    selection: {
+      selectedKeys: [...source.selection.selectedKeys],
+      focusedKey: source.selection.focusedKey,
+      inspectorKey: source.selection.inspectorKey,
+    },
+    inspectorDirty: source.inspectorDirty,
+    captureDraft: source.captureDraft,
+    openSurface: source.openSurface,
+    effectiveView(defaultView: TViewState): TViewState {
+      return this.viewOverride ?? defaultView;
+    },
+  };
 }
 
 function sourceFirst<T>(source: readonly T[], destination: readonly T[]): T[] {
@@ -272,10 +391,91 @@ export function boardColumnViewport(
   return created;
 }
 
+function emptyWorkspacePreference(): WorkspacePreference {
+  return {
+    version: 1,
+    layout: 'list',
+    filters: [],
+    group: 'none',
+    sort: 'date',
+    visibleFields: [],
+    layoutPreferences: {},
+  };
+}
+
+/** Reads existing Settings without letting mount-local interaction state write back into them. */
+class ProjectWorkspacePreferencePort implements CollectionPreferencePort<WorkspacePreference> {
+  private settings: CalendarSettings | null = null;
+  private readonly listeners = new Map<
+    CollectionScopeKey,
+    Set<(next: WorkspacePreference) => void>
+  >();
+
+  bind(settings: CalendarSettings): void {
+    this.settings = settings;
+  }
+
+  read(scope: CollectionScopeKey): WorkspacePreference {
+    const settings = this.settings;
+    if (!settings || !scope.startsWith('project:')) return emptyWorkspacePreference();
+    if (scope.endsWith(':tasks')) {
+      const view = settings.projects.view.tasks;
+      return {
+        version: 1,
+        layout: 'list',
+        filters: view.filters,
+        group: view.groupBy,
+        sort: view.sortBy,
+        visibleFields: view.table.columns
+          .filter(({ visible }) => visible)
+          .map(({ propertyId }) => propertyId),
+        layoutPreferences: { table: view.table, view },
+      };
+    }
+    const view = settings.projects.view.workNotes;
+    return {
+      version: 1,
+      layout: 'list',
+      filters: view.statusIds,
+      group: view.groupBy,
+      sort: view.sortBy,
+      visibleFields: [],
+      layoutPreferences: { view },
+    };
+  }
+
+  update(
+    scope: CollectionScopeKey,
+    expectedVersion: number,
+    next: WorkspacePreference,
+  ): Promise<WorkspacePreference> {
+    if (this.read(scope).version !== expectedVersion)
+      return Promise.reject(new Error('version conflict'));
+    for (const listener of this.listeners.get(scope) ?? []) listener(next);
+    return Promise.resolve(next);
+  }
+
+  subscribe(scope: CollectionScopeKey, listener: (next: WorkspacePreference) => void): () => void {
+    const scoped = this.listeners.get(scope) ?? new Set<(next: WorkspacePreference) => void>();
+    scoped.add(listener);
+    this.listeners.set(scope, scoped);
+    return () => {
+      scoped.delete(listener);
+      if (scoped.size === 0) this.listeners.delete(scope);
+    };
+  }
+}
+
 /** Ephemeral Project workspace continuity; never persisted to settings or the vault. */
 export class ProjectWorkspaceSession {
+  private readonly preferencePort = new ProjectWorkspacePreferencePort();
+  private readonly coordinator = new CollectionStateCoordinator<WorkspacePreference>({
+    preferences: this.preferencePort,
+    sessions: new InMemoryCollectionSessionPort(),
+    migratePreference: (current) => current,
+  });
   private readonly sessions = new Map<string, ProjectWorkspaceEntry>();
-  private readonly idle = workspaceEntry();
+  private readonly idle = workspaceEntry(this.coordinator, '__idle__');
   private readonly recoveries: ProjectWorkspaceRecoveryEntry[] = [];
   private projectPath: string | null = null;
   /** Portfolio continuity is independent of whichever Project workspace is open. */
@@ -294,6 +494,54 @@ export class ProjectWorkspaceSession {
     pending: false,
     createdPath: null,
   };
+
+  bindCollectionPreferences(settings: CalendarSettings): void {
+    this.preferencePort.bind(settings);
+    this.coordinator.invalidatePreferences();
+  }
+
+  collectionScopeKey(path: string, scope: ProjectWorkspaceScope): CollectionScopeKey {
+    return `project:${path}:${scope}`;
+  }
+
+  collectionSession(path: string, scope: ProjectWorkspaceScope): CollectionSessionState {
+    return this.coordinator.session(this.collectionScopeKey(path, scope));
+  }
+
+  subscribeCollectionSession(
+    path: string,
+    scope: ProjectWorkspaceScope,
+    listener: (next: CollectionSessionState) => void,
+  ): () => void {
+    return this.coordinator.subscribeSession(this.collectionScopeKey(path, scope), listener);
+  }
+
+  collectionPreference(path: string, scope: ProjectWorkspaceScope): WorkspacePreference {
+    return this.coordinator.preference(this.collectionScopeKey(path, scope));
+  }
+
+  collectionView<TViewState>(
+    path: string,
+    scope: ProjectWorkspaceScope,
+    fallback: TViewState,
+  ): TViewState {
+    const view = this.collectionPreference(path, scope).layoutPreferences['view'];
+    return view && typeof view === 'object' ? (view as TViewState) : fallback;
+  }
+
+  releaseProject(path: string): void {
+    this.sessions.delete(path);
+    this.coordinator.release(this.collectionScopeKey(path, 'tasks'));
+    this.coordinator.release(this.collectionScopeKey(path, 'work-notes'));
+    if (this.projectPath === path) this.projectPath = null;
+  }
+
+  destroy(): void {
+    for (const path of this.sessions.keys()) this.releaseProject(path);
+    this.coordinator.release('project:__idle__:tasks');
+    this.coordinator.release('project:__idle__:work-notes');
+    this.projectPath = null;
+  }
 
   get size(): number {
     return this.sessions.size;
@@ -346,7 +594,7 @@ export class ProjectWorkspaceSession {
 
   openProject(path: string): void {
     const existing = this.sessions.get(path);
-    const entry = existing ?? workspaceEntry();
+    const entry = existing ?? workspaceEntry(this.coordinator, path);
     if (!existing) this.sessions.set(path, entry);
     else {
       this.sessions.delete(path);
@@ -405,8 +653,14 @@ export class ProjectWorkspaceSession {
       reconcileSafeArrays(source.tasksScope, destination.tasksScope);
       reconcileSafeArrays(source.workNotesScope, destination.workNotesScope);
       this.sessions.delete(destinationPath);
+      this.coordinator.release(this.collectionScopeKey(destinationPath, 'tasks'));
+      this.coordinator.release(this.collectionScopeKey(destinationPath, 'work-notes'));
     }
     this.sessions.delete(sourcePath);
+    source.tasksScope.rebindCollectionInstance(this.collectionScopeKey(destinationPath, 'tasks'));
+    source.workNotesScope.rebindCollectionInstance(
+      this.collectionScopeKey(destinationPath, 'work-notes'),
+    );
     this.sessions.set(destinationPath, source);
     if (this.projectPath === sourcePath) this.projectPath = destinationPath;
     this.evictCleanSessions();
@@ -487,7 +741,7 @@ export class ProjectWorkspaceSession {
         ([path, entry]) => path !== this.projectPath && !this.isDirty(entry),
       );
       if (!evicted) return;
-      this.sessions.delete(evicted[0]);
+      this.releaseProject(evicted[0]);
     }
   }
 }

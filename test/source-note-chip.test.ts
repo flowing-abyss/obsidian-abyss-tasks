@@ -80,6 +80,18 @@ describe('renderSourceNoteChip', () => {
     expect(name?.textContent).toBe('Note');
   });
 
+  it('keeps a long unbroken source name in the shrinkable chip identity node', () => {
+    const container = freshContainer();
+    const name = 'x'.repeat(240);
+    renderSourceNoteChip(container, task({ source: { filePath: `Notes/${name}.md` } }));
+
+    const chip = container.querySelector<HTMLElement>('.abyss-task-source-note')!;
+    const identity = chip.querySelector<HTMLElement>('.abyss-task-source-note-name')!;
+    expect(chip.children).toHaveLength(2);
+    expect(identity.textContent).toBe(name);
+    expect(identity.getAttribute('title')).toBe(name);
+  });
+
   it('calls onClick with filePath when chip is clicked', () => {
     const container = freshContainer();
     const t = task({ source: { filePath: 'notes/2026-06-26.md' } });

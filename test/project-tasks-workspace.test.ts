@@ -1,3 +1,4 @@
+import { Menu } from 'obsidian';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
 import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
@@ -103,6 +104,70 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
 }
 
 describe('Project Tasks workspace', () => {
+  it('keeps scope, layouts, actions, search, and add in one named collection toolbar', () => {
+    const container = freshContainer();
+    const capture = vi.fn();
+    renderProjectDashboard(container, snapshot('small'), {
+      state: new AppState(),
+      settings: structuredClone(DEFAULT_SETTINGS),
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: (host) => {
+        const trigger = host.createEl('button', { attr: { 'data-project-task-capture': '' } });
+        trigger.addEventListener('click', capture);
+        return { destroy: () => undefined };
+      },
+    });
+
+    const toolbar = container.querySelector<HTMLElement>('[data-collection-controls]')!;
+    expect(toolbar.getAttribute('role')).toBe('toolbar');
+    expect(toolbar.getAttribute('aria-label')).toBe('Project collection controls');
+    expect(container.querySelectorAll('[role="toolbar"]')).toHaveLength(1);
+    expect(toolbar.querySelector('[data-project-scope-controls]')).not.toBeNull();
+    expect(toolbar.querySelector('[data-collection-kind="scope-or-status"]')).not.toBeNull();
+    expect(
+      Array.from(toolbar.querySelectorAll<HTMLElement>(':scope > [data-collection-kind]')).map(
+        (element) => element.dataset['collectionKind'],
+      ),
+    ).toEqual(['scope-or-status', 'layout', 'filter', 'group', 'sort', 'search', 'add']);
+
+    toolbar.querySelector<HTMLButtonElement>('[data-project-add]')!.click();
+    expect(capture).toHaveBeenCalledOnce();
+  });
+
+  it.each(['filter', 'group', 'sort'] as const)(
+    'returns focus to the workspace %s trigger when its native menu hides',
+    (kind) => {
+      let hide: (() => void) | undefined;
+      vi.spyOn(Menu.prototype, 'onHide').mockImplementation(function (this: Menu, handler) {
+        hide = handler;
+        return this;
+      });
+      vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+        return this;
+      });
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      renderProjectDashboard(container, snapshot('small'), {
+        state: new AppState(),
+        settings: structuredClone(DEFAULT_SETTINGS),
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      });
+
+      const trigger = container.querySelector<HTMLButtonElement>(`[data-collection-${kind}]`)!;
+      trigger.focus();
+      trigger.click();
+      expect(hide).toBeDefined();
+      hide?.();
+
+      expect(trigger.getAttribute('aria-expanded')).toBe('false');
+      expect(activeDocument.activeElement).toBe(trigger);
+      container.remove();
+    },
+  );
+
   it('feeds the same canonical Task search result identities to List, Board, and Timeline', () => {
     const container = freshContainer();
     const session = new ProjectWorkspaceSession();

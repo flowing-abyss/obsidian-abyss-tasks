@@ -3545,6 +3545,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   opacity: 1;
 }
 .abyss-task-source-note {
+  min-width: 0;
+  max-width: min(18rem, 100%);
   font-size: 11px;
   color: var(--text-muted);
   display: inline-flex;

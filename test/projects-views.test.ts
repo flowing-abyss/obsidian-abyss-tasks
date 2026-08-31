@@ -1639,7 +1639,7 @@ describe('renderProjectsList', () => {
 });
 
 describe('renderProjectDashboard', () => {
-  it('keeps the Project summary to two semantic rows and separates scope from collection controls', () => {
+  it('keeps the Project summary to two semantic rows and nests scope in collection controls', () => {
     const el = freshContainer();
     const project = proj({
       priority: 'A',
@@ -1661,9 +1661,9 @@ describe('renderProjectDashboard', () => {
     expect(el.querySelector('.abyss-project-description')).toBeNull();
     const scopeRow = el.querySelector('[data-project-scope-controls]')!;
     const collectionRow = el.querySelector('[data-collection-controls]')!;
-    expect(scopeRow).not.toBe(collectionRow);
+    expect(scopeRow.closest('[data-collection-controls]')).toBe(collectionRow);
     expect(scopeRow.querySelector('[data-project-layout]')).toBeNull();
-    expect(collectionRow.querySelector('[data-project-scope]')).toBeNull();
+    expect(collectionRow.querySelector('[data-project-scope]')).not.toBeNull();
     expect(collectionRow.querySelectorAll('input[aria-label="Filter tasks"]')).toHaveLength(1);
     expect(collectionRow.querySelector('[data-collection-filter]')).not.toBeNull();
     expect(collectionRow.querySelector('[data-collection-group]')).not.toBeNull();

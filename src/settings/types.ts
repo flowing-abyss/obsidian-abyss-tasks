@@ -96,6 +96,8 @@ export interface PersistedCollectionPreference<TFilter, TGroup, TSort, TLayout, 
 
 export interface CollectionSessionState {
   readonly query: string;
+  /** Ephemeral collection layout; omitted for older session producers. */
+  readonly layout?: string | null;
   readonly selectionKey: string | null;
   readonly focusedKey: string | null;
   readonly scrollAnchor: string | null;

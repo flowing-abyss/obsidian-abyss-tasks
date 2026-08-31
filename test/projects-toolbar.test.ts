@@ -79,7 +79,8 @@ describe('renderProjectsToolbar', () => {
     });
     try {
       const root = freshContainer();
-      const result = renderProjectsToolbar(root, context());
+      const ctx = context();
+      const result = renderProjectsToolbar(root, ctx);
       const filters = root.querySelector<HTMLElement>('.abyss-project-status-filters')!;
       Object.defineProperty(filters, 'clientWidth', { configurable: true, value: 120 });
       Object.defineProperty(filters, 'scrollWidth', { configurable: true, value: 420 });
@@ -92,6 +93,9 @@ describe('renderProjectsToolbar', () => {
       result.filterButton.click();
       expect(capturedTitles[0]).toBe('Status');
       expect(capturedTitles).toContain('Unmapped');
+      expect(result.filterButton.getAttribute('aria-label')).toContain(
+        String(ctx.settings.projects.view.visibleStatusIds.length),
+      );
       expect(root.textContent).not.toContain('Show');
     } finally {
       Object.defineProperty(globalThis, 'ResizeObserver', {

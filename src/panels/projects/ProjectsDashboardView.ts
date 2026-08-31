@@ -88,6 +88,7 @@ export function renderProjectDashboard(
   }
   const project = snapshot.project;
   const session = ctx.workspaceSession ?? new ProjectWorkspaceSession();
+  session.bindCollectionPreferences(ctx.settings);
   session.openProject(project.path);
   const taskScope = session.scopeSession('tasks');
   const workNotesScope = session.scopeSession('work-notes');
@@ -97,9 +98,13 @@ export function renderProjectDashboard(
   const workNotesAvailability =
     ctx.workNotesAvailability ?? ({ state: workNotesAvailable ? 'available' : 'hidden' } as const);
   const taskViewState = (): ProjectTasksViewState =>
-    taskScope.effectiveView(ctx.settings.projects.view.tasks);
+    taskScope.effectiveView(
+      session.collectionView(project.path, 'tasks', ctx.settings.projects.view.tasks),
+    );
   const workNotesViewState = (): WorkNotesViewState =>
-    workNotesScope.effectiveView(ctx.settings.projects.view.workNotes);
+    workNotesScope.effectiveView(
+      session.collectionView(project.path, 'work-notes', ctx.settings.projects.view.workNotes),
+    );
   const selectedTasks = (): readonly (typeof snapshot.tasks)[number][] =>
     selectProjectTasks({
       actions: snapshot.tasks,
@@ -277,14 +282,6 @@ export function renderProjectDashboard(
     cls: 'abyss-project-tasks',
     attr: { 'data-project-workspace': '' },
   });
-  const scopeRow = workspace.createDiv({
-    cls: 'abyss-project-scope-controls',
-    attr: { 'data-project-scope-controls': '', role: 'group', 'aria-label': 'Project scope' },
-  });
-  const workspaceTitle = scopeRow.createEl('h3', {
-    cls: 'abyss-project-tasks-title',
-    text: 'Tasks',
-  });
   const scopeButtons: HTMLButtonElement[] = [];
   const layoutButtons: HTMLButtonElement[] = [];
   const boardAvailable = (): boolean =>
@@ -296,6 +293,8 @@ export function renderProjectDashboard(
       : ctx.renderWorkNoteTimeline !== undefined && allWorkNotes.length > 0;
   let syncTimelineButton = (): void => undefined;
   let collectionControls: ReturnType<typeof renderCollectionControls> | null = null;
+  let scopeGroup!: HTMLElement;
+  let workspaceTitle!: HTMLElement;
   let child: ProjectChildRenderHandle | null = null;
   let destroyed = false;
   let arbitrationVersion = 0;
@@ -361,7 +360,7 @@ export function renderProjectDashboard(
     }
     workspace.dataset['scope'] = scope;
     workspace.dataset['layout'] = layout;
-    workspaceTitle.setText(scope === 'work-notes' ? 'Work Notes' : 'Tasks');
+    workspaceTitle?.setText(scope === 'work-notes' ? 'Work Notes' : 'Tasks');
     for (const button of scopeButtons) {
       const active = button.dataset['projectScope'] === scope;
       button.classList.toggle('is-active', active);
@@ -429,7 +428,7 @@ export function renderProjectDashboard(
     selectable = true,
     reason?: string,
   ): void => {
-    const button = scopeRow.createEl('button', {
+    const button = scopeGroup.createEl('button', {
       text: label,
       attr: {
         type: 'button',
@@ -467,17 +466,6 @@ export function renderProjectDashboard(
     layoutButtons.push(button);
   };
 
-  scopeButton('tasks', 'Tasks');
-  if (workNotesAvailability.state === 'available') {
-    scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
-  } else if (workNotesAvailability.state === 'invalid') {
-    scopeButton('work-notes', 'Work Notes', false, workNotesAvailability.reason);
-    const settings = scopeRow.createEl('button', {
-      text: 'Settings',
-      attr: { type: 'button', 'data-work-notes-settings': '' },
-    });
-    settings.addEventListener('click', () => ctx.onOpenWorkNotesSettings?.());
-  }
   const updateTaskView = (next: ProjectTasksViewState): void => {
     taskScope.viewOverride = next;
     renderWorkspace();
@@ -491,6 +479,16 @@ export function renderProjectDashboard(
   const updateWorkNotesView = (next: WorkNotesViewState): void => {
     workNotesScope.viewOverride = next;
     renderWorkspace();
+  };
+  const showWorkspaceMenu = (menu: Menu, event: MouseEvent): void => {
+    const trigger = event.currentTarget as HTMLButtonElement | null;
+    trigger?.setAttribute('aria-expanded', 'true');
+    menu.onHide(() => {
+      if (!trigger) return;
+      trigger.setAttribute('aria-expanded', 'false');
+      if (trigger.isConnected) trigger.focus({ preventScroll: true });
+    });
+    showMenuAtMouseEventWithFocus(menu, event);
   };
   const showFilterMenu = (event: MouseEvent): void => {
     const menu = new Menu();
@@ -526,7 +524,7 @@ export function renderProjectDashboard(
         );
       }
     }
-    showMenuAtMouseEventWithFocus(menu, event);
+    showWorkspaceMenu(menu, event);
   };
   const showGroupMenu = (event: MouseEvent): void => {
     const menu = new Menu();
@@ -552,7 +550,7 @@ export function renderProjectDashboard(
           }),
       );
     }
-    showMenuAtMouseEventWithFocus(menu, event);
+    showWorkspaceMenu(menu, event);
   };
   const showSortMenu = (event: MouseEvent): void => {
     const menu = new Menu();
@@ -585,12 +583,34 @@ export function renderProjectDashboard(
         }),
       );
     }
-    showMenuAtMouseEventWithFocus(menu, event);
+    showWorkspaceMenu(menu, event);
   };
 
   collectionControls = renderCollectionControls(workspace, {
     query: scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery,
     searchLabel: scope === 'tasks' ? 'Filter tasks' : 'Filter Work Notes',
+    toolbarLabel: 'Project collection controls',
+    renderLeading: (host) => {
+      scopeGroup = host.createDiv({
+        cls: 'abyss-project-scope-controls',
+        attr: { 'data-project-scope-controls': '', role: 'group', 'aria-label': 'Project scope' },
+      });
+      workspaceTitle = scopeGroup.createEl('h3', {
+        cls: 'abyss-project-tasks-title',
+        text: 'Tasks',
+      });
+      scopeButton('tasks', 'Tasks');
+      if (workNotesAvailability.state === 'available') {
+        scopeButton('work-notes', 'Work Notes', ctx.renderWorkNotes !== undefined);
+      } else if (workNotesAvailability.state === 'invalid') {
+        scopeButton('work-notes', 'Work Notes', false, workNotesAvailability.reason);
+        const settings = scopeGroup.createEl('button', {
+          text: 'Settings',
+          attr: { type: 'button', 'data-work-notes-settings': '' },
+        });
+        settings.addEventListener('click', () => ctx.onOpenWorkNotesSettings?.());
+      }
+    },
     renderLayout: (host) => {
       layoutHost = host.createDiv({
         cls: 'abyss-project-layout-controls',
@@ -615,7 +635,31 @@ export function renderProjectDashboard(
       else workNotesScope.textQuery = value;
       renderWorkspace();
     },
+    renderAdd: (host) => {
+      const add = host.createEl('button', {
+        cls: 'abyss-project-add',
+        attr: {
+          type: 'button',
+          'data-project-add': '',
+          'aria-label': 'Add item',
+          title: 'Add item',
+        },
+      });
+      setIcon(add, 'plus');
+      add.addEventListener('click', () => {
+        content
+          .querySelector<HTMLButtonElement>('[data-project-task-capture], .abyss-add-task-trigger')
+          ?.click();
+      });
+    },
   });
+  for (const kind of ['filter', 'group', 'sort'] as const) {
+    const trigger = collectionControls.element.querySelector<HTMLButtonElement>(
+      `[data-collection-${kind}]`,
+    );
+    trigger?.setAttribute('aria-haspopup', 'menu');
+    trigger?.setAttribute('aria-expanded', 'false');
+  }
   const content = workspace.createDiv({ cls: 'abyss-project-tasks-content' });
   let timelineButton: HTMLButtonElement | null = null;
   syncTimelineButton = (): void => {

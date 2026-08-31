@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ProjectWorkspaceSessionRegistry } from '../src/panels/projects/ProjectWorkspaceSession';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { ProjectTasksViewState } from '../src/settings/types';
 
 const taskDefault: ProjectTasksViewState = {
@@ -10,6 +11,52 @@ const taskDefault: ProjectTasksViewState = {
 };
 
 describe('ProjectWorkspaceSessionRegistry', () => {
+  it('constructs one coordinator-backed session per exact Project scope without persisting interaction state', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings);
+    registry.openProject('Projects/A.md');
+    const tasks = registry.scopeSession('tasks');
+    const workNotes = registry.scopeSession('work-notes');
+    const tasksListener = vi.fn();
+    const stop = registry.subscribeCollectionSession('Projects/A.md', 'tasks', tasksListener);
+
+    tasks.textQuery = 'ship';
+    tasks.selection.inspectorKey = 'task-1';
+    tasks.viewport.focusedKey = 'task-1';
+    tasks.viewport.firstKey = 'task-1';
+    tasks.layout = 'board';
+    workNotes.textQuery = 'retro';
+
+    expect(registry.collectionScopeKey('Projects/A.md', 'tasks')).toBe(
+      'project:Projects/A.md:tasks',
+    );
+    expect(registry.collectionSession('Projects/A.md', 'tasks')).toMatchObject({
+      query: 'ship',
+      selectionKey: 'task-1',
+      focusedKey: 'task-1',
+      scrollAnchor: 'task-1',
+      layout: 'board',
+    });
+    expect(registry.collectionSession('Projects/A.md', 'work-notes').query).toBe('retro');
+    expect(registry.collectionPreference('Projects/A.md', 'tasks').group).toBe(
+      settings.projects.view.tasks.groupBy,
+    );
+    expect(tasksListener).toHaveBeenCalledWith(
+      expect.objectContaining({ query: 'ship', layout: 'board' }),
+    );
+    expect(settings.projects.view.tasks).toEqual(DEFAULT_SETTINGS.projects.view.tasks);
+
+    stop();
+    registry.releaseProject('Projects/A.md');
+    expect(registry.collectionSession('Projects/A.md', 'tasks')).toMatchObject({
+      query: '',
+      selectionKey: null,
+      focusedKey: null,
+      scrollAnchor: null,
+    });
+  });
+
   it('owns independent session-only Timeline presentation state for every scope', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');

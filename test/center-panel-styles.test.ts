@@ -91,6 +91,7 @@ describe('CenterPanel task metadata styles', () => {
     const actionLayer = declarationsFor('.abyss-entity-action-layer');
     const deleteButton = declarationsFor('.abyss-task-delete-btn');
     const title = declarationsFor('.abyss-task-title');
+    const sourceChip = declarationsFor('.abyss-task-source-note');
     const sourceName = declarationsFor('.abyss-task-source-note-name');
 
     expect(card).toContain('position: relative');
@@ -100,6 +101,8 @@ describe('CenterPanel task metadata styles', () => {
     expect(title).toContain('overflow: hidden');
     expect(title).toContain('text-overflow: ellipsis');
     expect(title).toContain('white-space: nowrap');
+    expect(sourceChip).toContain('min-width: 0');
+    expect(sourceChip).toContain('max-width:');
     expect(sourceName).toContain('overflow: hidden');
     expect(sourceName).toContain('text-overflow: ellipsis');
   });

@@ -18,6 +18,8 @@ export interface CollectionControlsOptions {
   /** Collections without a working text-query capability omit the search slot. */
   readonly search?: boolean;
   readonly placeholder?: string;
+  /** Adds the single collection toolbar landmark when this is the complete control surface. */
+  readonly toolbarLabel?: string;
   readonly renderLeading?: (host: HTMLElement) => void;
   readonly renderLayout?: (host: HTMLElement) => void;
   /** Capabilities determine which shared action zones this collection exposes. */
@@ -64,7 +66,10 @@ export function renderCollectionControls(
 ): CollectionControlsHandle {
   const controls = parent.createDiv({
     cls: 'abyss-center-controls abyss-collection-controls',
-    attr: { 'data-collection-controls': '' },
+    attr: {
+      'data-collection-controls': '',
+      ...(options.toolbarLabel ? { role: 'toolbar', 'aria-label': options.toolbarLabel } : {}),
+    },
   });
   if (options.renderLeading) {
     const leading = controls.createDiv({ attr: { 'data-collection-kind': 'scope-or-status' } });

@@ -246,12 +246,15 @@ export function renderProjectsToolbar(
       chip.toggleClass('is-overflow-hidden', hidden);
       if (hidden) hiddenCount += 1;
     }
-    filterButton.setAttribute(
-      'aria-label',
-      overflowing
-        ? `Filter project statuses (${String(hiddenCount)} hidden)`
-        : 'Filter project statuses',
-    );
+    const activeCount = ctx.settings.projects.view.visibleStatusIds.length;
+    const label = overflowing
+      ? `Filter project statuses (${String(activeCount)} active; ${String(hiddenCount)} hidden)`
+      : `Filter project statuses (${String(activeCount)} active)`;
+    filterButton.setAttribute('aria-label', label);
+    filterButton.setAttribute('title', label);
+    filterButton
+      .querySelector('.abyss-collection-action-label')
+      ?.setText(`Filter (${String(activeCount)})`);
   };
   const ResizeObserverCtor = header.ownerDocument.defaultView?.ResizeObserver;
   const observer = ResizeObserverCtor ? new ResizeObserverCtor(updateOverflow) : undefined;
