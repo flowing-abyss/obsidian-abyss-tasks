@@ -226,16 +226,11 @@ describe('PanelView', () => {
       '.abyss-modal [data-dependency-candidate]',
     )!;
 
-    expect(button.getAttribute('aria-disabled')).toBeNull();
+    expect(button.getAttribute('aria-disabled')).toBe('true');
     button.click();
     await flushMicrotasks();
-    expect(newDependencyId).toHaveBeenCalledOnce();
-    expect(setDependency).toHaveBeenCalledWith({
-      prerequisite: candidate.ref,
-      dependent: dependent.ref,
-      dependencyId: 'modal-generated',
-      enabled: true,
-    });
+    expect(newDependencyId).not.toHaveBeenCalled();
+    expect(setDependency).not.toHaveBeenCalled();
     await view.onClose();
   });
 

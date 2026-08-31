@@ -3166,7 +3166,12 @@ export class CenterPanel {
 
   private presentNextActionConflict(conflict: NextActionConflict): void {
     const existing = conflict.tasks[0];
-    if (!existing) return;
+    if (!existing) {
+      new Notice(
+        `Next Action integrity needs review: ${conflict.diagnostic}. The task index was rescanned; refresh the Project and choose one action.`,
+      );
+      return;
+    }
     const count = conflict.tasks.length;
     const conflictingTasks = count === 1 ? 'another task' : `${count} other tasks`;
     this.taskModal?.open(

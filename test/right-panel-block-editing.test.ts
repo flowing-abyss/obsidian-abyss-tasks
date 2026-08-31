@@ -632,7 +632,7 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
-  it('requests a fresh dependency ID from the application boundary for an unlabelled prerequisite', async () => {
+  it('keeps an unlabelled prerequisite disabled without a stable proposed ID', async () => {
     const dependent = snapshot('dependent');
     const candidate = {
       ...snapshot('candidate'),
@@ -688,17 +688,12 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks();
 
-    expect(newDependencyId).toHaveBeenCalledOnce();
-    expect(setDependency).toHaveBeenCalledWith({
-      prerequisite: candidate.ref,
-      dependent: dependent.ref,
-      dependencyId: 'generated-id',
-      enabled: true,
-    });
+    expect(newDependencyId).not.toHaveBeenCalled();
+    expect(setDependency).not.toHaveBeenCalled();
     panel.destroy();
   });
 
-  it('surfaces an application-generated ID collision in the dependency field without writing', async () => {
+  it('keeps an ID-less candidate disabled before it can generate a colliding ID', async () => {
     const generateId = vi
       .fn<() => string>()
       .mockReturnValueOnce('collision')
@@ -748,21 +743,10 @@ describe('RightPanel block editing', () => {
     firstCandidate.click();
     await flushMicrotasks(20);
 
-    expect(generateId).toHaveBeenCalledTimes(1);
+    expect(generateId).not.toHaveBeenCalled();
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
     expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
-    expect(
-      container.querySelector('[data-task-field-feedback="dependencies"]')?.textContent,
-    ).toContain('Could not save dependencies');
-
-    firstCandidate.click();
-    await flushMicrotasks(30);
-
-    expect(generateId).toHaveBeenCalledTimes(2);
-    expect(process).toHaveBeenCalledOnce();
-    expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 fresh');
-    expect(await harness.read()).toContain('- [ ] Dependent ⛔ fresh');
     panel.destroy();
     harness.index.destroy();
     container.remove();

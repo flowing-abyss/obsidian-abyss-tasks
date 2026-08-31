@@ -80,6 +80,18 @@ export class NextActionService {
           for (const previous of tagged) this.rememberTagState(previous, false);
         }
         const verified = await this.verify(projectPath, task);
+        if (result.type === 'integrity-conflict') {
+          if (verified) {
+            return { ...verified, diagnostic: `${result.diagnostic}; ${verified.diagnostic}` };
+          }
+          return {
+            type: 'integrity-conflict',
+            projectPath,
+            tag: NEXT_ACTION_TAG,
+            tasks: [],
+            diagnostic: `${result.diagnostic}; authoritative rescan found an indeterminate replacement state`,
+          };
+        }
         if (result.type !== 'ok') return result;
         return verified ?? result;
       } finally {

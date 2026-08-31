@@ -2033,10 +2033,7 @@ export class RightPanel {
           this.tasks?.newDependencyId !== undefined;
         let unavailableReason: string | undefined =
           projected.availability.type === 'disabled' &&
-          !(
-            projected.availability.reason === 'Dependency ID unavailable' &&
-            this.tasks?.newDependencyId
-          )
+          !(projected.availability.reason === 'Dependency ID unavailable' && repairDependencyId)
             ? projected.availability.reason
             : undefined;
         if (duplicateId) unavailableReason = 'Duplicate ID';
