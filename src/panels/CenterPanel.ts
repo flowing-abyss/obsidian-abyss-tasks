@@ -1475,7 +1475,7 @@ export class CenterPanel {
                   filters: [...defaults.filters],
                   ...(defaults.statusGroups ? { statusGroups: [...defaults.statusGroups] } : {}),
                 },
-                onUpdate,
+                onUpdate: (next) => onUpdate({ ...viewState, ...next, table: viewState.table }),
               }),
             snapshots: this.projectSnapshots,
             onSaveSettings: this.onSaveSettings,

@@ -107,7 +107,7 @@ export interface ProjectTasksViewState {
   readonly sortBy: ListViewState['sortBy'];
   readonly filters: readonly PropertyFilter[];
   readonly statusGroups?: readonly TaskStatusType[];
-  readonly table?: ProjectTasksTablePreference;
+  readonly table: ProjectTasksTablePreference;
 }
 
 export interface WorkNotesViewState {
@@ -123,7 +123,7 @@ export interface ProjectsViewSettings {
   portfolioLayout: ProjectsPortfolioLayout;
   visibleStatusIds: string[];
   includeUnmapped: boolean;
-  table?: ProjectsTablePreference;
+  table: ProjectsTablePreference;
   board: ProjectBoardPreference;
   timeline: ProjectTimelinePreferences;
   tasks: ProjectTasksViewState;

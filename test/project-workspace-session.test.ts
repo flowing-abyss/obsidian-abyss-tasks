@@ -6,6 +6,7 @@ const taskDefault: ProjectTasksViewState = {
   groupBy: 'none',
   sortBy: { field: 'date', dir: 'asc' },
   filters: [],
+  table: { version: 1, columns: [], collapsedGroups: [] },
 };
 
 describe('ProjectWorkspaceSessionRegistry', () => {

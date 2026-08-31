@@ -625,6 +625,7 @@ describe('Project Tasks workspace', () => {
   it('preserves the user primary sort and uses ownership, created date, and file order only as equal-key tie-breakers', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.tasks = {
+      ...settings.projects.view.tasks,
       groupBy: 'none',
       sortBy: { field: 'title', dir: 'asc' },
       filters: [],

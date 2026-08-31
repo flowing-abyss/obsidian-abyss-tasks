@@ -1,11 +1,38 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { acceptWorkNoteAudit } from '../src/projects/work-notes/compatibility';
 import type { WorkNoteCompatibilityPreset } from '../src/projects/work-notes/types';
 import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
+import type {
+  CalendarSettings,
+  ProjectsTablePreference,
+  ProjectTasksTablePreference,
+} from '../src/settings/types';
 
 describe('migrateSettings', () => {
+  it('accepts partial raw settings only at migration while loaded settings require both Table preferences', () => {
+    const raw: Record<string, unknown> = { projects: { statuses: [] } };
+
+    migrateSettings(raw);
+
+    expectTypeOf<
+      CalendarSettings['projects']['view']['table']
+    >().toEqualTypeOf<ProjectsTablePreference>();
+    expectTypeOf<
+      CalendarSettings['projects']['view']['tasks']['table']
+    >().toEqualTypeOf<ProjectTasksTablePreference>();
+    expect((raw['projects'] as { view: Record<string, unknown> }).view['table']).toBeDefined();
+    expect(
+      (
+        (raw['projects'] as { view: Record<string, unknown> }).view['tasks'] as Record<
+          string,
+          unknown
+        >
+      )['table'],
+    ).toBeDefined();
+  });
+
   it('adds versioned Project board and scope-specific timeline preferences', () => {
     const raw: Record<string, unknown> = {};
 
