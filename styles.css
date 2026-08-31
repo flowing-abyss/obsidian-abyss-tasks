@@ -8523,10 +8523,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-virtual-table-header,
-.abyss-virtual-table-row {
+.abyss-virtual-table-row,
+.abyss-virtual-table-group-row {
   display: grid;
   grid-template-columns: var(--abyss-table-columns);
-  min-width: max-content;
+  inline-size: max-content;
+  min-inline-size: 100%;
 }
 
 .abyss-virtual-table-header {
@@ -8538,6 +8540,7 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-virtual-table-scroll {
+  position: relative;
   overflow: auto;
   max-block-size: min(68vh, 42rem);
 }
@@ -8552,11 +8555,71 @@ body.is-phone.is-mobile .abyss-creation-feedback {
 }
 
 .abyss-virtual-table-cell {
+  position: relative;
   min-width: 0;
   padding: var(--size-2-2, 4px) var(--size-4-2, 8px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.abyss-virtual-table-cell:focus-visible,
+.abyss-virtual-table-resize:focus-visible,
+.abyss-virtual-table-group-cell button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.abyss-virtual-table-header-cell {
+  display: flex;
+  align-items: center;
+  gap: var(--size-2-2, 4px);
+  font-weight: var(--font-semibold);
+}
+
+.abyss-virtual-table-header-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.abyss-virtual-table-resize {
+  position: absolute;
+  z-index: 2;
+  inset-block: 0;
+  inset-inline-end: -0.375rem;
+  inline-size: 0.75rem;
+  min-inline-size: 0.75rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.abyss-virtual-table-resize::after {
+  content: '';
+  position: absolute;
+  inset-block: 20%;
+  inset-inline-start: calc(50% - 0.5px);
+  inline-size: 1px;
+  background: var(--background-modifier-border-hover);
+}
+
+.abyss-virtual-table-group-cell {
+  grid-column: 1 / -1;
+  padding: 0;
+  background: var(--background-secondary-alt, var(--background-secondary));
+}
+
+.abyss-virtual-table-group-cell button {
+  inline-size: 100%;
+  min-block-size: 2rem;
+  justify-content: flex-start;
+  padding-inline: var(--size-4-2, 8px);
+  border-radius: 0;
+  font-weight: var(--font-semibold);
+  text-align: start;
 }
 
 .abyss-virtual-table-row + .abyss-virtual-table-row {

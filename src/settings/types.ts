@@ -66,6 +66,12 @@ export interface ProjectStatus {
 
 type ProjectsPortfolioLayout = 'overview' | 'board' | 'timeline';
 
+export type PortfolioGroupBy = 'none' | 'status' | 'priority';
+export interface PortfolioSort {
+  readonly field: 'title' | 'status' | 'priority' | 'progress' | 'start' | 'end';
+  readonly dir: 'asc' | 'desc';
+}
+
 export interface ProjectTableColumnPreference {
   readonly propertyId: string;
   readonly visible: boolean;
@@ -160,8 +166,8 @@ interface PortfolioCollectionLayoutPreference {
 
 export type PortfolioCollectionPreference = PersistedCollectionPreference<
   string,
-  'none',
-  'none',
+  PortfolioGroupBy,
+  PortfolioSort,
   ProjectsPortfolioLayout,
   PortfolioCollectionLayoutPreference
 >;
@@ -173,6 +179,8 @@ export interface ProjectScopedCollectionPreferences {
 
 export interface ProjectsViewSettings {
   portfolioLayout: ProjectsPortfolioLayout;
+  portfolioGroupBy?: PortfolioGroupBy;
+  portfolioSortBy?: PortfolioSort;
   visibleStatusIds: string[];
   includeUnmapped: boolean;
   table: ProjectsTablePreference;

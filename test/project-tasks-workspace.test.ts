@@ -11,6 +11,7 @@ import type {
 } from '../src/panels/projects/viewContext';
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type { ProjectTasksCollectionPreference } from '../src/settings/types';
 import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 function snapshot(
@@ -812,6 +813,129 @@ describe('Project Tasks workspace', () => {
 
     expect(search.value).toBe('note query');
     expect(search.getAttribute('aria-label')).toBe('Filter Work Notes');
+  });
+
+  it('renders the exact 500-task Table route and persists table width through the scoped coordinator', async () => {
+    const container = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const session = new ProjectWorkspaceSession();
+    session.bindCollectionPreferences(settings, vi.fn().mockResolvedValue(undefined));
+    session.openProject('Projects/A.md');
+    await session.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      layout: 'table',
+      group: 'status',
+    }));
+    const base = snapshot('empty');
+    const tasks = Array.from({ length: 500 }, (_, index) => ({
+      task: task({
+        title: `Task ${String(index)}`,
+        source: { filePath: 'Projects/A.md', line: index + 1 },
+      }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    }));
+
+    renderProjectDashboard(
+      container,
+      { ...base, tasks },
+      {
+        state: new AppState(),
+        settings,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        workspaceSession: session,
+        renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      },
+    );
+
+    expect(container.querySelector('[role="table"]')?.getAttribute('aria-label')).toBe(
+      'Project tasks table',
+    );
+    expect(container.querySelectorAll('[data-project-task-table-row]').length).toBeLessThan(30);
+    container
+      .querySelector<HTMLButtonElement>('[data-table-resize="task"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await flushMicrotasks();
+    expect(
+      (
+        session.collectionPreference('Projects/A.md', 'tasks') as ProjectTasksCollectionPreference
+      ).layoutPreferences['primary']?.table.columns.find(({ propertyId }) => propertyId === 'task')
+        ?.width,
+    ).toBe(248);
+  });
+
+  it('keeps scoped visibleFields synchronized when Fields toggles and reorders table columns', async () => {
+    const callbacks = new Map<string, () => void>();
+    const addItem = vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (
+      this: Menu,
+      callback,
+    ) {
+      let title = '';
+      const item = {
+        setTitle: (next: string) => {
+          title = next;
+          return item;
+        },
+        setDisabled: () => item,
+        setChecked: () => item,
+        onClick: (onClick: () => void) => {
+          callbacks.set(title, onClick);
+          return item;
+        },
+      };
+      callback(item as never);
+      return this;
+    });
+    const show = vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (
+      this: Menu,
+    ) {
+      return this;
+    });
+    try {
+      const container = freshContainer();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const session = new ProjectWorkspaceSession();
+      session.bindCollectionPreferences(settings, vi.fn().mockResolvedValue(undefined));
+      session.openProject('Projects/A.md');
+      renderProjectDashboard(container, snapshot('small'), {
+        state: new AppState(),
+        settings,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+        workspaceSession: session,
+        renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      });
+
+      container.querySelector<HTMLButtonElement>('[data-collection-fields]')!.click();
+      callbacks.get('Move Due earlier')!();
+      await flushMicrotasks();
+      let preference = session.collectionPreference(
+        'Projects/A.md',
+        'tasks',
+      ) as ProjectTasksCollectionPreference;
+      expect(preference.visibleFields).toEqual(['task', 'status', 'due', 'priority', 'nextAction']);
+      expect(
+        preference.layoutPreferences['primary']?.table.columns.map(({ propertyId }) => propertyId),
+      ).toEqual(['task', 'status', 'due', 'priority', 'nextAction']);
+
+      callbacks.get('Status')!();
+      await flushMicrotasks();
+      preference = session.collectionPreference(
+        'Projects/A.md',
+        'tasks',
+      ) as ProjectTasksCollectionPreference;
+      expect(preference.visibleFields).toEqual(['task', 'due', 'priority', 'nextAction']);
+      expect(
+        preference.layoutPreferences['primary']?.table.columns.find(
+          ({ propertyId }) => propertyId === 'status',
+        )?.visible,
+      ).toBe(false);
+    } finally {
+      addItem.mockRestore();
+      show.mockRestore();
+    }
   });
 
   it('preserves the user primary sort and uses ownership, created date, and file order only as equal-key tie-breakers', () => {

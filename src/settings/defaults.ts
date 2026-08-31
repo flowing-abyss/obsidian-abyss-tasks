@@ -49,6 +49,8 @@ export function buildDefaultProjectTasksTablePreference(): ProjectTasksTablePref
 export function buildDefaultProjectsView(statusIds: readonly string[]): ProjectsViewSettings {
   return {
     portfolioLayout: 'overview',
+    portfolioGroupBy: 'none',
+    portfolioSortBy: { field: 'title', dir: 'asc' },
     visibleStatusIds: [...statusIds],
     includeUnmapped: true,
     table: buildDefaultProjectsTablePreference(),

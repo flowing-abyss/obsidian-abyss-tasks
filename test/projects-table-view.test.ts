@@ -182,4 +182,108 @@ describe('ProjectsTableView', () => {
     expect(priority).toHaveBeenCalledWith('Projects/1.md', 'A');
     expect(range).toHaveBeenCalledWith('Projects/1.md', 'start', '2026-09-01');
   });
+
+  it('honors persisted custom order and width and commits keyboard resize without dropping unknown fields', () => {
+    const root = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const preference = {
+      version: 1 as const,
+      columns: [
+        { propertyId: 'client', visible: true, width: 210 },
+        { propertyId: 'project', visible: true, width: 260 },
+        { propertyId: 'dormant-field', visible: true, width: 125 },
+        { propertyId: 'status', visible: false, width: 90 },
+      ],
+      collapsedGroups: [],
+    };
+    const project = snapshot(1);
+    project.project.frontmatter = { client: 'Northwind' };
+    const changed = vi.fn();
+    renderProjectsTable(root, [project], {
+      settings,
+      preference,
+      onPreferenceChange: changed,
+      onOpen: vi.fn(),
+    });
+
+    expect(
+      Array.from(root.querySelectorAll('[role="columnheader"]')).map((cell) => cell.textContent),
+    ).toEqual(['Client', 'Project', 'Dormant field']);
+    expect(
+      root
+        .querySelector<HTMLElement>('[role="table"]')!
+        .style.getPropertyValue('--abyss-table-columns'),
+    ).toBe('210px 260px 125px');
+
+    root
+      .querySelector<HTMLButtonElement>('[data-table-resize="client"]')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+    expect(changed).toHaveBeenCalledWith({
+      ...preference,
+      columns: [
+        { propertyId: 'client', visible: true, width: 202 },
+        { propertyId: 'project', visible: true, width: 260 },
+        { propertyId: 'dormant-field', visible: true, width: 125 },
+        { propertyId: 'status', visible: false, width: 90 },
+      ],
+    });
+  });
+
+  it('sorts stably, renders collapsible groups, and exposes cell values to keyboard focus', () => {
+    const root = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const first = snapshot(2);
+    first.project.name = 'Same';
+    first.project.priority = 'A';
+    first.project.frontmatter = { client: 'A very long client value' };
+    const second = snapshot(1);
+    second.project.name = 'Same';
+    second.project.priority = 'B';
+    const changed = vi.fn();
+    const preference = {
+      version: 1 as const,
+      columns: [
+        { propertyId: 'project', visible: true },
+        { propertyId: 'client', visible: true },
+      ],
+      collapsedGroups: ['priority:B'],
+    };
+    renderProjectsTable(root, [first, second], {
+      settings,
+      preference,
+      groupBy: 'priority',
+      sortBy: { field: 'title', dir: 'asc' },
+      onPreferenceChange: changed,
+      onOpen: vi.fn(),
+    });
+
+    expect(
+      Array.from(root.querySelectorAll<HTMLElement>('[data-table-group]')).map(
+        (group) => group.dataset['tableGroup'],
+      ),
+    ).toEqual(['priority:A', 'priority:B']);
+    expect(root.querySelectorAll('[data-project-table-row]')).toHaveLength(1);
+    const value = root.querySelector<HTMLElement>(
+      '.abyss-virtual-table-row [data-table-column="client"]',
+    )!;
+    expect(value.tabIndex).toBe(0);
+    expect(value.title).toBe('A very long client value');
+
+    root.querySelector<HTMLButtonElement>('[data-table-group="priority:B"] button')!.click();
+    expect(changed).toHaveBeenCalledWith({ ...preference, collapsedGroups: [] });
+  });
+
+  it('does not turn a keyboard action on an editor or overflow control into row activation', () => {
+    const root = freshContainer();
+    const open = vi.fn();
+    renderProjectsTable(root, [snapshot(1)], {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      onOpen: open,
+    });
+
+    root
+      .querySelector<HTMLButtonElement>('.abyss-project-overflow-btn')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(open).not.toHaveBeenCalled();
+  });
 });

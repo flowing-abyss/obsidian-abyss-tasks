@@ -513,8 +513,8 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
         ...view.visibleStatusIds,
         ...(view.includeUnmapped ? [PORTFOLIO_UNMAPPED_FILTER] : []),
       ],
-      group: 'none',
-      sort: 'none',
+      group: view.portfolioGroupBy ?? 'none',
+      sort: structuredClone(view.portfolioSortBy ?? { field: 'title', dir: 'asc' }),
       visibleFields: view.table.columns
         .filter(({ visible }) => visible)
         .map(({ propertyId }) => propertyId),
@@ -654,14 +654,25 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       const priorLayout = view.portfolioLayout;
       const priorVisibleStatusIds = view.visibleStatusIds;
       const priorIncludeUnmapped = view.includeUnmapped;
+      const priorGroup = view.portfolioGroupBy;
+      const priorSort = view.portfolioSortBy;
+      const priorTable = view.table;
       const stagedLayout = preference.layout;
       const stagedVisibleStatusIds = preference.filters.filter(
         (id) => id !== PORTFOLIO_UNMAPPED_FILTER,
       );
       const stagedIncludeUnmapped = filters.has(PORTFOLIO_UNMAPPED_FILTER);
+      const stagedGroup = preference.group;
+      const stagedSort = structuredClone(preference.sort);
+      const stagedTable = structuredClone(
+        preference.layoutPreferences['overview']?.table ?? view.table,
+      );
       view.portfolioLayout = stagedLayout;
       view.visibleStatusIds = stagedVisibleStatusIds;
       view.includeUnmapped = stagedIncludeUnmapped;
+      view.portfolioGroupBy = stagedGroup;
+      view.portfolioSortBy = stagedSort;
+      view.table = stagedTable;
       return () => {
         if (settings.projects.view !== view) return;
         if (view.portfolioLayout === stagedLayout) view.portfolioLayout = priorLayout;
@@ -669,6 +680,9 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
           view.visibleStatusIds = priorVisibleStatusIds;
         if (view.includeUnmapped === stagedIncludeUnmapped)
           view.includeUnmapped = priorIncludeUnmapped;
+        if (view.portfolioGroupBy === stagedGroup) view.portfolioGroupBy = priorGroup;
+        if (view.portfolioSortBy === stagedSort) view.portfolioSortBy = priorSort;
+        if (view.table === stagedTable) view.table = priorTable;
       };
     }
 

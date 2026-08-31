@@ -16,6 +16,12 @@ import {
   inspectorSelectionKey,
 } from '../../ui/inspector/InspectorSelection';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import {
+  moveTableColumn,
+  safeFieldLabel,
+  tableVisibleFields,
+  toggleTableColumn,
+} from '../../ui/table/TablePreferences';
 import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
 import { renderProjectTasksTable } from './ProjectTasksTableView';
@@ -431,10 +437,13 @@ export function renderProjectDashboard(
         addTaskFilter,
       );
     } else if (layout === 'table') {
+      const viewState = taskViewState();
       const table = renderProjectTasksTable(content, selectedTasks(), {
         settings: ctx.settings,
         path: project.path,
-        preference: taskViewState().table,
+        preference: viewState.table,
+        groupBy: viewState.groupBy,
+        onPreferenceChange: (next) => updateTaskView({ ...taskViewState(), table: next }),
         onActivate: (action) => {
           session.tasks.activate(action.task.ref);
           publishEffectiveInspector();
@@ -526,6 +535,7 @@ export function renderProjectDashboard(
           filters: [...next.filters],
           group: next.groupBy,
           sort: { ...next.sortBy },
+          visibleFields: tableVisibleFields(next.table),
           layoutPreferences: { ...current.layoutPreferences, primary: layoutPreference },
         };
       })
@@ -661,32 +671,50 @@ export function renderProjectDashboard(
         item.setTitle('Fields are available in the tasks table').setDisabled(true),
       );
     } else {
-      const fields: readonly [string, string][] = [
+      const fieldLabels = new Map<string, string>([
         ['task', 'Task'],
         ['status', 'Status'],
         ['priority', 'Priority'],
         ['due', 'Due'],
         ['nextAction', 'Next action'],
-      ];
+      ]);
+      const initial = taskViewState().table;
+      for (const { propertyId } of initial.columns) {
+        if (!fieldLabels.has(propertyId)) fieldLabels.set(propertyId, safeFieldLabel(propertyId));
+      }
+      const fields = [...fieldLabels];
       for (const [id, label] of fields) {
+        const table = taskViewState().table;
         addTaskFieldMenuItem(
           menu,
           [id, label],
-          taskViewState().table.columns.some(
-            (column) => column.propertyId === id && column.visible,
-          ),
+          table.columns.some((column) => column.propertyId === id && column.visible),
           (fieldId) => {
             const current = taskViewState();
             updateTaskView({
               ...current,
-              table: {
-                ...current.table,
-                columns: current.table.columns.map((column) =>
-                  column.propertyId === fieldId ? { ...column, visible: !column.visible } : column,
-                ),
-              },
+              table: toggleTableColumn(current.table, fieldId),
             });
           },
+        );
+        const index = table.columns.findIndex((column) => column.propertyId === id);
+        menu.addItem((item) =>
+          item
+            .setTitle(`Move ${label} earlier`)
+            .setDisabled(index <= 0)
+            .onClick(() => {
+              const current = taskViewState();
+              updateTaskView({ ...current, table: moveTableColumn(current.table, id, -1) });
+            }),
+        );
+        menu.addItem((item) =>
+          item
+            .setTitle(`Move ${label} later`)
+            .setDisabled(index < 0 || index >= table.columns.length - 1)
+            .onClick(() => {
+              const current = taskViewState();
+              updateTaskView({ ...current, table: moveTableColumn(current.table, id, 1) });
+            }),
         );
       }
     }

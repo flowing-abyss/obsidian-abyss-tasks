@@ -160,6 +160,7 @@ function migrateTablePreference(
   return preference;
 }
 
+const PROJECT_TASK_COLLECTION_LAYOUTS = new Set(['list', 'table', 'board', 'timeline']);
 const PROJECT_COLLECTION_LAYOUTS = new Set(['list', 'board', 'timeline']);
 const TASK_PRIORITIES = new Set(['A', 'B', 'C', 'D', 'E', 'F']);
 
@@ -229,7 +230,7 @@ function normalizeTaskCollectionPreference(
   return {
     ...current,
     version: 1,
-    layout: PROJECT_COLLECTION_LAYOUTS.has(String(current['layout']))
+    layout: PROJECT_TASK_COLLECTION_LAYOUTS.has(String(current['layout']))
       ? current['layout']
       : baseline['layout'],
     filters: validTaskFilters(current['filters'])
@@ -314,6 +315,17 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
 
   if (!['overview', 'board', 'timeline'].includes(String(view['portfolioLayout']))) {
     view['portfolioLayout'] = defaults.portfolioLayout;
+  }
+  if (!['none', 'status', 'priority'].includes(String(view['portfolioGroupBy']))) {
+    view['portfolioGroupBy'] = defaults.portfolioGroupBy;
+  }
+  if (
+    !validSort(
+      view['portfolioSortBy'],
+      new Set(['title', 'status', 'priority', 'progress', 'start', 'end']),
+    )
+  ) {
+    view['portfolioSortBy'] = structuredClone(defaults.portfolioSortBy);
   }
   if (!stringArray(view['visibleStatusIds'])) {
     view['visibleStatusIds'] = [...defaults.visibleStatusIds];

@@ -53,7 +53,7 @@ describe('renderProjectsToolbar', () => {
         controls.querySelectorAll<HTMLElement>(':scope > [data-collection-kind]'),
         (element) => element.dataset['collectionKind'],
       ),
-    ).toEqual(['scope-or-status', 'layout', 'filter', 'fields', 'add']);
+    ).toEqual(['scope-or-status', 'layout', 'filter', 'group', 'sort', 'fields', 'add']);
     expect(controls.querySelector('[data-collection-kind="search"]')).toBeNull();
     expect(root.textContent).not.toContain('Show');
     expect(root.querySelectorAll('[data-collection-controls]')).toHaveLength(1);
@@ -209,5 +209,106 @@ describe('renderProjectsToolbar', () => {
     expect(ctx.onPortfolioLayoutChanged).not.toHaveBeenCalled();
     expect(Notice).toHaveBeenCalledOnce();
     expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
+  });
+
+  it('persists portfolio grouping, sorting, and field order through the coordinator', async () => {
+    const callbacks = new Map<string, () => void>();
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      let title = '';
+      const item = {
+        setTitle: (next: string) => {
+          title = next;
+          return item;
+        },
+        setDisabled: () => item,
+        setChecked: () => item,
+        onClick: (onClick: () => void) => {
+          callbacks.set(title, onClick);
+          return item;
+        },
+      };
+      callback(item as never);
+      return this;
+    });
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      return this;
+    });
+
+    const groupContext = context();
+    const groupRoot = freshContainer();
+    renderProjectsToolbar(groupRoot, groupContext);
+    groupRoot.querySelector<HTMLButtonElement>('[data-collection-group]')!.click();
+    callbacks.get('Priority')!();
+    await flushAsyncQueue();
+    expect(groupContext.collectionState.portfolioPreference().group).toBe('priority');
+    expect(groupContext.settings.projects.view.portfolioGroupBy).toBe('priority');
+
+    callbacks.clear();
+    const sortContext = context();
+    const sortRoot = freshContainer();
+    renderProjectsToolbar(sortRoot, sortContext);
+    sortRoot.querySelector<HTMLButtonElement>('[data-collection-sort]')!.click();
+    callbacks.get('Priority')!();
+    await flushAsyncQueue();
+    expect(sortContext.collectionState.portfolioPreference().sort).toEqual({
+      field: 'priority',
+      dir: 'asc',
+    });
+    expect(sortContext.settings.projects.view.portfolioSortBy).toEqual({
+      field: 'priority',
+      dir: 'asc',
+    });
+
+    callbacks.clear();
+    const fieldContext = context();
+    const fieldRoot = freshContainer();
+    renderProjectsToolbar(fieldRoot, fieldContext);
+    fieldRoot.querySelector<HTMLButtonElement>('[data-collection-fields]')!.click();
+    callbacks.get('Move Priority earlier')!();
+    await flushAsyncQueue();
+    const preference = fieldContext.collectionState.portfolioPreference();
+    expect(
+      preference.layoutPreferences['overview']?.table?.columns.map(({ propertyId }) => propertyId),
+    ).toEqual(['project', 'priority', 'status', 'progress', 'nextAction', 'start', 'end']);
+    expect(preference.visibleFields).toEqual([
+      'project',
+      'priority',
+      'status',
+      'progress',
+      'nextAction',
+      'start',
+      'end',
+    ]);
+    expect(
+      fieldContext.settings.projects.view.table.columns.map(({ propertyId }) => propertyId),
+    ).toEqual(['project', 'priority', 'status', 'progress', 'nextAction', 'start', 'end']);
+  });
+
+  it('offers safe custom Project descriptors in Fields before they are configured', () => {
+    const titles: string[] = [];
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
+      const item = {
+        setTitle: (title: string) => {
+          titles.push(title);
+          return item;
+        },
+        setDisabled: () => item,
+        setChecked: () => item,
+        onClick: () => item,
+      };
+      callback(item as never);
+      return this;
+    });
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      return this;
+    });
+    const root = freshContainer();
+    renderProjectsToolbar(root, {
+      ...context(),
+      portfolioFields: [['client', 'Client note']],
+    } as never);
+
+    root.querySelector<HTMLButtonElement>('[data-collection-fields]')!.click();
+    expect(titles).toContain('Client note');
   });
 });

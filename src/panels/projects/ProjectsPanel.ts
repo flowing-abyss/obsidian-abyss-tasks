@@ -1,4 +1,4 @@
-import { Platform, TFile, type App } from 'obsidian';
+import { Notice, Platform, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type {
   ProjectCommandService,
@@ -26,6 +26,7 @@ import {
   deriveInspectorSelection,
   inspectorSelectionKey,
 } from '../../ui/inspector/InspectorSelection';
+import { tableVisibleFields } from '../../ui/table/TablePreferences';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { renderProjectsBoard } from './ProjectsBoardView';
 import { renderProjectDashboard } from './ProjectsDashboardView';
@@ -34,7 +35,7 @@ import {
   renderProjectsList,
   showNewProjectInput,
 } from './ProjectsListView';
-import { renderProjectsTable } from './ProjectsTableView';
+import { projectTableFields, renderProjectsTable } from './ProjectsTableView';
 import {
   renderContainerResponsiveTimeline,
   renderProjectsTimeline,
@@ -546,6 +547,7 @@ export class ProjectsPanel {
       settings: this.settings,
       onSaveSettings: this.onSaveSettings,
       collectionState: this.workspaceSession,
+      portfolioFields: projectTableFields(this.snapshots),
       onFiltersChanged: () => {
         this.portfolioFocusIntent = null;
         this.render();
@@ -694,6 +696,26 @@ export class ProjectsPanel {
             settings: this.settings,
             preference:
               this.workspaceSession.portfolioPreference().layoutPreferences['overview']?.table,
+            groupBy: this.workspaceSession.portfolioPreference().group,
+            sortBy: this.workspaceSession.portfolioPreference().sort,
+            onPreferenceChange: (next) => {
+              void this.workspaceSession
+                .updatePortfolioPreference((current) => ({
+                  ...current,
+                  visibleFields: tableVisibleFields(next),
+                  layoutPreferences: {
+                    ...current.layoutPreferences,
+                    overview: { ...current.layoutPreferences['overview'], table: next },
+                  },
+                }))
+                .then(() => this.render())
+                .catch(
+                  () =>
+                    new Notice(
+                      'Project table preference was not saved. Nothing changed; try again.',
+                    ),
+                );
+            },
             onOpen: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
             onWriteProperty: (write) => this.writeProperty(write),
             onSetStatus: (path, statusId) => this.setStatus(path, statusId),

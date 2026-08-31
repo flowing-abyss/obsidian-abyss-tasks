@@ -28,6 +28,8 @@ export interface ProjectsListContext {
   onPortfolioLayoutChanged?: () => void;
   onCaptureSettled?: () => void;
   timelineAvailable?: boolean;
+  /** Safe built-in/frontmatter descriptors exposed by the shared Fields menu. */
+  portfolioFields?: readonly (readonly [string, string])[];
   captureSession?: ProjectCaptureSession;
   today?: () => string;
   onCreate: (name: string) => Promise<ProjectCreateResult>;

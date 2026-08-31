@@ -9,9 +9,19 @@ import {
 } from '../../projects/properties/ProjectPropertyAdapter';
 import type { ProjectPropertyWriteResult } from '../../projects/properties/ProjectPropertyCommands';
 import type { ProjectWorkspaceSnapshot } from '../../projects/types';
-import type { CalendarSettings, ProjectsTablePreference } from '../../settings/types';
+import type {
+  CalendarSettings,
+  PortfolioGroupBy,
+  PortfolioSort,
+  ProjectsTablePreference,
+} from '../../settings/types';
 import { EntityPresentation } from '../../ui/entity/EntityPresentation';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import {
+  resizeTableColumn,
+  safeFieldLabel,
+  setTableGroupCollapsed,
+} from '../../ui/table/TablePreferences';
 import { renderVirtualTable, type VirtualTableHandle } from '../../ui/table/VirtualTable';
 
 const DEFAULT_COLUMNS = [
@@ -24,11 +34,27 @@ const DEFAULT_COLUMNS = [
   ['end', 'End'],
 ] as const;
 
+export function projectTableFields(
+  snapshots: readonly ProjectWorkspaceSnapshot[],
+  bases: readonly PublicBasesDescriptor[] = [],
+): readonly (readonly [string, string])[] {
+  const labels = new Map<string, string>(DEFAULT_COLUMNS);
+  const adapter = new ProjectPropertyAdapter();
+  for (const snapshot of snapshots) {
+    for (const descriptor of adapter.describeAll(snapshot.project.frontmatter, bases)) {
+      if (!labels.has(descriptor.id)) labels.set(descriptor.id, descriptor.displayName);
+    }
+  }
+  return [...labels];
+}
+
 export interface ProjectsTableOptions {
   readonly settings: CalendarSettings;
   readonly onOpen: (path: string) => void;
   readonly preference?: ProjectsTablePreference;
   readonly onPreferenceChange?: (next: ProjectsTablePreference) => void;
+  readonly groupBy?: PortfolioGroupBy;
+  readonly sortBy?: PortfolioSort;
   /** Guarded generic writer. Built-in lifecycle/range fields use specialised callbacks. */
   readonly onWriteProperty?: (write: ProjectPropertyWrite) => Promise<ProjectPropertyWriteResult>;
   readonly onSetStatus?: (path: string, statusId: string) => Promise<{ readonly type: string }>;
@@ -50,20 +76,115 @@ function columns(
   snapshots: readonly ProjectWorkspaceSnapshot[],
   bases: readonly PublicBasesDescriptor[],
 ): readonly { readonly id: string; readonly label: string; readonly width?: number }[] {
-  const labels = new Map<string, string>(DEFAULT_COLUMNS);
-  const adapter = new ProjectPropertyAdapter();
-  for (const snapshot of snapshots) {
-    for (const descriptor of adapter.describeAll(snapshot.project.frontmatter, bases)) {
-      if (!labels.has(descriptor.id)) labels.set(descriptor.id, descriptor.displayName);
-    }
-  }
+  const labels = new Map(projectTableFields(snapshots, bases));
   return preference.columns
     .filter(({ visible }) => visible)
     .map(({ propertyId, width }) => ({
       id: propertyId,
-      label: labels.get(propertyId) ?? propertyId,
+      label: labels.get(propertyId) ?? safeFieldLabel(propertyId),
       width,
     }));
+}
+
+function compareOptional(left: string | undefined, right: string | undefined): number {
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return left.localeCompare(right);
+}
+
+function projectSortValue(
+  snapshot: ProjectWorkspaceSnapshot,
+  field: Exclude<PortfolioSort['field'], 'progress'>,
+): string | undefined {
+  if (field === 'title') return snapshot.project.name;
+  if (field === 'status')
+    return snapshot.project.statusId ?? snapshot.project.rawStatus ?? undefined;
+  if (field === 'priority') return snapshot.project.priority ?? undefined;
+  return snapshot.project.range[field]?.raw;
+}
+
+function compareProgress(left: number | null, right: number | null): number {
+  if (left === right) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return left - right;
+}
+
+function sortProjects(
+  snapshots: readonly ProjectWorkspaceSnapshot[],
+  sort: PortfolioSort,
+): readonly ProjectWorkspaceSnapshot[] {
+  const direction = sort.dir === 'asc' ? 1 : -1;
+  return [...snapshots].sort((left, right) => {
+    const explicit =
+      sort.field === 'progress'
+        ? compareProgress(left.taskRollup.progress, right.taskRollup.progress)
+        : compareOptional(projectSortValue(left, sort.field), projectSortValue(right, sort.field));
+    return explicit === 0
+      ? left.project.path.localeCompare(right.project.path)
+      : explicit * direction;
+  });
+}
+
+function projectGroups(
+  snapshots: readonly ProjectWorkspaceSnapshot[],
+  groupBy: PortfolioGroupBy,
+  preference: ProjectsTablePreference,
+  settings: CalendarSettings,
+) {
+  if (groupBy === 'none') return undefined;
+  const buckets = new Map<string, { label: string; rows: ProjectWorkspaceSnapshot[] }>();
+  for (const snapshot of snapshots) {
+    let value: string;
+    let label: string;
+    if (groupBy === 'status') {
+      value = snapshot.project.statusId ?? '__unmapped__';
+      label =
+        settings.projects.statuses.find(({ id }) => id === snapshot.project.statusId)?.label ??
+        snapshot.project.rawStatus ??
+        'No status';
+    } else {
+      value = snapshot.project.priority ?? 'none';
+      label = snapshot.project.priority ? `Priority ${snapshot.project.priority}` : 'No priority';
+    }
+    const key = `${groupBy}:${value}`;
+    const bucket = buckets.get(key) ?? { label, rows: [] };
+    bucket.rows.push(snapshot);
+    buckets.set(key, bucket);
+  }
+  const priorityOrder = new Map(['A', 'B', 'C', 'D', 'E', 'F', 'none'].map((key, i) => [key, i]));
+  const statusOrder = new Map(settings.projects.statuses.map(({ id }, i) => [id, i]));
+  return [...buckets.entries()]
+    .sort(([left], [right]) => {
+      const leftValue = left.slice(groupBy.length + 1);
+      const rightValue = right.slice(groupBy.length + 1);
+      const order = groupBy === 'priority' ? priorityOrder : statusOrder;
+      return (
+        (order.get(leftValue) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(rightValue) ?? Number.MAX_SAFE_INTEGER) || left.localeCompare(right)
+      );
+    })
+    .map(([key, bucket]) => ({
+      key,
+      label: bucket.label,
+      rows: bucket.rows,
+      collapsed: preference.collapsedGroups.includes(key),
+    }));
+}
+
+function makeCellFocusable(cell: HTMLElement, value: string, activate: () => void): void {
+  cell.tabIndex = 0;
+  if (value) {
+    cell.title = value;
+    cell.setAttribute('aria-label', value);
+  }
+  cell.addEventListener('keydown', (event) => {
+    if (event.target !== cell || (event.key !== 'Enter' && event.key !== ' ')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    activate();
+  });
 }
 
 function propertyDescriptor(
@@ -348,11 +469,28 @@ export function renderProjectsTable(
 ): VirtualTableHandle {
   const preference = options.preference ?? options.settings.projects.view.table;
   const adapter = new ProjectPropertyAdapter();
+  const tableColumns = columns(preference, snapshots, options.bases ?? []);
+  const ordered = sortProjects(
+    snapshots,
+    options.sortBy ??
+      options.settings.projects.view.portfolioSortBy ?? { field: 'title', dir: 'asc' },
+  );
+  const groups = projectGroups(
+    ordered,
+    options.groupBy ?? options.settings.projects.view.portfolioGroupBy ?? 'none',
+    preference,
+    options.settings,
+  );
   const table = renderVirtualTable(parent, {
-    columns: columns(preference, snapshots, options.bases ?? []),
-    rows: [...snapshots],
+    columns: tableColumns,
+    rows: ordered,
+    ...(groups ? { groups } : {}),
     key: ({ project }) => project.path,
     label: 'Projects overview table',
+    onColumnResize: (propertyId, width) =>
+      options.onPreferenceChange?.(resizeTableColumn(preference, propertyId, width)),
+    onGroupToggle: (groupKey, collapsed) =>
+      options.onPreferenceChange?.(setTableGroupCollapsed(preference, groupKey, collapsed)),
     renderRow: (snapshot, host) => {
       const row = host.createDiv({
         cls: 'abyss-virtual-table-row',
@@ -361,15 +499,16 @@ export function renderProjectsTable(
       const open = (): void => options.onOpen(snapshot.project.path);
       row.addEventListener('dblclick', open);
       row.addEventListener('keydown', (event) => {
+        if (event.target !== row) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           open();
         }
       });
-      for (const column of columns(preference, snapshots, options.bases ?? [])) {
+      for (const column of tableColumns) {
         const cell = row.createDiv({
           cls: 'abyss-virtual-table-cell',
-          attr: { role: 'cell', 'data-table-column': column.id },
+          attr: { role: 'cell', tabindex: '0', 'data-table-column': column.id },
         });
         let value: string;
         switch (column.id) {
@@ -387,6 +526,7 @@ export function renderProjectsTable(
             cell.addEventListener('contextmenu', (event) =>
               showProjectMenu(event, snapshot, options),
             );
+            makeCellFocusable(cell, snapshot.project.name, open);
             continue;
           }
           case 'status': {
@@ -405,6 +545,7 @@ export function renderProjectsTable(
                       : Promise.resolve({ type: 'invalid' })
                 : undefined,
             );
+            makeCellFocusable(cell, snapshot.project.statusId ?? '', open);
             continue;
           }
           case 'priority':
@@ -424,6 +565,7 @@ export function renderProjectsTable(
                     )
                 : undefined,
             );
+            makeCellFocusable(cell, snapshot.project.priority ?? '', open);
             continue;
           case 'progress':
             value =
@@ -444,6 +586,7 @@ export function renderProjectsTable(
               options,
               snapshot.project.path,
             );
+            makeCellFocusable(cell, snapshot.project.range.start?.raw ?? '', open);
             continue;
           case 'end':
             renderRangeEditor(
@@ -453,6 +596,7 @@ export function renderProjectsTable(
               options,
               snapshot.project.path,
             );
+            makeCellFocusable(cell, snapshot.project.range.end?.raw ?? '', open);
             continue;
           default: {
             const descriptor = propertyDescriptor(
@@ -469,9 +613,13 @@ export function renderProjectsTable(
               snapshot.project.path,
               options,
             );
-            if (cell.querySelector('[data-property-editor]')) continue;
+            if (cell.querySelector('[data-property-editor]')) {
+              makeCellFocusable(cell, value, open);
+              continue;
+            }
           }
         }
+        makeCellFocusable(cell, value, open);
         if (value) cell.createSpan({ text: value, attr: { title: value } });
       }
       return row;

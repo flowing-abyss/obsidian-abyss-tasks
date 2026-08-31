@@ -2550,6 +2550,27 @@ describe('ProjectsPanel dispatch', () => {
     }
   });
 
+  it('routes portfolio Overview through the real bounded configurable table', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'overview';
+    const snapshots = Array.from({ length: 120 }, (_, index) =>
+      workspace(proj({ path: `Projects/${String(index)}.md`, name: `Project ${String(index)}` })),
+    );
+    const panel = new ProjectsPanel(new AppState(), stubStore, stubMgr, settings, null as never, {
+      snapshots,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      expect(el.querySelector('[role="table"]')?.getAttribute('aria-label')).toBe(
+        'Projects overview table',
+      );
+      expect(el.querySelectorAll('[data-project-table-row]').length).toBeLessThan(120);
+    } finally {
+      panel.destroy();
+    }
+  });
+
   it.each(
     (['overview', 'board', 'timeline'] as const).flatMap((layout) => [
       {

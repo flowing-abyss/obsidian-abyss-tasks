@@ -1,10 +1,21 @@
 import { Menu, Notice, setIcon } from 'obsidian';
-import type { ProjectStatus, ProjectsTablePreference } from '../../settings/types';
+import type {
+  PortfolioGroupBy,
+  PortfolioSort,
+  ProjectStatus,
+  ProjectsTablePreference,
+} from '../../settings/types';
 import {
   renderCollectionControls,
   type CollectionControlAction,
 } from '../../ui/collection/CollectionControls';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import {
+  moveTableColumn,
+  safeFieldLabel,
+  tableVisibleFields,
+  toggleTableColumn,
+} from '../../ui/table/TablePreferences';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import type { ProjectsListContext } from './viewContext';
 
@@ -145,18 +156,18 @@ const TABLE_FIELDS: readonly [string, string][] = [
   ['end', 'End'],
 ];
 
-function updateFields(state: ProjectWorkspaceSession, id: string): Promise<void> {
+function updateTable(
+  state: ProjectWorkspaceSession,
+  mutate: (table: ProjectsTablePreference) => ProjectsTablePreference,
+): Promise<void> {
   return state
     .updatePortfolioPreference((current) => {
       const table = current.layoutPreferences['overview']?.table;
       if (!table) return current;
-      const columns = table.columns.map((column) =>
-        column.propertyId === id ? { ...column, visible: !column.visible } : column,
-      );
-      const next: ProjectsTablePreference = { ...table, columns };
+      const next = mutate(table);
       return {
         ...current,
-        visibleFields: columns.filter(({ visible }) => visible).map(({ propertyId }) => propertyId),
+        visibleFields: tableVisibleFields(next),
         layoutPreferences: {
           ...current.layoutPreferences,
           overview: { ...current.layoutPreferences['overview'], table: next },
@@ -164,6 +175,17 @@ function updateFields(state: ProjectWorkspaceSession, id: string): Promise<void>
       };
     })
     .then(() => undefined);
+}
+
+function portfolioFields(
+  table: ProjectsTablePreference | undefined,
+  available: readonly (readonly [string, string])[] = TABLE_FIELDS,
+): readonly (readonly [string, string])[] {
+  const labels = new Map(available);
+  for (const { propertyId } of table?.columns ?? []) {
+    if (!labels.has(propertyId)) labels.set(propertyId, safeFieldLabel(propertyId));
+  }
+  return [...labels];
 }
 
 function addPortfolioFieldMenuItem(
@@ -180,8 +202,60 @@ function addPortfolioFieldMenuItem(
       .setChecked(
         table?.columns.some((column) => column.propertyId === id && column.visible) ?? false,
       )
-      .onClick(() => void updateFields(state, id).then(onChanged).catch(reportPreferenceError)),
+      .onClick(
+        () =>
+          void updateTable(state, (current) => toggleTableColumn(current, id))
+            .then(onChanged)
+            .catch(reportPreferenceError),
+      ),
   );
+  const index = table?.columns.findIndex((column) => column.propertyId === id) ?? -1;
+  menu.addItem((item) =>
+    item
+      .setTitle(`Move ${label} earlier`)
+      .setDisabled(index <= 0)
+      .onClick(
+        () =>
+          void updateTable(state, (current) => moveTableColumn(current, id, -1))
+            .then(onChanged)
+            .catch(reportPreferenceError),
+      ),
+  );
+  menu.addItem((item) =>
+    item
+      .setTitle(`Move ${label} later`)
+      .setDisabled(index < 0 || index >= (table?.columns.length ?? 0) - 1)
+      .onClick(
+        () =>
+          void updateTable(state, (current) => moveTableColumn(current, id, 1))
+            .then(onChanged)
+            .catch(reportPreferenceError),
+      ),
+  );
+}
+
+function updatePortfolioGroup(
+  state: ProjectWorkspaceSession,
+  group: PortfolioGroupBy,
+): Promise<void> {
+  return state
+    .updatePortfolioPreference((current) => ({ ...current, group }))
+    .then(() => undefined);
+}
+
+function updatePortfolioSort(
+  state: ProjectWorkspaceSession,
+  field: PortfolioSort['field'],
+): Promise<void> {
+  return state
+    .updatePortfolioPreference((current) => ({
+      ...current,
+      sort: {
+        field,
+        dir: current.sort.field === field && current.sort.dir === 'asc' ? 'desc' : 'asc',
+      },
+    }))
+    .then(() => undefined);
 }
 
 function renderStatusFilter(
@@ -302,13 +376,68 @@ export function renderProjectsToolbar(
   const actions: readonly CollectionControlAction[] = [
     { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showStatusFilterMenu },
     {
+      kind: 'group',
+      label: 'Group',
+      icon: 'layout-list',
+      onActivate: (event) => {
+        const menu = new Menu();
+        for (const [value, label] of [
+          ['none', 'None'],
+          ['status', 'Status'],
+          ['priority', 'Priority'],
+        ] as const) {
+          menu.addItem((item) =>
+            item
+              .setTitle(label)
+              .setChecked(state.portfolioPreference().group === value)
+              .onClick(
+                () =>
+                  void updatePortfolioGroup(state, value)
+                    .then(ctx.onPortfolioLayoutChanged)
+                    .catch(reportPreferenceError),
+              ),
+          );
+        }
+        showMenuAtMouseEventWithFocus(menu, event);
+      },
+    },
+    {
+      kind: 'sort',
+      label: 'Sort',
+      icon: 'arrow-up-down',
+      onActivate: (event) => {
+        const menu = new Menu();
+        for (const [field, label] of [
+          ['title', 'Title'],
+          ['status', 'Status'],
+          ['priority', 'Priority'],
+          ['progress', 'Progress'],
+          ['start', 'Start'],
+          ['end', 'End'],
+        ] as const) {
+          menu.addItem((item) =>
+            item
+              .setTitle(label)
+              .setChecked(state.portfolioPreference().sort.field === field)
+              .onClick(
+                () =>
+                  void updatePortfolioSort(state, field)
+                    .then(ctx.onPortfolioLayoutChanged)
+                    .catch(reportPreferenceError),
+              ),
+          );
+        }
+        showMenuAtMouseEventWithFocus(menu, event);
+      },
+    },
+    {
       kind: 'fields',
       label: 'Fields',
       icon: 'columns-3',
       onActivate: (event) => {
         const menu = new Menu();
         const table = state.portfolioPreference().layoutPreferences['overview']?.table;
-        for (const [id, label] of TABLE_FIELDS) {
+        for (const [id, label] of portfolioFields(table, ctx.portfolioFields)) {
           addPortfolioFieldMenuItem(menu, [id, label], table, state, ctx.onPortfolioLayoutChanged);
         }
         showMenuAtMouseEventWithFocus(menu, event);
@@ -354,6 +483,11 @@ export function renderProjectsToolbar(
   filterButton = controls.querySelector<HTMLButtonElement>('[data-collection-filter]')!;
   filterButton.setAttribute('aria-haspopup', 'menu');
   filterButton.setAttribute('aria-expanded', 'false');
+  for (const kind of ['group', 'sort', 'fields'] as const) {
+    controls
+      .querySelector<HTMLButtonElement>(`[data-collection-${kind}]`)
+      ?.setAttribute('aria-haspopup', 'menu');
+  }
   const captureHost = header.createDiv({ cls: 'abyss-projects-new-input-host' });
   const liveRegion = header.createDiv({
     cls: 'abyss-sr-only abyss-project-create-live',
