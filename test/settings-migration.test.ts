@@ -186,6 +186,63 @@ describe('migrateSettings', () => {
     });
   });
 
+  it('drops malformed Table columns without discarding safe unknown columns', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [{ id: 'active', label: 'Active', behavior: 'regular' }],
+        defaultStatusId: 'active',
+        view: {
+          table: {
+            version: 1,
+            columns: [
+              { propertyId: 'project', visible: true },
+              { propertyId: 'unknown-project-property', visible: false, width: 280 },
+              { propertyId: 'unsafe-project-property', visible: 'yes' },
+            ],
+            collapsedGroups: [],
+          },
+          tasks: {
+            groupBy: 'none',
+            sortBy: { field: 'date', dir: 'asc' },
+            filters: [],
+            table: {
+              version: 1,
+              columns: [
+                { propertyId: 'task', visible: true },
+                { propertyId: 'unknown-task-property', visible: true },
+                { propertyId: 'unsafe-task-property', visible: false, width: 'wide' },
+              ],
+              collapsedGroups: [],
+            },
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    const view = (raw['projects'] as { view: Record<string, unknown> }).view;
+    expect(view['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'project', visible: true },
+        { propertyId: 'unknown-project-property', visible: false, width: 280 },
+      ],
+      collapsedGroups: [],
+    });
+    expect((view['tasks'] as Record<string, unknown>)['table']).toEqual({
+      version: 1,
+      columns: [
+        { propertyId: 'task', visible: true },
+        { propertyId: 'unknown-task-property', visible: true },
+      ],
+      collapsedGroups: [],
+    });
+  });
+
   it('creates a complete shortcut collection when legacy settings have none', () => {
     const raw: Record<string, unknown> = {};
 

@@ -122,19 +122,24 @@ function stringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }
 
-function tableColumns(value: unknown): value is readonly ProjectTableColumnPreference[] {
+function tableColumn(value: unknown): value is ProjectTableColumnPreference {
+  const candidate = record(value);
   return (
-    Array.isArray(value) &&
-    value.every((column) => {
-      const candidate = record(column);
-      return (
-        candidate !== undefined &&
-        typeof candidate['propertyId'] === 'string' &&
-        typeof candidate['visible'] === 'boolean' &&
-        (candidate['width'] === undefined || typeof candidate['width'] === 'number')
-      );
-    })
+    candidate !== undefined &&
+    typeof candidate['propertyId'] === 'string' &&
+    typeof candidate['visible'] === 'boolean' &&
+    (candidate['width'] === undefined || typeof candidate['width'] === 'number')
   );
+}
+
+function migrateTableColumns(
+  value: unknown,
+  defaults: readonly ProjectTableColumnPreference[],
+): readonly ProjectTableColumnPreference[] {
+  if (!Array.isArray(value)) return defaults.map((column) => ({ ...column }));
+  const columns = value.filter(tableColumn);
+  if (columns.length > 0 || value.length === 0) return columns;
+  return defaults.map((column) => ({ ...column }));
 }
 
 function migrateTablePreference(
@@ -150,9 +155,7 @@ function migrateTablePreference(
     };
   }
   if (preference['version'] !== 1) preference['version'] = 1;
-  if (!tableColumns(preference['columns'])) {
-    preference['columns'] = defaults.columns.map((column) => ({ ...column }));
-  }
+  preference['columns'] = migrateTableColumns(preference['columns'], defaults.columns);
   if (!stringArray(preference['collapsedGroups'])) preference['collapsedGroups'] = [];
   return preference;
 }
