@@ -11,15 +11,16 @@ import type {
 } from '../src/settings/types';
 
 describe('migrateSettings', () => {
-  it('adds the per-Project collection preference store without rewriting dormant records', () => {
+  it('normalizes partial scoped collection records while retaining dormant data', () => {
     const raw: Record<string, unknown> = {
       projects: {
         statuses: [],
         view: {
           collectionPreferences: {
             'Projects/A.md': {
-              tasks: { version: 1, layout: 'board', futureField: 'preserve me' },
-              workNotes: { version: 1, layout: 'list' },
+              tasks: { version: 9, layout: 'invalid', futureField: 'preserve me' },
+              workNotes: 42,
+              dormantScope: { retained: true },
             },
           },
         },
@@ -29,9 +30,41 @@ describe('migrateSettings', () => {
     migrateSettings(raw);
 
     const view = (raw['projects'] as { view: Record<string, unknown> }).view;
-    expect(view['collectionPreferences']).toMatchObject({
-      'Projects/A.md': { tasks: { futureField: 'preserve me' } },
+    const preferences = view['collectionPreferences'] as Record<string, Record<string, unknown>>;
+    expect(preferences['Projects/A.md']).toMatchObject({
+      tasks: {
+        version: 1,
+        layout: 'list',
+        filters: [],
+        group: 'none',
+        sort: { field: 'date', dir: 'asc' },
+        visibleFields: ['task', 'status', 'priority', 'due', 'nextAction'],
+        futureField: 'preserve me',
+      },
+      workNotes: {
+        version: 1,
+        layout: 'list',
+        filters: [],
+        group: 'none',
+        sort: { field: 'updated', dir: 'desc' },
+        visibleFields: [],
+        layoutPreferences: {},
+      },
+      dormantScope: { retained: true },
     });
+    expect(
+      (
+        (preferences['Projects/A.md']?.['tasks'] as Record<string, unknown>)[
+          'layoutPreferences'
+        ] as Record<string, unknown>
+      )['primary'],
+    ).toMatchObject({
+      table: { version: 1, columns: expect.any(Array), collapsedGroups: [] },
+    });
+
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+    expect(raw).toEqual(once);
   });
 
   it('accepts partial raw settings only at migration while loaded settings require both Table preferences', () => {

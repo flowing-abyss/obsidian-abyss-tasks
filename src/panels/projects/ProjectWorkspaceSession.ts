@@ -1,4 +1,5 @@
 import type { ProjectCreateResult } from '../../projects/ProjectManager';
+import { normalizeProjectCollectionPreferences } from '../../settings/migration';
 import type {
   CalendarSettings,
   CollectionSessionState,
@@ -412,6 +413,9 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   >();
 
   bind(settings: CalendarSettings, onSaveSettings?: () => Promise<void>): void {
+    normalizeProjectCollectionPreferences(
+      settings.projects.view as unknown as Record<string, unknown>,
+    );
     this.settings = settings;
     this.onSaveSettings = onSaveSettings;
     if (onSaveSettings) this.fallback.clear();

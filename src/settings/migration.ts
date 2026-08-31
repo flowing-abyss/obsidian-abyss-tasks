@@ -160,6 +160,149 @@ function migrateTablePreference(
   return preference;
 }
 
+const PROJECT_COLLECTION_LAYOUTS = new Set(['list', 'board', 'timeline']);
+const TASK_PRIORITIES = new Set(['A', 'B', 'C', 'D', 'E', 'F']);
+
+function validTaskFilters(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  return value.every((entry) => {
+    const filter = record(entry);
+    if (!filter || typeof filter['type'] !== 'string') return false;
+    if (filter['type'] === 'file') return typeof filter['filePath'] === 'string';
+    if (filter['type'] === 'priority')
+      return typeof filter['value'] === 'string' && TASK_PRIORITIES.has(filter['value']);
+    return (
+      ['tag', 'time', 'status', 'date'].includes(filter['type']) &&
+      typeof filter['value'] === 'string'
+    );
+  });
+}
+
+function taskCollectionBaseline(tasks: Record<string, unknown>): Record<string, unknown> {
+  const table = migrateTablePreference(
+    structuredClone(tasks['table']),
+    buildDefaultProjectTasksTablePreference(),
+  );
+  const columns = table['columns'] as readonly ProjectTableColumnPreference[];
+  const statusGroups = stringArray(tasks['statusGroups']) ? tasks['statusGroups'] : [];
+  return {
+    version: 1,
+    layout: 'list',
+    filters: validTaskFilters(tasks['filters']) ? structuredClone(tasks['filters']) : [],
+    group: PROJECT_TASK_GROUPS.has(String(tasks['groupBy'])) ? tasks['groupBy'] : 'none',
+    sort: validSort(tasks['sortBy'], PROJECT_TASK_SORTS)
+      ? structuredClone(tasks['sortBy'])
+      : { field: 'date', dir: 'asc' },
+    visibleFields: columns.filter((column) => column.visible).map((column) => column.propertyId),
+    layoutPreferences: {
+      primary: { table, statusGroups: [...statusGroups] },
+    },
+  };
+}
+
+function workNotesCollectionBaseline(workNotes: Record<string, unknown>): Record<string, unknown> {
+  return {
+    version: 1,
+    layout: 'list',
+    filters: stringArray(workNotes['statusIds']) ? [...workNotes['statusIds']] : [],
+    group: WORK_NOTE_GROUPS.has(String(workNotes['groupBy'])) ? workNotes['groupBy'] : 'none',
+    sort: validSort(workNotes['sortBy'], WORK_NOTE_SORTS)
+      ? structuredClone(workNotes['sortBy'])
+      : { field: 'updated', dir: 'desc' },
+    visibleFields: [],
+    layoutPreferences: {},
+  };
+}
+
+function normalizeTaskCollectionPreference(
+  value: unknown,
+  baseline: Record<string, unknown>,
+): Record<string, unknown> {
+  const current = record(value) ?? {};
+  const layouts = record(current['layoutPreferences']) ?? {};
+  const primary = record(layouts['primary']) ?? {};
+  const baselinePrimary = baseline['layoutPreferences'] as Record<string, Record<string, unknown>>;
+  const fallbackPrimary = baselinePrimary['primary']!;
+  const statusGroups = stringArray(primary['statusGroups'])
+    ? primary['statusGroups']
+    : (fallbackPrimary['statusGroups'] as string[]);
+  return {
+    ...current,
+    version: 1,
+    layout: PROJECT_COLLECTION_LAYOUTS.has(String(current['layout']))
+      ? current['layout']
+      : baseline['layout'],
+    filters: validTaskFilters(current['filters'])
+      ? structuredClone(current['filters'])
+      : structuredClone(baseline['filters']),
+    group: PROJECT_TASK_GROUPS.has(String(current['group'])) ? current['group'] : baseline['group'],
+    sort: validSort(current['sort'], PROJECT_TASK_SORTS)
+      ? structuredClone(current['sort'])
+      : structuredClone(baseline['sort']),
+    visibleFields: stringArray(current['visibleFields'])
+      ? [...current['visibleFields']]
+      : structuredClone(baseline['visibleFields']),
+    layoutPreferences: {
+      ...layouts,
+      primary: {
+        ...primary,
+        table: migrateTablePreference(
+          structuredClone(primary['table']),
+          fallbackPrimary['table'] as {
+            readonly version: 1;
+            readonly columns: readonly ProjectTableColumnPreference[];
+          },
+        ),
+        statusGroups: [...statusGroups],
+      },
+    },
+  };
+}
+
+function normalizeWorkNotesCollectionPreference(
+  value: unknown,
+  baseline: Record<string, unknown>,
+): Record<string, unknown> {
+  const current = record(value) ?? {};
+  return {
+    ...current,
+    version: 1,
+    layout: PROJECT_COLLECTION_LAYOUTS.has(String(current['layout']))
+      ? current['layout']
+      : baseline['layout'],
+    filters: stringArray(current['filters'])
+      ? [...current['filters']]
+      : structuredClone(baseline['filters']),
+    group: WORK_NOTE_GROUPS.has(String(current['group'])) ? current['group'] : baseline['group'],
+    sort: validSort(current['sort'], WORK_NOTE_SORTS)
+      ? structuredClone(current['sort'])
+      : structuredClone(baseline['sort']),
+    visibleFields: stringArray(current['visibleFields'])
+      ? [...current['visibleFields']]
+      : structuredClone(baseline['visibleFields']),
+    layoutPreferences: record(current['layoutPreferences']) ?? {},
+  };
+}
+
+/** Ensures every persisted Project scope is safe before collection coordinators read it. */
+export function normalizeProjectCollectionPreferences(view: Record<string, unknown>): void {
+  const tasks = record(view['tasks']);
+  const workNotes = record(view['workNotes']);
+  if (!tasks || !workNotes) return;
+  const taskBaseline = taskCollectionBaseline(tasks);
+  const workNotesBaseline = workNotesCollectionBaseline(workNotes);
+  const collectionPreferences = record(view['collectionPreferences']) ?? {};
+  for (const [path, rawEntry] of Object.entries(collectionPreferences)) {
+    const entry = record(rawEntry) ?? {};
+    collectionPreferences[path] = {
+      ...entry,
+      tasks: normalizeTaskCollectionPreference(entry['tasks'], taskBaseline),
+      workNotes: normalizeWorkNotesCollectionPreference(entry['workNotes'], workNotesBaseline),
+    };
+  }
+  view['collectionPreferences'] = collectionPreferences;
+}
+
 function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?: unknown }): void {
   const ids = (projects.statuses ?? []).map(({ id }) => id);
   const defaults = buildDefaultProjectsView(ids);
@@ -216,7 +359,7 @@ function migrateProjectsView(projects: { statuses?: Array<{ id: string }>; view?
       workNotes['statusIds'] = [...defaults.workNotes.statusIds];
     }
   }
-  if (!record(view['collectionPreferences'])) view['collectionPreferences'] = {};
+  normalizeProjectCollectionPreferences(view);
 }
 
 /**

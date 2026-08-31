@@ -81,6 +81,51 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(settings.projects.view.tasks.groupBy).toBe('none');
   });
 
+  it('normalizes dormant partial scope records before a coordinator read and reload', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.collectionPreferences['Projects/A.md'] = {
+      tasks: { version: 1, layout: 'board' },
+      workNotes: { version: 3, layout: 'invalid' },
+      dormantScope: { keep: 'future data' },
+    } as never;
+
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings);
+    registry.openProject('Projects/A.md');
+
+    expect(registry.collectionPreference('Projects/A.md', 'tasks')).toMatchObject({
+      version: 1,
+      layout: 'board',
+      filters: [],
+      group: 'none',
+      sort: { field: 'date', dir: 'asc' },
+      visibleFields: ['task', 'status', 'priority', 'due', 'nextAction'],
+      layoutPreferences: { primary: { table: { version: 1 } } },
+    });
+    expect(registry.collectionView('Projects/A.md', 'tasks')).toMatchObject({
+      filters: [],
+      groupBy: 'none',
+      sortBy: { field: 'date', dir: 'asc' },
+      table: { version: 1 },
+    });
+    expect(registry.collectionPreference('Projects/A.md', 'work-notes')).toMatchObject({
+      version: 1,
+      layout: 'list',
+      filters: settings.projects.view.workNotes.statusIds,
+      group: 'none',
+      sort: { field: 'updated', dir: 'desc' },
+      visibleFields: [],
+      layoutPreferences: {},
+    });
+    expect(settings.projects.view.collectionPreferences['Projects/A.md']).toMatchObject({
+      dormantScope: { keep: 'future data' },
+    });
+
+    const reloaded = new ProjectWorkspaceSessionRegistry();
+    reloaded.bindCollectionPreferences(settings);
+    expect(reloaded.collectionView('Projects/A.md', 'tasks').table).toMatchObject({ version: 1 });
+  });
+
   it('owns independent session-only Timeline presentation state for every scope', () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');
