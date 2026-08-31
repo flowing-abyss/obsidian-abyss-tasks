@@ -120,7 +120,6 @@ import {
 } from '../views/timegrid/renderTaskMeta';
 import type { TimedBlockKeyboardIntent } from '../views/timegrid/renderTimedBlocks';
 import type { TimedBoundaryTarget } from '../views/timegrid/timedInteractions';
-import { renderNextActionControl } from './projects/NextActionControl';
 import type {
   ProjectTaskCollectionEffect,
   ProjectTaskCollectionSession,
@@ -2786,14 +2785,6 @@ export class CenterPanel {
       this.focusTaskKey(key);
       this.state.set('taskStack', [task]);
     });
-
-    if (context.projectPath !== undefined && this.nextActions) {
-      renderNextActionControl(mainRow, {
-        task,
-        onSet: () => void this.updateProjectNextAction(context.projectPath!, task, false),
-        onClear: () => void this.updateProjectNextAction(context.projectPath!, task, true),
-      });
-    }
 
     renderEntityActionLayer(card, {
       className: 'abyss-task-delete-btn',

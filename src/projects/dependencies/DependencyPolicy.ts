@@ -41,7 +41,7 @@ export class DependencyPolicy implements DependencyPolicyPort {
   }
 
   validateLink(input: DependencyLinkValidationInput): DependencyLinkValidation {
-    return this.index.validateLink(input.prerequisite, input.dependent, input.dependencyId);
+    return this.index.preflightLink(input.prerequisite, input.dependent, input.dependencyId);
   }
 
   subscribe(listener: (event: DependencyProjectionUpdate) => void): () => void {

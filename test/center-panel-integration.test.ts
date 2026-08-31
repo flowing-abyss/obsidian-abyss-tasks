@@ -3441,15 +3441,13 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     return { panel, state, container, sessionExecute, planCreate };
   }
 
-  it('renders Next Action as an icon-only Project task-card control', async () => {
+  it('keeps Next Action out of the permanent Project task-card controls', async () => {
     const { panel, container } = await projectCaptureHarness();
     try {
       const card = container.querySelector<HTMLElement>('.abyss-task-card')!;
       const control = card.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]');
 
-      expect(control).not.toBeNull();
-      expect(control?.textContent?.trim()).toBe('');
-      expect(control?.getAttribute('title')).toBeTruthy();
+      expect(control).toBeNull();
       expect(card.querySelector('.abyss-next-action-slot')).toBeNull();
       expect(card.textContent).not.toMatch(/Choose Next Action|Next Action/u);
     } finally {
@@ -3458,7 +3456,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
-  it('sets a Project Next Action without writing an external Project marker', async () => {
+  it('sets a Project Next Action through the settled context action without writing an external Project marker', async () => {
     const app = await createAppWithFiles({ 'Projects/A.md': '# Project\n' });
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
@@ -3515,7 +3513,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     panel.mount(container);
     try {
       state.set('mode', 'projects');
-      container.querySelector<HTMLButtonElement>('[aria-label="Set as Next Action"]')!.click();
+      await call(panel, 'updateProjectNextAction', project.path, target, false);
       await flushMicrotasks();
 
       expect(applyRootTagChanges).toHaveBeenCalledWith({

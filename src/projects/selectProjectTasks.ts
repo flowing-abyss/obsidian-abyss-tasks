@@ -1,6 +1,7 @@
 import type { CalendarSettings, ProjectTasksViewState } from '../settings/types';
 import { selectTaskCollection } from '../task-lists/TaskListSelector';
 import type { TaskSnapshot } from '../tasks';
+import { NEXT_ACTION_TAG } from './NextActionService';
 import type { ProjectAction } from './types';
 
 function key(task: TaskSnapshot): string {
@@ -26,7 +27,10 @@ function projectTieBreak(
   const sourceOrder =
     Number(leftAction?.owner.type === 'work-note') -
     Number(rightAction?.owner.type === 'work-note');
+  const nextActionOrder =
+    Number(!left.tags.includes(NEXT_ACTION_TAG)) - Number(!right.tags.includes(NEXT_ACTION_TAG));
   return (
+    nextActionOrder ||
     sourceOrder ||
     compareCreated(left, right) ||
     left.source.filePath.localeCompare(right.source.filePath) ||

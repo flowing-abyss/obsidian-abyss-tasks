@@ -1,3 +1,7 @@
+export {
+  projectDependencyCandidates,
+  type DependencyCandidate,
+} from './application/DependencyCandidateProjection';
 export type {
   CalendarProjectionSources,
   CalendarTaskSource,
@@ -26,6 +30,8 @@ export {
 export type {
   DependencyCompletionDecision,
   DependencyInspection,
+  DependencyLinkValidation,
+  DependencyLinkValidationInput,
   DependencyProjectionPort,
 } from './domain/dependency';
 export { daysBetweenLocalDates, shiftLocalDate } from './domain/localDateMath';

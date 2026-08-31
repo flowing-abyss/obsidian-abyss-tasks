@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { NextActionReplacementCoordinator } from '../src/projects/NextActionReplacementCoordinator';
 import { NextActionService } from '../src/projects/NextActionService';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
@@ -10,6 +11,326 @@ import { localDate } from '../src/tasks/domain/validation';
 import { task, taskQueryApi } from './helpers';
 
 describe('Project Next Action', () => {
+  it('keeps target-file predecessors in the target add transaction before cross-file cleanup', async () => {
+    const localPrevious = task({
+      title: 'Local previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const externalPrevious = task({
+      title: 'External previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Work.md', line: 1 },
+    });
+    const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 4 } });
+    const application = {
+      queries: taskQueryApi({ list: () => [localPrevious, externalPrevious, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: target },
+        changed: true,
+      }),
+    } as unknown as TaskApplicationApi;
+
+    await new NextActionReplacementCoordinator(application).replace(target, [
+      localPrevious,
+      externalPrevious,
+    ]);
+
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(1, {
+      primary: target.ref,
+      changes: [
+        { task: target, tags: { add: ['#task/next_action'] } },
+        { task: localPrevious, tags: { remove: ['#task/next_action'] } },
+      ],
+    });
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: externalPrevious.ref,
+      changes: [{ task: externalPrevious, tags: { remove: ['#task/next_action'] } }],
+    });
+  });
+
+  it('restores every cleared predecessor when a later cross-file cleanup fails', async () => {
+    const first = task({
+      title: 'First',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/First.md', line: 1 },
+    });
+    const second = task({
+      title: 'Second',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Second.md', line: 1 },
+    });
+    const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 2 } });
+    const failure = { type: 'conflict' as const, current: second };
+    const application = {
+      queries: taskQueryApi({ list: () => [first, second, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi
+        .fn()
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        })
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: first },
+          changed: true,
+        })
+        .mockResolvedValueOnce(failure)
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        })
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: first },
+          changed: true,
+        }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionReplacementCoordinator(application).replace(target, [first, second]),
+    ).resolves.toBe(failure);
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(4, {
+      primary: target.ref,
+      changes: [{ task: target, tags: { remove: ['#task/next_action'] } }],
+    });
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(5, {
+      primary: first.ref,
+      changes: [{ task: first, tags: { add: ['#task/next_action'] } }],
+    });
+  });
+
+  it('serializes competing Project selections and re-reads the settled prior action', async () => {
+    const first = task({ title: 'First', source: { filePath: 'Projects/A.md', line: 1 } });
+    const second = task({ title: 'Second', source: { filePath: 'Projects/A.md', line: 2 } });
+    let releaseFirst!: () => void;
+    const applyRootTagChanges = vi.fn().mockImplementation(
+      async (intent: {
+        readonly changes: readonly {
+          readonly task: typeof first;
+          readonly tags: {
+            readonly add?: readonly string[];
+            readonly remove?: readonly string[];
+          };
+        }[];
+      }) => {
+        if (applyRootTagChanges.mock.calls.length === 1) {
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        return {
+          type: 'ok' as const,
+          outcome: { type: 'task' as const, task: first },
+          changed: true,
+        };
+      },
+    );
+    const application = {
+      // The TaskIndex has not yet published the first command when the second selection begins.
+      queries: taskQueryApi({
+        list: ({ tag } = {}) => (tag ? [] : [first, second]),
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const service = new NextActionService(application);
+
+    const firstSet = service.set('Projects/A.md', first);
+    const secondSet = service.set('Projects/A.md', second);
+    await Promise.resolve();
+    expect(applyRootTagChanges).toHaveBeenCalledOnce();
+    releaseFirst();
+    await Promise.all([firstSet, secondSet]);
+
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: second.ref,
+      changes: [
+        { task: second, tags: { add: ['#task/next_action'] } },
+        { task: first, tags: { remove: ['#task/next_action'] } },
+      ],
+    });
+  });
+
+  it('drops published local tag state before considering a later external edit', async () => {
+    const first = task({
+      title: 'First',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const second = task({ title: 'Second', source: { filePath: 'Projects/A.md', line: 2 } });
+    const third = task({ title: 'Third', source: { filePath: 'Projects/A.md', line: 3 } });
+    let indexed = [first, second, third];
+    let publish!: () => void;
+    const applyRootTagChanges = vi.fn().mockResolvedValue({
+      type: 'ok',
+      outcome: { type: 'task', task: second },
+      changed: true,
+    });
+    const application = {
+      queries: taskQueryApi({
+        list: ({ tag } = {}) => (tag ? indexed.filter((item) => item.tags.includes(tag)) : indexed),
+        subscribeSettled: (listener) => {
+          publish = () =>
+            listener({
+              type: 'settled',
+              reason: 'index',
+              files: [{ path: 'Projects/A.md', generation: 1 }],
+            });
+          return () => undefined;
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const service = new NextActionService(application);
+
+    await service.set('Projects/A.md', second);
+    indexed = [{ ...first, tags: [] }, { ...second, tags: ['#task/next_action'] }, third];
+    publish();
+    indexed = [
+      { ...first, tags: ['#task/next_action'] },
+      { ...second, tags: ['#task/next_action'] },
+      third,
+    ];
+
+    await service.set('Projects/A.md', third);
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: third.ref,
+      changes: [
+        { task: third, tags: { add: ['#task/next_action'] } },
+        { task: indexed[0], tags: { remove: ['#task/next_action'] } },
+        { task: indexed[1], tags: { remove: ['#task/next_action'] } },
+      ],
+    });
+  });
+
+  it('drops committed state for a root removed by a settled file publication', async () => {
+    const removed = task({ title: 'Removed', source: { filePath: 'Projects/A.md', line: 1 } });
+    const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 2 } });
+    let indexed = [removed, target];
+    let publish!: () => void;
+    const applyRootTagChanges = vi.fn().mockResolvedValue({
+      type: 'ok',
+      outcome: { type: 'task', task: target },
+      changed: true,
+    });
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        subscribeSettled: (listener) => {
+          publish = () =>
+            listener({
+              type: 'settled',
+              reason: 'index',
+              files: [{ path: 'Projects/A.md', generation: 1 }],
+            });
+          return () => undefined;
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+    const service = new NextActionService(application);
+
+    await service.set('Projects/A.md', removed);
+    indexed = [target];
+    publish();
+
+    await service.set('Projects/A.md', target);
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: target.ref,
+      changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+    });
+  });
+
+  it('compensates a cross-file add when removing the previous action fails', async () => {
+    const previous = task({
+      title: 'Previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Old.md', line: 1 },
+    });
+    const target = task({ title: 'Target', source: { filePath: 'Notes/New.md', line: 2 } });
+    const cleanupFailure = { type: 'conflict' as const, current: previous };
+    const application = {
+      queries: taskQueryApi({ list: () => [previous, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi
+        .fn()
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        })
+        .mockResolvedValueOnce(cleanupFailure)
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionReplacementCoordinator(application).replace(target, [previous]),
+    ).resolves.toBe(cleanupFailure);
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(1, {
+      primary: target.ref,
+      changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+    });
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: previous.ref,
+      changes: [{ task: previous, tags: { remove: ['#task/next_action'] } }],
+    });
+    expect(application.applyRootTagChanges).toHaveBeenNthCalledWith(3, {
+      primary: target.ref,
+      changes: [{ task: target, tags: { remove: ['#task/next_action'] } }],
+    });
+  });
+
+  it('reports an integrity conflict from an authoritative rescan when compensation cannot be proven', async () => {
+    const previous = task({
+      title: 'Previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Old.md', line: 1 },
+    });
+    const target = task({
+      title: 'Target',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/New.md', line: 2 },
+    });
+    const application = {
+      queries: taskQueryApi({ list: () => [previous, target] }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi
+        .fn()
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        })
+        .mockResolvedValueOnce({ type: 'conflict', current: previous })
+        .mockResolvedValueOnce({ type: 'io-error', cause: 'unknown', contentState: 'unknown' }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionReplacementCoordinator(application).replace(
+        target,
+        [previous],
+        'Projects/A.md',
+      ),
+    ).resolves.toEqual({
+      type: 'integrity-conflict',
+      projectPath: 'Projects/A.md',
+      tag: '#task/next_action',
+      tasks: [previous, target],
+    });
+  });
+
   it('moves Next Action between two Work Notes joined to the same Project', async () => {
     const previous = task({
       title: 'Work Note A task',
@@ -40,12 +361,13 @@ describe('Project Next Action', () => {
     await expect(
       new NextActionService(application, membership).set('Projects/A.md', target),
     ).resolves.toMatchObject({ type: 'ok' });
-    expect(applyRootTagChanges).toHaveBeenCalledWith({
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(1, {
       primary: target.ref,
-      changes: [
-        { task: target, tags: { add: ['#task/next_action'] } },
-        { task: previous, tags: { remove: ['#task/next_action'] } },
-      ],
+      changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+    });
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: previous.ref,
+      changes: [{ task: previous, tags: { remove: ['#task/next_action'] } }],
     });
   });
 
@@ -84,12 +406,13 @@ describe('Project Next Action', () => {
     await expect(
       new NextActionService(application, membership).set('Projects/A.md', target),
     ).resolves.toBe(result);
-    expect(applyRootTagChanges).toHaveBeenCalledWith({
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(1, {
       primary: target.ref,
-      changes: [
-        { task: target, tags: { add: ['#task/next_action'] } },
-        { task: inherited, tags: { remove: ['#task/next_action'] } },
-      ],
+      changes: [{ task: target, tags: { add: ['#task/next_action'] } }],
+    });
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: inherited.ref,
+      changes: [{ task: inherited, tags: { remove: ['#task/next_action'] } }],
     });
   });
 

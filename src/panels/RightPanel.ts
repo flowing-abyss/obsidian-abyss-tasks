@@ -7,15 +7,22 @@ import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/Tas
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
-import type { DependencyInspection, DependencyProjectionPort } from '../tasks';
+import type {
+  DependencyInspection,
+  DependencyLinkValidation,
+  DependencyLinkValidationInput,
+  DependencyProjectionPort,
+} from '../tasks';
 import {
   durationMinutes,
   formatCommentTimeLabel,
   localDate,
   localTime,
+  projectDependencyCandidates,
   type CommentRef,
   type CommentTimeContext,
   type CommentTimeContextProvider,
+  type DependencyCandidate,
   type PlanningTarget,
   type SubtaskPatch,
   type SubtaskRef,
@@ -86,7 +93,16 @@ interface DependencyCandidateGroups {
   readonly other: readonly TaskSnapshot[];
 }
 
-export type DependencyCandidateProvider = (dependent: TaskSnapshot) => DependencyCandidateGroups;
+/** Legacy grouped inputs are normalized at this UI boundary into one flat projection. */
+export type DependencyCandidateProvider = (
+  dependent: TaskSnapshot,
+) => DependencyCandidateGroups | readonly DependencyCandidate[];
+
+function isFlatDependencyCandidateSource(
+  value: ReturnType<DependencyCandidateProvider> | undefined,
+): value is readonly DependencyCandidate[] {
+  return Array.isArray(value);
+}
 
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
@@ -245,9 +261,13 @@ export class RightPanel {
       ) {
         return;
       }
+      const dependencyEditorWasOpen = this.el.querySelector('[data-dependency-editor]') !== null;
       const draft = this.captureDraftState();
       this.render();
       this.restoreDraftState(draft, root);
+      if (dependencyEditorWasOpen) {
+        this.el.querySelector<HTMLButtonElement>('[data-dependency-trigger]')?.click();
+      }
     });
     this.render();
   }
@@ -1954,13 +1974,12 @@ export class RightPanel {
           this.taskFieldBinding('dependencies', 'dependencies', clear),
           () => this.tasks!.clearDependency!({ dependent: task.ref, dependencyId: relation.id }),
         ).then((result) => {
-          if (result.type === 'ok') {
-            this.removeAnchoredSurface(editor);
-            this.focusDependencyTrigger();
-          }
+          if (result.type === 'ok') this.refreshDependencyEditor(editor, anchor, task);
         });
       });
     }
+    // Keep the persisted blocker list at the top even when graph diagnostics are present.
+    editor.prepend(relationHost);
 
     const listId = `${editorId}-list`;
     const search = editor.createEl('input', {
@@ -1979,24 +1998,7 @@ export class RightPanel {
       cls: 'abyss-dependency-candidates',
       attr: { id: listId, role: 'listbox' },
     });
-    const supplied = this.dependencyCandidates?.(task);
-    const all = supplied ?? {
-      project: [],
-      other: (this.tasks?.queries.list() ?? []).filter(
-        (candidate) => !sameTaskRef(candidate.ref, task.ref),
-      ),
-    };
-    const seen = new Set<string>();
-    const normalized = (candidates: readonly TaskSnapshot[]): readonly TaskSnapshot[] =>
-      candidates.filter((candidate) => {
-        if (sameTaskRef(candidate.ref, task.ref)) return false;
-        const key = `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-    const project = normalized(all.project);
-    const other = normalized(all.other);
+    const flatCandidates = this.flatDependencyCandidates(task);
     const selectionUnavailable =
       inspection.decision.type === 'invalid' &&
       inspection.decision.diagnostics.some(
@@ -2009,104 +2011,94 @@ export class RightPanel {
     const renderCandidates = (query: string): void => {
       results.empty();
       const needle = query.trim().toLocaleLowerCase();
-      const matching = (items: readonly TaskSnapshot[]): readonly TaskSnapshot[] =>
-        items.filter((candidate) =>
-          `${candidate.title} ${candidate.ref.filePath}`.toLocaleLowerCase().includes(needle),
-        );
-      const groups = [
-        ['Project', matching(project)],
-        ['Other tasks', matching(other)],
-      ] as const;
+      const matching = flatCandidates.filter(({ task: candidate }) =>
+        `${candidate.title} ${candidate.ref.filePath}`.toLocaleLowerCase().includes(needle),
+      );
       let count = 0;
-      for (const [label, candidates] of groups) {
-        if (candidates.length === 0 || count >= 20) continue;
-        results.createDiv({ cls: 'abyss-dependency-candidate-group', text: label });
-        for (const candidate of candidates.slice(0, 20 - count)) {
-          count += 1;
-          const candidateDecision = this.dependencyProjection?.evaluateCompletion(candidate);
-          const duplicateId =
-            candidate.dependency?.id !== undefined &&
-            candidateDecision?.type === 'invalid' &&
-            candidateDecision.diagnostics.some(
-              (diagnostic) =>
-                diagnostic.type === 'duplicate-id' && diagnostic.id === candidate.dependency?.id,
-            );
-          const dependencyIdAvailable =
-            repairDependencyId !== undefined ||
-            candidate.dependency?.id !== undefined ||
-            this.tasks?.newDependencyId !== undefined;
-          let unavailableReason: string | undefined;
-          if (duplicateId) unavailableReason = 'Duplicate ID';
-          else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
-          else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
-            unavailableReason = 'Already has an ID';
-          } else if (!dependencyIdAvailable) unavailableReason = 'Dependency ID unavailable';
-          const diagnosticTitle = unavailableReason ? ` — ${unavailableReason}` : '';
-          const diagnosticLabel = unavailableReason ? `, ${unavailableReason}` : '';
-          const candidateTitle = `${candidate.title} — ${candidate.ref.filePath}:${String(candidate.ref.line + 1)}${diagnosticTitle}`;
-          const button = results.createEl('button', {
-            cls: 'abyss-dependency-candidate',
-            attr: {
-              type: 'button',
-              role: 'option',
-              title: candidateTitle,
-              'aria-label': `${candidate.title}, ${candidate.ref.filePath}, line ${String(candidate.ref.line + 1)}${diagnosticLabel}`,
-              'data-dependency-candidate': '',
-              ...(unavailableReason && { 'aria-disabled': 'true' }),
-            },
-          });
+      for (const projected of matching.slice(0, 20)) {
+        const candidate = projected.task;
+        count += 1;
+        const candidateDecision = this.dependencyProjection?.evaluateCompletion(candidate);
+        const duplicateId =
+          candidate.dependency?.id !== undefined &&
+          candidateDecision?.type === 'invalid' &&
+          candidateDecision.diagnostics.some(
+            (diagnostic) =>
+              diagnostic.type === 'duplicate-id' && diagnostic.id === candidate.dependency?.id,
+          );
+        const dependencyIdAvailable =
+          repairDependencyId !== undefined ||
+          candidate.dependency?.id !== undefined ||
+          this.tasks?.newDependencyId !== undefined;
+        let unavailableReason: string | undefined =
+          projected.availability.type === 'disabled' ? projected.availability.reason : undefined;
+        if (duplicateId) unavailableReason = 'Duplicate ID';
+        else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
+        else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
+          unavailableReason = 'Already has an ID';
+        } else if (!dependencyIdAvailable) unavailableReason = 'Dependency ID unavailable';
+        const diagnosticTitle = unavailableReason ? ` — ${unavailableReason}` : '';
+        const diagnosticLabel = unavailableReason ? `, ${unavailableReason}` : '';
+        const candidateTitle = `${candidate.title} — ${candidate.ref.filePath}:${String(candidate.ref.line + 1)}${diagnosticTitle}`;
+        const button = results.createEl('button', {
+          cls: 'abyss-dependency-candidate',
+          attr: {
+            type: 'button',
+            role: 'option',
+            title: candidateTitle,
+            'aria-label': `${candidate.title}, ${candidate.ref.filePath}, line ${String(candidate.ref.line + 1)}${diagnosticLabel}`,
+            'data-dependency-candidate': '',
+            ...(unavailableReason && { 'aria-disabled': 'true' }),
+          },
+        });
+        button.createSpan({
+          cls: 'abyss-dependency-candidate-title',
+          text: candidate.title,
+        });
+        button.createSpan({
+          cls: 'abyss-dependency-candidate-source',
+          text: `${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`,
+          attr: { 'aria-hidden': 'true' },
+        });
+        if (unavailableReason) {
           button.createSpan({
-            cls: 'abyss-dependency-candidate-title',
-            text: candidate.title,
-          });
-          button.createSpan({
-            cls: 'abyss-dependency-candidate-source',
-            text: `${candidate.ref.filePath}:${String(candidate.ref.line + 1)}`,
+            cls: 'abyss-dependency-candidate-diagnostic',
+            text: unavailableReason,
             attr: { 'aria-hidden': 'true' },
           });
-          if (unavailableReason) {
-            button.createSpan({
-              cls: 'abyss-dependency-candidate-diagnostic',
-              text: unavailableReason,
-              attr: { 'aria-hidden': 'true' },
-            });
-          }
-          button.addEventListener('keydown', (event) => {
-            if (unavailableReason && (event.key === 'Enter' || event.key === ' ')) {
-              event.preventDefault();
-              event.stopPropagation();
-              return;
-            }
-            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
-            event.preventDefault();
-            const buttons = candidateButtons();
-            const index = buttons.indexOf(button);
-            const next = event.key === 'ArrowDown' ? buttons[index + 1] : buttons[index - 1];
-            (next ?? search).focus({ preventScroll: true });
-          });
-          button.addEventListener('click', () => {
-            if (unavailableReason) return;
-            if (!this.tasks?.setDependency) return;
-            const dependencyId =
-              repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
-            if (dependencyId === undefined) return;
-            void this.runTaskFieldCommand(
-              this.taskFieldBinding('dependencies', 'dependencies', button),
-              () =>
-                this.tasks!.setDependency!({
-                  prerequisite: candidate.ref,
-                  dependent: task.ref,
-                  dependencyId,
-                  enabled: true,
-                }),
-            ).then((result) => {
-              if (result.type === 'ok') {
-                this.removeAnchoredSurface(editor);
-                this.focusDependencyTrigger();
-              }
-            });
-          });
         }
+        button.addEventListener('keydown', (event) => {
+          if (unavailableReason && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+          event.preventDefault();
+          const buttons = candidateButtons();
+          const index = buttons.indexOf(button);
+          const next = event.key === 'ArrowDown' ? buttons[index + 1] : buttons[index - 1];
+          (next ?? search).focus({ preventScroll: true });
+        });
+        button.addEventListener('click', () => {
+          if (unavailableReason) return;
+          if (!this.tasks?.setDependency) return;
+          const dependencyId =
+            repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
+          if (dependencyId === undefined) return;
+          void this.runTaskFieldCommand(
+            this.taskFieldBinding('dependencies', 'dependencies', button),
+            () =>
+              this.tasks!.setDependency!({
+                prerequisite: candidate.ref,
+                dependent: task.ref,
+                dependencyId,
+                enabled: true,
+              }),
+          ).then((result) => {
+            if (result.type === 'ok') this.refreshDependencyEditor(editor, anchor, task);
+          });
+        });
       }
       if (count === 0) results.createDiv({ cls: 'abyss-dependency-empty', text: 'No tasks found' });
     };
@@ -2154,6 +2146,40 @@ export class RightPanel {
     this.el
       .querySelector<HTMLButtonElement>('[data-dependency-trigger]')
       ?.focus({ preventScroll: true });
+  }
+
+  private flatDependencyCandidates(task: TaskSnapshot): readonly DependencyCandidate[] {
+    const supplied = this.dependencyCandidates?.(task);
+    if (isFlatDependencyCandidateSource(supplied)) return supplied;
+    const projectTasks = supplied?.project ?? [];
+    const tasks = supplied
+      ? [...supplied.project, ...supplied.other]
+      : (this.tasks?.queries.list() ?? []);
+    const policy = this.dependencyProjection as
+      | {
+          readonly validateLink?: (
+            input: DependencyLinkValidationInput,
+          ) => DependencyLinkValidation;
+        }
+      | undefined;
+    return projectDependencyCandidates({
+      dependent: task,
+      tasks,
+      projectTasks,
+      validateLink: (prerequisite, dependent, dependencyId) =>
+        policy?.validateLink?.({ prerequisite, dependent, dependencyId }) ?? { type: 'allowed' },
+    });
+  }
+
+  /** Re-read the settled graph and keep the anchored editor open for consecutive edits. */
+  private refreshDependencyEditor(
+    editor: HTMLElement,
+    anchor: HTMLButtonElement,
+    task: TaskSnapshot,
+  ): void {
+    if (!editor.isConnected || !anchor.isConnected) return;
+    this.removeAnchoredSurface(editor);
+    this.showDependencyEditor(anchor, task);
   }
 
   private clearPopovers(): void {

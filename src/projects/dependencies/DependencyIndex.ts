@@ -183,6 +183,14 @@ export class DependencyIndex {
     }
     return { type: 'allowed' };
   }
+  /** Read-side picker preflight. Command validation still calls validateLink before any write. */
+  preflightLink(
+    prerequisite: TaskSnapshot,
+    dependent: TaskSnapshot,
+    dependencyId: string,
+  ): DependencyLinkValidation {
+    return this.validateLink(prerequisite, dependent, dependencyId);
+  }
   list(): readonly DependencyProjection[] {
     return [...this.projections.values()]
       .sort((a, b) => compareRefs(a.ref, b.ref))

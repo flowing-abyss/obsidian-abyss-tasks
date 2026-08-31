@@ -10,6 +10,7 @@ import {
   setTableGroupCollapsed,
 } from '../../ui/table/TablePreferences';
 import { renderVirtualTable, type VirtualTableHandle } from '../../ui/table/VirtualTable';
+import { isNextAction } from './NextActionControl';
 
 const DEFAULT_COLUMNS = [
   ['task', 'Task'],
@@ -140,9 +141,9 @@ export function renderProjectTasksTable(
         });
         if (column.id === 'nextAction') {
           makeCellFocusable(cell, 'Next action', activate);
-          if (action.task.tags?.includes('#task/next_action'))
+          if (isNextAction(action.task))
             cell.createSpan({
-              text: '✓',
+              text: 'List',
               attr: {
                 'data-next-action': 'true',
                 title: 'Next action',

@@ -23,6 +23,7 @@ export interface DependencyCommittedDelta {
 
 /** Neutral application policy; the Tasks core has no dependency on Projects. */
 export interface DependencyPolicyPort extends DependencyProjectionPort {
+  /** Read-side candidate preflight; mutation commands revalidate this exact intent at commit time. */
   validateLink(input: DependencyLinkValidationInput): DependencyLinkValidation;
   acceptCommittedDelta(delta: DependencyCommittedDelta): void;
 }

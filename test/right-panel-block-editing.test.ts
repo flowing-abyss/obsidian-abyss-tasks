@@ -513,12 +513,12 @@ describe('RightPanel block editing', () => {
             (candidate) =>
               candidate.querySelector('.abyss-dependency-candidate-title')?.textContent,
           ),
-      ).toEqual(['Prepare', 'Outside task', 'Outside task']);
+      ).toEqual(['Outside task', 'Outside task', 'Filler 1']);
       expect(candidates).toHaveLength(20);
-      expect(candidates[1]?.getAttribute('aria-label')).toContain('outside.md, line 4');
+      expect(candidates[0]?.getAttribute('aria-label')).toContain('outside.md, line 4');
       expect(
         candidates
-          .slice(1, 3)
+          .slice(0, 2)
           .map(
             (candidate) =>
               candidate.querySelector('.abyss-dependency-candidate-source')?.textContent,
@@ -537,7 +537,7 @@ describe('RightPanel block editing', () => {
       candidates[1]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
       expect(activeDocument.activeElement).toBe(candidates[0]);
 
-      candidates[1]!.click();
+      candidates[0]!.click();
       await flushMicrotasks();
       expect(setDependency).toHaveBeenCalledWith({
         prerequisite: outsideCandidate.ref,
@@ -545,19 +545,20 @@ describe('RightPanel block editing', () => {
         dependencyId: 'outside',
         enabled: true,
       });
-      expect(activeDocument.activeElement).toBe(currentTrigger());
-
-      currentTrigger().click();
+      expect(activeDocument.activeElement).toBe(
+        container.querySelector<HTMLInputElement>('[data-dependency-search]'),
+      );
       container.querySelector<HTMLButtonElement>('[data-dependency-clear="prep"]')!.click();
       await flushMicrotasks();
       expect(clearDependency).toHaveBeenCalledWith({
         dependent: dependent.ref,
         dependencyId: 'prep',
       });
-      expect(activeDocument.activeElement).toBe(currentTrigger());
+      expect(activeDocument.activeElement).toBe(
+        container.querySelector<HTMLInputElement>('[data-dependency-search]'),
+      );
 
       const finalTrigger = currentTrigger();
-      finalTrigger.click();
       activeDocument.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
       );
@@ -800,15 +801,17 @@ describe('RightPanel block editing', () => {
     panel.mount(container);
     container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
 
-    container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
+    const candidateButton = container.querySelector<HTMLButtonElement>(
+      '[data-dependency-candidate]',
+    )!;
+    expect(candidateButton.getAttribute('aria-disabled')).toBe('true');
+    expect(candidateButton.textContent).toContain('Would create a cycle');
+    candidateButton.click();
     await flushMicrotasks(20);
 
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
     expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
-    expect(
-      container.querySelector('[data-task-field-feedback="dependencies"]')?.textContent,
-    ).toContain('Could not save dependencies');
     expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();
     panel.destroy();
     harness.index.destroy();
@@ -849,7 +852,7 @@ describe('RightPanel block editing', () => {
     expect(generateId).not.toHaveBeenCalled();
     expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 wanted');
     expect(await harness.read()).toContain('- [ ] Dependent ⛔ wanted');
-    expect(container.querySelector('[data-dependency-editor]')).toBeNull();
+    expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();
     panel.destroy();
     harness.index.destroy();
     container.remove();
@@ -1137,7 +1140,16 @@ describe('RightPanel block editing', () => {
 
   it('keeps unresolved dependency inspection read-only and explains how to recover', async () => {
     const selected = snapshot('selected');
-    const candidate = snapshot('candidate');
+    const candidate = {
+      ...snapshot('candidate'),
+      ref: { filePath: 'candidate.md', line: 0, revision: 'candidate' },
+      source: {
+        filePath: 'candidate.md',
+        line: 0,
+        originalMarkdown: '- [ ] candidate',
+        originalBlock: '- [ ] candidate',
+      },
+    } satisfies TaskSnapshot;
     const setDependency = vi.fn();
     const tasks: TaskApplicationApi = {
       queries: taskQueryApi({ list: () => [selected, candidate] }),
