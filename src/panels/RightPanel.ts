@@ -104,6 +104,17 @@ function isFlatDependencyCandidateSource(
   return Array.isArray(value);
 }
 
+function dependencyValidationReason(validation: DependencyLinkValidation): string | undefined {
+  if (validation.type === 'allowed') return undefined;
+  const diagnostic = validation.diagnostics[0];
+  if (!diagnostic) return 'Dependency is unavailable';
+  if (diagnostic.type === 'cycle') return 'Would create a cycle';
+  if (diagnostic.type === 'self-edge') return 'Task cannot block itself';
+  if (diagnostic.type === 'duplicate-id') return 'Duplicate ID';
+  if (diagnostic.type === 'missing-prerequisite') return 'Missing prerequisite';
+  return 'Dependency data unavailable';
+}
+
 export interface RightPanelMutationLifecycle {
   readonly phase: 'started' | 'settled';
   readonly ref: TaskRef;
@@ -2013,6 +2024,11 @@ export class RightPanel {
       inspection.decision.diagnostics.some(
         (diagnostic) => diagnostic.type !== 'missing-prerequisite',
       );
+    const repairRequired =
+      inspection.decision.type === 'invalid' &&
+      inspection.decision.diagnostics.some(
+        (diagnostic) => diagnostic.type === 'missing-prerequisite',
+      );
     const candidateButtons = (): HTMLButtonElement[] =>
       Array.from(results.querySelectorAll<HTMLButtonElement>('[data-dependency-candidate]')).filter(
         (button) => !button.disabled,
@@ -2041,9 +2057,17 @@ export class RightPanel {
           this.tasks?.newDependencyId !== undefined;
         let unavailableReason: string | undefined =
           projected.availability.type === 'disabled' ? projected.availability.reason : undefined;
+        const repairValidation =
+          repairDependencyId !== undefined && candidate.dependency?.id === undefined
+            ? this.validateDependencyLink(candidate, task, repairDependencyId)
+            : undefined;
         if (duplicateId) unavailableReason = 'Duplicate ID';
         else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
-        else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
+        else if (repairDependencyId === undefined && repairRequired) {
+          unavailableReason = 'Repair missing prerequisite';
+        } else if (repairValidation) {
+          unavailableReason = dependencyValidationReason(repairValidation);
+        } else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
           unavailableReason = 'Already has an ID';
         } else if (!dependencyIdAvailable) unavailableReason = 'Dependency ID unavailable';
         const diagnosticTitle = unavailableReason ? ` — ${unavailableReason}` : '';
@@ -2179,10 +2203,25 @@ export class RightPanel {
       tasks,
       projectTasks,
       validateLink: (prerequisite, dependent, dependencyId) =>
-        policy?.validateLink?.({ prerequisite, dependent, dependencyId }) ?? { type: 'allowed' },
+        this.validateDependencyLink(prerequisite, dependent, dependencyId),
       preflightIdentityLink: (prerequisite, dependent) =>
         policy?.preflightIdentityLink?.(prerequisite, dependent) ?? { type: 'allowed' },
     });
+  }
+
+  private validateDependencyLink(
+    prerequisite: TaskSnapshot,
+    dependent: TaskSnapshot,
+    dependencyId: string,
+  ): DependencyLinkValidation {
+    const policy = this.dependencyProjection as
+      | {
+          readonly validateLink?: (
+            input: DependencyLinkValidationInput,
+          ) => DependencyLinkValidation;
+        }
+      | undefined;
+    return policy?.validateLink?.({ prerequisite, dependent, dependencyId }) ?? { type: 'allowed' };
   }
 
   /** Re-read the settled graph and keep the anchored editor open for consecutive edits. */

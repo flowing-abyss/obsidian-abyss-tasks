@@ -856,6 +856,48 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
+  it('keeps ordinary additions disabled while a missing prerequisite requires explicit repair', async () => {
+    const generateId = vi.fn(() => 'generated-id');
+    const source = ['- [ ] Dependent ⛔ wanted', '', '- [ ] Candidate without ID', ''].join('\n');
+    const harness = await realDependencyApplication(source, generateId);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const process = vi.spyOn(harness.app.vault, 'process');
+    panel.mount(container);
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    const button = container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.textContent).toContain('Repair missing prerequisite');
+    button.click();
+    await flushMicrotasks();
+
+    expect(generateId).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
+    expect(await harness.read()).toBe(source);
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
   it('activates an ID-less safe prerequisite with one picker-stable generated ID', async () => {
     const generateId = vi.fn(() => 'generated-id');
     const source = ['- [ ] Dependent', '', '- [ ] Candidate without ID', ''].join('\n');
