@@ -19,6 +19,12 @@ export interface DependencyCandidateProjectionInput {
     dependent: TaskSnapshot,
     dependencyId: string,
   ) => DependencyLinkValidation;
+  /**
+   * A picker-owned proposed ID for an ID-less prerequisite.  The projection
+   * remains pure: it only asks for a previously allocated candidate ID and
+   * uses graph validation to preflight that concrete identity.
+   */
+  readonly proposedDependencyId?: (prerequisite: TaskSnapshot) => string | undefined;
 }
 
 function sameTask(left: TaskSnapshot, right: TaskSnapshot): boolean {
@@ -59,7 +65,7 @@ export function projectDependencyCandidates(
     (left, right) => Number(!projectKeys.has(key(left))) - Number(!projectKeys.has(key(right))),
   );
   return candidates.map((task) => {
-    const id = task.dependency?.id;
+    const id = task.dependency?.id ?? input.proposedDependencyId?.(task);
     const reason =
       id === undefined
         ? 'Dependency ID unavailable'

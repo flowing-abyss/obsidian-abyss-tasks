@@ -359,7 +359,7 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks();
 
-    expect(newDependencyId).not.toHaveBeenCalled();
+    expect(newDependencyId).toHaveBeenCalledOnce();
     expect(setDependency).toHaveBeenCalledWith({
       prerequisite: candidate.ref,
       dependent: dependent.ref,
@@ -632,7 +632,7 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
-  it('keeps an unlabelled prerequisite disabled without a stable proposed ID', async () => {
+  it('assigns an unlabelled prerequisite one generated ID when it is activated', async () => {
     const dependent = snapshot('dependent');
     const candidate = {
       ...snapshot('candidate'),
@@ -688,12 +688,17 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks();
 
-    expect(newDependencyId).not.toHaveBeenCalled();
-    expect(setDependency).not.toHaveBeenCalled();
+    expect(newDependencyId).toHaveBeenCalledOnce();
+    expect(setDependency).toHaveBeenCalledWith({
+      prerequisite: candidate.ref,
+      dependent: dependent.ref,
+      dependencyId: 'generated-id',
+      enabled: true,
+    });
     panel.destroy();
   });
 
-  it('keeps an ID-less candidate disabled before it can generate a colliding ID', async () => {
+  it('leaves an ID-less generated collision to command-side validation without writing', async () => {
     const generateId = vi
       .fn<() => string>()
       .mockReturnValueOnce('collision')
@@ -743,7 +748,7 @@ describe('RightPanel block editing', () => {
     firstCandidate.click();
     await flushMicrotasks(20);
 
-    expect(generateId).not.toHaveBeenCalled();
+    expect(generateId).toHaveBeenCalledOnce();
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
     expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
@@ -833,10 +838,102 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks(30);
 
-    expect(generateId).not.toHaveBeenCalled();
+    expect(generateId).toHaveBeenCalledOnce();
     expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 wanted');
     expect(await harness.read()).toContain('- [ ] Dependent ⛔ wanted');
     expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
+  it('activates an ID-less safe prerequisite with one picker-stable generated ID', async () => {
+    const generateId = vi.fn(() => 'generated-id');
+    const source = ['- [ ] Dependent', '', '- [ ] Candidate without ID', ''].join('\n');
+    const harness = await realDependencyApplication(source, generateId);
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    panel.mount(container);
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    const button = container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!;
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    button.click();
+    await flushMicrotasks(30);
+
+    expect(generateId).toHaveBeenCalledOnce();
+    expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 generated-id');
+    expect(await harness.read()).toContain('- [ ] Dependent ⛔ generated-id');
+    panel.destroy();
+    harness.index.destroy();
+    container.remove();
+  });
+
+  it.each([
+    ['direct', ['- [ ] Dependent 🆔 dependent', '', '- [ ] Candidate without ID ⛔ dependent', '']],
+    [
+      'transitive',
+      [
+        '- [ ] Dependent 🆔 dependent',
+        '',
+        '- [ ] Candidate without ID ⛔ middle',
+        '',
+        '- [ ] Middle 🆔 middle ⛔ dependent',
+        '',
+      ],
+    ],
+  ] as const)('keeps an ID-less %s cycle unavailable in the live picker', async (_kind, lines) => {
+    const processSource = lines.join('\n');
+    const harness = await realDependencyApplication(processSource, () => 'generated-id');
+    const dependent = harness.index.list().find(({ source: item }) => item.line === 0)!;
+    const candidate = harness.index.list().find(({ source: item }) => item.line === 2)!;
+    const state = new AppState();
+    state.set('taskStack', [dependent]);
+    const panel = new RightPanel(
+      state,
+      harness.app,
+      testStatusRegistry(),
+      DEFAULT_SETTINGS,
+      undefined,
+      harness.tasks,
+      undefined,
+      undefined,
+      undefined,
+      noInteractionOwnership,
+      harness.policy,
+      () => ({ project: [candidate], other: [] }),
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    const process = vi.spyOn(harness.app.vault, 'process');
+    panel.mount(container);
+
+    container.querySelector<HTMLButtonElement>('[data-dependency-trigger]')!.click();
+    const button = container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!;
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.textContent).toContain('Would create a cycle');
+    button.click();
+    await flushMicrotasks();
+
+    expect(process).not.toHaveBeenCalled();
     panel.destroy();
     harness.index.destroy();
     container.remove();

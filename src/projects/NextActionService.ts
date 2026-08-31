@@ -13,6 +13,7 @@ import {
 export { NEXT_ACTION_TAG, type NextActionConflict } from './NextActionReplacementCoordinator';
 
 export type NextActionProjectMembership = (projectPath: string, task: TaskSnapshot) => boolean;
+export type NextActionProjectMembershipBarrier = (settled: TaskIndexSettledEvent) => Promise<void>;
 
 function sameTask(left: TaskSnapshot, right: TaskSnapshot): boolean {
   return left.ref.filePath === right.ref.filePath && left.ref.line === right.ref.line;
@@ -27,7 +28,11 @@ interface NextActionRegistry {
   readonly pendingProjects: Set<string>;
   readonly pendingTokens: Map<string, symbol>;
   readonly pendingKeys: Map<symbol, ReadonlySet<string>>;
-  readonly bridgedProjects: Map<string, ReadonlySet<string>>;
+  readonly bridgedProjects: Map<
+    string,
+    { readonly token: symbol; readonly keys: ReadonlySet<string> }
+  >;
+  readonly listeners: Set<() => void>;
 }
 
 const registries = new WeakMap<object, NextActionRegistry>();
@@ -50,13 +55,38 @@ export function projectedNextAction(
 export function acknowledgeProjectedNextActions(
   application: TaskApplicationApi,
   projectPath: string,
+  token?: symbol,
 ): void {
   const registry = registryFor(application);
   if (registry.pendingProjects.has(projectPath)) return;
-  for (const key of registry.bridgedProjects.get(projectPath) ?? []) {
+  const bridge = registry.bridgedProjects.get(projectPath);
+  if (!bridge || (token !== undefined && bridge.token !== token)) return;
+  for (const key of bridge.keys) {
     registry.committedTagState.delete(key);
   }
   registry.bridgedProjects.delete(projectPath);
+  notify(registry);
+}
+
+/** Application-owned projection invalidation; panel lifetimes must unsubscribe. */
+export function subscribeProjectedNextActions(
+  application: TaskApplicationApi,
+  listener: () => void,
+): () => void {
+  const registry = registryFor(application);
+  registry.listeners.add(listener);
+  return () => registry.listeners.delete(listener);
+}
+
+export function projectedNextActionToken(
+  application: TaskApplicationApi,
+  projectPath: string,
+): symbol | undefined {
+  return registryFor(application).bridgedProjects.get(projectPath)?.token;
+}
+
+function notify(registry: NextActionRegistry): void {
+  for (const listener of registry.listeners) listener();
 }
 
 function registryFor(application: TaskApplicationApi): NextActionRegistry {
@@ -69,6 +99,7 @@ function registryFor(application: TaskApplicationApi): NextActionRegistry {
     pendingTokens: new Map(),
     pendingKeys: new Map(),
     bridgedProjects: new Map(),
+    listeners: new Set(),
   };
   // The projection belongs to the application, not to a transient panel/service.
   // One listener is enough to retire settled bridges, and avoids remounts leaving
@@ -79,6 +110,7 @@ function registryFor(application: TaskApplicationApi): NextActionRegistry {
     for (const [key, pending] of registry.committedTagState) {
       if (paths.has(pending.task.ref.filePath)) registry.committedTagState.delete(key);
     }
+    notify(registry);
   });
   registries.set(application, registry);
   return registry;
@@ -90,6 +122,7 @@ export class NextActionService {
   constructor(
     private readonly application: TaskApplicationApi,
     private readonly projectMembership?: NextActionProjectMembership,
+    private readonly awaitProjectMembership?: NextActionProjectMembershipBarrier,
   ) {
     this.registry = registryFor(application);
   }
@@ -108,7 +141,7 @@ export class NextActionService {
           projectPath,
         );
         const verified = await this.verify(projectPath, task);
-        if (verified.ran) this.publishVerifiedState(projectPath, task);
+        if (verified.ran) this.publishVerifiedState(projectPath, task, pending);
         if (result.type === 'integrity-conflict') {
           if (verified.conflict) {
             return {
@@ -161,7 +194,7 @@ export class NextActionService {
           changes: [{ task, tags: { remove: [NEXT_ACTION_TAG] } }],
         });
         const verified = await this.verify(projectPath);
-        if (verified.ran) this.publishVerifiedState(projectPath);
+        if (verified.ran) this.publishVerifiedState(projectPath, undefined, pending);
         if (result.type !== 'ok') return result;
         if (!verified.ran) {
           this.rememberTagState(task, false);
@@ -217,6 +250,7 @@ export class NextActionService {
     );
     this.rememberTagState(target, false);
     for (const task of previous) this.rememberTagState(task, true);
+    notify(this.registry);
     return token;
   }
 
@@ -227,9 +261,15 @@ export class NextActionService {
     this.registry.pendingKeys.delete(token);
     // Both legacy adapters and a verified Project render need the bridge until
     // the application-owned acknowledgement/next settled publication retires it.
+    notify(this.registry);
+    notify(this.registry);
   }
 
-  private publishVerifiedState(projectPath: string, target?: TaskSnapshot): void {
+  private publishVerifiedState(
+    projectPath: string,
+    target: TaskSnapshot | undefined,
+    token: symbol,
+  ): void {
     const current = this.application.queries
       .list()
       .filter((candidate) => this.belongsToProject(projectPath, candidate, target ?? candidate));
@@ -237,7 +277,7 @@ export class NextActionService {
     for (const candidate of current) {
       this.rememberTagState(candidate, candidate.tags.includes(NEXT_ACTION_TAG));
     }
-    this.registry.bridgedProjects.set(projectPath, currentKeys);
+    this.registry.bridgedProjects.set(projectPath, { token, keys: currentKeys });
     for (const [key, pending] of this.registry.committedTagState) {
       if (
         this.belongsToProject(projectPath, pending.task, target ?? pending.task) &&
@@ -246,6 +286,7 @@ export class NextActionService {
         this.registry.committedTagState.delete(key);
       }
     }
+    notify(this.registry);
   }
 
   private async verify(
@@ -255,7 +296,8 @@ export class NextActionService {
     // Compatibility adapters without the new barrier cannot be mistaken for a real TaskIndex.
     // The production TaskIndex always supplies it; legacy test/read-only adapters keep prior behavior.
     if (!this.application.queries.rescan) return { ran: false };
-    await this.application.queries.rescan();
+    const settled = await this.application.queries.rescan();
+    await this.awaitProjectMembership?.(settled);
     const tagged = this.application.queries
       .list()
       .filter((task) => this.belongsToProject(projectPath, task, target ?? task))

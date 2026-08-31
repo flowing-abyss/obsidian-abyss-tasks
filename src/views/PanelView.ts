@@ -396,6 +396,7 @@ export class PanelView extends ItemView {
             ({ task }) =>
               task.ref.filePath === candidate.ref.filePath && task.ref.line === candidate.ref.line,
           ) === true,
+      (settled) => this.projectWorkspace?.awaitTaskPublication(settled) ?? Promise.resolve(),
     );
     this.right = new RightPanel(
       this.state,

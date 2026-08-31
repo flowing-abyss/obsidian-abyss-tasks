@@ -89,6 +89,8 @@ export class ProjectWorkspaceCoordinator {
   private invalidatedProjectPaths = new Set<string>();
   private dependencyProjectPaths = new Set<string>();
   private publishScheduled = false;
+  private publicationVersion = 0;
+  private publicationWaiters: Array<{ readonly after: number; readonly resolve: () => void }> = [];
   private started = false;
   private signature = '[]';
   private readySources = new Set<Source>();
@@ -168,6 +170,13 @@ export class ProjectWorkspaceCoordinator {
   ): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  /** Wait until task-settlement has rebuilt the joined Project/Work Note read model. */
+  async awaitTaskPublication(event: TaskIndexSettledEvent): Promise<void> {
+    if (!event.files.some(({ path }) => this.pending.has(path))) return;
+    const after = this.publicationVersion;
+    await new Promise<void>((resolve) => this.publicationWaiters.push({ after, resolve }));
   }
 
   absorbOwnCommit(paths: readonly string[]): void {
@@ -385,6 +394,12 @@ export class ProjectWorkspaceCoordinator {
       const result = this.readModel.rebuildBuckets(delta);
       const snapshots = result.snapshots;
       this.applyOwnershipDelta(delta);
+      this.publicationVersion += 1;
+      const ready = this.publicationWaiters.filter(({ after }) => after < this.publicationVersion);
+      this.publicationWaiters = this.publicationWaiters.filter(
+        ({ after }) => after >= this.publicationVersion,
+      );
+      for (const waiter of ready) waiter.resolve();
       if (result.changedProjectPaths.length === 0) return;
       this.signature = snapshotSignature(snapshots);
       const event: ProjectWorkspacePublication = {
@@ -427,5 +442,7 @@ export class ProjectWorkspaceCoordinator {
     this.readySources.clear();
     this.awaitingInitialization = false;
     this.publishScheduled = false;
+    for (const waiter of this.publicationWaiters) waiter.resolve();
+    this.publicationWaiters = [];
   }
 }

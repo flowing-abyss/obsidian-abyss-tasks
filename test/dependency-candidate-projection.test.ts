@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   projectDependencyCandidates,
   type DependencyCandidate,
@@ -95,5 +95,49 @@ describe('DependencyCandidateProjection', () => {
       { type: 'disabled', reason: 'Dependency ID unavailable' },
       { type: 'disabled', reason: 'Duplicate ID' },
     ]);
+  });
+
+  it('preflights an ID-less candidate with its proposed ID instead of hiding an identity-safe link', () => {
+    const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
+    const idless = task({
+      title: 'Candidate without ID',
+      source: { filePath: 'Tasks.md', line: 1 },
+    });
+    const validateLink = vi.fn(() => ({ type: 'allowed' as const }));
+
+    const candidates = projectDependencyCandidates({
+      dependent,
+      tasks: [idless],
+      projectTasks: [],
+      validateLink,
+      proposedDependencyId: () => 'generated-id',
+    });
+
+    expect(candidates[0]?.availability).toEqual({ type: 'available' });
+    expect(validateLink).toHaveBeenCalledWith(idless, dependent, 'generated-id');
+  });
+
+  it('keeps an ID-less candidate disabled when identity preflight finds a cycle', () => {
+    const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
+    const idless = task({
+      title: 'Candidate without ID',
+      source: { filePath: 'Tasks.md', line: 1 },
+    });
+
+    const candidates = projectDependencyCandidates({
+      dependent,
+      tasks: [idless],
+      projectTasks: [],
+      proposedDependencyId: () => 'generated-id',
+      validateLink: () => ({
+        type: 'invalid',
+        diagnostics: [{ type: 'cycle', ids: ['dependent', 'generated-id'] }],
+      }),
+    });
+
+    expect(candidates[0]?.availability).toEqual({
+      type: 'disabled',
+      reason: 'Would create a cycle',
+    });
   });
 });

@@ -153,7 +153,6 @@ export function renderProjectTasksTable(
             clientY: rect.top + Math.min(16, Math.max(0, rect.height / 2)),
           });
           options.onContextMenu(keyboardEvent, action, row);
-          row.focus({ preventScroll: true });
         }
       });
       for (const column of tableColumns) {

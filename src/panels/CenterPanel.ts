@@ -8,6 +8,8 @@ import {
   acknowledgeProjectedNextActions,
   NextActionService,
   projectedNextAction,
+  projectedNextActionToken,
+  subscribeProjectedNextActions,
   type NextActionConflict,
 } from '../projects/NextActionService';
 import type { ProjectCommandService } from '../projects/ProjectCommandService';
@@ -338,6 +340,7 @@ export class CenterPanel {
       projectPath: string,
       candidate: TaskSnapshot,
     ) => boolean,
+    private readonly awaitProjectMembership?: ConstructorParameters<typeof NextActionService>[2],
   ) {
     this.projectWorkspaceSession = collectionState;
     this.onSaveSettings = onSaveSettings ?? (async (): Promise<void> => {});
@@ -361,6 +364,7 @@ export class CenterPanel {
                     task.ref.line === candidate.ref.line,
                 ),
             ),
+          this.awaitProjectMembership,
         )
       : null;
     this.captureTargets = this.captureApplication
@@ -572,6 +576,13 @@ export class CenterPanel {
       query: this.state.get('centerFilter'),
     });
     if (this.persistsSettings) this.state.set('centerListViewState', initialVs);
+    if (this.tasks) {
+      this.offs.push(
+        subscribeProjectedNextActions(this.tasks, () => {
+          if (this.state.get('mode') === 'projects') this.refresh();
+        }),
+      );
+    }
 
     this.offs.push(
       this.state.on('selectedList', () => {
@@ -1548,7 +1559,11 @@ export class CenterPanel {
         // do not retire a different project's bridge from the overview list.
         const visibleProject = this.state.get('projectsPanel');
         if (this.tasks && visibleProject.view === 'dashboard') {
-          acknowledgeProjectedNextActions(this.tasks, visibleProject.path);
+          acknowledgeProjectedNextActions(
+            this.tasks,
+            visibleProject.path,
+            projectedNextActionToken(this.tasks, visibleProject.path),
+          );
         }
         this.onRenderComplete(this.el);
       } else {
@@ -2918,7 +2933,7 @@ export class CenterPanel {
 
         const menu = new Menu();
         this.populateCanonicalTaskMenu(menu, task, card, context);
-        showMenuAtMouseEventWithFocus(menu, e);
+        showMenuAtMouseEventWithFocus(menu, e, { restoreFocusTo: card });
       });
     return card;
   }
@@ -3171,8 +3186,9 @@ export class CenterPanel {
         nextActionState: (candidate) => projectedNextAction(this.tasks!, candidate),
       }),
     });
-    showMenuAtMouseEventWithFocus(menu, event);
-    anchor?.focus({ preventScroll: true });
+    showMenuAtMouseEventWithFocus(menu, event, {
+      ...(anchor && { restoreFocusTo: anchor }),
+    });
   }
 
   private presentNextActionConflict(conflict: NextActionConflict): void {

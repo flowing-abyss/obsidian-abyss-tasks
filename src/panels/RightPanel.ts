@@ -223,6 +223,7 @@ export class RightPanel {
   private detachedFocusTimer: number | undefined;
   private dependencyOff?: () => void;
   private dependencyEditorSequence = 0;
+  private readonly proposedDependencyIds = new Map<string, string>();
   private renderedTaskStack: readonly TaskLike[] = [];
   private hiddenTaskDraft?: { readonly ref: TaskRef; readonly bundle: RightPanelDraftBundle };
 
@@ -1882,6 +1883,18 @@ export class RightPanel {
       },
     });
     let repairDependencyId: string | undefined;
+    // Keep one proposed ID for each visible ID-less candidate.  The graph can
+    // then preflight its node identity before the command writes that ID.
+    const dependencyIdFor = (candidate: TaskSnapshot): string | undefined => {
+      if (repairDependencyId !== undefined) return repairDependencyId;
+      if (candidate.dependency?.id !== undefined) return candidate.dependency.id;
+      const key = `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`;
+      const existing = this.proposedDependencyIds.get(key);
+      if (existing !== undefined) return existing;
+      const proposed = this.tasks?.newDependencyId?.();
+      if (proposed !== undefined) this.proposedDependencyIds.set(key, proposed);
+      return proposed;
+    };
     const repairButtons: HTMLButtonElement[] = [];
     let beginRepair: ((dependencyId: string) => void) | undefined;
     if (inspection.decision.type === 'invalid') {
@@ -1975,7 +1988,7 @@ export class RightPanel {
           this.taskFieldBinding('dependencies', 'dependencies', clear),
           () => this.tasks!.clearDependency!({ dependent: task.ref, dependencyId: relation.id }),
         ).then((result) => {
-          if (result.type === 'ok') this.refreshDependencyEditor(editor, anchor, task);
+          if (result.type === 'ok') void this.refreshDependencyEditor(editor, anchor, task);
         });
       });
     }
@@ -1999,7 +2012,8 @@ export class RightPanel {
       cls: 'abyss-dependency-candidates',
       attr: { id: listId, role: 'listbox' },
     });
-    const flatCandidates = this.flatDependencyCandidates(task);
+    const flatCandidates = (): readonly DependencyCandidate[] =>
+      this.flatDependencyCandidates(task, dependencyIdFor);
     const selectionUnavailable =
       inspection.decision.type === 'invalid' &&
       inspection.decision.diagnostics.some(
@@ -2012,7 +2026,7 @@ export class RightPanel {
     const renderCandidates = (query: string): void => {
       results.empty();
       const needle = query.trim().toLocaleLowerCase();
-      const matching = flatCandidates.filter(({ task: candidate }) =>
+      const matching = flatCandidates().filter(({ task: candidate }) =>
         `${candidate.title} ${candidate.ref.filePath}`.toLocaleLowerCase().includes(needle),
       );
       let count = 0;
@@ -2032,10 +2046,7 @@ export class RightPanel {
           candidate.dependency?.id !== undefined ||
           this.tasks?.newDependencyId !== undefined;
         let unavailableReason: string | undefined =
-          projected.availability.type === 'disabled' &&
-          !(projected.availability.reason === 'Dependency ID unavailable' && repairDependencyId)
-            ? projected.availability.reason
-            : undefined;
+          projected.availability.type === 'disabled' ? projected.availability.reason : undefined;
         if (duplicateId) unavailableReason = 'Duplicate ID';
         else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
         else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
@@ -2087,8 +2098,7 @@ export class RightPanel {
         button.addEventListener('click', () => {
           if (unavailableReason) return;
           if (!this.tasks?.setDependency) return;
-          const dependencyId =
-            repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
+          const dependencyId = dependencyIdFor(candidate);
           if (dependencyId === undefined) return;
           void this.runTaskFieldCommand(
             this.taskFieldBinding('dependencies', 'dependencies', button),
@@ -2100,7 +2110,7 @@ export class RightPanel {
                 enabled: true,
               }),
           ).then((result) => {
-            if (result.type === 'ok') this.refreshDependencyEditor(editor, anchor, task);
+            if (result.type === 'ok') void this.refreshDependencyEditor(editor, anchor, task);
           });
         });
       }
@@ -2152,7 +2162,10 @@ export class RightPanel {
       ?.focus({ preventScroll: true });
   }
 
-  private flatDependencyCandidates(task: TaskSnapshot): readonly DependencyCandidate[] {
+  private flatDependencyCandidates(
+    task: TaskSnapshot,
+    proposedDependencyId?: (candidate: TaskSnapshot) => string | undefined,
+  ): readonly DependencyCandidate[] {
     const supplied = this.dependencyCandidates?.(task);
     if (isFlatDependencyCandidateSource(supplied)) return supplied;
     const projectTasks = supplied?.project ?? [];
@@ -2172,18 +2185,20 @@ export class RightPanel {
       projectTasks,
       validateLink: (prerequisite, dependent, dependencyId) =>
         policy?.validateLink?.({ prerequisite, dependent, dependencyId }) ?? { type: 'allowed' },
+      proposedDependencyId,
     });
   }
 
   /** Re-read the settled graph and keep the anchored editor open for consecutive edits. */
-  private refreshDependencyEditor(
+  private async refreshDependencyEditor(
     editor: HTMLElement,
     anchor: HTMLButtonElement,
     task: TaskSnapshot,
-  ): void {
+  ): Promise<void> {
+    await this.tasks?.queries.rescan?.();
     if (!editor.isConnected || !anchor.isConnected) return;
     this.removeAnchoredSurface(editor);
-    this.showDependencyEditor(anchor, task);
+    this.showDependencyEditor(anchor, this.currentDependencyTask(task) ?? task);
   }
 
   /** A graph update may rebase an ID-less root, so never render blockers from a captured stack item. */

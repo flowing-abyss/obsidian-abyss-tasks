@@ -135,6 +135,6 @@ describe('ProjectTasksTableView', () => {
     const focus = vi.spyOn(row, 'focus');
     row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }));
     expect(openActions).toHaveBeenLastCalledWith(expect.any(MouseEvent), action, row);
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(focus).not.toHaveBeenCalled();
   });
 });

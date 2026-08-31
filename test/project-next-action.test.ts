@@ -4,6 +4,8 @@ import {
   acknowledgeProjectedNextActions,
   NextActionService,
   projectedNextAction,
+  projectedNextActionToken,
+  subscribeProjectedNextActions,
 } from '../src/projects/NextActionService';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
@@ -15,6 +17,83 @@ import { localDate } from '../src/tasks/domain/validation';
 import { task, taskQueryApi } from './helpers';
 
 describe('Project Next Action', () => {
+  it('publishes pending and verified bridge changes even without a later index event', async () => {
+    const target = task({ source: { filePath: 'Project.md', line: 0 }, tags: [] });
+    const previous = task({
+      source: { filePath: 'Project.md', line: 1 },
+      tags: ['#task/next_action'],
+    });
+    let indexed: readonly (typeof target)[] = [
+      target,
+      previous,
+    ] as unknown as readonly (typeof target)[];
+    let settle!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          await waiting;
+          indexed = [
+            { ...target, tags: ['#task/next_action'] },
+            { ...previous, tags: [] },
+          ] as never;
+          return { type: 'settled' as const, reason: 'index' as const, files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({ type: 'ok' as const }),
+    } as unknown as TaskApplicationApi;
+    const published = vi.fn();
+    const stop = subscribeProjectedNextActions(application, published);
+    const service = new NextActionService(application);
+    const operation = service.set('Project.md', target);
+    await Promise.resolve();
+
+    expect(projectedNextAction(application, target)).toBe(false);
+    expect(projectedNextAction(application, previous)).toBe(true);
+    settle();
+    await operation;
+    expect(projectedNextAction(application, target)).toBe(true);
+    expect(projectedNextAction(application, previous)).toBe(false);
+    acknowledgeProjectedNextActions(
+      application,
+      'Project.md',
+      projectedNextActionToken(application, 'Project.md'),
+    );
+    expect(projectedNextAction(application, target)).toBeUndefined();
+    expect(published.mock.calls.length).toBeGreaterThanOrEqual(3);
+    stop();
+  });
+
+  it('waits for fresh joined-work-note membership before accepting a rescan', async () => {
+    const target = task({ source: { filePath: 'Project.md', line: 0 }, tags: [] });
+    const joined = task({ source: { filePath: 'Work.md', line: 0 }, tags: ['#task/next_action'] });
+    let published = false;
+    const application = {
+      queries: taskQueryApi({
+        list: () => [target, joined],
+        rescan: async () => ({ type: 'settled' as const, reason: 'index' as const, files: [] }),
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({ type: 'ok' as const }),
+    } as unknown as TaskApplicationApi;
+    const service = new NextActionService(
+      application,
+      (_path, candidate) => candidate === target || (published && candidate === joined),
+      async () => {
+        published = true;
+      },
+    );
+
+    await expect(service.set('Project.md', target)).resolves.toMatchObject({
+      type: 'integrity-conflict',
+      tasks: [joined],
+    });
+  });
+
   it('returns a visible integrity conflict when the authoritative rescan finds duplicates', async () => {
     const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 1 } });
     const duplicate = task({
