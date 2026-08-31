@@ -208,7 +208,7 @@ describe('renderProjectsList', () => {
       onPortfolioLayoutChanged,
     });
     el.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="board"]')!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(settings.projects.view.portfolioLayout).toBe('board');
     expect(settings.projects.view.visibleStatusIds).toEqual([ACTIVE_ID]);
@@ -230,7 +230,7 @@ describe('renderProjectsList', () => {
     available
       .querySelector<HTMLButtonElement>('[data-project-portfolio-layout="timeline"]')!
       .click();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.portfolioLayout).toBe('timeline');
     expect(onPortfolioLayoutChanged).toHaveBeenCalledOnce();
 
@@ -1083,7 +1083,7 @@ describe('renderProjectsList', () => {
       openNote,
     });
     el.querySelector<HTMLButtonElement>('[data-project-status-filter="wip"]')!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(settings.projects.view.visibleStatusIds).toEqual(['wip']);
     expect(onSaveSettings).toHaveBeenCalledOnce();
@@ -1095,14 +1095,13 @@ describe('renderProjectsList', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const root = attachedContainer();
     const outside = activeDocument.body.createEl('button');
-    const save = deferred<void>();
     let forceOutsideFocus = false;
     let cleanup = (): void => undefined;
     const context = {
       ...ctx,
       state: new AppState(),
       settings,
-      onSaveSettings: vi.fn().mockReturnValue(save.promise),
+      onSaveSettings: vi.fn().mockResolvedValue(undefined),
       onFiltersChanged: () => {
         cleanup();
         root.empty();
@@ -1117,7 +1116,7 @@ describe('renderProjectsList', () => {
       )!;
       active.focus();
       active.click();
-      await Promise.resolve();
+      await flushMicrotasks();
       expect(activeDocument.activeElement?.getAttribute('data-project-status-filter')).toBe(
         ACTIVE_ID,
       );
@@ -1125,7 +1124,7 @@ describe('renderProjectsList', () => {
       const unmapped = root.querySelector<HTMLButtonElement>('[data-project-unmapped-filter]')!;
       unmapped.focus();
       unmapped.click();
-      await Promise.resolve();
+      await flushMicrotasks();
       expect(activeDocument.activeElement?.hasAttribute('data-project-unmapped-filter')).toBe(true);
 
       const pointerFilter = root.querySelector<HTMLButtonElement>(
@@ -1135,10 +1134,7 @@ describe('renderProjectsList', () => {
       pointerFilter.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
       forceOutsideFocus = true;
       pointerFilter.click();
-      expect(activeDocument.activeElement).toBe(outside);
-      save.resolve();
-      await save.promise;
-      await Promise.resolve();
+      await flushMicrotasks();
       expect(activeDocument.activeElement).toBe(outside);
     } finally {
       cleanup();
@@ -1162,7 +1158,7 @@ describe('renderProjectsList', () => {
       onSetStatus,
     });
     el.querySelector<HTMLButtonElement>('[data-project-unmapped-filter]')!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(settings.projects.view.includeUnmapped).toBe(true);
     expect(onSaveSettings).toHaveBeenCalledOnce();
@@ -2619,7 +2615,7 @@ describe('ProjectsPanel dispatch', () => {
 
   it.each(['overview', 'board', 'timeline'] as const)(
     'returns overflow-filter focus to Filter after a %s remount',
-    (layout) => {
+    async (layout) => {
       let invokeFirstItem: (() => void) | undefined;
       vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, callback) {
         const item = {
@@ -2663,6 +2659,7 @@ describe('ProjectsPanel dispatch', () => {
         expect(filter.getAttribute('aria-expanded')).toBe('true');
 
         invokeFirstItem?.();
+        await flushMicrotasks();
 
         const replacement = el.querySelector<HTMLButtonElement>('[data-collection-filter]')!;
         expect(replacement).not.toBe(filter);

@@ -1,15 +1,39 @@
-import { Menu } from 'obsidian';
+import { Menu, Notice } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
+import { ProjectWorkspaceSessionRegistry } from '../src/panels/projects/ProjectWorkspaceSession';
 import { renderProjectsToolbar } from '../src/panels/projects/ProjectsToolbar';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { freshContainer } from './helpers';
 
-function context() {
+vi.mock('obsidian', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('obsidian')>();
+  return { ...actual, Notice: vi.fn() };
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+async function flushAsyncQueue(): Promise<void> {
+  await new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+}
+
+function context(onSaveSettings = vi.fn().mockResolvedValue(undefined)) {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const collectionState = new ProjectWorkspaceSessionRegistry();
+  collectionState.bindCollectionPreferences(settings, onSaveSettings);
   return {
     state: new AppState(),
-    settings: structuredClone(DEFAULT_SETTINGS),
-    onSaveSettings: vi.fn().mockResolvedValue(undefined),
+    settings,
+    onSaveSettings,
+    collectionState,
     onCreate: vi.fn(),
     onSetStatus: vi.fn(),
     openNote: vi.fn(),
@@ -114,11 +138,76 @@ describe('renderProjectsToolbar', () => {
     renderProjectsToolbar(root, ctx);
 
     root.querySelector<HTMLButtonElement>('[data-project-status-filter]')!.click();
-    await Promise.resolve();
+    await flushAsyncQueue();
 
     expect(ctx.settings.projects.view.visibleStatusIds).not.toContain(
       ctx.settings.projects.statuses[0]!.id,
     );
     expect(ctx.onSaveSettings).toHaveBeenCalledOnce();
+  });
+
+  it('renders a portfolio layout change only after the settings save settles', async () => {
+    const save = deferred<void>();
+    const onSaveSettings = vi.fn().mockReturnValue(save.promise);
+    const ctx = { ...context(onSaveSettings), onPortfolioLayoutChanged: vi.fn() };
+    const root = freshContainer();
+    renderProjectsToolbar(root, ctx);
+
+    root.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="board"]')!.click();
+    await flushAsyncQueue();
+
+    expect(ctx.settings.projects.view.portfolioLayout).toBe('board');
+    expect(ctx.collectionState.portfolioPreference().layout).toBe('overview');
+    expect(ctx.onPortfolioLayoutChanged).not.toHaveBeenCalled();
+    save.resolve();
+    await flushAsyncQueue();
+    expect(ctx.collectionState.portfolioPreference().layout).toBe('board');
+    expect(ctx.onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+  });
+
+  it('settles one equal-revision layout write and reports the stale UI write', async () => {
+    vi.mocked(Notice).mockClear();
+    const save = deferred<void>();
+    const ctx = {
+      ...context(vi.fn().mockReturnValue(save.promise)),
+      onPortfolioLayoutChanged: vi.fn(),
+    };
+    const root = freshContainer();
+    renderProjectsToolbar(root, ctx);
+
+    root.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="board"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="timeline"]')!.click();
+    await flushAsyncQueue();
+    save.resolve();
+    await flushAsyncQueue();
+    await flushAsyncQueue();
+
+    expect(ctx.collectionState.portfolioPreference().layout).toBe('board');
+    expect(ctx.onPortfolioLayoutChanged).toHaveBeenCalledOnce();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('changed elsewhere');
+  });
+
+  it('restores portfolio settings and reports a rejected save without rerendering', async () => {
+    vi.mocked(Notice).mockClear();
+    const save = deferred<void>();
+    const ctx = {
+      ...context(vi.fn().mockReturnValue(save.promise)),
+      onPortfolioLayoutChanged: vi.fn(),
+    };
+    const priorView = ctx.settings.projects.view;
+    const root = freshContainer();
+    renderProjectsToolbar(root, ctx);
+
+    root.querySelector<HTMLButtonElement>('[data-project-portfolio-layout="board"]')!.click();
+    await flushAsyncQueue();
+    save.reject(new Error('disk full'));
+    await flushAsyncQueue();
+
+    expect(ctx.settings.projects.view).toBe(priorView);
+    expect(ctx.collectionState.portfolioPreference().layout).toBe('overview');
+    expect(ctx.onPortfolioLayoutChanged).not.toHaveBeenCalled();
+    expect(Notice).toHaveBeenCalledOnce();
+    expect(String(vi.mocked(Notice).mock.calls[0]?.[0])).toContain('not saved');
   });
 });

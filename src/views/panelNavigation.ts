@@ -22,6 +22,12 @@ export interface PanelNavigationCenterPort {
   openQuickCapture(): void;
 }
 
+export interface MainTaskCollectionNavigationPort {
+  activateMainTaskCollection(listKey: string): void;
+  mainTaskView(): ListViewState;
+  updateMainTaskSession(changes: { readonly query: string }): void;
+}
+
 export class PanelNavigator implements PanelNavigationActions {
   private lastTasksList: ListSelection;
 
@@ -30,8 +36,10 @@ export class PanelNavigator implements PanelNavigationActions {
     private readonly settings: CalendarSettings,
     private readonly center: PanelNavigationCenterPort,
     private readonly onSaveSettings: () => Promise<void> = async () => {},
+    private readonly collections?: MainTaskCollectionNavigationPort,
   ) {
     this.lastTasksList = state.get('selectedList');
+    this.collections?.activateMainTaskCollection(listSelectionToKey(this.lastTasksList));
   }
 
   openTasks(): void {
@@ -43,6 +51,7 @@ export class PanelNavigator implements PanelNavigationActions {
       this.persistListState(this.lastTasksList);
       this.lastTasksList = selection;
       const next = this.listState(selection);
+      this.collections?.updateMainTaskSession({ query: '' });
       this.state.set('selectedList', selection);
       this.state.set('centerListViewState', next);
       this.state.set('centerFilter', '');
@@ -76,6 +85,7 @@ export class PanelNavigator implements PanelNavigationActions {
       this.storeListState(previous);
       this.moveListStateIdentity(previous, selection);
       this.lastTasksList = selection;
+      this.collections?.activateMainTaskCollection(listSelectionToKey(selection));
       this.state.set('selectedList', selection);
       this.state.set('centerListViewState', this.listState(selection));
       this.state.set('centerFilter', '');
@@ -92,6 +102,7 @@ export class PanelNavigator implements PanelNavigationActions {
   }
 
   private persistListState(selection: ListSelection): void {
+    if (this.collections) return;
     this.storeListState(selection);
     void this.onSaveSettings();
   }
@@ -117,6 +128,10 @@ export class PanelNavigator implements PanelNavigationActions {
 
   private listState(selection: ListSelection): ListViewState {
     const key = listSelectionToKey(selection);
+    if (this.collections) {
+      this.collections.activateMainTaskCollection(key);
+      return this.collections.mainTaskView();
+    }
     const saved = this.settings.listViewStates?.[key];
     if (saved) return saved;
     const defaults = getListViewDefaults(key);

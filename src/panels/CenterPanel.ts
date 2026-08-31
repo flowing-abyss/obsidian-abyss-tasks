@@ -1,4 +1,4 @@
-import { Component, Menu, setIcon, type App, type MenuItem } from 'obsidian';
+import { Component, Menu, Notice, setIcon, type App, type MenuItem } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import { listSelectionToKey, normalizeStatusGroups, statusGroupsEqual } from '../app/listViewState';
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
@@ -292,7 +292,7 @@ export class CenterPanel {
   // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
   private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
   private pendingProjectBoardUndoObservedNext = false;
-  private readonly projectWorkspaceSession = new ProjectWorkspaceSession();
+  private readonly projectWorkspaceSession: ProjectWorkspaceSession;
   private projectTaskList: MountedProjectTaskList | null = null;
   private projectTaskListCleanup: (() => void) | null = null;
   private readonly nextActions: NextActionService | null;
@@ -329,9 +329,15 @@ export class CenterPanel {
     private readonly workNoteCommands?: WorkNoteCommandService,
     private readonly projectCommands?: ProjectCommandService,
     private readonly dependencyProjection?: DependencyProjectionPort,
+    collectionState: ProjectWorkspaceSession = new ProjectWorkspaceSession(),
   ) {
+    this.projectWorkspaceSession = collectionState;
     this.onSaveSettings = onSaveSettings ?? (async (): Promise<void> => {});
     this.persistsSettings = onSaveSettings !== undefined;
+    this.projectWorkspaceSession.bindCollectionPreferences(
+      settings,
+      this.persistsSettings ? this.onSaveSettings : undefined,
+    );
     this.captureApplication = captureApplication ?? null;
     this.nextActions = tasks
       ? new NextActionService(tasks, (projectPath, candidate) =>
@@ -360,6 +366,7 @@ export class CenterPanel {
           openQuickCapture: () => undefined,
         },
         this.onSaveSettings,
+        this.projectWorkspaceSession,
       );
     if (tasks) {
       this.keyboardQueue = new TimedBlockKeyboardQueue(tasks, {
@@ -548,12 +555,16 @@ export class CenterPanel {
 
     // Initialize per-list state before first render
     const initialKey = listSelectionToKey(this.state.get('selectedList'));
-    const initialVs: ListViewState =
-      this.settings.listViewStates?.[initialKey] ?? getListViewDefaults(initialKey);
-    this.state.set('centerListViewState', initialVs);
+    this.projectWorkspaceSession.activateMainTaskCollection(initialKey);
+    const initialVs = this.mainTaskViewState();
+    this.projectWorkspaceSession.updateMainTaskSession({
+      query: this.state.get('centerFilter'),
+    });
+    if (this.persistsSettings) this.state.set('centerListViewState', initialVs);
 
     this.offs.push(
       this.state.on('selectedList', () => {
+        this.projectWorkspaceSession.activateMainTaskCollection(this.activeListKey());
         this.cancelStaleListCapture();
         this.selectedTaskKeys.clear();
         this.selectionAnchorKey = null;
@@ -1522,7 +1533,7 @@ export class CenterPanel {
     header.createEl('h2', { cls: 'abyss-center-title', text: this.getTitle() });
 
     const { searchInput, element: collectionControls } = renderCollectionControls(header, {
-      query: this.state.get('centerFilter'),
+      query: this.mainTaskQuery(),
       searchLabel: 'Filter tasks',
       toolbarLabel: 'Task collection controls',
       actions: [
@@ -1563,6 +1574,7 @@ export class CenterPanel {
         window.clearTimeout(this.filterDebounce);
         this.filterDebounce = window.setTimeout(() => {
           this.refocusSearch = true;
+          this.projectWorkspaceSession.updateMainTaskSession({ query: value });
           this.state.set('centerFilter', value);
         }, 150);
       },
@@ -2487,7 +2499,7 @@ export class CenterPanel {
   }
 
   private renderWithGrouping(container: HTMLElement, tasks: TaskSnapshot[]): void {
-    const vs = this.state.get('centerListViewState');
+    const vs = this.mainTaskViewState();
     const today = localDate(window.moment().format('YYYY-MM-DD'));
     const tomorrow = window.moment().add(1, 'day').format('YYYY-MM-DD');
 
@@ -3288,7 +3300,7 @@ export class CenterPanel {
   private mainTaskCollectionControlBinding(): TaskCollectionControlBinding {
     const listKey = this.activeListKey();
     return {
-      viewState: this.state.get('centerListViewState'),
+      viewState: this.mainTaskViewState(),
       defaults: getListViewDefaults(listKey),
       onUpdate: (next) => this.updateViewState(next),
       onRemoveFilter: (index) => this.removePropertyFilter(index),
@@ -3332,7 +3344,7 @@ export class CenterPanel {
   }
 
   private addPropertyFilter(filter: PropertyFilter): void {
-    const vs = this.state.get('centerListViewState');
+    const vs = this.mainTaskViewState();
     const already = vs.filters.some((f) => {
       if (f.type !== filter.type) return false;
       if (f.type === 'file' && filter.type === 'file') return f.filePath === filter.filePath;
@@ -3349,19 +3361,54 @@ export class CenterPanel {
   }
 
   private removePropertyFilter(idx: number): void {
-    const vs = this.state.get('centerListViewState');
+    const vs = this.mainTaskViewState();
     this.updateViewState({ ...vs, filters: vs.filters.filter((_, index) => index !== idx) });
   }
 
   private updateViewState(next: ListViewState): void {
-    if (!this.settings.listViewStates) this.settings.listViewStates = {};
-    this.settings.listViewStates[this.activeListKey()] = next;
-    void this.onSaveSettings();
-    this.state.set('centerListViewState', next);
+    if (!this.persistsSettings) {
+      this.state.set('centerListViewState', next);
+      return;
+    }
+    void this.projectWorkspaceSession
+      .updateMainTaskPreference((current) => ({
+        ...current,
+        filters: [...next.filters],
+        group: next.groupBy,
+        sort: { ...next.sortBy },
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          primary: { ...(next.statusGroups && { statusGroups: [...next.statusGroups] }) },
+        },
+      }))
+      .then(() =>
+        this.state.set('centerListViewState', this.projectWorkspaceSession.mainTaskView()),
+      )
+      .catch((error: unknown) => {
+        const conflict =
+          error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+        new Notice(
+          conflict
+            ? 'Task list preferences changed elsewhere. Your change was not saved; review the settled list.'
+            : 'Task list preference was not saved. Nothing changed; try again.',
+        );
+      });
   }
 
   private activeListKey(): string {
     return listSelectionToKey(this.state.get('selectedList'));
+  }
+
+  private mainTaskViewState(): ListViewState {
+    return this.persistsSettings
+      ? this.projectWorkspaceSession.mainTaskView()
+      : this.state.get('centerListViewState');
+  }
+
+  private mainTaskQuery(): string {
+    return this.persistsSettings
+      ? this.projectWorkspaceSession.mainTaskSession().query
+      : this.state.get('centerFilter');
   }
 
   private showViewStatePopover(
@@ -4052,10 +4099,10 @@ export class CenterPanel {
       ...selectTaskList({
         tasks: this.queries.list(),
         selection: this.state.get('selectedList'),
-        viewState: this.state.get('centerListViewState'),
+        viewState: this.mainTaskViewState(),
         settings: this.settings,
         today: window.moment().format('YYYY-MM-DD') as LocalDate,
-        textQuery: this.state.get('centerFilter'),
+        textQuery: this.mainTaskQuery(),
       }),
     ];
   }

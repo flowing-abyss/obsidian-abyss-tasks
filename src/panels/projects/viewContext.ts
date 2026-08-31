@@ -23,6 +23,7 @@ export interface ProjectsListContext {
   state: AppState;
   settings: CalendarSettings;
   onSaveSettings: () => Promise<void>;
+  collectionState?: ProjectWorkspaceSession;
   onFiltersChanged?: () => void;
   onPortfolioLayoutChanged?: () => void;
   onCaptureSettled?: () => void;

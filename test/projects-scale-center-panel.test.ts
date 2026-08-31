@@ -590,6 +590,7 @@ describe('Projects Tasks/List scale integration RED', () => {
     execute.mockReturnValueOnce(pending.promise);
     try {
       click(root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!);
+      await flushMicrotasks();
       const inspectedCard = cardFor(root, tasks[4]!)!;
       click(inspectedCard);
       const card = Array.from(

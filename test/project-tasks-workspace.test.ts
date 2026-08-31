@@ -216,7 +216,7 @@ describe('Project Tasks workspace', () => {
     },
   );
 
-  it('feeds the same canonical Task search result identities to List, Board, and Timeline', () => {
+  it('feeds the same canonical Task search result identities to List, Board, and Timeline', async () => {
     const container = freshContainer();
     const session = new ProjectWorkspaceSession();
     session.openProject('Projects/A.md');
@@ -266,7 +266,9 @@ describe('Project Tasks workspace', () => {
       },
     );
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     container.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+    await flushMicrotasks();
 
     expect(identities).toEqual([['Ship release'], ['Ship release'], ['Ship release']]);
   });
@@ -340,6 +342,7 @@ describe('Project Tasks workspace', () => {
       renderTaskBoard,
     });
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
 
     expect(renderTasks.mock.calls[0]?.[3]).toMatchObject(override);
     expect(renderTaskBoard.mock.calls[0]?.[3]).toMatchObject(override);
@@ -369,7 +372,7 @@ describe('Project Tasks workspace', () => {
       renderTasks,
     });
     container.querySelector<HTMLButtonElement>('[data-test-project-filter]')!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     expect(renderTasks.mock.lastCall?.[3].filters).toContainEqual({
       type: 'tag',
@@ -382,7 +385,7 @@ describe('Project Tasks workspace', () => {
     expect(state.get('centerListViewState').filters).toEqual([]);
   });
 
-  it('destroys each child renderer before replacement and destroys the active child with the dashboard', () => {
+  it('destroys each child renderer before replacement and destroys the active child with the dashboard', async () => {
     const container = freshContainer();
     activeDocument.body.append(container);
     const listDestroy = vi.fn();
@@ -425,9 +428,11 @@ describe('Project Tasks workspace', () => {
     expect(dashboard).toEqual(expect.objectContaining({ destroy: expect.any(Function) }));
 
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     expect(listDestroy).toHaveBeenCalledOnce();
     expect(sequence).toEqual(['list-render', 'list-destroy', 'board-render']);
     container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    await flushMicrotasks();
     expect(boardDestroy).toHaveBeenCalledOnce();
     expect(sequence).toEqual([
       'list-render',
@@ -473,6 +478,7 @@ describe('Project Tasks workspace', () => {
         }),
     });
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     const item = container.querySelector<HTMLElement>('[data-board-item="task"]')!;
     item.dispatchEvent(new Event('dragstart', { bubbles: true }));
     container
@@ -480,6 +486,7 @@ describe('Project Tasks workspace', () => {
       .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
 
     container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    await flushMicrotasks();
     expect(container.querySelector('.replacement-list')).not.toBeNull();
     pending.resolve({ type: 'ok', path: 'task' });
     await flushMicrotasks();
@@ -520,8 +527,10 @@ describe('Project Tasks workspace', () => {
         }),
     });
     container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
     container.querySelector<HTMLButtonElement>('[data-project-layout="list"]')!.click();
+    await flushMicrotasks();
     pending.resolve({ type: 'ok', path: 'task' });
     await flushMicrotasks();
 
@@ -548,11 +557,12 @@ describe('Project Tasks workspace', () => {
     });
   });
 
-  it('retains same-Project Timeline layout and viewport but resets a different Project to Tasks/List', () => {
+  it('retains same-Project Timeline layout and viewport but resets a different Project to Tasks/List', async () => {
     const session = new ProjectWorkspaceSession();
     session.openProject('Projects/A.md');
     session.scope = 'work-notes';
     session.layout = 'timeline';
+    await flushMicrotasks();
     Object.assign(session.timelines.workNotes, {
       firstKey: 'work-note:Work Notes/Deep.md',
       firstIndex: 120,
@@ -636,7 +646,7 @@ describe('Project Tasks workspace', () => {
     },
   );
 
-  it('activates the Board route and preserves Tasks/List as the default', () => {
+  it('activates the Board route and preserves Tasks/List as the default', async () => {
     const container = freshContainer();
     const renderTasks = vi.fn((host: HTMLElement) => {
       host.createDiv({ text: 'Shared task list' });
@@ -661,6 +671,7 @@ describe('Project Tasks workspace', () => {
     expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'list' });
 
     board.click();
+    await flushMicrotasks();
 
     expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'board' });
     expect(container.querySelector('.abyss-project-tasks-content')?.textContent).toBe(
@@ -669,7 +680,7 @@ describe('Project Tasks workspace', () => {
     expect(renderTaskBoard).toHaveBeenCalledOnce();
   });
 
-  it('enables Timeline only when the active scope has dated data and a real renderer', () => {
+  it('enables Timeline only when the active scope has dated data and a real renderer', async () => {
     const container = freshContainer();
     const renderTaskTimeline = vi.fn((host: HTMLElement) => {
       host.createDiv({ text: 'Shared task Timeline' });
@@ -690,6 +701,7 @@ describe('Project Tasks workspace', () => {
 
     expect(timeline.disabled).toBe(false);
     timeline.click();
+    await flushMicrotasks();
     expect(workspace.dataset).toMatchObject({ scope: 'tasks', layout: 'timeline' });
     expect(container.querySelector('.abyss-project-tasks-content')?.textContent).toBe(
       'Shared task Timeline',
@@ -697,7 +709,7 @@ describe('Project Tasks workspace', () => {
     expect(renderTaskTimeline).toHaveBeenCalledOnce();
   });
 
-  it('enables the Work Note Timeline only after selecting a dated Work Note scope', () => {
+  it('enables the Work Note Timeline only after selecting a dated Work Note scope', async () => {
     const container = freshContainer();
     const base = snapshot('with-work-notes');
     const dated = {
@@ -735,6 +747,7 @@ describe('Project Tasks workspace', () => {
     )!;
     expect(timeline.disabled).toBe(false);
     timeline.click();
+    await flushMicrotasks();
     expect(container.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject(
       {
         scope: 'work-notes',

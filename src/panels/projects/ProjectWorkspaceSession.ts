@@ -1,8 +1,12 @@
 import type { ProjectCreateResult } from '../../projects/ProjectManager';
+import { getListViewDefaults } from '../../settings/defaults';
 import { normalizeProjectCollectionPreferences } from '../../settings/migration';
 import type {
   CalendarSettings,
   CollectionSessionState,
+  ListViewState,
+  MainTasksCollectionPreference,
+  PortfolioCollectionPreference,
   ProjectScopedCollectionPreferences,
   ProjectTasksCollectionPreference,
   ProjectTasksViewState,
@@ -10,9 +14,11 @@ import type {
   WorkNotesViewState,
 } from '../../settings/types';
 import {
+  CollectionPreferenceConflictError,
   CollectionStateCoordinator,
   InMemoryCollectionSessionPort,
   type CollectionPreferencePort,
+  type CollectionPreferenceSnapshot,
   type CollectionScopeKey,
 } from '../../ui/collection/CollectionStateCoordinator';
 import type { BoardViewPreference } from './boardPreferences';
@@ -63,7 +69,11 @@ export interface ProjectWorkspaceScopeSession<_TViewState> {
   openSurface: string | null;
 }
 
-type WorkspacePreference = ProjectTasksCollectionPreference | WorkNotesCollectionPreference;
+type WorkspacePreference =
+  | MainTasksCollectionPreference
+  | PortfolioCollectionPreference
+  | ProjectTasksCollectionPreference
+  | WorkNotesCollectionPreference;
 type WorkspacePreferenceFor<S extends ProjectWorkspaceScope> = S extends 'tasks'
   ? ProjectTasksCollectionPreference
   : WorkNotesCollectionPreference;
@@ -210,8 +220,13 @@ function scopeSession<TViewState>(
     },
     set layout(next: ProjectWorkspaceLayout) {
       const scope = instanceKey as CollectionScopeKey;
-      const current = coordinator.preference(scope);
-      void coordinator.updatePreference(scope, current.version, { ...current, layout: next });
+      const current = coordinator.preferenceSnapshot(scope);
+      void coordinator
+        .updatePreference(scope, current.revision, {
+          ...current.preference,
+          layout: next,
+        } as WorkspacePreference)
+        .catch(() => undefined);
     },
     get textQuery(): string {
       return coordinator.session(instanceKey).query;
@@ -390,6 +405,8 @@ function emptyWorkspacePreference(): WorkNotesCollectionPreference {
   };
 }
 
+const PORTFOLIO_UNMAPPED_FILTER = '__unmapped__';
+
 function scopeParts(
   scope: CollectionScopeKey,
 ): { readonly path: string; readonly kind: 'tasks' | 'work-notes' } | null {
@@ -402,15 +419,18 @@ function scopeParts(
   return null;
 }
 
-/** Versioned settings-backed preference store; mount sessions never write into it. */
+/** Settings-backed preference store shared by every production collection scope. */
 class ProjectWorkspacePreferencePort implements CollectionPreferencePort<WorkspacePreference> {
   private settings: CalendarSettings | null = null;
   private onSaveSettings: (() => Promise<void>) | undefined;
   private readonly fallback = new Map<CollectionScopeKey, WorkspacePreference>();
+  private readonly revisions = new Map<string, number>();
   private readonly listeners = new Map<
     CollectionScopeKey,
-    Set<(next: WorkspacePreference) => void>
+    Set<(next: CollectionPreferenceSnapshot<WorkspacePreference>) => void>
   >();
+  private saveQueue: Promise<void> = Promise.resolve();
+  private mainTaskListKey = 'today';
 
   bind(settings: CalendarSettings, onSaveSettings?: () => Promise<void>): void {
     normalizeProjectCollectionPreferences(
@@ -419,6 +439,14 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     this.settings = settings;
     this.onSaveSettings = onSaveSettings;
     if (onSaveSettings) this.fallback.clear();
+  }
+
+  activateMainTaskList(listKey: string): void {
+    this.mainTaskListKey = listKey;
+  }
+
+  private revisionKey(scope: CollectionScopeKey): string {
+    return scope === 'tasks:main' ? `${scope}:${this.mainTaskListKey}` : scope;
   }
 
   private taskBaseline(settings: CalendarSettings): ProjectTasksCollectionPreference {
@@ -451,61 +479,192 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     };
   }
 
+  private mainTaskPreference(settings: CalendarSettings): MainTasksCollectionPreference {
+    const view =
+      settings.listViewStates?.[this.mainTaskListKey] ?? getListViewDefaults(this.mainTaskListKey);
+    return {
+      version: 1,
+      layout: 'list',
+      filters: structuredClone(view.filters),
+      group: view.groupBy,
+      sort: { ...view.sortBy },
+      visibleFields: [],
+      layoutPreferences: {
+        primary: { ...(view.statusGroups && { statusGroups: [...view.statusGroups] }) },
+      },
+    };
+  }
+
+  private portfolioPreference(settings: CalendarSettings): PortfolioCollectionPreference {
+    const view = settings.projects.view;
+    return {
+      version: 1,
+      layout: view.portfolioLayout,
+      filters: [
+        ...view.visibleStatusIds,
+        ...(view.includeUnmapped ? [PORTFOLIO_UNMAPPED_FILTER] : []),
+      ],
+      group: 'none',
+      sort: 'none',
+      visibleFields: view.table.columns
+        .filter(({ visible }) => visible)
+        .map(({ propertyId }) => propertyId),
+      layoutPreferences: {
+        overview: { table: structuredClone(view.table) },
+        board: { board: structuredClone(view.board) },
+        timeline: { timeline: structuredClone(view.timeline.portfolio) },
+      },
+    };
+  }
+
   private stored(scope: CollectionScopeKey): WorkspacePreference | undefined {
     const fallback = this.fallback.get(scope);
     if (fallback) return fallback;
     const settings = this.settings;
+    if (!settings) return undefined;
+    if (scope === 'tasks:main') return this.mainTaskPreference(settings);
+    if (scope === 'projects:portfolio') return this.portfolioPreference(settings);
     const parts = scopeParts(scope);
-    if (!settings || !parts) return undefined;
+    if (!parts) return undefined;
     return settings.projects.view.collectionPreferences[parts.path]?.[
       parts.kind === 'tasks' ? 'tasks' : 'workNotes'
     ];
   }
 
-  read(scope: CollectionScopeKey): WorkspacePreference {
+  read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<WorkspacePreference> {
     const settings = this.settings;
     const parts = scopeParts(scope);
     const stored = this.stored(scope);
-    if (stored) return structuredClone(stored);
-    if (!settings || !parts) return emptyWorkspacePreference();
-    return parts.kind === 'tasks' ? this.taskBaseline(settings) : this.workNotesBaseline(settings);
+    let preference: WorkspacePreference;
+    if (stored) preference = structuredClone(stored);
+    else if (!settings || !parts) preference = emptyWorkspacePreference();
+    else if (parts.kind === 'tasks') preference = this.taskBaseline(settings);
+    else preference = this.workNotesBaseline(settings);
+    return {
+      revision: this.revisions.get(this.revisionKey(scope)) ?? 0,
+      preference,
+    };
   }
 
   update(
     scope: CollectionScopeKey,
-    expectedVersion: number,
+    expectedRevision: number,
     next: WorkspacePreference,
-  ): Promise<WorkspacePreference> {
-    const parts = scopeParts(scope);
-    const settings = this.settings;
-    if (!parts || !settings || !this.onSaveSettings) {
-      if (this.read(scope).version !== expectedVersion)
-        return Promise.reject(new Error('version conflict'));
-      this.fallback.set(scope, structuredClone(next));
-      for (const listener of this.listeners.get(scope) ?? []) listener(next);
-      return Promise.resolve(next);
-    }
-    if (this.read(scope).version !== expectedVersion)
-      return Promise.reject(new Error('version conflict'));
-    const current = settings.projects.view.collectionPreferences[parts.path];
-    const nextRecord: ProjectScopedCollectionPreferences = {
-      tasks: current?.tasks ?? this.taskBaseline(settings),
-      workNotes: current?.workNotes ?? this.workNotesBaseline(settings),
-      [parts.kind === 'tasks' ? 'tasks' : 'workNotes']: structuredClone(next) as never,
-    };
-    settings.projects.view.collectionPreferences[parts.path] = nextRecord;
-    for (const listener of this.listeners.get(scope) ?? []) listener(next);
-    return Promise.resolve(this.onSaveSettings()).then(() => next);
+  ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
+    const operation = this.saveQueue.then(() => this.commit(scope, expectedRevision, next));
+    this.saveQueue = operation.then(
+      () => undefined,
+      () => undefined,
+    );
+    return operation;
   }
 
-  subscribe(scope: CollectionScopeKey, listener: (next: WorkspacePreference) => void): () => void {
-    const scoped = this.listeners.get(scope) ?? new Set<(next: WorkspacePreference) => void>();
+  subscribe(
+    scope: CollectionScopeKey,
+    listener: (next: CollectionPreferenceSnapshot<WorkspacePreference>) => void,
+  ): () => void {
+    const scoped =
+      this.listeners.get(scope) ??
+      new Set<(next: CollectionPreferenceSnapshot<WorkspacePreference>) => void>();
     scoped.add(listener);
     this.listeners.set(scope, scoped);
     return () => {
       scoped.delete(listener);
       if (scoped.size === 0) this.listeners.delete(scope);
     };
+  }
+
+  private async commit(
+    scope: CollectionScopeKey,
+    expectedRevision: number,
+    next: WorkspacePreference,
+  ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
+    const revisionKey = this.revisionKey(scope);
+    const revision = this.revisions.get(revisionKey) ?? 0;
+    if (revision !== expectedRevision) throw new CollectionPreferenceConflictError();
+    const settings = this.settings;
+    if (!settings || !this.onSaveSettings) {
+      this.fallback.set(scope, structuredClone(next));
+      return this.publish(scope, revisionKey, revision, next);
+    }
+
+    const restore = this.stage(settings, scope, next);
+    try {
+      await this.onSaveSettings();
+    } catch (error) {
+      restore();
+      throw error;
+    }
+    return this.publish(scope, revisionKey, revision, next);
+  }
+
+  private stage(
+    settings: CalendarSettings,
+    scope: CollectionScopeKey,
+    next: WorkspacePreference,
+  ): () => void {
+    if (scope === 'tasks:main') {
+      const prior = settings.listViewStates;
+      const preference = next as MainTasksCollectionPreference;
+      const statusGroups = preference.layoutPreferences['primary']?.statusGroups;
+      const view: ListViewState = {
+        groupBy: preference.group,
+        sortBy: { ...preference.sort },
+        filters: [...preference.filters],
+        ...(statusGroups && { statusGroups: [...statusGroups] }),
+      };
+      settings.listViewStates = { ...(prior ?? {}), [this.mainTaskListKey]: view };
+      return () => {
+        if (prior) settings.listViewStates = prior;
+        else delete settings.listViewStates;
+      };
+    }
+
+    const prior = settings.projects.view;
+    if (scope === 'projects:portfolio') {
+      const preference = next as PortfolioCollectionPreference;
+      const filters = new Set(preference.filters);
+      settings.projects.view = {
+        ...prior,
+        portfolioLayout: preference.layout,
+        visibleStatusIds: preference.filters.filter((id) => id !== PORTFOLIO_UNMAPPED_FILTER),
+        includeUnmapped: filters.has(PORTFOLIO_UNMAPPED_FILTER),
+      };
+      return () => {
+        settings.projects.view = prior;
+      };
+    }
+
+    const parts = scopeParts(scope);
+    if (!parts) return () => undefined;
+    const current = prior.collectionPreferences[parts.path];
+    const nextRecord: ProjectScopedCollectionPreferences = {
+      tasks: current?.tasks ?? this.taskBaseline(settings),
+      workNotes: current?.workNotes ?? this.workNotesBaseline(settings),
+      [parts.kind === 'tasks' ? 'tasks' : 'workNotes']: structuredClone(next) as never,
+    };
+    settings.projects.view = {
+      ...prior,
+      collectionPreferences: {
+        ...prior.collectionPreferences,
+        [parts.path]: nextRecord,
+      },
+    };
+    return () => {
+      settings.projects.view = prior;
+    };
+  }
+
+  private publish(
+    scope: CollectionScopeKey,
+    revisionKey: string,
+    revision: number,
+    preference: WorkspacePreference,
+  ): CollectionPreferenceSnapshot<WorkspacePreference> {
+    const settled = { revision: revision + 1, preference: structuredClone(preference) };
+    this.revisions.set(revisionKey, settled.revision);
+    for (const listener of this.listeners.get(scope) ?? []) listener(settled);
+    return settled;
   }
 
   renameProject(sourcePath: string, destinationPath: string): void {
@@ -555,6 +714,74 @@ export class ProjectWorkspaceSession {
     this.coordinator.invalidatePreferences();
   }
 
+  activateMainTaskCollection(listKey: string): void {
+    this.preferencePort.activateMainTaskList(listKey);
+    this.coordinator.invalidatePreference('tasks:main');
+  }
+
+  mainTaskPreferenceSnapshot(): CollectionPreferenceSnapshot<MainTasksCollectionPreference> {
+    return this.coordinator.preferenceSnapshot(
+      'tasks:main',
+    ) as CollectionPreferenceSnapshot<MainTasksCollectionPreference>;
+  }
+
+  mainTaskView(): ListViewState {
+    const preference = this.mainTaskPreferenceSnapshot().preference;
+    const statusGroups = preference.layoutPreferences['primary']?.statusGroups;
+    return {
+      groupBy: preference.group,
+      sortBy: { ...preference.sort },
+      filters: [...preference.filters],
+      ...(statusGroups && { statusGroups: [...statusGroups] }),
+    };
+  }
+
+  updateMainTaskPreference(
+    mutate: (current: MainTasksCollectionPreference) => MainTasksCollectionPreference,
+  ): Promise<CollectionPreferenceSnapshot<MainTasksCollectionPreference>> {
+    const current = this.mainTaskPreferenceSnapshot();
+    return this.coordinator.updatePreference(
+      'tasks:main',
+      current.revision,
+      mutate(current.preference),
+    ) as Promise<CollectionPreferenceSnapshot<MainTasksCollectionPreference>>;
+  }
+
+  mainTaskSession(): CollectionSessionState {
+    return this.coordinator.session('tasks:main');
+  }
+
+  updateMainTaskSession(changes: Partial<CollectionSessionState>): void {
+    this.coordinator.updateSession('tasks:main', { ...this.mainTaskSession(), ...changes });
+  }
+
+  portfolioPreferenceSnapshot(): CollectionPreferenceSnapshot<PortfolioCollectionPreference> {
+    return this.coordinator.preferenceSnapshot(
+      'projects:portfolio',
+    ) as CollectionPreferenceSnapshot<PortfolioCollectionPreference>;
+  }
+
+  portfolioPreference(): PortfolioCollectionPreference {
+    return this.portfolioPreferenceSnapshot().preference;
+  }
+
+  updatePortfolioPreference(
+    mutate: (current: PortfolioCollectionPreference) => PortfolioCollectionPreference,
+  ): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
+    const current = this.portfolioPreferenceSnapshot();
+    return this.coordinator.updatePreference(
+      'projects:portfolio',
+      current.revision,
+      mutate(current.preference),
+    ) as Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>>;
+  }
+
+  subscribePortfolioPreference(
+    listener: (next: CollectionPreferenceSnapshot<PortfolioCollectionPreference>) => void,
+  ): () => void {
+    return this.coordinator.subscribePreference('projects:portfolio', listener as never);
+  }
+
   collectionScopeKey(path: string, scope: ProjectWorkspaceScope): CollectionScopeKey {
     return `project:${path}:${scope}`;
   }
@@ -580,7 +807,9 @@ export class ProjectWorkspaceSession {
     scope: ProjectWorkspaceScope,
     listener: (next: WorkspacePreference) => void,
   ): () => void {
-    return this.coordinator.subscribePreference(this.collectionScopeKey(path, scope), listener);
+    return this.coordinator.subscribePreference(this.collectionScopeKey(path, scope), (next) =>
+      listener(next.preference),
+    );
   }
 
   updateCollectionPreference<S extends ProjectWorkspaceScope>(
@@ -589,10 +818,12 @@ export class ProjectWorkspaceSession {
     mutate: (current: WorkspacePreferenceFor<S>) => WorkspacePreferenceFor<S>,
   ): Promise<WorkspacePreferenceFor<S>> {
     const key = this.collectionScopeKey(path, scope);
-    const current = this.coordinator.preference(key) as WorkspacePreferenceFor<S>;
-    return this.coordinator.updatePreference(key, current.version, mutate(current)) as Promise<
+    const current = this.coordinator.preferenceSnapshot(key) as CollectionPreferenceSnapshot<
       WorkspacePreferenceFor<S>
     >;
+    return this.coordinator
+      .updatePreference(key, current.revision, mutate(current.preference))
+      .then((next) => next.preference as WorkspacePreferenceFor<S>);
   }
 
   collectionView(path: string, scope: 'tasks'): ProjectTasksViewState;

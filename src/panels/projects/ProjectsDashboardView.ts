@@ -1,4 +1,4 @@
-import { Menu, setIcon } from 'obsidian';
+import { Menu, Notice, setIcon } from 'obsidian';
 import {
   projectHealthProjection,
   type ProjectHealthProjection,
@@ -28,6 +28,15 @@ import {
 
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
 export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
+
+function reportPreferenceError(error: unknown): void {
+  const conflict = error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+  new Notice(
+    conflict
+      ? 'Project collection changed elsewhere. Your change was not saved; review the settled view.'
+      : 'Project collection preference was not saved. Nothing changed; try again.',
+  );
+}
 
 function currentLocalDate(): string {
   const now = new Date();
@@ -453,28 +462,37 @@ export function renderProjectDashboard(
     button.setAttribute('aria-disabled', String(!selectable));
     if (selectable) {
       button.addEventListener('click', () => {
-        layout = value;
-        session.layout = layout;
-        renderWorkspace();
+        void session
+          .updateCollectionPreference(project.path, scope, (current) => ({
+            ...current,
+            layout: value,
+          }))
+          .then(() => {
+            layout = value;
+            renderWorkspace();
+          })
+          .catch(reportPreferenceError);
       });
     }
     layoutButtons.push(button);
   };
 
   const updateTaskView = (next: ProjectTasksViewState): void => {
-    void session.updateCollectionPreference(project.path, 'tasks', (current) => {
-      const layoutPreference = { ...current.layoutPreferences['primary'], table: next.table };
-      if (next.statusGroups) layoutPreference.statusGroups = next.statusGroups;
-      else delete layoutPreference.statusGroups;
-      return {
-        ...current,
-        filters: [...next.filters],
-        group: next.groupBy,
-        sort: { ...next.sortBy },
-        layoutPreferences: { ...current.layoutPreferences, primary: layoutPreference },
-      };
-    });
-    renderWorkspace();
+    void session
+      .updateCollectionPreference(project.path, 'tasks', (current) => {
+        const layoutPreference = { ...current.layoutPreferences['primary'], table: next.table };
+        if (next.statusGroups) layoutPreference.statusGroups = next.statusGroups;
+        else delete layoutPreference.statusGroups;
+        return {
+          ...current,
+          filters: [...next.filters],
+          group: next.groupBy,
+          sort: { ...next.sortBy },
+          layoutPreferences: { ...current.layoutPreferences, primary: layoutPreference },
+        };
+      })
+      .then(() => renderWorkspace())
+      .catch(reportPreferenceError);
   };
   const addTaskFilter = (filter: PropertyFilter): void => {
     const current = taskViewState();
@@ -483,13 +501,15 @@ export function renderProjectDashboard(
     updateTaskView({ ...current, filters: [...current.filters, filter] });
   };
   const updateWorkNotesView = (next: WorkNotesViewState): void => {
-    void session.updateCollectionPreference(project.path, 'work-notes', (current) => ({
-      ...current,
-      filters: [...next.statusIds],
-      group: next.groupBy,
-      sort: { ...next.sortBy },
-    }));
-    renderWorkspace();
+    void session
+      .updateCollectionPreference(project.path, 'work-notes', (current) => ({
+        ...current,
+        filters: [...next.statusIds],
+        group: next.groupBy,
+        sort: { ...next.sortBy },
+      }))
+      .then(() => renderWorkspace())
+      .catch(reportPreferenceError);
   };
   const showWorkspaceMenu = (menu: Menu, event: MouseEvent): void => {
     const trigger = event.currentTarget as HTMLButtonElement | null;

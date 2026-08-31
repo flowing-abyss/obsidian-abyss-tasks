@@ -157,6 +157,7 @@ function makeStaticPanel(
   interactionOwnership?: InteractionOwnershipPort,
   tasks?: TaskApplicationApi,
   dependencyProjection?: DependencyProjectionPort,
+  onSaveSettings?: () => Promise<void>,
 ): CenterPanel {
   return new CenterPanel(
     state,
@@ -164,7 +165,7 @@ function makeStaticPanel(
     settings,
     queryApiForSnapshots(() => snapshots),
     new StatusRegistry(settings.taskStatuses),
-    undefined,
+    onSaveSettings,
     null,
     null,
     tasks,
@@ -407,6 +408,39 @@ describe('CenterPanel list selection', () => {
 });
 
 describe('CenterPanel semantic navigation render boundary', () => {
+  it('renders a main Task preference only after its settings save settles', async () => {
+    const state = new AppState();
+    state.set('selectedList', 'today');
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const save = deferred<void>();
+    const panel = makeStaticPanel(
+      state,
+      [],
+      settings,
+      {} as App,
+      undefined,
+      undefined,
+      undefined,
+      () => save.promise,
+    );
+    const container = freshContainer();
+    panel.mount(container);
+
+    container.querySelector<HTMLButtonElement>('.abyss-view-state-btn')!.click();
+    const none = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('.abyss-view-state-option'),
+    ).find((button) => button.textContent?.includes('None'))!;
+    none.click();
+    await flushMicrotasks();
+
+    expect(settings.listViewStates?.['today']?.groupBy).toBe('none');
+    expect(state.get('centerListViewState').groupBy).toBe('date');
+    save.resolve();
+    await flushMicrotasks();
+    expect(state.get('centerListViewState').groupBy).toBe('none');
+    panel.destroy();
+  });
+
   it('does not expose or forward the PanelView-owned Quick Capture action', () => {
     const panel = makeStaticPanel(new AppState(), [], structuredClone(DEFAULT_SETTINGS));
 
@@ -3590,6 +3624,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     );
     try {
       container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+      await flushMicrotasks();
       const inProgress = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'in-progress')!;
       const trigger = container.querySelector<HTMLButtonElement>(
         `[data-board-column-add="${inProgress.id}"] .abyss-add-task-trigger`,

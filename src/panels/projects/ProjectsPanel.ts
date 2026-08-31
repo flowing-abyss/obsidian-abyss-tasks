@@ -146,6 +146,7 @@ export class ProjectsPanel {
     this.workNoteCommands = opts.workNoteCommands;
     this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
+    this.workspaceSession.bindCollectionPreferences(settings, opts.onSaveSettings);
     this.onAnnounce = opts.onAnnounce ?? ((): void => {});
   }
 
@@ -496,6 +497,7 @@ export class ProjectsPanel {
       state: this.state,
       settings: this.settings,
       onSaveSettings: this.onSaveSettings,
+      collectionState: this.workspaceSession,
       onFiltersChanged: () => {
         this.portfolioFocusIntent = null;
         this.render();
@@ -507,19 +509,20 @@ export class ProjectsPanel {
       onSetStatus: (p: string, id: string) => void this.setStatus(p, id),
       openNote: (p: string) => this.openNote(p),
     };
-    const visibleStatusIds = new Set(this.settings.projects.view.visibleStatusIds);
+    const portfolioPreference = this.workspaceSession.portfolioPreference();
+    const visibleStatusIds = new Set(portfolioPreference.filters);
     const createdPath = this.workspaceSession.portfolioCapture.createdPath;
     const timelineSnapshots = this.snapshots.filter(
       ({ project }) =>
         project.path === createdPath ||
         (project.statusId === null
-          ? this.settings.projects.view.includeUnmapped
+          ? visibleStatusIds.has('__unmapped__')
           : visibleStatusIds.has(project.statusId)),
     );
     const timelineAvailable = this.projectCommands !== undefined;
     const projectCommands = this.projectCommands;
     const portfolioContext = { ...listContext, timelineAvailable };
-    if (this.settings.projects.view.portfolioLayout === 'timeline' && projectCommands) {
+    if (portfolioPreference.layout === 'timeline' && projectCommands) {
       const toolbar = renderProjectsToolbar(container, portfolioContext);
       const { newProjectButton } = toolbar;
       let captureCleanup: (() => void) | undefined;
@@ -609,7 +612,7 @@ export class ProjectsPanel {
       this.restorePortfolioContinuity(portfolioFocus);
       return;
     }
-    if (this.settings.projects.view.portfolioLayout === 'board') {
+    if (portfolioPreference.layout === 'board') {
       const board = renderProjectsBoard(container, {
         ...portfolioContext,
         snapshots: this.snapshots,

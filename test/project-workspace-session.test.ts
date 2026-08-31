@@ -2,7 +2,145 @@ import { describe, expect, it, vi } from 'vitest';
 import { ProjectWorkspaceSessionRegistry } from '../src/panels/projects/ProjectWorkspaceSession';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const flushAsyncQueue = async (): Promise<void> =>
+  new Promise((resolve) => globalThis.setTimeout(resolve, 0));
+
 describe('ProjectWorkspaceSessionRegistry', () => {
+  it('routes main Task and portfolio preferences through isolated production scopes and reloads them', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const untouchedDesktop = settings.desktop;
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockResolvedValue(undefined));
+    registry.activateMainTaskCollection('today');
+
+    await registry.updateMainTaskPreference((current) => ({
+      ...current,
+      group: 'priority',
+      filters: [{ type: 'tag', value: '#ship' }],
+    }));
+    await registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'board',
+      filters: ['status-1'],
+    }));
+
+    expect(settings.listViewStates?.['today']).toMatchObject({
+      groupBy: 'priority',
+      filters: [{ type: 'tag', value: '#ship' }],
+    });
+    expect(settings.projects.view).toMatchObject({
+      portfolioLayout: 'board',
+      visibleStatusIds: ['status-1'],
+    });
+    expect(settings.desktop).toBe(untouchedDesktop);
+    expect(registry.mainTaskPreferenceSnapshot()).toMatchObject({
+      revision: 1,
+      preference: { version: 1, group: 'priority' },
+    });
+    expect(registry.portfolioPreferenceSnapshot()).toMatchObject({
+      revision: 1,
+      preference: { version: 1, layout: 'board' },
+    });
+
+    const reloaded = new ProjectWorkspaceSessionRegistry();
+    reloaded.bindCollectionPreferences(settings);
+    reloaded.activateMainTaskCollection('today');
+    expect(reloaded.mainTaskView()).toMatchObject({ groupBy: 'priority' });
+    expect(reloaded.portfolioPreference()).toMatchObject({
+      layout: 'board',
+      filters: ['status-1'],
+    });
+  });
+
+  it('keeps deferred settings staged but publishes and exposes only the settled portfolio snapshot', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const save = deferred<void>();
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockReturnValue(save.promise));
+    const listener = vi.fn();
+    registry.subscribePortfolioPreference(listener);
+
+    const pending = registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'board',
+    }));
+    await flushAsyncQueue();
+
+    expect(settings.projects.view.portfolioLayout).toBe('board');
+    expect(registry.portfolioPreference()).toMatchObject({ layout: 'overview' });
+    expect(listener).not.toHaveBeenCalled();
+    save.resolve();
+    await expect(pending).resolves.toMatchObject({
+      revision: 1,
+      preference: { layout: 'board' },
+    });
+    expect(registry.portfolioPreference()).toMatchObject({ layout: 'board' });
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
+  it('restores the exact prior settings object and emits nothing when a collection save rejects', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const priorView = settings.projects.view;
+    const save = deferred<void>();
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockReturnValue(save.promise));
+    const listener = vi.fn();
+    registry.subscribePortfolioPreference(listener);
+
+    const pending = registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'board',
+    }));
+    save.reject(new Error('disk full'));
+
+    await expect(pending).rejects.toThrow('disk full');
+    expect(settings.projects.view).toBe(priorView);
+    expect(settings.projects.view.portfolioLayout).toBe('overview');
+    expect(registry.portfolioPreferenceSnapshot()).toMatchObject({
+      revision: 0,
+      preference: { layout: 'overview' },
+    });
+    expect(listener).not.toHaveBeenCalled();
+  });
+
+  it('settles exactly one of two portfolio writes issued from the same revision', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const save = deferred<void>();
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockReturnValueOnce(save.promise));
+    const listener = vi.fn();
+    registry.subscribePortfolioPreference(listener);
+
+    const first = registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'board',
+    }));
+    const stale = registry.updatePortfolioPreference((current) => ({
+      ...current,
+      layout: 'timeline',
+    }));
+    save.resolve();
+
+    await expect(first).resolves.toMatchObject({ revision: 1 });
+    await expect(stale).rejects.toThrow('revision conflict');
+    expect(settings.projects.view.portfolioLayout).toBe('board');
+    expect(listener).toHaveBeenCalledOnce();
+  });
+
   it('constructs one coordinator-backed session per exact Project scope without persisting interaction state', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const registry = new ProjectWorkspaceSessionRegistry();
@@ -158,7 +296,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(registry.portfolioTimeline.scrollLeft).toBe(0);
   });
 
-  it('keeps independent Task and Work Note slices, including their scope-local continuity', () => {
+  it('keeps independent Task and Work Note slices, including their scope-local continuity', async () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');
     const tasks = registry.scopeSession('tasks');
@@ -169,6 +307,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     tasks.viewport.firstKey = 'task-1';
     tasks.selection.selectedKeys = ['task-1'];
     workNotes.layout = 'timeline';
+    await flushAsyncQueue();
     workNotes.textQuery = 'retro';
     workNotes.viewport.firstKey = 'note-1';
     workNotes.selection.selectedKeys = ['note-1'];
@@ -226,7 +365,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(registry.hasProject('Projects/0.md')).toBe(true);
   });
 
-  it('restores each Project path and scope from its own registry entry', () => {
+  it('restores each Project path and scope from its own registry entry', async () => {
     const registry = new ProjectWorkspaceSessionRegistry();
     registry.openProject('Projects/A.md');
     registry.scope = 'work-notes';
@@ -236,6 +375,7 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     registry.scope = 'tasks';
     registry.layout = 'timeline';
     registry.scopeSession('tasks').textQuery = 'beta';
+    await flushAsyncQueue();
 
     registry.openProject('Projects/A.md');
     expect(registry.scope).toBe('work-notes');

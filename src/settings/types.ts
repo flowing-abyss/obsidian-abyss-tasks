@@ -140,6 +140,32 @@ export type WorkNotesCollectionPreference = PersistedCollectionPreference<
   Record<string, never>
 >;
 
+interface MainTasksCollectionLayoutPreference {
+  readonly statusGroups?: readonly TaskStatusType[];
+}
+
+export type MainTasksCollectionPreference = PersistedCollectionPreference<
+  PropertyFilter,
+  ListViewState['groupBy'],
+  ListViewState['sortBy'],
+  'list',
+  MainTasksCollectionLayoutPreference
+>;
+
+interface PortfolioCollectionLayoutPreference {
+  readonly table?: ProjectsTablePreference;
+  readonly board?: ProjectBoardPreference;
+  readonly timeline?: ProjectTimelinePreferences['portfolio'];
+}
+
+export type PortfolioCollectionPreference = PersistedCollectionPreference<
+  string,
+  'none',
+  'none',
+  ProjectsPortfolioLayout,
+  PortfolioCollectionLayoutPreference
+>;
+
 export interface ProjectScopedCollectionPreferences {
   readonly tasks: ProjectTasksCollectionPreference;
   readonly workNotes: WorkNotesCollectionPreference;

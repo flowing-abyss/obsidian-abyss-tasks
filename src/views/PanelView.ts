@@ -8,6 +8,7 @@ import {
   renderInspectorDraftRecovery,
   renderProjectInspector,
 } from '../panels/projects/ProjectInspector';
+import { ProjectWorkspaceSession } from '../panels/projects/ProjectWorkspaceSession';
 import { renderWorkNoteInspector } from '../panels/projects/WorkNoteInspector';
 import { ProjectCommandService } from '../projects/ProjectCommandService';
 import { projectHealthProjection } from '../projects/ProjectHealthProjection';
@@ -185,6 +186,7 @@ export class PanelView extends ItemView {
   private pendingCompactPane: PendingCompactPane | undefined = undefined;
   private modeInspectorClearVersion = 0;
   private readonly inspectorDrafts = new InspectorDraftRegistry();
+  private collectionState?: ProjectWorkspaceSession;
 
   private inspectorReturnTarget(origin: InspectorFocusOrigin | null): HTMLElement | null {
     if (origin?.element?.isConnected) return origin.element;
@@ -237,6 +239,8 @@ export class PanelView extends ItemView {
 
     this.state = new AppState();
     this.interactionRegistry = new InteractionRegistry<ShortcutActionId>();
+    this.collectionState = new ProjectWorkspaceSession();
+    this.collectionState.bindCollectionPreferences(this.settings, this.onSaveSettings);
     this.panelNavigation = new PanelNavigator(
       this.state,
       this.settings,
@@ -250,6 +254,7 @@ export class PanelView extends ItemView {
         },
       },
       this.onSaveSettings,
+      this.collectionState,
     );
     this.selectedListRenameUnsub = this.tagManager.registerSelectedListState({
       getSelectedList: () => this.state.get('selectedList'),
@@ -383,6 +388,7 @@ export class PanelView extends ItemView {
       this.workNoteCommands,
       projectCommands,
       this.dependencyProjection,
+      this.collectionState,
     );
     this.right = new RightPanel(
       this.state,

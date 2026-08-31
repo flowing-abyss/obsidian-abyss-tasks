@@ -739,7 +739,7 @@ describe('renderWorkNotesView', () => {
     },
   );
 
-  it('makes Work Notes selectable while every dashboard still opens in Tasks/List', () => {
+  it('makes Work Notes selectable while every dashboard still opens in Tasks/List', async () => {
     const root = freshContainer();
     const session = new ProjectWorkspaceSession();
     const renderTasks = vi.fn((host: HTMLElement) => {
@@ -794,6 +794,7 @@ describe('renderWorkNotesView', () => {
     expect(root.querySelector('.abyss-project-tasks-title')?.textContent).toBe('Work Notes');
     expect(renderWorkNotes).toHaveBeenCalledOnce();
     root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     expect(workspace.dataset).toMatchObject({ scope: 'work-notes', layout: 'board' });
     handle.destroy();
 
@@ -806,7 +807,7 @@ describe('renderWorkNotesView', () => {
     handle.destroy();
   });
 
-  it('retains the same open Project workspace but resets a newly opened or different Project', () => {
+  it('retains the same open Project workspace but resets a newly opened or different Project', async () => {
     const root = freshContainer();
     const session = new ProjectWorkspaceSession();
     const context = {
@@ -845,6 +846,7 @@ describe('renderWorkNotesView', () => {
     renderProjectDashboard(root, snapshot('Projects/P.md'), context);
     root.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
     root.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+    await flushMicrotasks();
     root.empty();
     renderProjectDashboard(root, snapshot('Projects/P.md'), context);
     expect(root.querySelector<HTMLElement>('[data-project-workspace]')?.dataset).toMatchObject({

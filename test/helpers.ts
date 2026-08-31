@@ -120,7 +120,7 @@ export function makeCenterPanelForTest(
   app: ObsidianApp,
   settings: CalendarSettings,
   _tagManager: TagManager,
-  onSaveSettings: () => Promise<void> = async () => {},
+  onSaveSettings?: () => Promise<void>,
   projectStore: ProjectStore | null = null,
   projectManager: ProjectManager | null = null,
   tasks?: TaskApplicationApi,

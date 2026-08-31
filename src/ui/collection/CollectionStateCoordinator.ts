@@ -6,14 +6,29 @@ export type CollectionScopeKey =
   | `project:${string}:tasks`
   | `project:${string}:work-notes`;
 
+export interface CollectionPreferenceSnapshot<TPreference> {
+  readonly revision: number;
+  readonly preference: TPreference;
+}
+
+export class CollectionPreferenceConflictError extends Error {
+  constructor() {
+    super('collection preference revision conflict');
+    this.name = 'CollectionPreferenceConflictError';
+  }
+}
+
 export interface CollectionPreferencePort<TPreference> {
-  read(scope: CollectionScopeKey): TPreference;
+  read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<TPreference>;
   update(
     scope: CollectionScopeKey,
-    expectedVersion: number,
+    expectedRevision: number,
     next: TPreference,
-  ): Promise<TPreference>;
-  subscribe(scope: CollectionScopeKey, listener: (next: TPreference) => void): () => void;
+  ): Promise<CollectionPreferenceSnapshot<TPreference>>;
+  subscribe(
+    scope: CollectionScopeKey,
+    listener: (next: CollectionPreferenceSnapshot<TPreference>) => void,
+  ): () => void;
 }
 
 export interface CollectionSessionPort {
@@ -80,7 +95,11 @@ export class InMemoryCollectionSessionPort implements CollectionSessionPort {
  * and open surfaces are intentionally exposed only through the session port.
  */
 export class CollectionStateCoordinator<TPreference extends AnyCollectionPreference> {
-  private readonly migrated = new Map<CollectionScopeKey, TPreference>();
+  private readonly migrated = new Map<
+    CollectionScopeKey,
+    CollectionPreferenceSnapshot<TPreference>
+  >();
+  private readonly writeQueues = new Map<CollectionScopeKey, Promise<void>>();
 
   constructor(
     private readonly ports: {
@@ -91,9 +110,17 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
   ) {}
 
   preference(scope: CollectionScopeKey): TPreference {
+    return this.preferenceSnapshot(scope).preference;
+  }
+
+  preferenceSnapshot(scope: CollectionScopeKey): CollectionPreferenceSnapshot<TPreference> {
     const cached = this.migrated.get(scope);
     if (cached) return cached;
-    const next = this.ports.migratePreference(this.ports.preferences.read(scope));
+    const current = this.ports.preferences.read(scope);
+    const next = {
+      revision: current.revision,
+      preference: this.ports.migratePreference(current.preference),
+    };
     this.migrated.set(scope, next);
     return next;
   }
@@ -103,31 +130,47 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     this.migrated.clear();
   }
 
+  invalidatePreference(scope: CollectionScopeKey): void {
+    this.migrated.delete(scope);
+  }
+
   async updatePreference(
     scope: CollectionScopeKey,
-    expectedVersion: number,
+    expectedRevision: number,
     next: TPreference,
-  ): Promise<TPreference> {
-    const previous = this.migrated.get(scope);
-    this.migrated.set(scope, this.ports.migratePreference(next));
-    try {
-      const settled = await this.ports.preferences.update(scope, expectedVersion, next);
-      const migrated = this.ports.migratePreference(settled);
+  ): Promise<CollectionPreferenceSnapshot<TPreference>> {
+    const previousWrite = this.writeQueues.get(scope) ?? Promise.resolve();
+    const result = previousWrite.then(async () => {
+      const current = this.preferenceSnapshot(scope);
+      if (current.revision !== expectedRevision) throw new CollectionPreferenceConflictError();
+      const settled = await this.ports.preferences.update(scope, expectedRevision, next);
+      const migrated = {
+        revision: settled.revision,
+        preference: this.ports.migratePreference(settled.preference),
+      };
       this.migrated.set(scope, migrated);
       return migrated;
-    } catch (error) {
-      if (previous) this.migrated.set(scope, previous);
-      else this.migrated.delete(scope);
-      throw error;
-    }
+    });
+    const queue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.writeQueues.set(scope, queue);
+    void queue.finally(() => {
+      if (this.writeQueues.get(scope) === queue) this.writeQueues.delete(scope);
+    });
+    return result;
   }
 
   subscribePreference(
     scope: CollectionScopeKey,
-    listener: (next: TPreference) => void,
+    listener: (next: CollectionPreferenceSnapshot<TPreference>) => void,
   ): () => void {
     return this.ports.preferences.subscribe(scope, (next) => {
-      const migrated = this.ports.migratePreference(next);
+      const migrated = {
+        revision: next.revision,
+        preference: this.ports.migratePreference(next.preference),
+      };
       this.migrated.set(scope, migrated);
       listener(migrated);
     });

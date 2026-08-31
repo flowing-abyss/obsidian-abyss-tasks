@@ -1,11 +1,14 @@
-import { Menu, setIcon } from 'obsidian';
+import { Menu, Notice, setIcon } from 'obsidian';
 import type { ProjectStatus } from '../../settings/types';
 import {
   renderCollectionControls,
   type CollectionControlAction,
 } from '../../ui/collection/CollectionControls';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
+import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import type { ProjectsListContext } from './viewContext';
+
+const UNMAPPED_FILTER = '__unmapped__';
 
 export interface ProjectsToolbarResult {
   readonly newProjectButton: HTMLButtonElement;
@@ -15,7 +18,27 @@ export interface ProjectsToolbarResult {
   destroy(): void;
 }
 
-function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext): void {
+function reportPreferenceError(error: unknown): void {
+  const conflict = error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+  new Notice(
+    conflict
+      ? 'Project view changed elsewhere. Your change was not saved; review the settled view.'
+      : 'Project view preference was not saved. Nothing changed; try again.',
+  );
+}
+
+function collectionState(ctx: ProjectsListContext): ProjectWorkspaceSession {
+  if (ctx.collectionState) return ctx.collectionState;
+  const state = new ProjectWorkspaceSession();
+  state.bindCollectionPreferences(ctx.settings, ctx.onSaveSettings);
+  return state;
+}
+
+function renderPortfolioLayout(
+  controls: HTMLElement,
+  ctx: ProjectsListContext,
+  state: ProjectWorkspaceSession,
+): void {
   const switcher = controls.createDiv({
     cls: 'abyss-cal-view-switcher abyss-projects-view-switcher',
     attr: { 'aria-label': 'Project view' },
@@ -26,7 +49,7 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
     ['timeline', 'Timeline'],
   ];
   for (const [layout, label] of layouts) {
-    const selected = ctx.settings.projects.view.portfolioLayout === layout;
+    const selected = state.portfolioPreference().layout === layout;
     const button = switcher.createEl('button', {
       cls: `abyss-cal-view-btn${selected ? ' is-active' : ''}`,
       text: label,
@@ -41,36 +64,85 @@ function renderPortfolioLayout(controls: HTMLElement, ctx: ProjectsListContext):
       button.setAttribute('aria-disabled', 'true');
     }
     button.addEventListener('click', () => {
-      if (ctx.settings.projects.view.portfolioLayout === layout) return;
-      ctx.settings.projects.view.portfolioLayout = layout;
-      void ctx.onSaveSettings();
-      ctx.onPortfolioLayoutChanged?.();
+      if (state.portfolioPreference().layout === layout) return;
+      void state
+        .updatePortfolioPreference((current) => ({ ...current, layout }))
+        .then(() => ctx.onPortfolioLayoutChanged?.())
+        .catch(reportPreferenceError);
     });
   }
 }
 
-function saveFilterChange(ctx: ProjectsListContext): void {
-  void ctx.onSaveSettings();
-  ctx.onFiltersChanged?.();
-}
-
-function toggleStatus(ctx: ProjectsListContext, statusId: string): void {
-  const visible = new Set(ctx.settings.projects.view.visibleStatusIds);
+function toggleStatus(
+  ctx: ProjectsListContext,
+  state: ProjectWorkspaceSession,
+  statusId: string,
+): Promise<boolean> {
+  const current = state.portfolioPreference();
+  const visible = new Set(current.filters);
   if (visible.has(statusId)) visible.delete(statusId);
   else visible.add(statusId);
-  ctx.settings.projects.view.visibleStatusIds = ctx.settings.projects.statuses
-    .map(({ id }) => id)
-    .filter((id) => visible.has(id));
-  saveFilterChange(ctx);
+  const configured = new Set(ctx.settings.projects.statuses.map(({ id }) => id));
+  const known = ctx.settings.projects.statuses.map(({ id }) => id).filter((id) => visible.has(id));
+  const dormant = current.filters.filter((id) => id !== UNMAPPED_FILTER && !configured.has(id));
+  const filters = [
+    ...known,
+    ...dormant,
+    ...(visible.has(UNMAPPED_FILTER) ? [UNMAPPED_FILTER] : []),
+  ];
+  return state
+    .updatePortfolioPreference((preference) => ({ ...preference, filters }))
+    .then(() => {
+      ctx.onFiltersChanged?.();
+      return true;
+    })
+    .catch((error: unknown) => {
+      reportPreferenceError(error);
+      return false;
+    });
+}
+
+function toggleUnmapped(ctx: ProjectsListContext, state: ProjectWorkspaceSession): Promise<void> {
+  const selected = state.portfolioPreference().filters.includes(UNMAPPED_FILTER);
+  return state
+    .updatePortfolioPreference((current) => ({
+      ...current,
+      filters: selected
+        ? current.filters.filter((id) => id !== UNMAPPED_FILTER)
+        : [...current.filters, UNMAPPED_FILTER],
+    }))
+    .then(() => ctx.onFiltersChanged?.())
+    .catch(reportPreferenceError);
+}
+
+function addStatusFilterMenuItems(
+  menu: Menu,
+  ctx: ProjectsListContext,
+  state: ProjectWorkspaceSession,
+): void {
+  menu.addItem((item) => item.setTitle('Status').setDisabled(true));
+  for (const status of ctx.settings.projects.statuses) {
+    menu.addItem((item) => {
+      item.setTitle(status.label);
+      item.setChecked(state.portfolioPreference().filters.includes(status.id));
+      item.onClick(() => void toggleStatus(ctx, state, status.id));
+    });
+  }
+  menu.addItem((item) => {
+    item.setTitle('Unmapped');
+    item.setChecked(state.portfolioPreference().filters.includes(UNMAPPED_FILTER));
+    item.onClick(() => void toggleUnmapped(ctx, state));
+  });
 }
 
 function renderStatusFilter(
   controls: HTMLElement,
   status: ProjectStatus,
   ctx: ProjectsListContext,
+  state: ProjectWorkspaceSession,
 ): void {
   let pointerActivation = false;
-  const selected = ctx.settings.projects.view.visibleStatusIds.includes(status.id);
+  const selected = state.portfolioPreference().filters.includes(status.id);
   const button = controls.createEl('button', {
     cls: `abyss-filter-chip abyss-project-status-filter${selected ? ' is-active' : ''}`,
     attr: {
@@ -90,25 +162,30 @@ function renderStatusFilter(
     const restoreKeyboardFocus = ownsFocus && !pointerActivation;
     pointerActivation = false;
     const projectsRoot = button.closest<HTMLElement>('.abyss-projects-panel, .abyss-projects-list');
-    toggleStatus(ctx, status.id);
-    const active = button.ownerDocument.activeElement;
-    const focusIsUnclaimed =
-      active === button ||
-      active === button.ownerDocument.body ||
-      !(active instanceof HTMLElement) ||
-      !active.isConnected;
-    if (restoreKeyboardFocus && focusIsUnclaimed) {
-      const replacement = Array.from(
-        projectsRoot?.querySelectorAll<HTMLElement>('[data-project-status-filter]') ?? [],
-      ).find(({ dataset }) => dataset['projectStatusFilter'] === status.id);
-      replacement?.focus({ preventScroll: true });
-    }
+    void toggleStatus(ctx, state, status.id).then((settled) => {
+      const active = button.ownerDocument.activeElement;
+      const focusIsUnclaimed =
+        active === button ||
+        active === button.ownerDocument.body ||
+        !(active instanceof HTMLElement) ||
+        !active.isConnected;
+      if (settled && restoreKeyboardFocus && focusIsUnclaimed) {
+        const replacement = Array.from(
+          projectsRoot?.querySelectorAll<HTMLElement>('[data-project-status-filter]') ?? [],
+        ).find(({ dataset }) => dataset['projectStatusFilter'] === status.id);
+        replacement?.focus({ preventScroll: true });
+      }
+    });
   });
 }
 
-function renderUnmappedFilter(controls: HTMLElement, ctx: ProjectsListContext): void {
+function renderUnmappedFilter(
+  controls: HTMLElement,
+  ctx: ProjectsListContext,
+  state: ProjectWorkspaceSession,
+): void {
   let pointerActivation = false;
-  const selected = ctx.settings.projects.view.includeUnmapped;
+  const selected = state.portfolioPreference().filters.includes(UNMAPPED_FILTER);
   const button = controls.createEl('button', {
     cls: `abyss-filter-chip abyss-project-status-filter${selected ? ' is-active' : ''}`,
     attr: {
@@ -127,19 +204,28 @@ function renderUnmappedFilter(controls: HTMLElement, ctx: ProjectsListContext): 
     const restoreKeyboardFocus = ownsFocus && !pointerActivation;
     pointerActivation = false;
     const projectsRoot = button.closest<HTMLElement>('.abyss-projects-panel, .abyss-projects-list');
-    ctx.settings.projects.view.includeUnmapped = !selected;
-    saveFilterChange(ctx);
-    const active = button.ownerDocument.activeElement;
-    const focusIsUnclaimed =
-      active === button ||
-      active === button.ownerDocument.body ||
-      !(active instanceof HTMLElement) ||
-      !active.isConnected;
-    if (restoreKeyboardFocus && focusIsUnclaimed) {
-      projectsRoot
-        ?.querySelector<HTMLElement>('[data-project-unmapped-filter]')
-        ?.focus({ preventScroll: true });
-    }
+    void state
+      .updatePortfolioPreference((current) => ({
+        ...current,
+        filters: selected
+          ? current.filters.filter((id) => id !== UNMAPPED_FILTER)
+          : [...current.filters, UNMAPPED_FILTER],
+      }))
+      .then(() => {
+        ctx.onFiltersChanged?.();
+        const active = button.ownerDocument.activeElement;
+        const focusIsUnclaimed =
+          active === button ||
+          active === button.ownerDocument.body ||
+          !(active instanceof HTMLElement) ||
+          !active.isConnected;
+        if (restoreKeyboardFocus && focusIsUnclaimed) {
+          projectsRoot
+            ?.querySelector<HTMLElement>('[data-project-unmapped-filter]')
+            ?.focus({ preventScroll: true });
+        }
+      })
+      .catch(reportPreferenceError);
   });
 }
 
@@ -147,6 +233,7 @@ export function renderProjectsToolbar(
   container: HTMLElement,
   ctx: ProjectsListContext,
 ): ProjectsToolbarResult {
+  const state = collectionState(ctx);
   const header = container.createDiv({ cls: 'abyss-center-header abyss-projects-toolbar' });
   header.createEl('h2', { cls: 'abyss-center-title abyss-projects-title', text: 'Projects' });
   let filters!: HTMLElement;
@@ -160,22 +247,7 @@ export function renderProjectsToolbar(
         filterButton.focus({ preventScroll: true });
       }
     });
-    menu.addItem((item) => item.setTitle('Status').setDisabled(true));
-    for (const status of ctx.settings.projects.statuses) {
-      menu.addItem((item) => {
-        item.setTitle(status.label);
-        item.setChecked(ctx.settings.projects.view.visibleStatusIds.includes(status.id));
-        item.onClick(() => toggleStatus(ctx, status.id));
-      });
-    }
-    menu.addItem((item) => {
-      item.setTitle('Unmapped');
-      item.setChecked(ctx.settings.projects.view.includeUnmapped);
-      item.onClick(() => {
-        ctx.settings.projects.view.includeUnmapped = !ctx.settings.projects.view.includeUnmapped;
-        saveFilterChange(ctx);
-      });
-    });
+    addStatusFilterMenuItems(menu, ctx, state);
     showMenuAtMouseEventWithFocus(menu, event);
   };
   const actions: readonly CollectionControlAction[] = [
@@ -196,12 +268,14 @@ export function renderProjectsToolbar(
           'data-portfolio-zone': 'filters',
         },
       });
-      for (const status of ctx.settings.projects.statuses) renderStatusFilter(filters, status, ctx);
-      renderUnmappedFilter(filters, ctx);
+      for (const status of ctx.settings.projects.statuses) {
+        renderStatusFilter(filters, status, ctx, state);
+      }
+      renderUnmappedFilter(filters, ctx, state);
     },
     renderLayout: (host) => {
       host.setAttribute('data-portfolio-zone', 'layout');
-      renderPortfolioLayout(host, ctx);
+      renderPortfolioLayout(host, ctx, state);
     },
     actions,
     onQueryInput: () => undefined,
@@ -247,7 +321,9 @@ export function renderProjectsToolbar(
       chip.toggleClass('is-overflow-hidden', hidden);
       if (hidden) hiddenCount += 1;
     }
-    const activeCount = ctx.settings.projects.view.visibleStatusIds.length;
+    const activeCount = state
+      .portfolioPreference()
+      .filters.filter((id) => id !== UNMAPPED_FILTER).length;
     const label = overflowing
       ? `Filter project statuses (${String(activeCount)} active; ${String(hiddenCount)} hidden)`
       : `Filter project statuses (${String(activeCount)} active)`;
