@@ -353,6 +353,47 @@ describe('Work Note relation projection', () => {
 });
 
 describe('ProjectWorkspaceCoordinator convergence', () => {
+  it('flushes queued Work Note membership before rebuilding for authoritative verification', async () => {
+    const direct = action(projectPath, 1, 'open');
+    const joined = action('Work/Queued.md', 1, 'open');
+    let notes: readonly WorkNoteSnapshot[] = [];
+    const flushPending = vi.fn(async () => {
+      notes = [workNote('Work/Queued.md')];
+    });
+    const coordinator = new ProjectWorkspaceCoordinator(
+      {
+        list: () => [project()],
+        get: (path) => (path === projectPath ? project() : undefined),
+        onUpdate: () => () => {},
+      },
+      {
+        list: () => [direct, joined],
+        subscribe: () => () => {},
+      },
+      {
+        list: () => notes,
+        get: (path) => notes.find((candidate) => candidate.path === path),
+        diagnosticsFor: () => [],
+        onUpdate: () => () => {},
+        flushPending,
+      },
+      () => statuses,
+    );
+    coordinator.start();
+
+    await coordinator.refreshForVerification({
+      type: 'settled',
+      reason: 'index',
+      files: [{ path: 'Work/Queued.md', generation: 3 }],
+    });
+
+    expect(flushPending).toHaveBeenCalledOnce();
+    expect(
+      coordinator.get(projectPath)?.tasks.map(({ task: snapshot }) => snapshot.ref.filePath),
+    ).toEqual([projectPath, 'Work/Queued.md']);
+    coordinator.destroy();
+  });
+
   it('settles a cross-Project dependency projection on the causal prerequisite file only', async () => {
     const prerequisitePath = 'Projects/A.md';
     const dependentPath = 'Projects/B.md';

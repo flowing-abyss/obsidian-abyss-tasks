@@ -199,6 +199,7 @@ export class WorkNoteIndex {
   private fullRefreshPending = false;
   private explicitRefreshPending = false;
   private debounce = 0;
+  private flushInFlight?: Promise<void>;
   private indexedFingerprint = '';
   private generations = new Map<string, number>();
   private pendingSettledPaths = new Set<string>();
@@ -944,6 +945,21 @@ export class WorkNoteIndex {
     this.queueFull();
   }
 
+  /** Forces an already queued index flush to settle before an authoritative read. */
+  async flushPending(): Promise<void> {
+    if (this.flushInFlight) return this.flushInFlight;
+    if (!this.debounce) return;
+    window.clearTimeout(this.debounce);
+    this.debounce = 0;
+    const flush = Promise.resolve().then(() => this.flush());
+    this.flushInFlight = flush;
+    try {
+      await flush;
+    } finally {
+      if (this.flushInFlight === flush) this.flushInFlight = undefined;
+    }
+  }
+
   list(): readonly WorkNoteSnapshot[] {
     return [...this.byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
   }
@@ -991,5 +1007,6 @@ export class WorkNoteIndex {
     this.settledListeners.clear();
     this.generations.clear();
     this.ready = false;
+    this.flushInFlight = undefined;
   }
 }

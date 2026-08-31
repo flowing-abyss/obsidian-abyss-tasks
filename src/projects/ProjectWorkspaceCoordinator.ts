@@ -18,6 +18,8 @@ type Source = 'project' | 'task' | 'work-note';
 
 interface ProjectSource {
   isReady?(): boolean;
+  /** Drains a scheduled source update before an authoritative workspace read. */
+  flushPending?(): Promise<void>;
   list(): readonly Project[];
   get(path: string): Project | undefined;
   onUpdate(listener: (event: ProjectStoreEvent) => void): () => void;
@@ -28,6 +30,8 @@ type TaskSource = Pick<TaskQueryApi, 'isReady' | 'list' | 'subscribe' | 'subscri
 
 interface WorkNoteSource {
   isReady?(): boolean;
+  /** Drains a scheduled source update before an authoritative workspace read. */
+  flushPending?(): Promise<void>;
   list(): readonly WorkNoteSnapshot[];
   get(path: string): WorkNoteSnapshot | undefined;
   diagnosticsFor(path: string): readonly WorkNoteSnapshot['diagnostics'][number][];
@@ -172,12 +176,18 @@ export class ProjectWorkspaceCoordinator {
     return () => this.listeners.delete(listener);
   }
 
-  /** Wait until task-settlement has rebuilt the joined Project/Work Note read model. */
-  awaitTaskPublication(_event: TaskIndexSettledEvent): Promise<void> {
+  /**
+   * Actively settles all derived membership sources before rebuilding the
+   * workspace used by an authoritative Task verification.  A TaskIndex full
+   * rescan alone does not guarantee that an already queued Work Note or
+   * Project metadata update has published its membership yet.
+   */
+  async refreshForVerification(_event: TaskIndexSettledEvent): Promise<void> {
     if (!this.started || this.awaitingInitialization) return Promise.resolve();
-    // A full TaskIndex rescan may enumerate unchanged files without producing
-    // matching ProjectStore/WorkNote generations. Rebuild from all current
-    // settled sources instead of waiting for a hypothetical future event.
+    await Promise.all([this.projects.flushPending?.(), this.workNotes.flushPending?.()]);
+    // A full TaskIndex rescan may enumerate unchanged files. Rebuild only
+    // after every derived source has drained its already queued work rather
+    // than waiting for a hypothetical future generation.
     const snapshots = this.readModel.rebuild();
     this.captureOwnership();
     this.signature = snapshotSignature(snapshots);
@@ -189,7 +199,11 @@ export class ProjectWorkspaceCoordinator {
       projectPaths: snapshots.map(({ project }) => project.path).sort((a, b) => a.localeCompare(b)),
     };
     for (const listener of this.listeners) listener(snapshots, event);
-    return Promise.resolve();
+  }
+
+  /** Compatibility name retained for existing TaskIndex settlement callers. */
+  awaitTaskPublication(event: TaskIndexSettledEvent): Promise<void> {
+    return this.refreshForVerification(event);
   }
 
   absorbOwnCommit(paths: readonly string[]): void {

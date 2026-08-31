@@ -92,12 +92,34 @@ describe('DependencyCandidateProjection', () => {
     });
 
     expect(candidates.map(({ availability }) => availability)).toEqual([
-      { type: 'disabled', reason: 'Dependency ID unavailable' },
+      { type: 'id-required' },
       { type: 'disabled', reason: 'Duplicate ID' },
     ]);
   });
 
-  it('preflights an ID-less candidate with its proposed ID instead of hiding an identity-safe link', () => {
+  it('reports an identity-safe ID-less candidate as ID-required without allocating', () => {
+    const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
+    const idless = task({
+      title: 'Candidate without ID',
+      source: { filePath: 'Tasks.md', line: 1 },
+    });
+    const validateLink = vi.fn(() => ({ type: 'allowed' as const }));
+    const preflightIdentityLink = vi.fn(() => ({ type: 'allowed' as const }));
+
+    const candidates = projectDependencyCandidates({
+      dependent,
+      tasks: [idless],
+      projectTasks: [],
+      validateLink,
+      preflightIdentityLink,
+    });
+
+    expect(candidates[0]?.availability).toEqual({ type: 'id-required' });
+    expect(preflightIdentityLink).toHaveBeenCalledWith(idless, dependent);
+    expect(validateLink).not.toHaveBeenCalled();
+  });
+
+  it('keeps an identity-safe ID-less candidate ID-required without allocating during projection', () => {
     const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
     const idless = task({
       title: 'Candidate without ID',
@@ -110,11 +132,10 @@ describe('DependencyCandidateProjection', () => {
       tasks: [idless],
       projectTasks: [],
       validateLink,
-      proposedDependencyId: () => 'generated-id',
     });
 
-    expect(candidates[0]?.availability).toEqual({ type: 'available' });
-    expect(validateLink).toHaveBeenCalledWith(idless, dependent, 'generated-id');
+    expect(candidates[0]?.availability).toEqual({ type: 'id-required' });
+    expect(validateLink).not.toHaveBeenCalled();
   });
 
   it('keeps an ID-less candidate disabled when identity preflight finds a cycle', () => {
@@ -128,10 +149,12 @@ describe('DependencyCandidateProjection', () => {
       dependent,
       tasks: [idless],
       projectTasks: [],
-      proposedDependencyId: () => 'generated-id',
-      validateLink: () => ({
+      preflightIdentityLink: () => ({
         type: 'invalid',
-        diagnostics: [{ type: 'cycle', ids: ['dependent', 'generated-id'] }],
+        diagnostics: [{ type: 'cycle', ids: ['dependent'] }],
+      }),
+      validateLink: () => ({
+        type: 'allowed',
       }),
     });
 

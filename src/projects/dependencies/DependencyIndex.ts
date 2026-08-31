@@ -191,6 +191,41 @@ export class DependencyIndex {
   ): DependencyLinkValidation {
     return this.validateLink(prerequisite, dependent, dependencyId);
   }
+  /**
+   * Preflights an ID-less picker candidate by node identity only.  The caller
+   * still allocates an ID and calls validateLink at command time; this avoids
+   * reserving an ID merely to render a safe candidate.
+   */
+  preflightIdentityLink(
+    prerequisite: TaskSnapshot,
+    dependent: TaskSnapshot,
+  ): DependencyLinkValidation {
+    const prerequisiteNode = this.nodeForSnapshot(prerequisite);
+    const dependentNode = this.nodeForSnapshot(dependent);
+    if (!prerequisiteNode || !dependentNode) {
+      return { type: 'invalid', diagnostics: [{ type: 'unresolved-projection' }] };
+    }
+    if (prerequisiteNode.key === dependentNode.key) {
+      return { type: 'invalid', diagnostics: [{ type: 'self-edge', id: '' }] };
+    }
+    const seen = new Set([prerequisiteNode.key]);
+    const queue = [prerequisiteNode.key];
+    for (let index = 0; index < queue.length; index += 1) {
+      const key = queue[index]!;
+      if (key === dependentNode.key) {
+        const ids = [prerequisiteNode.id, dependentNode.id]
+          .filter((id): id is string => id !== undefined)
+          .sort((left, right) => left.localeCompare(right));
+        return { type: 'invalid', diagnostics: [{ type: 'cycle', ids }] };
+      }
+      for (const next of this.forward.get(key) ?? []) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    return { type: 'allowed' };
+  }
   list(): readonly DependencyProjection[] {
     return [...this.projections.values()]
       .sort((a, b) => compareRefs(a.ref, b.ref))

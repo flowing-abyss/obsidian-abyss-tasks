@@ -359,7 +359,7 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks();
 
-    expect(newDependencyId).toHaveBeenCalledOnce();
+    expect(newDependencyId).not.toHaveBeenCalled();
     expect(setDependency).toHaveBeenCalledWith({
       prerequisite: candidate.ref,
       dependent: dependent.ref,
@@ -698,7 +698,7 @@ describe('RightPanel block editing', () => {
     panel.destroy();
   });
 
-  it('leaves an ID-less generated collision to command-side validation without writing', async () => {
+  it('retries an ID-less generated collision with one fresh ID on the next activation', async () => {
     const generateId = vi
       .fn<() => string>()
       .mockReturnValueOnce('collision')
@@ -745,6 +745,7 @@ describe('RightPanel block editing', () => {
       '[data-dependency-candidate]',
     )!;
 
+    expect(generateId).not.toHaveBeenCalled();
     firstCandidate.click();
     await flushMicrotasks(20);
 
@@ -752,6 +753,14 @@ describe('RightPanel block editing', () => {
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
     expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
+
+    firstCandidate.click();
+    await flushMicrotasks(20);
+
+    expect(generateId).toHaveBeenCalledTimes(2);
+    expect(process).toHaveBeenCalledOnce();
+    expect(await harness.read()).toContain('Candidate without ID 🆔 fresh');
+    expect(await harness.read()).toContain('Dependent ⛔ fresh');
     panel.destroy();
     harness.index.destroy();
     container.remove();
@@ -838,7 +847,7 @@ describe('RightPanel block editing', () => {
     container.querySelector<HTMLButtonElement>('[data-dependency-candidate]')!.click();
     await flushMicrotasks(30);
 
-    expect(generateId).toHaveBeenCalledOnce();
+    expect(generateId).not.toHaveBeenCalled();
     expect(await harness.read()).toContain('- [ ] Candidate without ID 🆔 wanted');
     expect(await harness.read()).toContain('- [ ] Dependent ⛔ wanted');
     expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();

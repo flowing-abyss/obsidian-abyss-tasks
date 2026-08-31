@@ -25,6 +25,11 @@ export interface DependencyCommittedDelta {
 export interface DependencyPolicyPort extends DependencyProjectionPort {
   /** Read-side candidate preflight; mutation commands revalidate this exact intent at commit time. */
   validateLink(input: DependencyLinkValidationInput): DependencyLinkValidation;
+  /** Identity-only preflight for an ID-less picker candidate; it never allocates an ID. */
+  preflightIdentityLink?(
+    prerequisite: TaskSnapshot,
+    dependent: TaskSnapshot,
+  ): DependencyLinkValidation;
   acceptCommittedDelta(delta: DependencyCommittedDelta): void;
 }
 

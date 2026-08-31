@@ -9,10 +9,13 @@ afterEach(() => {
 });
 
 describe('showMenuAtMouseEventWithFocus', () => {
-  it('keeps keyboard focus in the menu and restores its anchor only after close', () => {
+  it('dismisses on Tab and moves focus forward from its anchor', () => {
     const anchor = freshContainer();
     anchor.tabIndex = 0;
     activeDocument.body.append(anchor);
+    const following = freshContainer();
+    following.tabIndex = 0;
+    activeDocument.body.append(following);
     const activated = vi.fn();
     const menu = new Menu();
     let surface: HTMLElement | undefined;
@@ -28,6 +31,11 @@ describe('showMenuAtMouseEventWithFocus', () => {
       }
       return this;
     });
+    const close = menu.close.bind(menu);
+    vi.spyOn(menu, 'close').mockImplementation(() => {
+      close();
+      surface?.remove();
+    });
     const focus = vi.spyOn(anchor, 'focus');
 
     showMenuAtMouseEventWithFocus(menu, new MouseEvent('contextmenu', { bubbles: true }), {
@@ -35,17 +43,54 @@ describe('showMenuAtMouseEventWithFocus', () => {
     });
 
     const first = surface!.querySelector<HTMLElement>('.menu-item')!;
-    const next = surface!.querySelectorAll<HTMLElement>('.menu-item')[1]!;
     expect(activeDocument.activeElement).toBe(first);
     first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-    expect(activeDocument.activeElement).toBe(next);
-    next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
-    expect(activeDocument.activeElement).toBe(first);
-    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-    expect(activeDocument.activeElement).toBe(next);
-    next.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-    expect(activated).toHaveBeenCalledOnce();
-    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(surface?.isConnected).toBe(false);
+    expect(activeDocument.activeElement).toBe(following);
+    expect(activated).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+    anchor.remove();
+    following.remove();
+  });
+
+  it('dismisses on Shift+Tab and moves focus before its anchor while Escape restores it', () => {
+    const before = freshContainer();
+    before.tabIndex = 0;
+    activeDocument.body.append(before);
+    const anchor = freshContainer();
+    anchor.tabIndex = 0;
+    activeDocument.body.append(anchor);
+    const menu = new Menu();
+    let surface: HTMLElement | undefined;
+    vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
+      surface = activeDocument.body.createDiv({ cls: 'menu' });
+      surface.createDiv({ cls: 'menu-item', text: 'First' });
+      return this;
+    });
+    const close = menu.close.bind(menu);
+    vi.spyOn(menu, 'close').mockImplementation(() => {
+      close();
+      surface?.remove();
+    });
+
+    showMenuAtMouseEventWithFocus(menu, new MouseEvent('contextmenu', { bubbles: true }), {
+      restoreFocusTo: anchor,
+    });
+    const first = surface!.querySelector<HTMLElement>('.menu-item')!;
+    first.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }),
+    );
+    expect(surface?.isConnected).toBe(false);
+    expect(activeDocument.activeElement).toBe(before);
+
+    showMenuAtMouseEventWithFocus(menu, new MouseEvent('contextmenu', { bubbles: true }), {
+      restoreFocusTo: anchor,
+    });
+    surface!
+      .querySelector<HTMLElement>('.menu-item')!
+      .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(activeDocument.activeElement).toBe(anchor);
+    before.remove();
     anchor.remove();
   });
 });

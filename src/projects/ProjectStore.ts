@@ -150,6 +150,7 @@ export class ProjectStore {
   private queryUnsub?: () => void;
   private querySettledUnsub?: () => void;
   private debounce = 0;
+  private flushInFlight?: Promise<void>;
   private waitingPaths = new Set<string>();
   private readyPaths = new Set<string>();
   private readyFull = false;
@@ -285,6 +286,7 @@ export class ProjectStore {
   }
 
   private flush(): void {
+    this.debounce = 0;
     const before = this.cacheSignature();
     const previousDiagnostics = this.diagnostics;
     const previousProjectPaths = new Set(this.byPath.keys());
@@ -502,6 +504,21 @@ export class ProjectStore {
     }
   }
 
+  /** Forces an already scheduled metadata/Task barrier flush to publish now. */
+  async flushPending(): Promise<void> {
+    if (this.flushInFlight) return this.flushInFlight;
+    if (!this.debounce) return;
+    window.clearTimeout(this.debounce);
+    this.debounce = 0;
+    const flush = Promise.resolve().then(() => this.flush());
+    this.flushInFlight = flush;
+    try {
+      await flush;
+    } finally {
+      if (this.flushInFlight === flush) this.flushInFlight = undefined;
+    }
+  }
+
   onUpdate(cb: (event: ProjectStoreEvent) => void): () => void {
     this.listeners.push(cb);
     return () => {
@@ -532,6 +549,7 @@ export class ProjectStore {
     this.generations.clear();
     this.initializationPending = false;
     this.ready = false;
+    this.flushInFlight = undefined;
     this.listeners = [];
     this.settledListeners.clear();
   }

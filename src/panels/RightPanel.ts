@@ -223,7 +223,6 @@ export class RightPanel {
   private detachedFocusTimer: number | undefined;
   private dependencyOff?: () => void;
   private dependencyEditorSequence = 0;
-  private readonly proposedDependencyIds = new Map<string, string>();
   private renderedTaskStack: readonly TaskLike[] = [];
   private hiddenTaskDraft?: { readonly ref: TaskRef; readonly bundle: RightPanelDraftBundle };
 
@@ -1883,17 +1882,12 @@ export class RightPanel {
       },
     });
     let repairDependencyId: string | undefined;
-    // Keep one proposed ID for each visible ID-less candidate.  The graph can
-    // then preflight its node identity before the command writes that ID.
+    // ID-less candidates are graph-preflighted by identity. Allocate exactly
+    // once on activation so an unsuccessful command cannot poison later tries.
     const dependencyIdFor = (candidate: TaskSnapshot): string | undefined => {
       if (repairDependencyId !== undefined) return repairDependencyId;
       if (candidate.dependency?.id !== undefined) return candidate.dependency.id;
-      const key = `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`;
-      const existing = this.proposedDependencyIds.get(key);
-      if (existing !== undefined) return existing;
-      const proposed = this.tasks?.newDependencyId?.();
-      if (proposed !== undefined) this.proposedDependencyIds.set(key, proposed);
-      return proposed;
+      return this.tasks?.newDependencyId?.();
     };
     const repairButtons: HTMLButtonElement[] = [];
     let beginRepair: ((dependencyId: string) => void) | undefined;
@@ -2013,7 +2007,7 @@ export class RightPanel {
       attr: { id: listId, role: 'listbox' },
     });
     const flatCandidates = (): readonly DependencyCandidate[] =>
-      this.flatDependencyCandidates(task, dependencyIdFor);
+      this.flatDependencyCandidates(task);
     const selectionUnavailable =
       inspection.decision.type === 'invalid' &&
       inspection.decision.diagnostics.some(
@@ -2111,11 +2105,6 @@ export class RightPanel {
               }),
           ).then((result) => {
             if (result.type === 'ok') void this.refreshDependencyEditor(editor, anchor, task);
-            else {
-              this.proposedDependencyIds.delete(
-                `${candidate.ref.filePath}\u0000${String(candidate.ref.line)}`,
-              );
-            }
           });
         });
       }
@@ -2167,10 +2156,7 @@ export class RightPanel {
       ?.focus({ preventScroll: true });
   }
 
-  private flatDependencyCandidates(
-    task: TaskSnapshot,
-    proposedDependencyId?: (candidate: TaskSnapshot) => string | undefined,
-  ): readonly DependencyCandidate[] {
+  private flatDependencyCandidates(task: TaskSnapshot): readonly DependencyCandidate[] {
     const supplied = this.dependencyCandidates?.(task);
     if (isFlatDependencyCandidateSource(supplied)) return supplied;
     const projectTasks = supplied?.project ?? [];
@@ -2182,6 +2168,10 @@ export class RightPanel {
           readonly validateLink?: (
             input: DependencyLinkValidationInput,
           ) => DependencyLinkValidation;
+          readonly preflightIdentityLink?: (
+            prerequisite: TaskSnapshot,
+            dependent: TaskSnapshot,
+          ) => DependencyLinkValidation;
         }
       | undefined;
     return projectDependencyCandidates({
@@ -2190,7 +2180,8 @@ export class RightPanel {
       projectTasks,
       validateLink: (prerequisite, dependent, dependencyId) =>
         policy?.validateLink?.({ prerequisite, dependent, dependencyId }) ?? { type: 'allowed' },
-      proposedDependencyId,
+      preflightIdentityLink: (prerequisite, dependent) =>
+        policy?.preflightIdentityLink?.(prerequisite, dependent) ?? { type: 'allowed' },
     });
   }
 

@@ -7,6 +7,9 @@ import {
   projectedNextActionToken,
   subscribeProjectedNextActions,
 } from '../src/projects/NextActionService';
+import { ProjectWorkspaceCoordinator } from '../src/projects/ProjectWorkspaceCoordinator';
+import type { Project } from '../src/projects/types';
+import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskApplicationApi } from '../src/tasks';
@@ -65,6 +68,8 @@ describe('Project Next Action', () => {
     );
     expect(projectedNextAction(application, target)).toBeUndefined();
     expect(published).toHaveBeenCalledTimes(2);
+    await Promise.resolve();
+    expect(published).toHaveBeenCalledTimes(2);
     stop();
   });
 
@@ -92,6 +97,90 @@ describe('Project Next Action', () => {
       type: 'integrity-conflict',
       tasks: [joined],
     });
+  });
+
+  it('waits for a queued external Work Note join before rejecting an authoritative duplicate', async () => {
+    const projectPath = 'Project.md';
+    const target = task({ source: { filePath: projectPath, line: 0 }, tags: [] });
+    const joined = task({
+      source: { filePath: 'Work/External.md', line: 0 },
+      tags: ['#task/next_action'],
+    });
+    let indexed: readonly (typeof target)[] = [target, joined] as never;
+    let notes: readonly WorkNoteSnapshot[] = [];
+    const project = {
+      path: projectPath,
+      name: 'Project',
+      frontmatter: {},
+      tags: [],
+      statusId: 'active',
+      rawStatus: 'Active',
+      range: {},
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    } satisfies Project;
+    const workspace = new ProjectWorkspaceCoordinator(
+      {
+        list: () => [project],
+        get: (path) => (path === projectPath ? project : undefined),
+        onUpdate: () => () => {},
+      },
+      { list: () => indexed, subscribe: () => () => {} },
+      {
+        list: () => notes,
+        get: (path) => notes.find((note) => note.path === path),
+        diagnosticsFor: () => [],
+        onUpdate: () => () => {},
+        flushPending: async () => {
+          notes = [
+            {
+              path: 'Work/External.md',
+              presetRevision: 1,
+              presetFingerprint: 'queued',
+              kind: 'ordinary',
+              projectPath,
+              statusId: 'active',
+              rawStatus: null,
+              writableStatusShape: true,
+              range: {},
+              blockedByPaths: [],
+              relatedPaths: [],
+              diagnostics: [],
+            },
+          ];
+        },
+      },
+      () => [],
+    );
+    workspace.start();
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          indexed = [{ ...target, tags: ['#task/next_action'] }, joined] as never;
+          return { type: 'settled' as const, reason: 'index' as const, files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({ type: 'ok' as const }),
+    } as unknown as TaskApplicationApi;
+    const service = new NextActionService(
+      application,
+      (path, candidate) =>
+        workspace
+          .get(path)
+          ?.tasks.some(
+            ({ task: current }) =>
+              current.ref.filePath === candidate.ref.filePath &&
+              current.ref.line === candidate.ref.line,
+          ) ?? false,
+      (settled) => workspace.refreshForVerification(settled),
+    );
+
+    await expect(service.set(projectPath, target)).resolves.toMatchObject({
+      type: 'integrity-conflict',
+      tasks: expect.arrayContaining([expect.objectContaining({ ref: joined.ref })]),
+    });
+    workspace.destroy();
   });
 
   it('returns a visible integrity conflict when the authoritative rescan finds duplicates', async () => {

@@ -66,7 +66,9 @@ export function acknowledgeProjectedNextActions(
     registry.committedTagState.delete(key);
   }
   registry.bridgedProjects.delete(projectPath);
-  notify(registry);
+  // The caller has already rendered this exact verified state. Removing its
+  // bridge is bookkeeping only; publishing again would recursively remount the
+  // same Project surface without changing any visible projection.
 }
 
 /** Application-owned projection invalidation; panel lifetimes must unsubscribe. */
