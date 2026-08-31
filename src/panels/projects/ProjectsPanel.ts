@@ -89,6 +89,7 @@ export interface ProjectsPanelOptions {
     event: MouseEvent,
     projectPath: string,
     task: ProjectWorkspaceSnapshot['tasks'][number],
+    anchor?: HTMLElement,
   ) => void;
   nextActionState?: (
     task: ProjectWorkspaceSnapshot['tasks'][number]['task'],
@@ -516,7 +517,8 @@ export class ProjectsPanel {
             event: MouseEvent,
             projectPath: string,
             task: ProjectWorkspaceSnapshot['tasks'][number],
-          ) => this.onTaskContextMenu!(event, projectPath, task),
+            anchor?: HTMLElement,
+          ) => this.onTaskContextMenu!(event, projectPath, task, anchor),
         }),
         ...(this.nextActionState && { nextActionState: this.nextActionState }),
         openNote: (p) => this.openNote(p),

@@ -15,8 +15,13 @@ export interface ProjectChildRenderHandle {
   destroy(): void;
 }
 
-export function joinedNextAction(actions: readonly ProjectAction[]): ProjectAction | undefined {
-  return actions.find(({ task }) => task.tags?.includes('#task/next_action') === true);
+export function joinedNextAction(
+  actions: readonly ProjectAction[],
+  nextActionState?: (task: ProjectAction['task']) => boolean | undefined,
+): ProjectAction | undefined {
+  return actions.find(
+    ({ task }) => nextActionState?.(task) ?? task.tags?.includes('#task/next_action') === true,
+  );
 }
 
 export interface ProjectsListContext {
@@ -34,7 +39,12 @@ export interface ProjectsListContext {
   today?: () => string;
   onCreate: (name: string) => Promise<ProjectCreateResult>;
   onSetStatus: (path: string, statusId: string) => void;
-  onTaskContextMenu?: (event: MouseEvent, projectPath: string, task: ProjectAction) => void;
+  onTaskContextMenu?: (
+    event: MouseEvent,
+    projectPath: string,
+    task: ProjectAction,
+    anchor?: HTMLElement,
+  ) => void;
   onSetPriority?: (path: string, priority: ProjectPriority | null) => void;
   openNote: (path: string) => void;
   /** Overview body adapter; the list shell remains the owner of toolbar/capture continuity. */
@@ -50,7 +60,12 @@ export interface ProjectsDashboardContext {
   onSaveSettings?: () => Promise<void>;
   onSetStatus: (path: string, statusId: string) => void;
   nextActionState?: (task: ProjectAction['task']) => boolean | undefined;
-  onTaskContextMenu?: (event: MouseEvent, projectPath: string, task: ProjectAction) => void;
+  onTaskContextMenu?: (
+    event: MouseEvent,
+    projectPath: string,
+    task: ProjectAction,
+    anchor?: HTMLElement,
+  ) => void;
   openNote: (path: string) => void;
   workspaceSession?: ProjectWorkspaceSession;
   /** Renders the project's tasks into `host` (wired by PanelView to reuse task rendering). */

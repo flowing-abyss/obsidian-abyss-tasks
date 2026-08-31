@@ -5,6 +5,7 @@ import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
 import {
+  acknowledgeProjectedNextActions,
   NextActionService,
   projectedNextAction,
   type NextActionConflict,
@@ -333,6 +334,10 @@ export class CenterPanel {
     private readonly projectCommands?: ProjectCommandService,
     private readonly dependencyProjection?: DependencyProjectionPort,
     collectionState: ProjectWorkspaceSession = new ProjectWorkspaceSession(),
+    private readonly currentProjectMembership?: (
+      projectPath: string,
+      candidate: TaskSnapshot,
+    ) => boolean,
   ) {
     this.projectWorkspaceSession = collectionState;
     this.onSaveSettings = onSaveSettings ?? (async (): Promise<void> => {});
@@ -343,16 +348,19 @@ export class CenterPanel {
     );
     this.captureApplication = captureApplication ?? null;
     this.nextActions = tasks
-      ? new NextActionService(tasks, (projectPath, candidate) =>
-          this.projectSnapshots.some(
-            (snapshot) =>
-              snapshot.project.path === projectPath &&
-              snapshot.tasks.some(
-                ({ task }) =>
-                  task.ref.filePath === candidate.ref.filePath &&
-                  task.ref.line === candidate.ref.line,
-              ),
-          ),
+      ? new NextActionService(
+          tasks,
+          (projectPath, candidate) =>
+            this.currentProjectMembership?.(projectPath, candidate) ??
+            this.projectSnapshots.some(
+              (snapshot) =>
+                snapshot.project.path === projectPath &&
+                snapshot.tasks.some(
+                  ({ task }) =>
+                    task.ref.filePath === candidate.ref.filePath &&
+                    task.ref.line === candidate.ref.line,
+                ),
+            ),
         )
       : null;
     this.captureTargets = this.captureApplication
@@ -1044,6 +1052,9 @@ export class CenterPanel {
                 projectPath,
                 dependencyDecision: row.action.dependency,
                 projectTaskCollection: true,
+                ...(this.tasks && {
+                  nextActionState: (task) => projectedNextAction(this.tasks!, task),
+                }),
                 onAddPropertyFilter,
               });
               card.dataset['virtualRowKind'] = 'task';
@@ -1208,6 +1219,9 @@ export class CenterPanel {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
+            ...(this.tasks && {
+              nextActionState: (task) => projectedNextAction(this.tasks!, task),
+            }),
             manageStatusMenu: false,
             onAddPropertyFilter,
           }),
@@ -1311,6 +1325,9 @@ export class CenterPanel {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
+            ...(this.tasks && {
+              nextActionState: (task) => projectedNextAction(this.tasks!, task),
+            }),
             onAddPropertyFilter,
           });
         },
@@ -1516,8 +1533,8 @@ export class CenterPanel {
             onAnnounce: (message) => {
               this.selectionLiveRegion().textContent = message;
             },
-            onTaskContextMenu: (event, projectPath, action) =>
-              this.showProjectNextActionMenu(event, projectPath, action.task),
+            onTaskContextMenu: (event, projectPath, action, anchor) =>
+              this.showProjectNextActionMenu(event, projectPath, action.task, anchor),
             ...(this.tasks && {
               nextActionState: (task) => projectedNextAction(this.tasks!, task),
             }),
@@ -1527,6 +1544,12 @@ export class CenterPanel {
         // lands on the shared center element (which would leak layout into tasks mode).
         const host = this.el.createDiv({ cls: 'abyss-projects-host' });
         this.projectsPanel.mount(host);
+        // Only the Project dashboard has consumed its summary and task surface;
+        // do not retire a different project's bridge from the overview list.
+        const visibleProject = this.state.get('projectsPanel');
+        if (this.tasks && visibleProject.view === 'dashboard') {
+          acknowledgeProjectedNextActions(this.tasks, visibleProject.path);
+        }
         this.onRenderComplete(this.el);
       } else {
         this.el.createDiv({ cls: 'abyss-center-empty', text: 'Projects unavailable' });
@@ -2552,6 +2575,7 @@ export class CenterPanel {
       readonly manageStatusMarker?: boolean;
       readonly dependencyDecision?: DependencyCompletionDecision;
       readonly projectTaskCollection?: boolean;
+      readonly nextActionState?: (task: TaskSnapshot) => boolean | undefined;
       readonly onAddPropertyFilter?: (filter: PropertyFilter) => void;
     } = {},
   ): HTMLElement {
@@ -2571,6 +2595,8 @@ export class CenterPanel {
       cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
       attr: { tabindex: '-1' },
     });
+    const isNextAction = context.nextActionState?.(task) ?? task.tags.includes('#task/next_action');
+    if (isNextAction) card.dataset['nextAction'] = 'true';
     applyTaskPresentationIdentity(card, task.ref);
     card.dataset['inspectorOriginKey'] = inspectorSelectionKey({ type: 'task', task: task.ref });
     card.dataset['filePath'] = task.source.filePath;
@@ -2890,144 +2916,8 @@ export class CenterPanel {
           }
         }
 
-        // ── SINGLE TASK MENU ─────────────────────────────────
-        const today = localDate(window.moment().format('YYYY-MM-DD'));
-        const tomorrow = shiftLocalDate(today, 1);
-        const isToday = task.planning.due === today;
         const menu = new Menu();
-
-        // ── Today toggle ──────────────────────────────────────
-        menu.addItem((item) =>
-          item
-            .setTitle('Today')
-            .setIcon('calendar')
-            .setSection('today')
-            .setChecked(isToday)
-            .onClick(() => void this.toggleTaskDuePreset(task, today)),
-        );
-
-        if (tomorrow) {
-          menu.addItem((item) =>
-            item
-              .setTitle('Tomorrow')
-              .setIcon('calendar-plus')
-              .setSection('today')
-              .setChecked(task.planning.due === tomorrow)
-              .onClick(() => void this.toggleTaskDuePreset(task, tomorrow)),
-          );
-        }
-
-        // ── Pinned tags ────────────────────────────────────────
-        if (this.settings.pinnedTags.length > 0) {
-          for (const pinnedTag of this.settings.pinnedTags) {
-            const hasTag = this.getTaskTags(task).has(pinnedTag);
-            menu.addItem((item) =>
-              item
-                .setTitle(pinnedTag)
-                .setIcon('tag')
-                .setSection('tags')
-                .setChecked(hasTag)
-                .onClick(
-                  () =>
-                    void this.patchTaskTags(
-                      task,
-                      hasTag ? [] : [pinnedTag],
-                      hasTag ? [pinnedTag] : [],
-                    ),
-                ),
-            );
-          }
-        }
-
-        if (context.projectPath !== undefined && this.nextActions) {
-          const active = task.tags.includes('#task/next_action');
-          menu.addItem((item) =>
-            item
-              .setTitle(active ? 'Clear Next Action' : 'Set as Next Action')
-              .setIcon(active ? 'list-x' : 'list-checks')
-              .setSection('actions')
-              .onClick(() => void this.updateProjectNextAction(context.projectPath!, task, active)),
-          );
-        }
-
-        // ── Priority (submenu) ────────────────────────────────
-        menu.addItem((item) => {
-          item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
-          const sub = getSubmenu(item);
-          this.buildPrioritySubmenu(sub, task);
-        });
-
-        // ── Status (submenu) ──────────────────────────────────
-        menu.addItem((item) => {
-          item.setTitle('Status').setIcon('check-square').setSection('priority');
-          const sub = getSubmenu(item);
-          buildStatusSubmenu(
-            sub,
-            task,
-            this.statusRegistry,
-            (c) => void this.setTaskStatus(task, c),
-          );
-        });
-
-        menu.addItem((item) =>
-          item
-            .setTitle('Filter by this priority')
-            .setIcon('filter')
-            .setSection('priority')
-            .onClick(() => addPropertyFilter({ type: 'priority', value: task.priority })),
-        );
-
-        menu.addItem((item) =>
-          item
-            .setTitle('Filter by this status')
-            .setIcon('filter')
-            .setSection('priority')
-            .onClick(() => addPropertyFilter({ type: 'status', value: task.statusSymbol })),
-        );
-
-        // ── Set tag… ───────────────────────────────────────────
-        menu.addItem((item) =>
-          item
-            .setTitle('Set date…')
-            .setIcon('calendar-cog')
-            .setSection('actions')
-            .onClick(() => this.openTaskDatePicker(card, [task])),
-        );
-
-        menu.addItem((item) =>
-          item
-            .setTitle('Set tag…')
-            .setIcon('hash')
-            .setSection('actions')
-            .onClick(() => this.openTagPicker(task)),
-        );
-
-        menu.addItem((item) => {
-          item
-            .setTitle('Edit repeat…')
-            .setIcon('repeat-2')
-            .setSection('actions')
-            .onClick(() => this.openRecurrenceEditor(card, task));
-        });
-
-        // ── Open in note ──────────────────────────────────────
-        menu.addItem((item) =>
-          item
-            .setTitle('Open in note')
-            .setIcon('file-text')
-            .setSection('actions')
-            .onClick(() => void openInFile(this.app, task)),
-        );
-
-        // ── Delete ─────────────────────────────────────────────
-        menu.addItem((item) =>
-          item
-            .setTitle('Delete')
-            .setIcon('trash-2')
-            .setSection('danger')
-            .onClick(() => void this.deleteTask(task)),
-        );
-
+        this.populateCanonicalTaskMenu(menu, task, card, context);
         showMenuAtMouseEventWithFocus(menu, e);
       });
     return card;
@@ -3146,22 +3036,143 @@ export class CenterPanel {
     presentTaskCommandResult(result);
   }
 
-  /** The Project Table delegates to the same context-menu mutation as task cards. */
+  private populateCanonicalTaskMenu(
+    menu: Menu,
+    task: TaskSnapshot,
+    anchor: HTMLElement,
+    context: {
+      readonly projectPath?: string;
+      readonly nextActionState?: (task: TaskSnapshot) => boolean | undefined;
+      readonly onAddPropertyFilter?: (filter: PropertyFilter) => void;
+    },
+  ): void {
+    const today = localDate(window.moment().format('YYYY-MM-DD'));
+    const tomorrow = shiftLocalDate(today, 1);
+    menu.addItem((item) =>
+      item
+        .setTitle('Today')
+        .setIcon('calendar')
+        .setSection('today')
+        .setChecked(task.planning.due === today)
+        .onClick(() => void this.toggleTaskDuePreset(task, today)),
+    );
+    if (tomorrow) {
+      menu.addItem((item) =>
+        item
+          .setTitle('Tomorrow')
+          .setIcon('calendar-plus')
+          .setSection('today')
+          .setChecked(task.planning.due === tomorrow)
+          .onClick(() => void this.toggleTaskDuePreset(task, tomorrow)),
+      );
+    }
+    for (const pinnedTag of this.settings.pinnedTags) {
+      const hasTag = this.getTaskTags(task).has(pinnedTag);
+      menu.addItem((item) =>
+        item
+          .setTitle(pinnedTag)
+          .setIcon('tag')
+          .setSection('tags')
+          .setChecked(hasTag)
+          .onClick(
+            () =>
+              void this.patchTaskTags(task, hasTag ? [] : [pinnedTag], hasTag ? [pinnedTag] : []),
+          ),
+      );
+    }
+    if (context.projectPath !== undefined && this.nextActions) {
+      const active = context.nextActionState?.(task) ?? task.tags.includes('#task/next_action');
+      menu.addItem((item) =>
+        item
+          .setTitle(active ? 'Clear Next Action' : 'Set as Next Action')
+          .setIcon(active ? 'list-x' : 'list-checks')
+          .setSection('actions')
+          .onClick(() => void this.updateProjectNextAction(context.projectPath!, task, active)),
+      );
+    }
+    menu.addItem((item) => {
+      item.setTitle('Priority').setIcon('arrow-up-narrow-wide').setSection('priority');
+      this.buildPrioritySubmenu(getSubmenu(item), task);
+    });
+    menu.addItem((item) => {
+      item.setTitle('Status').setIcon('check-square').setSection('priority');
+      buildStatusSubmenu(
+        getSubmenu(item),
+        task,
+        this.statusRegistry,
+        (status) => void this.setTaskStatus(task, status),
+      );
+    });
+    const addPropertyFilter =
+      context.onAddPropertyFilter ?? ((filter: PropertyFilter) => this.addPropertyFilter(filter));
+    menu.addItem((item) =>
+      item
+        .setTitle('Filter by this priority')
+        .setIcon('filter')
+        .setSection('priority')
+        .onClick(() => addPropertyFilter({ type: 'priority', value: task.priority })),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Filter by this status')
+        .setIcon('filter')
+        .setSection('priority')
+        .onClick(() => addPropertyFilter({ type: 'status', value: task.statusSymbol })),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Set date…')
+        .setIcon('calendar-cog')
+        .setSection('actions')
+        .onClick(() => this.openTaskDatePicker(anchor, [task])),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Set tag…')
+        .setIcon('hash')
+        .setSection('actions')
+        .onClick(() => this.openTagPicker(task)),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Edit repeat…')
+        .setIcon('repeat-2')
+        .setSection('actions')
+        .onClick(() => this.openRecurrenceEditor(anchor, task)),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Open in note')
+        .setIcon('file-text')
+        .setSection('actions')
+        .onClick(() => void openInFile(this.app, task)),
+    );
+    menu.addItem((item) =>
+      item
+        .setTitle('Delete')
+        .setIcon('trash-2')
+        .setSection('danger')
+        .onClick(() => void this.deleteTask(task)),
+    );
+  }
+
+  /** The Project Table and task cards invoke one canonical task action model. */
   private showProjectNextActionMenu(
     event: MouseEvent,
     projectPath: string,
     task: TaskSnapshot,
+    anchor?: HTMLElement,
   ): void {
     event.preventDefault();
     const menu = new Menu();
-    const active = task.tags.includes('#task/next_action');
-    menu.addItem((item) =>
-      item
-        .setTitle(active ? 'Clear Next Action' : 'Set as Next Action')
-        .setIcon(active ? 'list-x' : 'list-checks')
-        .onClick(() => void this.updateProjectNextAction(projectPath, task, active)),
-    );
+    this.populateCanonicalTaskMenu(menu, task, anchor ?? this.el, {
+      projectPath,
+      ...(this.tasks && {
+        nextActionState: (candidate) => projectedNextAction(this.tasks!, candidate),
+      }),
+    });
     showMenuAtMouseEventWithFocus(menu, event);
+    anchor?.focus({ preventScroll: true });
   }
 
   private presentNextActionConflict(conflict: NextActionConflict): void {

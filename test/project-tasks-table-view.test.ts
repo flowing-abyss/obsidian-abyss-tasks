@@ -125,6 +125,16 @@ describe('ProjectTasksTableView', () => {
     root
       .querySelector<HTMLElement>('[data-project-task-table-row]')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
-    expect(openActions).toHaveBeenCalledWith(expect.any(MouseEvent), action);
+    expect(openActions).toHaveBeenCalledWith(
+      expect.any(MouseEvent),
+      action,
+      root.querySelector('[data-project-task-table-row]'),
+    );
+
+    const row = root.querySelector<HTMLElement>('[data-project-task-table-row]')!;
+    const focus = vi.spyOn(row, 'focus');
+    row.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true }));
+    expect(openActions).toHaveBeenLastCalledWith(expect.any(MouseEvent), action, row);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 });

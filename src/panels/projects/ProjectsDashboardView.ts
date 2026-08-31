@@ -248,7 +248,9 @@ export function renderProjectDashboard(
     snapshot.taskRollup.total,
     `${project.name} task progress`,
   );
-  const nextAction = health.selectedNextAction ?? joinedNextAction(snapshot.tasks);
+  const nextAction = ctx.nextActionState
+    ? joinedNextAction(snapshot.tasks, ctx.nextActionState)
+    : health.selectedNextAction;
   if (nextAction) {
     /* eslint-disable obsidianmd/ui/sentence-case -- Next Action is a named planning concept. */
     const next = stats.createEl('button', {
@@ -453,7 +455,8 @@ export function renderProjectDashboard(
           publishEffectiveInspector();
         },
         ...(ctx.onTaskContextMenu && {
-          onContextMenu: (event, action) => ctx.onTaskContextMenu!(event, project.path, action),
+          onContextMenu: (event, action, anchor) =>
+            ctx.onTaskContextMenu!(event, project.path, action, anchor),
         }),
       });
       child = { destroy: () => table.destroy() };

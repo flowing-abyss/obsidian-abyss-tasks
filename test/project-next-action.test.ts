@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NextActionReplacementCoordinator } from '../src/projects/NextActionReplacementCoordinator';
-import { NextActionService, projectedNextAction } from '../src/projects/NextActionService';
+import {
+  acknowledgeProjectedNextActions,
+  NextActionService,
+  projectedNextAction,
+} from '../src/projects/NextActionService';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskApplicationApi } from '../src/tasks';
@@ -76,6 +80,102 @@ describe('Project Next Action', () => {
       type: 'ok',
     });
     expect(projectedNextAction(application, taskToClear)).toBe(false);
+  });
+
+  it('keeps the previous authoritative action projected until the rescan verifies replacement', async () => {
+    const previous = task({
+      title: 'Previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 2 } });
+    let indexed = [previous, target];
+    let releaseRescan!: () => void;
+    let enteredRescan!: () => void;
+    const rescanning = new Promise<void>((resolve) => {
+      enteredRescan = resolve;
+    });
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          enteredRescan();
+          await new Promise<void>((resolve) => {
+            releaseRescan = resolve;
+          });
+          indexed = [
+            { ...previous, tags: [] },
+            { ...target, tags: ['#task/next_action'] },
+          ];
+          return { type: 'settled' as const, reason: 'index' as const, files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: target },
+        changed: true,
+      }),
+    } as unknown as TaskApplicationApi;
+
+    const operation = new NextActionService(application).set('Projects/A.md', target);
+    await rescanning;
+    expect(projectedNextAction(application, previous)).toBe(true);
+    expect(projectedNextAction(application, target)).toBe(false);
+
+    releaseRescan();
+    await expect(operation).resolves.toMatchObject({ type: 'ok' });
+    expect(projectedNextAction(application, previous)).toBe(false);
+    expect(projectedNextAction(application, target)).toBe(true);
+    acknowledgeProjectedNextActions(application, 'Projects/A.md');
+    expect(projectedNextAction(application, previous)).toBeUndefined();
+    expect(projectedNextAction(application, target)).toBeUndefined();
+  });
+
+  it('keeps a coordinator integrity result explicit when the rescan proves its exact state', async () => {
+    const previous = task({
+      title: 'Previous',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Notes/Previous.md', line: 1 },
+    });
+    const target = task({ title: 'Target', source: { filePath: 'Notes/Target.md', line: 1 } });
+    let indexed = [previous, target];
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          indexed = [
+            { ...previous, tags: [] },
+            { ...target, tags: ['#task/next_action'] },
+          ];
+          return { type: 'settled' as const, reason: 'index' as const, files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi
+        .fn()
+        .mockResolvedValueOnce({
+          type: 'ok',
+          outcome: { type: 'task', task: target },
+          changed: true,
+        })
+        .mockResolvedValueOnce({ type: 'conflict', current: previous })
+        .mockResolvedValueOnce({ type: 'io-error', cause: 'unknown', contentState: 'unknown' }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionService(application, () => true).set('Projects/A.md', target),
+    ).resolves.toMatchObject({
+      type: 'integrity-conflict',
+      diagnostic: expect.stringContaining(
+        'authoritative rescan verified the exact replacement state',
+      ),
+      tasks: [expect.objectContaining({ title: 'Target' })],
+    });
+    expect(projectedNextAction(application, previous)).toBe(false);
+    expect(projectedNextAction(application, target)).toBe(true);
+    acknowledgeProjectedNextActions(application, 'Projects/A.md');
+    expect(projectedNextAction(application, target)).toBeUndefined();
   });
 
   it('keeps target-file predecessors in the target add transaction before cross-file cleanup', async () => {

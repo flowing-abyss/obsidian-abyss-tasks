@@ -389,6 +389,13 @@ export class PanelView extends ItemView {
       projectCommands,
       this.dependencyProjection,
       this.collectionState,
+      (projectPath, candidate) =>
+        this.projectWorkspace
+          ?.get(projectPath)
+          ?.tasks.some(
+            ({ task }) =>
+              task.ref.filePath === candidate.ref.filePath && task.ref.line === candidate.ref.line,
+          ) === true,
     );
     this.right = new RightPanel(
       this.state,

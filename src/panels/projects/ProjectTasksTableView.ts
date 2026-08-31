@@ -24,7 +24,7 @@ export interface ProjectTasksTableOptions {
   readonly path: string;
   readonly onActivate: (action: ProjectAction) => void;
   /** Reuses the canonical Project task action menu; no permanent row controls. */
-  readonly onContextMenu?: (event: MouseEvent, action: ProjectAction) => void;
+  readonly onContextMenu?: (event: MouseEvent, action: ProjectAction, anchor: HTMLElement) => void;
   readonly nextActionState?: (task: ProjectAction['task']) => boolean | undefined;
   readonly preference?: ProjectTasksTablePreference;
   readonly onPreferenceChange?: (next: ProjectTasksTablePreference) => void;
@@ -133,7 +133,7 @@ export function renderProjectTasksTable(
       row.addEventListener('contextmenu', (event) => {
         if (!options.onContextMenu) return;
         event.preventDefault();
-        options.onContextMenu(event, action);
+        options.onContextMenu(event, action, row);
       });
       row.addEventListener('keydown', (event) => {
         if (event.target !== row) return;
@@ -146,7 +146,14 @@ export function renderProjectTasksTable(
           options.onContextMenu
         ) {
           event.preventDefault();
-          options.onContextMenu(new MouseEvent('contextmenu', { bubbles: true }), action);
+          const rect = row.getBoundingClientRect();
+          const keyboardEvent = new MouseEvent('contextmenu', {
+            bubbles: true,
+            clientX: rect.left + Math.min(16, Math.max(0, rect.width / 2)),
+            clientY: rect.top + Math.min(16, Math.max(0, rect.height / 2)),
+          });
+          options.onContextMenu(keyboardEvent, action, row);
+          row.focus({ preventScroll: true });
         }
       });
       for (const column of tableColumns) {

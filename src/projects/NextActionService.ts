@@ -25,6 +25,9 @@ interface NextActionRegistry {
     { readonly task: TaskSnapshot; readonly tagged: boolean }
   >;
   readonly pendingProjects: Set<string>;
+  readonly pendingTokens: Map<string, symbol>;
+  readonly pendingKeys: Map<symbol, ReadonlySet<string>>;
+  readonly bridgedProjects: Map<string, ReadonlySet<string>>;
 }
 
 const registries = new WeakMap<object, NextActionRegistry>();
@@ -39,6 +42,23 @@ export function projectedNextAction(
   )?.tagged;
 }
 
+/**
+ * A Project surface calls this only after it has rendered the settled query
+ * state.  It makes the final authoritative bridge one-render bounded without
+ * allowing an old service instance to retire a newer pending operation.
+ */
+export function acknowledgeProjectedNextActions(
+  application: TaskApplicationApi,
+  projectPath: string,
+): void {
+  const registry = registryFor(application);
+  if (registry.pendingProjects.has(projectPath)) return;
+  for (const key of registry.bridgedProjects.get(projectPath) ?? []) {
+    registry.committedTagState.delete(key);
+  }
+  registry.bridgedProjects.delete(projectPath);
+}
+
 function registryFor(application: TaskApplicationApi): NextActionRegistry {
   const existing = registries.get(application);
   if (existing) return existing;
@@ -46,7 +66,20 @@ function registryFor(application: TaskApplicationApi): NextActionRegistry {
     replacementTails: new Map(),
     committedTagState: new Map(),
     pendingProjects: new Set(),
+    pendingTokens: new Map(),
+    pendingKeys: new Map(),
+    bridgedProjects: new Map(),
   };
+  // The projection belongs to the application, not to a transient panel/service.
+  // One listener is enough to retire settled bridges, and avoids remounts leaving
+  // behind callbacks that can clear a later operation's overlay.
+  application.queries.subscribeSettled?.((settled) => {
+    if (registry.pendingProjects.size > 0) return;
+    const paths = new Set(settled.files.map(({ path }) => path));
+    for (const [key, pending] of registry.committedTagState) {
+      if (paths.has(pending.task.ref.filePath)) registry.committedTagState.delete(key);
+    }
+  });
   registries.set(application, registry);
   return registry;
 }
@@ -59,7 +92,6 @@ export class NextActionService {
     private readonly projectMembership?: NextActionProjectMembership,
   ) {
     this.registry = registryFor(application);
-    this.application.queries.subscribeSettled?.((event) => this.reconcileCommittedTagState(event));
   }
 
   async set(
@@ -68,21 +100,28 @@ export class NextActionService {
   ): Promise<TaskCommandResult | NextActionConflict> {
     return await this.serialize(projectPath, async () => {
       const tagged = this.taggedForProject(projectPath, task);
-      this.beginPending(projectPath, task, tagged);
+      const pending = this.beginPending(projectPath, task, tagged);
       try {
         const result = await new NextActionReplacementCoordinator(this.application).replace(
           task,
           tagged,
           projectPath,
         );
-        if (result.type === 'ok') {
-          this.rememberTagState(task, true);
-          for (const previous of tagged) this.rememberTagState(previous, false);
-        }
         const verified = await this.verify(projectPath, task);
+        if (verified.ran) this.publishVerifiedState(projectPath, task);
         if (result.type === 'integrity-conflict') {
-          if (verified) {
-            return { ...verified, diagnostic: `${result.diagnostic}; ${verified.diagnostic}` };
+          if (verified.conflict) {
+            return {
+              ...verified.conflict,
+              diagnostic: `${result.diagnostic}; ${verified.conflict.diagnostic}`,
+            };
+          }
+          if (verified.ran) {
+            return this.integrityConflict(
+              projectPath,
+              `${result.diagnostic}; authoritative rescan verified the exact replacement state`,
+              this.currentTagged(projectPath, task),
+            );
           }
           return {
             type: 'integrity-conflict',
@@ -93,9 +132,18 @@ export class NextActionService {
           };
         }
         if (result.type !== 'ok') return result;
-        return verified ?? result;
+        if (!verified.ran) {
+          // Legacy/read-only adapters do not provide the mandatory production
+          // barrier. Preserve their existing sequential command behaviour,
+          // while the real TaskIndex reaches this branch only after verify().
+          if (!this.application.queries.rescan) {
+            this.rememberTagState(task, true);
+            for (const previous of tagged) this.rememberTagState(previous, false);
+          }
+        }
+        return verified.conflict ?? result;
       } finally {
-        this.endPending(projectPath);
+        this.endPending(projectPath, pending);
       }
     });
   }
@@ -106,18 +154,22 @@ export class NextActionService {
   ): Promise<TaskCommandResult | NextActionConflict> {
     if (!this.application.applyRootTagChanges) return this.unavailable();
     return await this.serialize(projectPath, async () => {
-      this.beginPending(projectPath, task, [task]);
+      const pending = this.beginPending(projectPath, task, [task]);
       try {
         const result = await this.application.applyRootTagChanges!({
           primary: task.ref,
           changes: [{ task, tags: { remove: [NEXT_ACTION_TAG] } }],
         });
-        if (result.type === 'ok') this.rememberTagState(task, false);
         const verified = await this.verify(projectPath);
         if (result.type !== 'ok') return result;
-        return verified ?? result;
+        if (verified.ran && !verified.conflict) {
+          this.publishVerifiedState(projectPath);
+        } else if (!verified.ran) {
+          this.rememberTagState(task, false);
+        }
+        return verified.conflict ?? result;
       } finally {
-        this.endPending(projectPath);
+        this.endPending(projectPath, pending);
       }
     });
   }
@@ -156,25 +208,54 @@ export class NextActionService {
     projectPath: string,
     target: TaskSnapshot,
     previous: readonly TaskSnapshot[],
-  ): void {
+  ): symbol {
+    const token = Symbol(projectPath);
     this.registry.pendingProjects.add(projectPath);
+    this.registry.pendingTokens.set(projectPath, token);
+    this.registry.pendingKeys.set(
+      token,
+      new Set([this.key(target), ...previous.map((candidate) => this.key(candidate))]),
+    );
     this.rememberTagState(target, false);
     for (const task of previous) this.rememberTagState(task, true);
+    return token;
   }
 
-  private endPending(projectPath: string): void {
+  private endPending(projectPath: string, token: symbol): void {
+    if (this.registry.pendingTokens.get(projectPath) !== token) return;
     this.registry.pendingProjects.delete(projectPath);
-    // Keep the settled snapshot as the presentation bridge until a later publication
-    // replaces stale mounted Project snapshots.
+    this.registry.pendingTokens.delete(projectPath);
+    this.registry.pendingKeys.delete(token);
+    // Both legacy adapters and a verified Project render need the bridge until
+    // the application-owned acknowledgement/next settled publication retires it.
+  }
+
+  private publishVerifiedState(projectPath: string, target?: TaskSnapshot): void {
+    const current = this.application.queries
+      .list()
+      .filter((candidate) => this.belongsToProject(projectPath, candidate, target ?? candidate));
+    const currentKeys = new Set(current.map((candidate) => this.key(candidate)));
+    for (const candidate of current) {
+      this.rememberTagState(candidate, candidate.tags.includes(NEXT_ACTION_TAG));
+    }
+    this.registry.bridgedProjects.set(projectPath, currentKeys);
+    for (const [key, pending] of this.registry.committedTagState) {
+      if (
+        this.belongsToProject(projectPath, pending.task, target ?? pending.task) &&
+        !currentKeys.has(key)
+      ) {
+        this.registry.committedTagState.delete(key);
+      }
+    }
   }
 
   private async verify(
     projectPath: string,
     target?: TaskSnapshot,
-  ): Promise<NextActionConflict | undefined> {
+  ): Promise<{ readonly ran: boolean; readonly conflict?: NextActionConflict }> {
     // Compatibility adapters without the new barrier cannot be mistaken for a real TaskIndex.
     // The production TaskIndex always supplies it; legacy test/read-only adapters keep prior behavior.
-    if (!this.application.queries.rescan) return undefined;
+    if (!this.application.queries.rescan) return { ran: false };
     await this.application.queries.rescan();
     const tagged = this.application.queries
       .list()
@@ -182,11 +263,18 @@ export class NextActionService {
       .filter((task) => task.tags.includes(NEXT_ACTION_TAG));
     let exact = tagged.length === 0;
     if (target) exact = tagged.length === 1 && sameTask(tagged[0]!, target);
-    if (exact) return undefined;
+    if (exact) return { ran: true };
     const diagnostic = target
       ? 'expected exactly one next action after authoritative rescan'
       : 'expected no next action after authoritative rescan';
-    return this.integrityConflict(projectPath, diagnostic, tagged);
+    return { ran: true, conflict: this.integrityConflict(projectPath, diagnostic, tagged) };
+  }
+
+  private currentTagged(projectPath: string, target: TaskSnapshot): readonly TaskSnapshot[] {
+    return this.application.queries
+      .list()
+      .filter((task) => this.belongsToProject(projectPath, task, target))
+      .filter((task) => task.tags.includes(NEXT_ACTION_TAG));
   }
 
   private integrityConflict(
@@ -198,20 +286,11 @@ export class NextActionService {
   }
 
   /** Stops our write-lag bridge from masking a later index or external publication. */
-  private reconcileCommittedTagState(settled?: TaskIndexSettledEvent): void {
-    if (settled) {
-      const settledPaths = new Set(settled.files.map(({ path }) => path));
-      for (const [key, pending] of this.registry.committedTagState) {
-        if (
-          settledPaths.has(pending.task.ref.filePath) &&
-          ![...this.registry.pendingProjects].some((projectPath) =>
-            this.belongsToProject(projectPath, pending.task, pending.task),
-          )
-        ) {
-          this.registry.committedTagState.delete(key);
-        }
-      }
-    }
+  private reconcileCommittedTagState(_settled?: TaskIndexSettledEvent): void {
+    // Settled-event cleanup is application-owned in registryFor().  A service
+    // can only reconcile against the current query snapshot and can never
+    // remove a bridge created by a later service/remount.
+    if (this.registry.pendingProjects.size > 0) return;
     for (const task of this.application.queries.list()) {
       const key = this.key(task);
       const pending = this.registry.committedTagState.get(key);
@@ -247,12 +326,13 @@ export class NextActionService {
   private belongsToProject(
     projectPath: string,
     candidate: TaskSnapshot,
-    target: TaskSnapshot,
+    _target: TaskSnapshot,
   ): boolean {
-    if (this.projectMembership) return this.projectMembership(projectPath, candidate);
+    // Direct-file membership is the only safe fallback. Joined work-note
+    // membership is supplied by the canonical Project relation resolver.
     return (
       candidate.source.filePath === projectPath ||
-      candidate.source.filePath === target.source.filePath
+      this.projectMembership?.(projectPath, candidate) === true
     );
   }
 }
