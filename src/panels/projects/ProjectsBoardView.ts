@@ -1666,7 +1666,7 @@ export function renderProjectsBoard(
         () => undefined,
         () => undefined,
         false,
-        false,
+        true,
         false,
       );
     },

@@ -1,10 +1,15 @@
 import { TFile, type App } from 'obsidian';
-import type { ProjectPropertyWrite } from './ProjectPropertyAdapter';
+import {
+  isOwnedProjectProperty,
+  ProjectPropertyAdapter,
+  type ProjectPropertyWrite,
+} from './ProjectPropertyAdapter';
 
 export type ProjectPropertyWriteResult =
   | { readonly type: 'ok'; readonly value: unknown }
   | { readonly type: 'unchanged' }
   | { readonly type: 'conflict'; readonly current: unknown }
+  | { readonly type: 'unsupported'; readonly field: string }
   | { readonly type: 'invalid'; readonly field: 'path' | 'property' }
   | { readonly type: 'io-error' };
 
@@ -30,6 +35,16 @@ export class ProjectPropertyCommands {
   async write(write: ProjectPropertyWrite): Promise<ProjectPropertyWriteResult> {
     if (!write.propertyId || write.propertyId === '__proto__' || write.propertyId === 'constructor')
       return { type: 'invalid', field: 'property' };
+    if (isOwnedProjectProperty(write.propertyId)) {
+      return { type: 'unsupported', field: write.propertyId };
+    }
+    const adapter = new ProjectPropertyAdapter();
+    if (
+      adapter.describe(write.propertyId, write.expected).kind === 'unsupported' ||
+      adapter.describe(write.propertyId, write.next).kind === 'unsupported'
+    ) {
+      return { type: 'unsupported', field: write.propertyId };
+    }
     const file = this.app.vault.getAbstractFileByPath(write.path);
     if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
     try {

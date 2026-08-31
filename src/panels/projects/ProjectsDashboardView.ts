@@ -386,6 +386,10 @@ export function renderProjectDashboard(
       button.setAttribute('aria-pressed', String(active));
     }
     for (const button of layoutButtons) {
+      if (button.dataset['projectLayout'] === 'table') {
+        button.hidden = scope !== 'tasks';
+        button.setAttribute('aria-hidden', String(scope !== 'tasks'));
+      }
       const active = button.dataset['projectLayout'] === layout;
       button.classList.toggle('is-active', active);
       button.setAttribute('aria-pressed', String(active));
@@ -396,6 +400,13 @@ export function renderProjectDashboard(
         button.disabled = !timelineAvailable();
         button.setAttribute('aria-disabled', String(button.disabled));
       }
+    }
+    const fields = collectionControls?.element.querySelector<HTMLElement>(
+      '[data-collection-fields]',
+    );
+    if (fields) {
+      fields.hidden = scope !== 'tasks';
+      fields.setAttribute('aria-hidden', String(scope !== 'tasks'));
     }
     child?.destroy();
     child = null;

@@ -216,7 +216,7 @@ function scopeSession<TViewState>(
     captureDraft: null,
     get layout(): ProjectWorkspaceLayout {
       const layout = coordinator.preference(instanceKey as CollectionScopeKey).layout;
-      return layout === 'board' || layout === 'timeline' ? layout : 'list';
+      return layout === 'table' || layout === 'board' || layout === 'timeline' ? layout : 'list';
     },
     set layout(next: ProjectWorkspaceLayout) {
       const scope = instanceKey as CollectionScopeKey;

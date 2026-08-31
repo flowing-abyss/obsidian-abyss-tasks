@@ -1,5 +1,5 @@
 export interface EntityPresentationOptions {
-  readonly identity: string;
+  readonly identity?: string;
   readonly status?: string;
   readonly priority?: string | null;
   readonly progress?: string;
@@ -13,11 +13,13 @@ export class EntityPresentation {
 
   render(parent: HTMLElement): HTMLElement {
     const root = parent.createDiv({ cls: 'abyss-entity-presentation' });
-    root.createSpan({
-      cls: 'abyss-entity-identity',
-      text: this.options.identity,
-      attr: { 'data-entity-slot': 'identity', title: this.options.identity },
-    });
+    if (this.options.identity) {
+      root.createSpan({
+        cls: 'abyss-entity-identity',
+        text: this.options.identity,
+        attr: { 'data-entity-slot': 'identity', title: this.options.identity },
+      });
+    }
     this.slot(root, 'status', this.options.status);
     this.slot(root, 'priority', this.options.priority ?? undefined);
     this.slot(root, 'progress', this.options.progress);
@@ -29,9 +31,15 @@ export class EntityPresentation {
   private slot(parent: HTMLElement, name: string, value: string | undefined): void {
     if (!value) return;
     parent.createSpan({
-      cls: `abyss-entity-${name}`,
+      cls: `abyss-entity-${name}${name === 'priority' ? ' abyss-project-priority' : ''}`,
       text: value,
-      attr: { 'data-entity-slot': name, title: value },
+      attr: {
+        'data-entity-slot': name,
+        title: value,
+        ...(name === 'priority'
+          ? { 'data-priority': value, 'aria-label': `Priority ${value}` }
+          : {}),
+      },
     });
   }
 }

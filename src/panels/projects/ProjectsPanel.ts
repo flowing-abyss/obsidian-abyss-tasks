@@ -2,10 +2,15 @@ import { Platform, TFile, type App } from 'obsidian';
 import type { AppState } from '../../app/AppState';
 import type {
   ProjectCommandService,
+  ProjectMetadataCommandResult,
   ProjectPropertyCommandResult,
+  ProjectRangeCommandResult,
 } from '../../projects/ProjectCommandService';
 import type { ProjectCreateResult, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
+import { parseProjectDate } from '../../projects/projectDates';
+import type { ProjectPropertyWrite } from '../../projects/properties/ProjectPropertyAdapter';
+import type { ProjectPropertyWriteResult } from '../../projects/properties/ProjectPropertyCommands';
 import type { ProjectPriority, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import { isAuditAccepted } from '../../projects/work-notes/compatibility';
@@ -186,12 +191,46 @@ export class ProjectsPanel {
     return result;
   }
 
-  private async setPriority(path: string, priority: ProjectPriority | null): Promise<void> {
+  private async setPriority(
+    path: string,
+    priority: ProjectPriority | null,
+  ): Promise<ProjectMetadataCommandResult> {
     const project = this.snapshots.find((snapshot) => snapshot.project.path === path)?.project;
-    if (!project || !this.projectCommands) return;
+    if (!project || !this.projectCommands) return { type: 'invalid', field: 'path' };
     const observed = { path, value: project.observed?.priority ?? project.frontmatter['priority'] };
     const result = await this.projectCommands.setPriority(observed, priority);
     if (result.type === 'ok') this.projectStore.refresh();
+    return result;
+  }
+
+  private async writeProperty(write: ProjectPropertyWrite): Promise<ProjectPropertyWriteResult> {
+    if (!this.projectCommands) return { type: 'io-error' };
+    const result = await this.projectCommands.setProperty(write);
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
+  }
+
+  private async setRangeEndpoint(
+    path: string,
+    endpoint: 'start' | 'end',
+    raw: string | null,
+  ): Promise<ProjectRangeCommandResult> {
+    const project = this.snapshots.find((snapshot) => snapshot.project.path === path)?.project;
+    if (!project || !this.projectCommands) return { type: 'invalid', issue: 'path' };
+    const value = raw === null ? null : parseProjectDate(raw);
+    if (raw !== null && !value) {
+      return { type: 'invalid', issue: endpoint === 'start' ? 'invalid-start' : 'invalid-end' };
+    }
+    const result = await this.projectCommands.setRange(
+      {
+        path,
+        start: project.observed?.start ?? project.frontmatter['start'],
+        end: project.observed?.end ?? project.frontmatter['end'],
+      },
+      endpoint === 'start' ? { start: value } : { end: value },
+    );
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
   }
 
   private openNote(path: string): void {
@@ -656,6 +695,10 @@ export class ProjectsPanel {
             preference:
               this.workspaceSession.portfolioPreference().layoutPreferences['overview']?.table,
             onOpen: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
+            onWriteProperty: (write) => this.writeProperty(write),
+            onSetStatus: (path, statusId) => this.setStatus(path, statusId),
+            onSetPriority: (path, priority) => this.setPriority(path, priority ?? null),
+            onSetRange: (path, endpoint, raw) => this.setRangeEndpoint(path, endpoint, raw),
           });
           return { destroy: () => table.destroy() };
         },

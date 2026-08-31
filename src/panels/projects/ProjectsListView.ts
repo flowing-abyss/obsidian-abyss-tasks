@@ -7,6 +7,7 @@ import type { ProjectCreateResult } from '../../projects/ProjectManager';
 import { orderedGroups, type StatusGroup } from '../../projects/status';
 import type { Project, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { ProjectStatus } from '../../settings/types';
+import { EntityPresentation } from '../../ui/entity/EntityPresentation';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { BoundedWindow } from './BoundedWindow';
 import type { ProjectCaptureSession } from './ProjectWorkspaceSession';
@@ -514,6 +515,11 @@ export function renderProjectRow(
   const firstLine = row.createDiv({
     cls: 'abyss-project-row-line abyss-project-row-line--primary',
   });
+  // Board keeps its established keyboard/DnD identity carrier while sharing
+  // the same priority presentation slot as the portfolio table.
+  new EntityPresentation({
+    priority: project.priority === 'D' ? undefined : project.priority,
+  }).render(firstLine);
   firstLine.createSpan({
     cls: `abyss-project-health abyss-project-health--${health.severity}`,
     attr: {
@@ -533,13 +539,6 @@ export function renderProjectRow(
   nameWrap.createSpan({ cls: 'abyss-project-name', text: project.name });
   if ((nameCounts.get(project.name) ?? 0) > 1) {
     nameWrap.setAttribute('title', `${project.name} — ${parentFolder(project.path)}`);
-  }
-  if (project.priority && project.priority !== 'D') {
-    firstLine.createSpan({
-      cls: 'abyss-project-priority',
-      text: project.priority,
-      attr: { 'data-priority': project.priority, 'aria-label': `Priority ${project.priority}` },
-    });
   }
   if (snapshot.taskRollup.total > 0) {
     const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });

@@ -104,6 +104,34 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
 }
 
 describe('Project Tasks workspace', () => {
+  it('hides the Tasks Table layout and Fields control in the Work Notes scope', async () => {
+    const container = freshContainer();
+    const workspaceSession = new ProjectWorkspaceSession();
+    await workspaceSession.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      layout: 'table',
+    }));
+    renderProjectDashboard(container, snapshot('with-work-notes'), {
+      state: new AppState(),
+      settings: structuredClone(DEFAULT_SETTINGS),
+      workspaceSession,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      renderTasks: vi.fn(() => ({ destroy: () => undefined })),
+      renderWorkNotes: vi.fn(() => ({ destroy: () => undefined })),
+    });
+    expect(
+      container.querySelector<HTMLElement>('[data-project-workspace]')?.dataset['layout'],
+    ).toBe('table');
+    container.querySelector<HTMLButtonElement>('[data-project-scope="work-notes"]')!.click();
+    expect(container.querySelector<HTMLElement>('[data-project-layout="table"]')?.hidden).toBe(
+      true,
+    );
+    expect(container.querySelector<HTMLElement>('[data-collection-fields]')?.hidden).toBe(true);
+    expect(
+      container.querySelector<HTMLElement>('[data-project-workspace]')?.dataset['layout'],
+    ).toBe('list');
+  });
   it('keeps scope, layouts, actions, search, and add in one named collection toolbar', () => {
     const container = freshContainer();
     const capture = vi.fn();
