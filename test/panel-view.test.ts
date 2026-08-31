@@ -590,7 +590,24 @@ describe('PanelView', () => {
       expect(right.getAttribute('aria-modal')).toBe('true');
       const taskClose = right.querySelector<HTMLButtonElement>('.abyss-inspector-shell-close')!;
       expect(taskClose.getAttribute('aria-label')).toBe('Close Task details');
-      taskClose.click();
+      const titleView = right.querySelector<HTMLElement>('.abyss-right-title-view')!;
+      titleView.click();
+      const title = right.querySelector<HTMLTextAreaElement>('.abyss-right-title-edit')!;
+      const originalTitle = title.value;
+      title.value = `${originalTitle} draft`;
+      title.dispatchEvent(new Event('input', { bubbles: true }));
+      activeDocument.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      expect(internals.state.get('taskStack')).not.toEqual([]);
+      expect(right.classList.contains('is-compact-open')).toBe(true);
+      title.value = originalTitle;
+      title.dispatchEvent(new Event('input', { bubbles: true }));
+      activeDocument.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      expect(internals.state.get('taskStack')).toEqual([]);
+      expect(right.classList.contains('is-compact-open')).toBe(false);
+      expect(activeDocument.activeElement).toBe(details);
+
+      internals.state.set('taskStack', [task()]);
+      right.querySelector<HTMLButtonElement>('.abyss-inspector-shell-close')!.click();
       expect(internals.state.get('taskStack')).toEqual([]);
       expect(right.classList.contains('is-compact-open')).toBe(false);
       expect(activeDocument.activeElement).toBe(details);

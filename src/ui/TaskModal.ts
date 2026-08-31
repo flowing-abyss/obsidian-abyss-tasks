@@ -94,6 +94,15 @@ export class TaskModal {
       this.interactionOwnership,
       this.dependencyProjection,
       this.dependencyCandidates,
+      undefined,
+      {
+        narrow: () => false,
+        returnFocus: () =>
+          this.modalEl?.querySelector<HTMLElement>('.abyss-modal-close-btn') ?? null,
+        onRequestClose: () => this.close(),
+        isDirty: () => false,
+        closeOnHandledEscape: true,
+      },
     );
     this.innerPanel.mount(panelEl);
 

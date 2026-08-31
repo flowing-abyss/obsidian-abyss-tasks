@@ -1059,10 +1059,10 @@ describe('TaskModal with real RightPanel', () => {
     modal.open(current);
 
     const header = activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-header')!;
-    const initialMarker = header.querySelector<HTMLElement>(':scope > .abyss-status-marker')!;
+    const initialMarker = header.querySelector<HTMLElement>('.abyss-status-marker')!;
     expect(initialMarker).not.toBeNull();
-    expect(initialMarker.nextElementSibling).toBe(
-      header.querySelector(':scope > .abyss-right-title'),
+    expect(initialMarker.closest('[data-inspector-field="status"]')?.nextElementSibling).toBe(
+      header.querySelector('.abyss-right-title')?.closest('[data-inspector-field="title"]'),
     );
     expect(initialMarker.getAttribute('data-status')).toBe('status-waiting');
     expect(initialMarker.getAttribute('data-priority')).toBe('F');
@@ -1074,12 +1074,12 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
     expect(
       activeDocument
-        .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
+        .querySelector('.abyss-modal .abyss-right-header .abyss-status-marker')
         ?.getAttribute('data-status'),
     ).toBe('status-3');
 
     activeDocument
-      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')!
+      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header .abyss-status-marker')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     const waiting = Array.from(
       activeDocument.querySelectorAll<HTMLElement>('.abyss-status-popover-row'),
@@ -1090,12 +1090,12 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
     expect(
       activeDocument
-        .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
+        .querySelector('.abyss-modal .abyss-right-header .abyss-status-marker')
         ?.getAttribute('data-status'),
     ).toBe('status-waiting');
 
     activeDocument
-      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')!
+      .querySelector<HTMLElement>('.abyss-modal .abyss-right-header .abyss-status-marker')!
       .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     click(
       activeDocument.querySelector<HTMLElement>(
@@ -1110,7 +1110,7 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.querySelector('.abyss-modal-close-btn')).not.toBeNull();
     expect(
       activeDocument
-        .querySelector('.abyss-modal .abyss-right-header > .abyss-status-marker')
+        .querySelector('.abyss-modal .abyss-right-header .abyss-status-marker')
         ?.getAttribute('data-priority'),
     ).toBe('A');
 
@@ -1130,7 +1130,7 @@ describe('TaskModal with real RightPanel', () => {
     listener?.({ type: 'changed', files: ['f.md'] });
 
     const refreshedMarker = activeDocument.querySelector<HTMLElement>(
-      '.abyss-modal .abyss-right-header > .abyss-status-marker',
+      '.abyss-modal .abyss-right-header .abyss-status-marker',
     );
     expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
     expect(activeDocument.querySelector('.abyss-task-selection-stale')).toBeNull();
@@ -1188,6 +1188,37 @@ describe('TaskModal with real RightPanel', () => {
     expect(activeDocument.activeElement).toBe(repeatChip);
   });
 
+  it('closes once when Escape bubbles from an ordinary Task title editor', async () => {
+    const app = await createAppWithFiles({ 'f.md': '- [ ] Modal title\n' });
+    const current = task({
+      title: 'Modal title',
+      source: {
+        filePath: 'f.md',
+        line: 0,
+        originalMarkdown: '- [ ] Modal title',
+        originalBlock: '- [ ] Modal title',
+      },
+    });
+    const queries: TaskQueryApi = taskQueryApi({ list: () => [current] });
+    modal = new TaskModal(app, testStatusRegistry(), DEFAULT_SETTINGS, queries, {
+      queries,
+      execute: vi.fn<TaskApplicationApi['execute']>(),
+    });
+    modal.open(current);
+    click(activeDocument.querySelector<HTMLElement>('.abyss-modal .abyss-right-title-view')!);
+    const title = activeDocument.querySelector<HTMLTextAreaElement>(
+      '.abyss-modal .abyss-right-title-edit',
+    )!;
+    title.value = 'Unsaved modal title';
+    title.dispatchEvent(new Event('input', { bubbles: true }));
+
+    title.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+
+    expect(activeDocument.querySelector('.abyss-modal-backdrop')).toBeNull();
+  });
+
   it('keeps the modal open when Escape dismisses its status menu', async () => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Modal status\n' });
     const current = task({
@@ -1209,7 +1240,7 @@ describe('TaskModal with real RightPanel', () => {
     });
     modal.open(current);
     const marker = activeDocument.querySelector<HTMLElement>(
-      '.abyss-modal .abyss-right-header > .abyss-status-marker',
+      '.abyss-modal .abyss-right-header .abyss-status-marker',
     )!;
 
     marker.focus();
@@ -1401,28 +1432,33 @@ describe('TaskModal with real RightPanel', () => {
       surface: 'title editor',
       openSelector: '.abyss-right-title-view',
       ownedSelector: '.abyss-right-title-edit',
+      closesModal: true,
     },
     {
       surface: 'description editor',
       openSelector: '.abyss-right-desc-view',
       ownedSelector: '.abyss-right-desc-edit',
+      closesModal: true,
     },
     {
       surface: 'add-subtask editor',
       openSelector: '.abyss-subtask-add-row',
       ownedSelector: '.abyss-subtask-new-input',
+      closesModal: true,
     },
     {
       surface: 'inline comment editor',
       openSelector: '.abyss-comment-text',
       ownedSelector: '.abyss-comment-edit-input',
+      closesModal: false,
     },
     {
       surface: 'inline tag dropdown',
       openSelector: '+ tag',
       ownedSelector: '.abyss-tag-input',
+      closesModal: false,
     },
-  ])('keeps the modal open when Escape cancels its $surface', async (entry) => {
+  ])('applies TaskModal Escape ownership for its $surface', async (entry) => {
     const app = await createAppWithFiles({ 'f.md': '- [ ] Nested Escape\n' });
     const current = task({
       title: 'Nested Escape',
@@ -1464,7 +1500,11 @@ describe('TaskModal with real RightPanel', () => {
     await flushMicrotasks();
 
     expect(escape.defaultPrevented).toBe(true);
-    expect(activeDocument.querySelector(`.abyss-modal ${entry.ownedSelector}`)).toBeNull();
-    expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+    if (entry.closesModal) {
+      expect(activeDocument.querySelector('.abyss-modal-backdrop')).toBeNull();
+    } else {
+      expect(activeDocument.querySelector(`.abyss-modal ${entry.ownedSelector}`)).toBeNull();
+      expect(activeDocument.querySelector('.abyss-modal-backdrop')).not.toBeNull();
+    }
   });
 });

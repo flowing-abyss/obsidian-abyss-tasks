@@ -908,7 +908,11 @@ export class PanelView extends ItemView {
       }
       const path = event.composedPath();
       const activePane = pane === 'left' ? elements.left : elements.right;
-      if (pane === 'right' && activePane.querySelector('.abyss-inspector-shell')) {
+      if (
+        pane === 'right' &&
+        (activePane.matches('.abyss-inspector-shell') ||
+          activePane.querySelector('.abyss-inspector-shell'))
+      ) {
         return;
       }
       if (

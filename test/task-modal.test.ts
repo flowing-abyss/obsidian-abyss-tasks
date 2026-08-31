@@ -14,6 +14,7 @@ const mockState = vi.hoisted(() => ({
   // inspect taskStack after simulating a store update (RightPanel itself is mocked out).
   capturedState: null as AppState | null,
   capturedTasks: undefined as TaskApplicationApi | undefined,
+  capturedShell: undefined as { onRequestClose(): void } | undefined,
 }));
 
 vi.mock('../src/panels/RightPanel', () => ({
@@ -25,9 +26,18 @@ vi.mock('../src/panels/RightPanel', () => ({
     _settings: unknown,
     _onSuccessfulMutation: unknown,
     tasks: TaskApplicationApi | undefined,
+    _headerActions: unknown,
+    _mutation: unknown,
+    _commentTime: unknown,
+    _ownership: unknown,
+    _projection: unknown,
+    _candidates: unknown,
+    _inspectorRenderer: unknown,
+    shell: { onRequestClose(): void } | undefined,
   ) {
     mockState.capturedState = state;
     mockState.capturedTasks = tasks;
+    mockState.capturedShell = shell;
     return {
       mount: (el: HTMLElement) => {
         mockState.mountImpl(el);
@@ -57,6 +67,7 @@ describe('TaskModal', () => {
     mockState.includeHeaderActions.value = true;
     mockState.capturedState = null;
     mockState.capturedTasks = undefined;
+    mockState.capturedShell = undefined;
     modal = new TaskModal(app, testStatusRegistry());
   });
 
@@ -143,6 +154,13 @@ describe('TaskModal', () => {
       modal.open(task());
       activeDocument.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
+    });
+
+    it('gives the embedded Task inspector a closing shell port', () => {
+      modal.open(task());
+      mockState.capturedShell?.onRequestClose();
+      expect(activeDocument.body.querySelector('.abyss-modal-backdrop')).toBeNull();
+      expect(mockState.destroyImpl).toHaveBeenCalledTimes(1);
     });
 
     it('other keys do not close', () => {

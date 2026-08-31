@@ -305,7 +305,7 @@ describe('RightPanel dependency completion policy', () => {
     const { panel, state, el } = await makePanel({}, application);
     state.set('taskStack', [dependent]);
 
-    el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!.dispatchEvent(
+    el.querySelector<HTMLElement>('.abyss-right-header .abyss-status-marker')!.dispatchEvent(
       new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
     );
     const done = Array.from(
@@ -320,7 +320,7 @@ describe('RightPanel dependency completion policy', () => {
       type: 'blocked',
       operation: 'completion',
     });
-    const marker = el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!;
+    const marker = el.querySelector<HTMLElement>('.abyss-right-header .abyss-status-marker')!;
     marker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     await flushMicrotasks();
 
@@ -462,7 +462,7 @@ describe('RightPanel interaction ownership', () => {
       category: 'date',
       open: (el: HTMLElement) =>
         click(
-          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row button')).find(
             (candidate) => candidate.textContent?.startsWith('📅'),
           )!,
         ),
@@ -553,7 +553,7 @@ describe('RightPanel interaction ownership', () => {
       category: 'date',
       open: (el: HTMLElement) =>
         click(
-          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row > button')).find(
+          Array.from(el.querySelectorAll<HTMLElement>('.abyss-chips-row button')).find(
             (candidate) => candidate.textContent?.startsWith('📅'),
           )!,
         ),
@@ -615,7 +615,7 @@ describe('RightPanel interaction ownership', () => {
         expect(el.querySelector(surface)).not.toBeNull();
 
         const statusMarker = el.querySelector<HTMLElement>(
-          '.abyss-right-header > .abyss-status-marker',
+          '.abyss-right-header .abyss-status-marker',
         )!;
         statusMarker.focus();
         statusMarker.dispatchEvent(
@@ -759,21 +759,26 @@ describe('RightPanel.renderTask', () => {
     el.ownerDocument.body.append(el);
     state.set('taskStack', [selected]);
     const priority = el.querySelector<HTMLButtonElement>('.abyss-priority-chip')!;
+    const priorityRow = priority.closest<HTMLElement>('[data-inspector-field="priority"]')!;
+    expect(priorityRow.tagName).toBe('DIV');
+    expect(priorityRow.classList.contains('abyss-inspector-field-row')).toBe(true);
     priority.focus();
-
-    const update = (
-      panel as unknown as { updatePriority(task: TaskSnapshot, value: string): Promise<void> }
-    ).updatePriority(selected, 'A');
+    click(priority);
+    click(el.querySelector<HTMLButtonElement>('.abyss-priority-option[data-priority="A"]')!);
     const feedback = el.querySelector<HTMLElement>('[data-task-field-feedback="priority"]')!;
     expect(feedback.dataset['resultType']).toBe('pending');
+    expect(feedback.parentElement).toBe(priorityRow);
     expect(priority.disabled).toBe(true);
+    expect(priority.textContent).toContain('Highest');
 
     settle({ type: 'conflict', current: selected });
-    await update;
+    await flushMicrotasks();
     expect(feedback.dataset['resultType']).toBe('conflict');
     expect(feedback.textContent).toContain('Draft kept');
     expect(priority.disabled).toBe(false);
     expect(el.ownerDocument.activeElement).toBe(priority);
+    expect(priority.textContent).toContain('High');
+    expect(priority.classList.contains('abyss-priority-chip--B')).toBe(true);
     panel.destroy();
     el.remove();
   });
@@ -790,6 +795,17 @@ describe('RightPanel.renderTask', () => {
         (field) => field.dataset['inspectorField'],
       ),
     ).toEqual(expect.arrayContaining(['description', 'subtasks', 'comments']));
+    for (const field of ['status', 'date', 'priority', 'recurrence'] as const) {
+      const row = el.querySelector<HTMLElement>(
+        `.abyss-inspector-field-row[data-inspector-field="${field}"]`,
+      );
+      expect(row?.tagName).toBe('DIV');
+      expect(row?.querySelector('[role="checkbox"], button, input, textarea')).not.toBeNull();
+    }
+    expect(
+      el.querySelector<HTMLElement>('.abyss-inspector-field-row[data-inspector-field="title"]')
+        ?.tagName,
+    ).toBe('DIV');
     expect(el.querySelector('.abyss-right-section-label')?.textContent).toBe('Progress');
     expect(
       Array.from(
@@ -871,11 +887,13 @@ describe('RightPanel.renderTask', () => {
       state.set('taskStack', selection === 'root' ? [root] : [root, child]);
 
       const header = el.querySelector<HTMLElement>('.abyss-right-header')!;
-      const marker = header.querySelector<HTMLElement>(':scope > .abyss-status-marker')!;
-      const title = header.querySelector<HTMLElement>(':scope > .abyss-right-title')!;
-      expect(header.querySelectorAll(':scope > .abyss-status-marker')).toHaveLength(1);
+      const marker = header.querySelector<HTMLElement>('.abyss-status-marker')!;
+      const title = header.querySelector<HTMLElement>('.abyss-right-title')!;
+      expect(header.querySelectorAll('.abyss-status-marker')).toHaveLength(1);
       expect(marker).not.toBeNull();
-      expect(marker.nextElementSibling).toBe(title);
+      expect(marker.closest('[data-inspector-field="status"]')?.nextElementSibling).toBe(
+        title.closest('[data-inspector-field="title"]'),
+      );
       expect(marker.getAttribute('data-status')).toBe('status-waiting');
       expect(marker.getAttribute('data-priority')).toBe('F');
 
@@ -895,7 +913,7 @@ describe('RightPanel.renderTask', () => {
       );
 
       const currentMarker = el.querySelector<HTMLElement>(
-        '.abyss-right-header > .abyss-status-marker',
+        '.abyss-right-header .abyss-status-marker',
       )!;
       currentMarker.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
@@ -921,7 +939,7 @@ describe('RightPanel.renderTask', () => {
         symbol: 'w',
       });
 
-      el.querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')!.dispatchEvent(
+      el.querySelector<HTMLElement>('.abyss-right-header .abyss-status-marker')!.dispatchEvent(
         new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
       );
       click(
@@ -1335,9 +1353,9 @@ describe('RightPanel popovers', () => {
         },
       }),
     ]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
     const escapedToDocument = vi.fn();
     ownerDocument.addEventListener('keydown', escapedToDocument);
 
@@ -1377,9 +1395,9 @@ describe('RightPanel popovers', () => {
     outside.textContent = 'Outside';
     ownerDocument.body.append(outside);
     state.set('taskStack', [task({ title: 'Date traversal', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
     vi.useFakeTimers();
 
     try {
@@ -1413,9 +1431,9 @@ describe('RightPanel popovers', () => {
     const outside = ownerDocument.createElement('button');
     ownerDocument.body.append(outside);
     state.set('taskStack', [task({ title: 'Date cleanup', planning: { due: '2026-08-11' } })]);
-    const chip = Array.from(
-      el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row > button'),
-    ).find((candidate) => candidate.textContent?.startsWith('📅'))!;
+    const chip = Array.from(el.querySelectorAll<HTMLButtonElement>('.abyss-chips-row button')).find(
+      (candidate) => candidate.textContent?.startsWith('📅'),
+    )!;
     vi.useFakeTimers();
     const clearTimeout = vi.spyOn(ownerDocument.defaultView!, 'clearTimeout');
 

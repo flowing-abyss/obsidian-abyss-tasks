@@ -1547,7 +1547,9 @@ describe('RightPanel.updatePriority', () => {
         originalBlock: '- [ ] x',
       },
     });
-    await expect(call<Promise<void>>(panel, 'updatePriority', t, 'A')).resolves.toBeUndefined();
+    await expect(call<Promise<boolean | undefined>>(panel, 'updatePriority', t, 'A')).resolves.toBe(
+      false,
+    );
   });
 });
 

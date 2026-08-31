@@ -79,6 +79,32 @@ describe('renderWorkNoteInspector', () => {
     expect(root.querySelector('[data-work-note-task-command]')).toBeNull();
   });
 
+  it('renders absent optional metadata as Not set while reserving Unavailable for unsupported fields', () => {
+    const root = freshContainer();
+    renderWorkNoteInspector(
+      root,
+      { ...snapshot, priority: undefined, description: undefined },
+      {
+        statuses: DEFAULT_SETTINGS.projects.statuses,
+        onSetStatus: vi.fn(),
+        openNote: vi.fn(),
+      },
+    );
+
+    expect(root.querySelector('[data-inspector-field="priority"]')?.textContent).toContain(
+      'Not set',
+    );
+    expect(root.querySelector('[data-inspector-field="description"]')?.textContent).toContain(
+      'Not set',
+    );
+    expect(root.querySelector('[data-inspector-field="comments"]')?.textContent).toContain(
+      'Unavailable',
+    );
+    expect(root.querySelector('[data-inspector-field="progress"]')?.textContent).toContain(
+      'Unavailable',
+    );
+  });
+
   it('opens the note and exposes status as a native-menu button', () => {
     const root = freshContainer();
     const openNote = vi.fn();

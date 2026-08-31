@@ -42,7 +42,7 @@ import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import {
   createInspectorFieldPresenter,
   markInspectorEntity,
-  markInspectorField,
+  renderInspectorControlField,
   renderInspectorField,
   type InspectorFieldKind,
 } from '../ui/inspector/InspectorFields';
@@ -99,6 +99,9 @@ export interface TaskInspectorShellPort {
   readonly narrow: () => boolean;
   readonly returnFocus: () => HTMLElement | null;
   readonly onRequestClose: () => void;
+  /** Modal owners may deliberately close instead of retaining their private draft. */
+  readonly isDirty?: () => boolean;
+  readonly closeOnHandledEscape?: boolean;
 }
 
 interface SubmittedDraft {
@@ -900,7 +903,10 @@ export class RightPanel {
       returnFocus: () => this.taskInspectorShell?.returnFocus() ?? null,
       onRequestClose: () => this.taskInspectorShell?.onRequestClose(),
       isDirty: () =>
-        this.captureDraftState()?.entries.some((entry) => isDirtyDraft(entry)) ?? false,
+        this.taskInspectorShell?.isDirty?.() ??
+        this.captureDraftState()?.entries.some((entry) => isDirtyDraft(entry)) ??
+        false,
+      closeOnHandledEscape: this.taskInspectorShell?.closeOnHandledEscape,
     };
     return bindInspectorShell(this.el, shell);
   }
@@ -932,7 +938,13 @@ export class RightPanel {
 
     // Header
     const header = this.el.createDiv({ cls: 'abyss-right-header' });
-    const statusMarker = renderStatusMarker(header, {
+    const status = renderInspectorControlField(
+      header,
+      'status',
+      'Status',
+      'abyss-right-status-field',
+    );
+    renderStatusMarker(status.content, {
       task,
       registry: this.statusRegistry,
       ...('source' in task && this.dependencyProjection
@@ -944,8 +956,8 @@ export class RightPanel {
         this.openStatusMenu(event, task);
       },
     });
-    markInspectorField(statusMarker, 'status');
-    this.renderTitleBlock(header, task);
+    const title = renderInspectorControlField(header, 'title', 'Title', 'abyss-right-title-field');
+    this.renderTitleBlock(title.content, task);
 
     const headerActions = header.createDiv({ cls: 'abyss-right-header-actions' });
 
@@ -973,7 +985,10 @@ export class RightPanel {
 
       // Date chip (due-first display; if scheduled is set, prefer showing scheduled as the
       // "when this sits on the calendar" chip, matching the due-centric anchor-priority rule)
-      this.renderDateChip(chips, task);
+      this.renderDateChip(
+        renderInspectorControlField(chips, 'date', 'Date', 'abyss-task-chip-field').content,
+        task,
+      );
 
       // Combined time + duration chip (duration only applies to top-level TaskSnapshot, not SubtaskSnapshot)
       const duration = 'source' in task ? task.planning.duration : undefined;
@@ -987,7 +1002,12 @@ export class RightPanel {
           ? `Change time, currently ${task.planning.time}, duration ${String(duration)} minutes`
           : `Change time, currently ${task.planning.time}, no duration`;
       }
-      const timeChip = chips.createEl('button', {
+      const timeChip = renderInspectorControlField(
+        chips,
+        'date',
+        'Time',
+        'abyss-task-chip-field',
+      ).content.createEl('button', {
         cls: `abyss-chip abyss-chip-time${task.planning.time ? '' : ' abyss-chip-empty'}`,
         text: timeChipText,
         attr: {
@@ -1003,14 +1023,30 @@ export class RightPanel {
       });
 
       // Priority chip
-      this.renderPriorityChip(chips, task);
+      this.renderPriorityChip(
+        renderInspectorControlField(chips, 'priority', 'Priority', 'abyss-task-chip-field').content,
+        task,
+      );
 
       if ('source' in task && this.dependencyProjection) {
-        this.renderDependencyChip(chips, task);
+        this.renderDependencyChip(
+          renderInspectorControlField(
+            chips,
+            'dependencies',
+            'Dependencies',
+            'abyss-task-chip-field',
+          ).content,
+          task,
+        );
       }
 
       // Repeat chip and its one shared editor. TaskModal inherits this through RightPanel reuse.
-      this.renderRecurrenceChip(chips, task, stack);
+      this.renderRecurrenceChip(
+        renderInspectorControlField(chips, 'recurrence', 'Recurrence', 'abyss-task-chip-field')
+          .content,
+        task,
+        stack,
+      );
 
       // Scheduled ("Plan") and Start chips — once SET, rendered as a normal round-pill,
       // same style as the date/time/priority chips above; clicking it opens the same small
@@ -1020,8 +1056,16 @@ export class RightPanel {
       // add whichever of Start/Plan are currently unset; picking one opens the exact same
       // popover. This intentionally reverses the "always-visible placeholder pill" unset
       // treatment from the previous round after live testing showed it cluttered the row.
-      if (task.planning.scheduled) this.renderScheduledChip(chips, task);
-      if (task.planning.start) this.renderStartChip(chips, task);
+      if (task.planning.scheduled)
+        this.renderScheduledChip(
+          renderInspectorControlField(chips, 'date', 'Plan', 'abyss-task-chip-field').content,
+          task,
+        );
+      if (task.planning.start)
+        this.renderStartChip(
+          renderInspectorControlField(chips, 'date', 'Start', 'abyss-task-chip-field').content,
+          task,
+        );
       this.renderAddDateMenu(chips, task);
 
       // Tag chips
@@ -1462,7 +1506,6 @@ export class RightPanel {
       cls: `abyss-chip${d ? '' : ' abyss-chip-empty'}`,
       text: d ? `📅 ${this.formatDate(d)}` : '📅 Date',
     });
-    markInspectorField(chip, 'date');
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showDatePopover(chip, task, field);
@@ -1606,7 +1649,6 @@ export class RightPanel {
         'aria-expanded': 'false',
       },
     });
-    markInspectorField(chip, 'priority');
     chip.addEventListener('click', (e) => {
       e.stopPropagation();
       this.showPriorityPopover(chip, task);
@@ -1622,7 +1664,6 @@ export class RightPanel {
       cls: `abyss-chip abyss-repeat-chip${task.recurrence ? '' : ' abyss-chip-add abyss-chip-empty'}`,
       attr: { title: task.recurrence ? 'Edit repeat' : 'Add repeat' },
     });
-    markInspectorField(chip, 'recurrence');
     if (task.recurrence) {
       renderRecurrenceBadge(chip, recurrenceBadgeInput(task.recurrence));
       chip.createSpan({ cls: 'abyss-repeat-chip-label', text: task.recurrence });
@@ -1731,7 +1772,6 @@ export class RightPanel {
         'data-dependency-trigger': '',
       },
     });
-    markInspectorField(trigger, 'dependencies');
     setIcon(trigger, inspection.relations.length > 0 ? 'lock-keyhole' : 'link-2');
     if (inspection.decision.type !== 'allowed') {
       renderDependencyBadge(trigger, inspection.decision);
@@ -1847,15 +1887,14 @@ export class RightPanel {
       setIcon(clear, 'x');
       clear.addEventListener('click', () => {
         if (!this.tasks?.clearDependency) return;
-        void this.tasks
-          .clearDependency({ dependent: task.ref, dependencyId: relation.id })
-          .then((result) => {
-            presentTaskCommandResult(result);
-            if (result.type === 'ok') {
-              this.removeAnchoredSurface(editor);
-              this.focusDependencyTrigger();
-            }
-          });
+        void this.runTaskFieldCommand('dependencies', () =>
+          this.tasks!.clearDependency!({ dependent: task.ref, dependencyId: relation.id }),
+        ).then((result) => {
+          if (result.type === 'ok') {
+            this.removeAnchoredSurface(editor);
+            this.focusDependencyTrigger();
+          }
+        });
       });
     }
 
@@ -1987,20 +2026,19 @@ export class RightPanel {
             const dependencyId =
               repairDependencyId ?? candidate.dependency?.id ?? this.tasks.newDependencyId?.();
             if (dependencyId === undefined) return;
-            void this.tasks
-              .setDependency({
+            void this.runTaskFieldCommand('dependencies', () =>
+              this.tasks!.setDependency!({
                 prerequisite: candidate.ref,
                 dependent: task.ref,
                 dependencyId,
                 enabled: true,
-              })
-              .then((result) => {
-                presentTaskCommandResult(result);
-                if (result.type === 'ok') {
-                  this.removeAnchoredSurface(editor);
-                  this.focusDependencyTrigger();
-                }
-              });
+              }),
+            ).then((result) => {
+              if (result.type === 'ok') {
+                this.removeAnchoredSurface(editor);
+                this.focusDependencyTrigger();
+              }
+            });
           });
         }
       }
@@ -2182,7 +2220,7 @@ export class RightPanel {
       setIcon(flagEl, 'flag');
       btn.createEl('span', { cls: 'abyss-priority-option-label', text: opt.label });
       btn.addEventListener('click', () => {
-        // Optimistic update on the chip
+        // Optimistic update stays on the control: the field row owns semantics.
         const chipLabels: Record<string, string> = {
           A: '🚩 Highest',
           B: '🚩 High',
@@ -2191,12 +2229,30 @@ export class RightPanel {
           E: '🚩 Low',
           F: '🚩 Lowest',
         };
+        const previous = {
+          text: anchor.textContent ?? '',
+          priority: anchor.getAttribute('data-priority'),
+          classes: Array.from(anchor.classList),
+        };
         anchor.textContent = chipLabels[opt.value] ?? 'Priority';
         anchor.setAttribute('data-priority', opt.value);
-        anchor.className = `abyss-chip abyss-priority-chip abyss-priority-chip--${opt.value}${opt.value === 'D' ? ' abyss-chip-empty' : ''}`;
+        for (const className of Array.from(anchor.classList)) {
+          if (className.startsWith('abyss-priority-chip--') || className === 'abyss-chip-empty') {
+            anchor.removeClass(className);
+          }
+        }
+        anchor.addClass(`abyss-priority-chip--${opt.value}`);
+        if (opt.value === 'D') anchor.addClass('abyss-chip-empty');
         this.removeAnchoredSurface(pop);
         anchor.focus({ preventScroll: true });
-        void this.updatePriority(task, opt.value);
+        void this.updatePriority(task, opt.value).then((saved) => {
+          if (saved) return;
+          anchor.textContent = previous.text;
+          if (previous.priority === null) anchor.removeAttribute('data-priority');
+          else anchor.setAttribute('data-priority', previous.priority);
+          for (const className of Array.from(anchor.classList)) anchor.classList.remove(className);
+          for (const className of previous.classes) anchor.classList.add(className);
+        });
       });
     }
     this.positionAnchoredSurface(pop, anchor, 'below-start');
@@ -2593,7 +2649,6 @@ export class RightPanel {
     initiatingStack?: readonly TaskLike[],
     submission?: object,
   ): void {
-    presentTaskCommandResult(result);
     if (result.type !== 'ok' || result.outcome.type !== 'task') return;
     const stack = this.state.get('taskStack');
     const initiatingRoot = rootRefForPlanningTarget(target);
@@ -2654,14 +2709,15 @@ export class RightPanel {
     this.applyPlanningResult(result, target);
   }
 
-  private async updatePriority(task: TaskLike, priority: string): Promise<void> {
-    if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return;
+  private async updatePriority(task: TaskLike, priority: string): Promise<boolean | undefined> {
+    if (!['A', 'B', 'C', 'D', 'E', 'F'].includes(priority)) return undefined;
     const target = this.planningTarget(task);
-    if (!target || !this.tasks) return;
+    if (!target || !this.tasks) return undefined;
     const patch: TaskPatch = {
       priority: { type: 'set', value: priority as TaskPriority },
     };
-    await this.executePlanningPatch(task, patch);
+    const result = await this.executePlanningPatch(task, patch);
+    return result.type === 'ok';
   }
 
   private async removeTag(task: TaskLike, tag: string): Promise<void> {

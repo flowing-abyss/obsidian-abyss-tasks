@@ -262,7 +262,7 @@ describe('RightPanel block editing', () => {
       panel.mount(container);
       try {
         const marker = container.querySelector<HTMLElement>(
-          '.abyss-right-header > .abyss-status-marker',
+          '.abyss-right-header .abyss-status-marker',
         )!;
         expect(marker.getAttribute('aria-disabled')).toBe('true');
         expect(marker.getAttribute('tabindex')).toBe('0');
@@ -697,7 +697,7 @@ describe('RightPanel block editing', () => {
     panel.destroy();
   });
 
-  it('rejects an application-generated ID collision without writing and succeeds with the next ID', async () => {
+  it('surfaces an application-generated ID collision in the dependency field without writing', async () => {
     const generateId = vi
       .fn<() => string>()
       .mockReturnValueOnce('collision')
@@ -750,10 +750,10 @@ describe('RightPanel block editing', () => {
     expect(generateId).toHaveBeenCalledTimes(1);
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
-    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(1);
-    expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toContain(
-      'same dependency ID',
-    );
+    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
+    expect(
+      container.querySelector('[data-task-field-feedback="dependencies"]')?.textContent,
+    ).toContain('Could not save dependencies');
 
     firstCandidate.click();
     await flushMicrotasks(30);
@@ -767,7 +767,7 @@ describe('RightPanel block editing', () => {
     container.remove();
   });
 
-  it('announces a real prospective cycle once and leaves the vault unchanged', async () => {
+  it('surfaces a real prospective cycle in the dependency field and leaves the vault unchanged', async () => {
     const source = [
       '- [ ] Dependent 🆔 dependent',
       '',
@@ -805,10 +805,10 @@ describe('RightPanel block editing', () => {
 
     expect(process).not.toHaveBeenCalled();
     expect(await harness.read()).toBe(source);
-    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(1);
-    expect(activeDocument.querySelector('.abyss-task-command-live-region')?.textContent).toContain(
-      'dependency cycle',
-    );
+    expect(activeDocument.querySelectorAll('.abyss-task-command-live-region')).toHaveLength(0);
+    expect(
+      container.querySelector('[data-task-field-feedback="dependencies"]')?.textContent,
+    ).toContain('Could not save dependencies');
     expect(container.querySelector('[data-dependency-editor]')).not.toBeNull();
     panel.destroy();
     harness.index.destroy();

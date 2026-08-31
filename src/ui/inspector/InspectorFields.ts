@@ -109,11 +109,7 @@ export function markInspectorEntity(host: HTMLElement, kind: InspectorEntityKind
 }
 
 export function markInspectorField(host: HTMLElement, field: InspectorFieldKind): HTMLElement {
-  // Some task controls predate the shared inspector markup. Giving those
-  // controls the row contract keeps their established command wiring intact
-  // while making their field identity and lifecycle discoverable like every
-  // rendered Project/Work Note row.
-  host.addClass('abyss-inspector-field', 'abyss-inspector-field-row');
+  host.addClass('abyss-inspector-field');
   host.dataset['inspectorField'] = field;
   return host;
 }
@@ -131,4 +127,17 @@ export function renderInspectorField(
   const fieldLabel = row.createSpan({ cls: 'abyss-inspector-field-label', text: label });
   const content = row.createDiv({ cls: 'abyss-inspector-field-content' });
   return { row, label: fieldLabel, content };
+}
+
+/** A semantic field row that hosts legacy controls without making the control the row. */
+export function renderInspectorControlField(
+  host: HTMLElement,
+  field: InspectorFieldKind,
+  label: string,
+  className = '',
+): InspectorFieldHandle {
+  const handle = renderInspectorField(host, field, label, className);
+  handle.row.addClass('abyss-inspector-control-field');
+  handle.label.addClass('abyss-sr-only');
+  return handle;
 }

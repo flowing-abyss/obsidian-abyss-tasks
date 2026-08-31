@@ -195,14 +195,14 @@ export function renderWorkNoteInspector(
   if (note.priority) {
     renderInspectorField(metadata, 'priority', 'Priority').content.setText(note.priority);
   } else {
-    renderInspectorField(metadata, 'priority', 'Priority').content.setText('Unavailable');
+    renderInspectorField(metadata, 'priority', 'Priority').content.setText('Not set');
   }
   if (note.description) {
     const description = renderInspectorField(metadata, 'description', 'Description').content;
     description.setText(note.description);
     description.dataset['workNoteDescription'] = '';
   } else {
-    renderInspectorField(metadata, 'description', 'Description').content.setText('Unavailable');
+    renderInspectorField(metadata, 'description', 'Description').content.setText('Not set');
   }
   if (note.milestonePath || note.blockedByPaths.length > 0 || note.relatedPaths.length > 0) {
     const relations = renderInspectorField(metadata, 'relations', 'Relations').content;

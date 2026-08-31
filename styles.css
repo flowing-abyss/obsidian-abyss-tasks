@@ -8432,6 +8432,12 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   font-size: var(--font-ui-smaller);
 }
 
+.abyss-right-status-field,
+.abyss-right-title-field,
+.abyss-task-chip-field {
+  display: contents;
+}
+
 /* Field rows are deliberately semantic, not card-within-card decoration. */
 .abyss-entity-inspector .abyss-inspector-field-row {
   display: grid;

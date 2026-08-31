@@ -4284,13 +4284,13 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
     const modal = new TaskModal(app, registry, DEFAULT_SETTINGS, queries, application);
     try {
       panelHost
-        .querySelector<HTMLElement>('.abyss-right-header > .abyss-status-marker')
+        .querySelector<HTMLElement>('.abyss-right-header .abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
 
       modal.open(recurring);
       activeDocument
-        .querySelector<HTMLElement>('.abyss-modal .abyss-right-header > .abyss-status-marker')
+        .querySelector<HTMLElement>('.abyss-modal .abyss-right-header .abyss-status-marker')
         ?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
 
