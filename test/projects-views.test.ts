@@ -1165,8 +1165,12 @@ describe('renderProjectsList', () => {
       });
 
       const row = el.querySelector<HTMLElement>('.abyss-project-row')!;
+      const presentation = row.querySelector<HTMLElement>('.abyss-entity-presentation')!;
       const lines = row.querySelectorAll<HTMLElement>('.abyss-project-row-line');
       expect(lines).toHaveLength(2);
+      expect(presentation.classList.contains('abyss-entity-presentation--project-row')).toBe(true);
+      expect(getComputedStyle(presentation).display).toBe('grid');
+      expect(getComputedStyle(presentation).gridRow).toBe('1 / -1');
       expect(Array.from(lines).every((line) => getComputedStyle(line).overflow === 'hidden')).toBe(
         true,
       );

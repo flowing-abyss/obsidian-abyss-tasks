@@ -8634,6 +8634,14 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   min-width: 0;
   gap: var(--size-2-2, 4px);
 }
+.abyss-entity-presentation--project-row {
+  display: grid;
+  grid-row: 1 / -1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  min-height: 0;
+  gap: 0;
+}
 .abyss-entity-identity {
   overflow: hidden;
   text-overflow: ellipsis;

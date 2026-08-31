@@ -30,6 +30,8 @@ interface EntityPresentationAction {
 
 type EntityPresentationSlotValue = string | EntityPresentationSlot;
 
+type EntityPresentationLayout = 'inline' | 'project-row';
+
 export interface EntityPresentationOptions {
   readonly identity?: EntityPresentationSlotValue;
   readonly status?: EntityPresentationSlotValue;
@@ -41,6 +43,8 @@ export interface EntityPresentationOptions {
   readonly secondary?: EntityPresentationSlotValue;
   readonly actions?: readonly EntityPresentationAction[];
   readonly className?: string;
+  /** Context-specific layout for a presentation that owns the two rows of a Project card. */
+  readonly layout?: EntityPresentationLayout;
   readonly actionsClassName?: string;
   readonly primarySlots?: readonly EntityPresentationSlotName[];
   readonly secondarySlots?: readonly EntityPresentationSlotName[];
@@ -69,7 +73,13 @@ export class EntityPresentation {
 
   render(parent: HTMLElement, options: EntityPresentationRenderOptions = {}): HTMLElement {
     const root = parent.createDiv({
-      cls: ['abyss-entity-presentation', this.options.className].filter(Boolean).join(' '),
+      cls: [
+        'abyss-entity-presentation',
+        this.options.layout === 'project-row' ? 'abyss-entity-presentation--project-row' : '',
+        this.options.className,
+      ]
+        .filter(Boolean)
+        .join(' '),
     });
     const grouped = new Set([
       ...(this.options.primarySlots ?? []),

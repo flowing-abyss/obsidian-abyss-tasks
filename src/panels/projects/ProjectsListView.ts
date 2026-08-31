@@ -554,6 +554,7 @@ export function renderProjectRow(
   }
 
   const presentation = new EntityPresentation({
+    layout: 'project-row',
     actionsClassName: 'abyss-project-row-actions',
     primarySlots: ['health', 'identity', 'priority', 'progress'],
     secondarySlots: ['secondary', 'date', 'relations'],
