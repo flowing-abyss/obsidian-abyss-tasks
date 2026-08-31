@@ -53,7 +53,7 @@ describe('renderProjectsToolbar', () => {
         controls.querySelectorAll<HTMLElement>(':scope > [data-collection-kind]'),
         (element) => element.dataset['collectionKind'],
       ),
-    ).toEqual(['scope-or-status', 'layout', 'filter', 'add']);
+    ).toEqual(['scope-or-status', 'layout', 'filter', 'fields', 'add']);
     expect(controls.querySelector('[data-collection-kind="search"]')).toBeNull();
     expect(root.textContent).not.toContain('Show');
     expect(root.querySelectorAll('[data-collection-controls]')).toHaveLength(1);

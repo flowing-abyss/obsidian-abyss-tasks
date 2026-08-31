@@ -1,6 +1,6 @@
 import type { AppState } from '../../app/AppState';
 import type { ProjectCreateResult } from '../../projects/ProjectManager';
-import type { ProjectAction } from '../../projects/types';
+import type { ProjectAction, ProjectPriority } from '../../projects/types';
 import type { WorkNoteSnapshot, WorkNoteStatusDefinition } from '../../projects/work-notes/types';
 import type {
   CalendarSettings,
@@ -32,7 +32,13 @@ export interface ProjectsListContext {
   today?: () => string;
   onCreate: (name: string) => Promise<ProjectCreateResult>;
   onSetStatus: (path: string, statusId: string) => void;
+  onSetPriority?: (path: string, priority: ProjectPriority | null) => void;
   openNote: (path: string) => void;
+  /** Overview body adapter; the list shell remains the owner of toolbar/capture continuity. */
+  renderOverview?: (
+    host: HTMLElement,
+    snapshots: readonly import('../../projects/types').ProjectWorkspaceSnapshot[],
+  ) => ProjectChildRenderHandle;
 }
 
 export interface ProjectsDashboardContext {

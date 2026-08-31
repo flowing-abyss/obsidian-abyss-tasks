@@ -320,6 +320,15 @@ export function renderProjectsList(
     };
   }
 
+  if (ctx.renderOverview) {
+    const table = ctx.renderOverview(scroll, visibleSnapshots);
+    return (): void => {
+      captureCleanup?.();
+      table.destroy();
+      toolbar.destroy();
+    };
+  }
+
   const entries: PortfolioEntry[] = [];
   for (const group of orderedGroups(statuses, projects)) {
     const inGroup = projectsInGroup(group, projects);
@@ -629,8 +638,13 @@ export function renderProjectRow(
         .onClick(() => ctx.openNote(project.path)),
     );
     if (showStatusControl) {
-      for (const action of projectStatusMenuModel(statuses, project)) {
-        menu.addItem((item) =>
+      const statusMenu = (
+        menu.addItem((item) => item.setTitle('Status')) as unknown as {
+          setSubmenu(): Menu;
+        }
+      ).setSubmenu();
+      for (const action of projectStatusMenuModel(statuses, project))
+        statusMenu.addItem((item) =>
           item
             .setTitle(action.label)
             .setIcon(action.icon)
@@ -638,7 +652,19 @@ export function renderProjectRow(
             .setDisabled(action.disabled)
             .onClick(() => ctx.onSetStatus(project.path, action.columnKey)),
         );
+    }
+    const priorityMenu = (
+      menu.addItem((item) => item.setTitle('Priority')) as unknown as {
+        setSubmenu(): Menu;
       }
+    ).setSubmenu();
+    for (const priority of ['A', 'B', 'C', 'D', 'E', 'F'] as const) {
+      priorityMenu.addItem((item) =>
+        item
+          .setTitle(priority)
+          .setChecked(project.priority === priority)
+          .onClick(() => ctx.onSetPriority?.(project.path, priority)),
+      );
     }
     showMenuAtMouseEventWithFocus(menu, e);
   });

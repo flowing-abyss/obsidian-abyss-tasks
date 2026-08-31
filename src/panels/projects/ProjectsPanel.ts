@@ -6,7 +6,7 @@ import type {
 } from '../../projects/ProjectCommandService';
 import type { ProjectCreateResult, ProjectManager } from '../../projects/ProjectManager';
 import type { ProjectStore } from '../../projects/ProjectStore';
-import type { ProjectWorkspaceSnapshot } from '../../projects/types';
+import type { ProjectPriority, ProjectWorkspaceSnapshot } from '../../projects/types';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import { isAuditAccepted } from '../../projects/work-notes/compatibility';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
@@ -29,6 +29,7 @@ import {
   renderProjectsList,
   showNewProjectInput,
 } from './ProjectsListView';
+import { renderProjectsTable } from './ProjectsTableView';
 import {
   renderContainerResponsiveTimeline,
   renderProjectsTimeline,
@@ -183,6 +184,14 @@ export class ProjectsPanel {
     const result = await this.projectManager.undoStatus(path, expectedStatusId, previousStatusId);
     if (refresh && result.type === 'ok') this.projectStore.refresh();
     return result;
+  }
+
+  private async setPriority(path: string, priority: ProjectPriority | null): Promise<void> {
+    const project = this.snapshots.find((snapshot) => snapshot.project.path === path)?.project;
+    if (!project || !this.projectCommands) return;
+    const observed = { path, value: project.observed?.priority ?? project.frontmatter['priority'] };
+    const result = await this.projectCommands.setPriority(observed, priority);
+    if (result.type === 'ok') this.projectStore.refresh();
   }
 
   private openNote(path: string): void {
@@ -507,6 +516,8 @@ export class ProjectsPanel {
       onCreate: (name: string) => this.createProject(name),
       captureSession: this.workspaceSession.portfolioCapture,
       onSetStatus: (p: string, id: string) => void this.setStatus(p, id),
+      onSetPriority: (p: string, priority: ProjectPriority | null) =>
+        void this.setPriority(p, priority),
       openNote: (p: string) => this.openNote(p),
     };
     const portfolioPreference = this.workspaceSession.portfolioPreference();
@@ -637,7 +648,18 @@ export class ProjectsPanel {
       });
       this.viewCleanup = () => board.destroy();
     } else {
-      this.viewCleanup = renderProjectsList(container, this.snapshots, portfolioContext);
+      this.viewCleanup = renderProjectsList(container, this.snapshots, {
+        ...portfolioContext,
+        renderOverview: (host, snapshots) => {
+          const table = renderProjectsTable(host, snapshots, {
+            settings: this.settings,
+            preference:
+              this.workspaceSession.portfolioPreference().layoutPreferences['overview']?.table,
+            onOpen: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
+          });
+          return { destroy: () => table.destroy() };
+        },
+      });
     }
     this.restorePortfolioContinuity(portfolioFocus);
   }

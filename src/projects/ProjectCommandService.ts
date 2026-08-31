@@ -14,6 +14,11 @@ import {
   type ProjectLifecycleObservation,
 } from './lifecycle';
 import { parseProjectDate, parseProjectRange } from './projectDates';
+import type { ProjectPropertyWrite } from './properties/ProjectPropertyAdapter';
+import {
+  ProjectPropertyCommands,
+  type ProjectPropertyWriteResult,
+} from './properties/ProjectPropertyCommands';
 import type {
   Project,
   ProjectComment,
@@ -208,6 +213,11 @@ export class ProjectCommandService {
       end: project.frontmatter['end'],
     };
     return { path: project.path, ...observed };
+  }
+
+  /** Public generic property command for typed Table cells; specialised commands retain ownership. */
+  async setProperty(write: ProjectPropertyWrite): Promise<ProjectPropertyWriteResult> {
+    return await new ProjectPropertyCommands(this.app).write(write);
   }
 
   observeComments(

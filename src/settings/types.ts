@@ -128,7 +128,7 @@ export type ProjectTasksCollectionPreference = PersistedCollectionPreference<
   PropertyFilter,
   ProjectTasksViewState['groupBy'],
   ProjectTasksViewState['sortBy'],
-  'list' | 'board' | 'timeline',
+  'list' | 'table' | 'board' | 'timeline',
   ProjectTasksCollectionLayoutPreference
 >;
 

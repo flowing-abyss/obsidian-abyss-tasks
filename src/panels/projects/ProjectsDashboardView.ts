@@ -18,6 +18,7 @@ import {
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
+import { renderProjectTasksTable } from './ProjectTasksTableView';
 import { ProjectWorkspaceSession } from './ProjectWorkspaceSession';
 import { taskTimelineItem } from './timelineProjection';
 import {
@@ -27,7 +28,7 @@ import {
 } from './viewContext';
 
 export type ProjectWorkspaceScope = 'tasks' | 'work-notes';
-export type ProjectWorkspaceLayout = 'list' | 'board' | 'timeline';
+export type ProjectWorkspaceLayout = 'list' | 'table' | 'board' | 'timeline';
 
 function reportPreferenceError(error: unknown): void {
   const conflict = error instanceof Error && error.name === 'CollectionPreferenceConflictError';
@@ -77,6 +78,20 @@ function propertyFilterIdentity(filter: PropertyFilter): string {
   return filter.type === 'file'
     ? `${filter.type}:${filter.filePath}`
     : `${filter.type}:${filter.value}`;
+}
+
+function addTaskFieldMenuItem(
+  menu: Menu,
+  field: readonly [string, string],
+  visible: boolean,
+  toggle: (id: string) => void,
+): void {
+  menu.addItem((item) =>
+    item
+      .setTitle(field[1])
+      .setChecked(visible)
+      .onClick(() => toggle(field[0])),
+  );
 }
 
 /** Detail view for a single project: header, stats, description, its tasks. */
@@ -404,6 +419,17 @@ export function renderProjectDashboard(
         snapshot.tasks,
         addTaskFilter,
       );
+    } else if (layout === 'table') {
+      const table = renderProjectTasksTable(content, selectedTasks(), {
+        settings: ctx.settings,
+        path: project.path,
+        preference: taskViewState().table,
+        onActivate: (action) => {
+          session.tasks.activate(action.task.ref);
+          publishEffectiveInspector();
+        },
+      });
+      child = { destroy: () => table.destroy() };
     } else if (layout === 'board' && ctx.renderTaskBoard) {
       child = ctx.renderTaskBoard(
         content,
@@ -462,10 +488,11 @@ export function renderProjectDashboard(
     button.setAttribute('aria-disabled', String(!selectable));
     if (selectable) {
       button.addEventListener('click', () => {
+        if (scope === 'work-notes' && value === 'table') return;
         void session
           .updateCollectionPreference(project.path, scope, (current) => ({
             ...current,
-            layout: value,
+            layout: value as never,
           }))
           .then(() => {
             layout = value;
@@ -616,6 +643,44 @@ export function renderProjectDashboard(
     }
     showWorkspaceMenu(menu, event);
   };
+  const showFieldsMenu = (event: MouseEvent): void => {
+    const menu = new Menu();
+    if (scope !== 'tasks') {
+      menu.addItem((item) =>
+        item.setTitle('Fields are available in the tasks table').setDisabled(true),
+      );
+    } else {
+      const fields: readonly [string, string][] = [
+        ['task', 'Task'],
+        ['status', 'Status'],
+        ['priority', 'Priority'],
+        ['due', 'Due'],
+        ['nextAction', 'Next action'],
+      ];
+      for (const [id, label] of fields) {
+        addTaskFieldMenuItem(
+          menu,
+          [id, label],
+          taskViewState().table.columns.some(
+            (column) => column.propertyId === id && column.visible,
+          ),
+          (fieldId) => {
+            const current = taskViewState();
+            updateTaskView({
+              ...current,
+              table: {
+                ...current.table,
+                columns: current.table.columns.map((column) =>
+                  column.propertyId === fieldId ? { ...column, visible: !column.visible } : column,
+                ),
+              },
+            });
+          },
+        );
+      }
+    }
+    showWorkspaceMenu(menu, event);
+  };
 
   collectionControls = renderCollectionControls(workspace, {
     query: scope === 'tasks' ? taskScope.textQuery : workNotesScope.textQuery,
@@ -648,6 +713,7 @@ export function renderProjectDashboard(
         attr: { role: 'group', 'aria-label': 'Collection layout' },
       });
       layoutButton('list', 'List');
+      layoutButton('table', 'Table');
       if (
         snapshot.tasks.length > 0 ||
         ctx.renderTaskBoard !== undefined ||
@@ -660,6 +726,7 @@ export function renderProjectDashboard(
       { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showFilterMenu },
       { kind: 'group', label: 'Group', icon: 'layout-list', onActivate: showGroupMenu },
       { kind: 'sort', label: 'Sort', icon: 'arrow-up-down', onActivate: showSortMenu },
+      { kind: 'fields', label: 'Fields', icon: 'columns-3', onActivate: showFieldsMenu },
     ],
     onQueryInput: (value) => {
       if (scope === 'tasks') taskScope.textQuery = value;

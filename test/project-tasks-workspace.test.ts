@@ -129,7 +129,7 @@ describe('Project Tasks workspace', () => {
       Array.from(toolbar.querySelectorAll<HTMLElement>(':scope > [data-collection-kind]')).map(
         (element) => element.dataset['collectionKind'],
       ),
-    ).toEqual(['scope-or-status', 'layout', 'filter', 'group', 'sort', 'search', 'add']);
+    ).toEqual(['scope-or-status', 'layout', 'filter', 'group', 'sort', 'fields', 'search', 'add']);
 
     toolbar.querySelector<HTMLButtonElement>('[data-project-add]')!.click();
     expect(capture).toHaveBeenCalledOnce();

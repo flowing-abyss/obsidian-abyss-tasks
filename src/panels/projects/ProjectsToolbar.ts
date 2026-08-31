@@ -1,5 +1,5 @@
 import { Menu, Notice, setIcon } from 'obsidian';
-import type { ProjectStatus } from '../../settings/types';
+import type { ProjectStatus, ProjectsTablePreference } from '../../settings/types';
 import {
   renderCollectionControls,
   type CollectionControlAction,
@@ -135,6 +135,55 @@ function addStatusFilterMenuItems(
   });
 }
 
+const TABLE_FIELDS: readonly [string, string][] = [
+  ['project', 'Project'],
+  ['status', 'Status'],
+  ['priority', 'Priority'],
+  ['progress', 'Progress'],
+  ['nextAction', 'Next action'],
+  ['start', 'Start'],
+  ['end', 'End'],
+];
+
+function updateFields(state: ProjectWorkspaceSession, id: string): Promise<void> {
+  return state
+    .updatePortfolioPreference((current) => {
+      const table = current.layoutPreferences['overview']?.table;
+      if (!table) return current;
+      const columns = table.columns.map((column) =>
+        column.propertyId === id ? { ...column, visible: !column.visible } : column,
+      );
+      const next: ProjectsTablePreference = { ...table, columns };
+      return {
+        ...current,
+        visibleFields: columns.filter(({ visible }) => visible).map(({ propertyId }) => propertyId),
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          overview: { ...current.layoutPreferences['overview'], table: next },
+        },
+      };
+    })
+    .then(() => undefined);
+}
+
+function addPortfolioFieldMenuItem(
+  menu: Menu,
+  field: readonly [string, string],
+  table: ProjectsTablePreference | undefined,
+  state: ProjectWorkspaceSession,
+  onChanged: (() => void) | undefined,
+): void {
+  const [id, label] = field;
+  menu.addItem((item) =>
+    item
+      .setTitle(label)
+      .setChecked(
+        table?.columns.some((column) => column.propertyId === id && column.visible) ?? false,
+      )
+      .onClick(() => void updateFields(state, id).then(onChanged).catch(reportPreferenceError)),
+  );
+}
+
 function renderStatusFilter(
   controls: HTMLElement,
   status: ProjectStatus,
@@ -252,6 +301,19 @@ export function renderProjectsToolbar(
   };
   const actions: readonly CollectionControlAction[] = [
     { kind: 'filter', label: 'Filter', icon: 'list-filter', onActivate: showStatusFilterMenu },
+    {
+      kind: 'fields',
+      label: 'Fields',
+      icon: 'columns-3',
+      onActivate: (event) => {
+        const menu = new Menu();
+        const table = state.portfolioPreference().layoutPreferences['overview']?.table;
+        for (const [id, label] of TABLE_FIELDS) {
+          addPortfolioFieldMenuItem(menu, [id, label], table, state, ctx.onPortfolioLayoutChanged);
+        }
+        showMenuAtMouseEventWithFocus(menu, event);
+      },
+    },
   ];
   let newProjectButton!: HTMLButtonElement;
   const { element: controls } = renderCollectionControls(header, {

@@ -8513,3 +8513,66 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   min-height: 5rem;
   resize: vertical;
 }
+
+/* Shared bounded Table geometry. Header and row intentionally use the same compact grid. */
+.abyss-virtual-table {
+  --abyss-table-columns: minmax(12rem, 2fr) repeat(6, minmax(5.5rem, 1fr));
+  min-width: 0;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+
+.abyss-virtual-table-header,
+.abyss-virtual-table-row {
+  display: grid;
+  grid-template-columns: var(--abyss-table-columns);
+  min-width: max-content;
+}
+
+.abyss-virtual-table-header {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--background-secondary);
+  border-block-end: 1px solid var(--background-modifier-border);
+}
+
+.abyss-virtual-table-scroll {
+  overflow: auto;
+  max-block-size: min(68vh, 42rem);
+}
+
+.abyss-virtual-table-row {
+  min-block-size: 2rem;
+  outline-offset: -2px;
+}
+
+.abyss-virtual-table-row:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+}
+
+.abyss-virtual-table-cell {
+  min-width: 0;
+  padding: var(--size-2-2, 4px) var(--size-4-2, 8px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-virtual-table-row + .abyss-virtual-table-row {
+  border-block-start: 1px solid var(--background-modifier-border-hover);
+}
+
+.abyss-virtual-table-row:hover {
+  background: var(--background-modifier-hover);
+}
+.abyss-entity-presentation {
+  display: inline-flex;
+  min-width: 0;
+  gap: var(--size-2-2, 4px);
+}
+.abyss-entity-identity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
