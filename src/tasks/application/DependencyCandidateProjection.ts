@@ -61,7 +61,9 @@ export function projectDependencyCandidates(
   return candidates.map((task) => {
     const id = task.dependency?.id;
     const reason =
-      id === undefined ? undefined : disabledReason(input.validateLink(task, input.dependent, id));
+      id === undefined
+        ? 'Dependency ID unavailable'
+        : disabledReason(input.validateLink(task, input.dependent, id));
     return {
       task,
       rank: projectKeys.has(key(task)) ? 0 : 1,

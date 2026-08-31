@@ -23,6 +23,9 @@ export interface ProjectTasksTableOptions {
   readonly settings: CalendarSettings;
   readonly path: string;
   readonly onActivate: (action: ProjectAction) => void;
+  /** Reuses the canonical Project task action menu; no permanent row controls. */
+  readonly onContextMenu?: (event: MouseEvent, action: ProjectAction) => void;
+  readonly nextActionState?: (task: ProjectAction['task']) => boolean | undefined;
   readonly preference?: ProjectTasksTablePreference;
   readonly onPreferenceChange?: (next: ProjectTasksTablePreference) => void;
   readonly groupBy?: ProjectTasksViewState['groupBy'];
@@ -127,11 +130,23 @@ export function renderProjectTasksTable(
       });
       const activate = (): void => options.onActivate(action);
       row.addEventListener('dblclick', activate);
+      row.addEventListener('contextmenu', (event) => {
+        if (!options.onContextMenu) return;
+        event.preventDefault();
+        options.onContextMenu(event, action);
+      });
       row.addEventListener('keydown', (event) => {
         if (event.target !== row) return;
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           activate();
+        }
+        if (
+          (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) &&
+          options.onContextMenu
+        ) {
+          event.preventDefault();
+          options.onContextMenu(new MouseEvent('contextmenu', { bubbles: true }), action);
         }
       });
       for (const column of tableColumns) {
@@ -141,7 +156,7 @@ export function renderProjectTasksTable(
         });
         if (column.id === 'nextAction') {
           makeCellFocusable(cell, 'Next action', activate);
-          if (isNextAction(action.task))
+          if (options.nextActionState?.(action.task) ?? isNextAction(action.task))
             cell.createSpan({
               text: 'List',
               attr: {

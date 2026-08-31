@@ -147,6 +147,7 @@ const PUBLIC_INTERFACE_MEMBER_CONSUMERS: Record<string, string> = {
   'TaskQueryApi.isReady': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.forCalendarProjection': 'src/panels/CenterPanel.ts',
   'TaskQueryApi.list': 'src/panels/CenterPanel.ts',
+  'TaskQueryApi.rescan': 'src/projects/NextActionService.ts',
   'TaskQueryApi.resolve': 'src/views/PanelView.ts',
   'TaskQueryApi.subscribe': 'src/projects/ProjectStore.ts',
   'TaskQueryApi.subscribeSettled': 'src/projects/ProjectStore.ts',

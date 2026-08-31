@@ -1867,6 +1867,7 @@ export class RightPanel {
   }
 
   private showDependencyEditor(anchor: HTMLButtonElement, task: TaskSnapshot): void {
+    task = this.currentDependencyTask(task) ?? task;
     this.clearPopovers();
     const inspection = this.dependencyInspection(task);
     const editorId = `abyss-dependency-editor-${String(++this.dependencyEditorSequence)}`;
@@ -2031,7 +2032,13 @@ export class RightPanel {
           candidate.dependency?.id !== undefined ||
           this.tasks?.newDependencyId !== undefined;
         let unavailableReason: string | undefined =
-          projected.availability.type === 'disabled' ? projected.availability.reason : undefined;
+          projected.availability.type === 'disabled' &&
+          !(
+            projected.availability.reason === 'Dependency ID unavailable' &&
+            this.tasks?.newDependencyId
+          )
+            ? projected.availability.reason
+            : undefined;
         if (duplicateId) unavailableReason = 'Duplicate ID';
         else if (selectionUnavailable) unavailableReason = 'Resolve dependency issue';
         else if (repairDependencyId !== undefined && candidate.dependency?.id !== undefined) {
@@ -2180,6 +2187,17 @@ export class RightPanel {
     if (!editor.isConnected || !anchor.isConnected) return;
     this.removeAnchoredSurface(editor);
     this.showDependencyEditor(anchor, task);
+  }
+
+  /** A graph update may rebase an ID-less root, so never render blockers from a captured stack item. */
+  private currentDependencyTask(task: TaskSnapshot): TaskSnapshot | undefined {
+    const resolved = this.tasks?.queries.resolve(task.ref);
+    if (resolved?.type === 'exact') return resolved.task;
+    if (resolved?.type === 'rebased') return resolved.current;
+    const sameLocation = this.tasks?.queries
+      .list({ filePath: task.ref.filePath })
+      .filter((candidate) => candidate.ref.line === task.ref.line);
+    return sameLocation?.length === 1 ? sameLocation[0] : undefined;
   }
 
   private clearPopovers(): void {

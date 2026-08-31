@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NextActionReplacementCoordinator } from '../src/projects/NextActionReplacementCoordinator';
-import { NextActionService } from '../src/projects/NextActionService';
+import { NextActionService, projectedNextAction } from '../src/projects/NextActionService';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { toStatusRules } from '../src/settings/statusCatalogAdapter';
 import type { TaskApplicationApi } from '../src/tasks';
@@ -11,6 +11,73 @@ import { localDate } from '../src/tasks/domain/validation';
 import { task, taskQueryApi } from './helpers';
 
 describe('Project Next Action', () => {
+  it('returns a visible integrity conflict when the authoritative rescan finds duplicates', async () => {
+    const target = task({ title: 'Target', source: { filePath: 'Projects/A.md', line: 1 } });
+    const duplicate = task({
+      title: 'Duplicate',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 2 },
+    });
+    let indexed: readonly (typeof target)[] = [target];
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          indexed = [
+            { ...target, tags: ['#task/next_action'] },
+            duplicate,
+          ] as unknown as readonly (typeof target)[];
+          return { type: 'settled', reason: 'index', files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: target },
+        changed: true,
+      }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionService(application).set('Projects/A.md', target),
+    ).resolves.toMatchObject({
+      type: 'integrity-conflict',
+      projectPath: 'Projects/A.md',
+      diagnostic: 'expected exactly one next action after authoritative rescan',
+    });
+  });
+
+  it('clears the shared projection after an authoritative successful clear', async () => {
+    const taskToClear = task({
+      title: 'Current',
+      tags: ['#task/next_action'],
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    let indexed = [taskToClear];
+    const application = {
+      queries: taskQueryApi({
+        list: () => indexed,
+        rescan: async () => {
+          indexed = [{ ...taskToClear, tags: [] }];
+          return { type: 'settled' as const, reason: 'index' as const, files: [] };
+        },
+      }),
+      execute: vi.fn(),
+      applyRootTagChanges: vi.fn().mockResolvedValue({
+        type: 'ok',
+        outcome: { type: 'task', task: taskToClear },
+        changed: true,
+      }),
+    } as unknown as TaskApplicationApi;
+
+    await expect(
+      new NextActionService(application).clear('Projects/A.md', taskToClear),
+    ).resolves.toMatchObject({
+      type: 'ok',
+    });
+    expect(projectedNextAction(application, taskToClear)).toBe(false);
+  });
+
   it('keeps target-file predecessors in the target add transaction before cross-file cleanup', async () => {
     const localPrevious = task({
       title: 'Local previous',
@@ -146,6 +213,46 @@ describe('Project Next Action', () => {
     await Promise.resolve();
     expect(applyRootTagChanges).toHaveBeenCalledOnce();
     releaseFirst();
+    await Promise.all([firstSet, secondSet]);
+
+    expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
+      primary: second.ref,
+      changes: [
+        { task: second, tags: { add: ['#task/next_action'] } },
+        { task: first, tags: { remove: ['#task/next_action'] } },
+      ],
+    });
+  });
+
+  it('shares the Project replacement queue across remounted service instances', async () => {
+    const first = task({ title: 'First', source: { filePath: 'Projects/A.md', line: 1 } });
+    const second = task({ title: 'Second', source: { filePath: 'Projects/A.md', line: 2 } });
+    let release!: () => void;
+    const applyRootTagChanges = vi.fn().mockImplementation(async () => {
+      if (applyRootTagChanges.mock.calls.length === 1) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return {
+        type: 'ok' as const,
+        outcome: { type: 'task' as const, task: first },
+        changed: true,
+      };
+    });
+    const application = {
+      queries: taskQueryApi({ list: () => [first, second] }),
+      execute: vi.fn(),
+      applyRootTagChanges,
+    } as unknown as TaskApplicationApi;
+
+    const initial = new NextActionService(application);
+    const remounted = new NextActionService(application);
+    const firstSet = initial.set('Projects/A.md', first);
+    const secondSet = remounted.set('Projects/A.md', second);
+    await Promise.resolve();
+    expect(applyRootTagChanges).toHaveBeenCalledOnce();
+    release();
     await Promise.all([firstSet, secondSet]);
 
     expect(applyRootTagChanges).toHaveBeenNthCalledWith(2, {
@@ -327,6 +434,7 @@ describe('Project Next Action', () => {
       type: 'integrity-conflict',
       projectPath: 'Projects/A.md',
       tag: '#task/next_action',
+      diagnostic: 'compensation could not be proven from the authoritative task state',
       tasks: [previous, target],
     });
   });

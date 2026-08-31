@@ -135,6 +135,7 @@ export function renderProjectDashboard(
       actions: snapshot.tasks,
       viewState: taskViewState(),
       settings: ctx.settings,
+      ...(ctx.nextActionState && { nextActionState: ctx.nextActionState }),
       ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
     });
   const selectedWorkNotes = (): typeof allWorkNotes =>
@@ -373,6 +374,8 @@ export function renderProjectDashboard(
     });
   };
 
+  // The workspace layout switch is intentionally exhaustive.
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   const renderWorkspace = (): void => {
     if (destroyed) return;
     syncTimelineButton();
@@ -441,6 +444,7 @@ export function renderProjectDashboard(
       const table = renderProjectTasksTable(content, selectedTasks(), {
         settings: ctx.settings,
         path: project.path,
+        ...(ctx.nextActionState && { nextActionState: ctx.nextActionState }),
         preference: viewState.table,
         groupBy: viewState.groupBy,
         onPreferenceChange: (next) => updateTaskView({ ...taskViewState(), table: next }),
@@ -448,6 +452,9 @@ export function renderProjectDashboard(
           session.tasks.activate(action.task.ref);
           publishEffectiveInspector();
         },
+        ...(ctx.onTaskContextMenu && {
+          onContextMenu: (event, action) => ctx.onTaskContextMenu!(event, project.path, action),
+        }),
       });
       child = { destroy: () => table.destroy() };
     } else if (layout === 'board' && ctx.renderTaskBoard) {

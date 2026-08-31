@@ -105,4 +105,26 @@ describe('ProjectTasksTableView', () => {
     taskCell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
     expect(activate).toHaveBeenCalledOnce();
   });
+
+  it('forwards a real row context-menu event to the shared task action callback', () => {
+    const root = freshContainer();
+    const action = {
+      task: task({ title: 'Ship', source: { filePath: 'Projects/A.md', line: 1 } }),
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    };
+    const openActions = vi.fn();
+    renderProjectTasksTable(root, [action], {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      path: 'Projects/A.md',
+      onActivate: vi.fn(),
+      onContextMenu: openActions,
+    });
+
+    root
+      .querySelector<HTMLElement>('[data-project-task-table-row]')!
+      .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    expect(openActions).toHaveBeenCalledWith(expect.any(MouseEvent), action);
+  });
 });

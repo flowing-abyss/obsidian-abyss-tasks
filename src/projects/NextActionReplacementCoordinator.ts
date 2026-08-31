@@ -7,6 +7,7 @@ export interface NextActionConflict {
   readonly projectPath: string;
   readonly tag: typeof NEXT_ACTION_TAG;
   readonly tasks: readonly TaskSnapshot[];
+  readonly diagnostic: string;
 }
 
 function sameFile(left: TaskSnapshot, right: TaskSnapshot): boolean {
@@ -96,7 +97,13 @@ export class NextActionReplacementCoordinator {
           known.ref.filePath === candidate.ref.filePath && known.ref.line === candidate.ref.line,
       ),
     );
-    return { type: 'integrity-conflict', projectPath, tag: NEXT_ACTION_TAG, tasks };
+    return {
+      type: 'integrity-conflict',
+      projectPath,
+      tag: NEXT_ACTION_TAG,
+      tasks,
+      diagnostic: 'compensation could not be proven from the authoritative task state',
+    };
   }
 
   private unavailable(): TaskCommandResult {

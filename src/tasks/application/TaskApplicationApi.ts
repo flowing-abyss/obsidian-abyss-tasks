@@ -64,6 +64,8 @@ export interface TaskQueryApi {
   list(query?: TaskQuery): readonly TaskSnapshot[];
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources;
   resolve(ref: TaskRef): TaskResolution;
+  /** Forces a vault-backed TaskIndex rescan and resolves only after it publishes settled state. */
+  rescan?(): Promise<TaskIndexSettledEvent>;
   subscribe(listener: (event: TaskIndexEvent) => void): () => void;
   /** Optional compatibility port for consumers that coordinate completed per-file parses. */
   subscribeSettled?(listener: (event: TaskIndexSettledEvent) => void): () => void;

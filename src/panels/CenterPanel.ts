@@ -4,7 +4,11 @@ import { listSelectionToKey, normalizeStatusGroups, statusGroupsEqual } from '..
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
 import type { LinkToken } from '../parser/links';
 import { PRIORITY_LEVELS } from '../priority';
-import { NextActionService, type NextActionConflict } from '../projects/NextActionService';
+import {
+  NextActionService,
+  projectedNextAction,
+  type NextActionConflict,
+} from '../projects/NextActionService';
 import type { ProjectCommandService } from '../projects/ProjectCommandService';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
@@ -1512,6 +1516,11 @@ export class CenterPanel {
             onAnnounce: (message) => {
               this.selectionLiveRegion().textContent = message;
             },
+            onTaskContextMenu: (event, projectPath, action) =>
+              this.showProjectNextActionMenu(event, projectPath, action.task),
+            ...(this.tasks && {
+              nextActionState: (task) => projectedNextAction(this.tasks!, task),
+            }),
           },
         );
         // Mount into a dedicated child so ProjectsPanel's own class/DOM never
@@ -3128,13 +3137,31 @@ export class CenterPanel {
   ): Promise<void> {
     if (!this.nextActions) return;
     const result = clear
-      ? await this.nextActions.clear(task)
+      ? await this.nextActions.clear(projectPath, task)
       : await this.nextActions.set(projectPath, task);
     if (result.type === 'integrity-conflict') {
       this.presentNextActionConflict(result);
       return;
     }
     presentTaskCommandResult(result);
+  }
+
+  /** The Project Table delegates to the same context-menu mutation as task cards. */
+  private showProjectNextActionMenu(
+    event: MouseEvent,
+    projectPath: string,
+    task: TaskSnapshot,
+  ): void {
+    event.preventDefault();
+    const menu = new Menu();
+    const active = task.tags.includes('#task/next_action');
+    menu.addItem((item) =>
+      item
+        .setTitle(active ? 'Clear Next Action' : 'Set as Next Action')
+        .setIcon(active ? 'list-x' : 'list-checks')
+        .onClick(() => void this.updateProjectNextAction(projectPath, task, active)),
+    );
+    showMenuAtMouseEventWithFocus(menu, event);
   }
 
   private presentNextActionConflict(conflict: NextActionConflict): void {

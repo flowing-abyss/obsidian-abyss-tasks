@@ -541,6 +541,38 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     return this.initialized;
   }
 
+  /** Re-read every current markdown file and publish one awaitable settled barrier. */
+  async rescan(): Promise<TaskIndexSettledEvent> {
+    const files = [...this.app.vault.getMarkdownFiles()]
+      .map((file) => ({ file, path: file.path }))
+      .sort((left, right) => left.path.localeCompare(right.path));
+    const currentPaths = new Set(files.map(({ path }) => path));
+    const changed = new Set<string>();
+    for (const path of this.taskMap.keys()) {
+      if (currentPaths.has(path)) continue;
+      this.removeFile(path);
+      changed.add(path);
+    }
+    for (const { file, path } of files) {
+      if (await this.loadFile(file, path, true, true)) changed.add(path);
+    }
+    const settled: TaskIndexSettledEvent = {
+      type: 'settled',
+      reason: 'index',
+      files: [...new Set([...changed, ...currentPaths])]
+        .map((path) => ({ path, generation: this.fileGenerations.get(path) ?? 0 }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    };
+    if (changed.size > 0) {
+      this.publish({
+        type: 'changed',
+        files: [...changed].sort((left, right) => left.localeCompare(right)),
+      });
+    }
+    this.publishSettled(settled);
+    return settled;
+  }
+
   private async performInitialization(): Promise<void> {
     this.registerEvents();
     const files = [...this.app.vault.getMarkdownFiles()]

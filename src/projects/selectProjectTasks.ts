@@ -19,6 +19,7 @@ function compareCreated(left: TaskSnapshot, right: TaskSnapshot): number {
 
 function projectTieBreak(
   actionByTask: ReadonlyMap<string, ProjectAction>,
+  nextActionState: ((task: TaskSnapshot) => boolean | undefined) | undefined,
   left: TaskSnapshot,
   right: TaskSnapshot,
 ): number {
@@ -28,7 +29,8 @@ function projectTieBreak(
     Number(leftAction?.owner.type === 'work-note') -
     Number(rightAction?.owner.type === 'work-note');
   const nextActionOrder =
-    Number(!left.tags.includes(NEXT_ACTION_TAG)) - Number(!right.tags.includes(NEXT_ACTION_TAG));
+    Number(!(nextActionState?.(left) ?? left.tags.includes(NEXT_ACTION_TAG))) -
+    Number(!(nextActionState?.(right) ?? right.tags.includes(NEXT_ACTION_TAG)));
   return (
     nextActionOrder ||
     sourceOrder ||
@@ -43,6 +45,7 @@ export interface SelectProjectTasksInput {
   readonly viewState: ProjectTasksViewState;
   readonly settings: CalendarSettings;
   readonly textQuery?: string;
+  readonly nextActionState?: (task: TaskSnapshot) => boolean | undefined;
 }
 
 /** Selects joined direct and inherited Project actions with the canonical task-list semantics. */
@@ -53,7 +56,7 @@ export function selectProjectTasks(input: SelectProjectTasksInput): readonly Pro
     viewState: input.viewState,
     settings: input.settings,
     ...(input.textQuery !== undefined && { textQuery: input.textQuery }),
-    tieBreak: (left, right) => projectTieBreak(actionByTask, left, right),
+    tieBreak: (left, right) => projectTieBreak(actionByTask, input.nextActionState, left, right),
   }).flatMap((task) => {
     const action = actionByTask.get(key(task));
     return action ? [action] : [];

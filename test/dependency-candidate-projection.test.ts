@@ -71,4 +71,29 @@ describe('DependencyCandidateProjection', () => {
       },
     ]);
   });
+
+  it('never presents a missing or duplicate dependency ID as available', () => {
+    const dependent = task({ title: 'Dependent', dependency: { id: 'dependent', dependsOn: [] } });
+    const missingId = task({ title: 'Missing ID', source: { filePath: 'Tasks.md', line: 1 } });
+    const duplicateId = task({
+      title: 'Duplicate ID',
+      source: { filePath: 'Tasks.md', line: 2 },
+      dependency: { id: 'duplicate', dependsOn: [] },
+    });
+
+    const candidates = projectDependencyCandidates({
+      dependent,
+      tasks: [missingId, duplicateId],
+      projectTasks: [],
+      validateLink: () => ({
+        type: 'invalid',
+        diagnostics: [{ type: 'duplicate-id', id: 'duplicate', candidates: [] }],
+      }),
+    });
+
+    expect(candidates.map(({ availability }) => availability)).toEqual([
+      { type: 'disabled', reason: 'Dependency ID unavailable' },
+      { type: 'disabled', reason: 'Duplicate ID' },
+    ]);
+  });
 });

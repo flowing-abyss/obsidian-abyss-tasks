@@ -85,6 +85,14 @@ export interface ProjectsPanelOptions {
   projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
   onAnnounce?: (message: string) => void;
+  onTaskContextMenu?: (
+    event: MouseEvent,
+    projectPath: string,
+    task: ProjectWorkspaceSnapshot['tasks'][number],
+  ) => void;
+  nextActionState?: (
+    task: ProjectWorkspaceSnapshot['tasks'][number]['task'],
+  ) => boolean | undefined;
 }
 
 export interface PendingProjectBoardUndo {
@@ -119,6 +127,8 @@ export class ProjectsPanel {
   private readonly workspaceSession: ProjectWorkspaceSession;
   private readonly persistCollectionPreferences: boolean;
   private readonly onAnnounce: (message: string) => void;
+  private readonly onTaskContextMenu: ProjectsPanelOptions['onTaskContextMenu'];
+  private readonly nextActionState: ProjectsPanelOptions['nextActionState'];
   private viewCleanup: (() => void) | null = null;
   /** The dashboard owns a mounted collection instance until an actual close. */
   private dashboardSessionPath: string | null = null;
@@ -155,6 +165,8 @@ export class ProjectsPanel {
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
     this.workspaceSession.bindCollectionPreferences(settings, opts.onSaveSettings);
     this.onAnnounce = opts.onAnnounce ?? ((): void => {});
+    this.onTaskContextMenu = opts.onTaskContextMenu;
+    this.nextActionState = opts.nextActionState;
   }
 
   private async createProject(name: string): Promise<ProjectCreateResult> {
@@ -463,6 +475,8 @@ export class ProjectsPanel {
     replacement?.focus({ preventScroll: true });
   }
 
+  // The panel's existing top-level view switch is intentionally exhaustive.
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   private render(): void {
     const portfolioFocus = this.portfolioFocusIntent ?? this.capturePortfolioContinuity();
     this.portfolioFocusIntent = null;
@@ -497,6 +511,14 @@ export class ProjectsPanel {
         settings: this.settings,
         ...(this.persistCollectionPreferences ? { onSaveSettings: this.onSaveSettings } : {}),
         onSetStatus: (p, id) => void this.setStatus(p, id),
+        ...(this.onTaskContextMenu && {
+          onTaskContextMenu: (
+            event: MouseEvent,
+            projectPath: string,
+            task: ProjectWorkspaceSnapshot['tasks'][number],
+          ) => this.onTaskContextMenu!(event, projectPath, task),
+        }),
+        ...(this.nextActionState && { nextActionState: this.nextActionState }),
         openNote: (p) => this.openNote(p),
         workspaceSession: this.workspaceSession,
         renderTasks: this.renderTasks,

@@ -34,6 +34,7 @@ export interface ProjectsListContext {
   today?: () => string;
   onCreate: (name: string) => Promise<ProjectCreateResult>;
   onSetStatus: (path: string, statusId: string) => void;
+  onTaskContextMenu?: (event: MouseEvent, projectPath: string, task: ProjectAction) => void;
   onSetPriority?: (path: string, priority: ProjectPriority | null) => void;
   openNote: (path: string) => void;
   /** Overview body adapter; the list shell remains the owner of toolbar/capture continuity. */
@@ -48,6 +49,8 @@ export interface ProjectsDashboardContext {
   settings: CalendarSettings;
   onSaveSettings?: () => Promise<void>;
   onSetStatus: (path: string, statusId: string) => void;
+  nextActionState?: (task: ProjectAction['task']) => boolean | undefined;
+  onTaskContextMenu?: (event: MouseEvent, projectPath: string, task: ProjectAction) => void;
   openNote: (path: string) => void;
   workspaceSession?: ProjectWorkspaceSession;
   /** Renders the project's tasks into `host` (wired by PanelView to reuse task rendering). */
