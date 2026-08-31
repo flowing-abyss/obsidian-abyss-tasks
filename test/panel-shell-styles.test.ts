@@ -781,4 +781,26 @@ describe('Projects hardening styles', () => {
       'border: 1px solid var(--background-modifier-border)',
     );
   });
+
+  it('keeps the shared collection search free of decorative double dividers', () => {
+    const controls = declarationsFor('.abyss-collection-controls');
+    expect(controls).not.toMatch(/border-block(?:-start|-end)?\s*:/u);
+    expect(css).not.toContain('[data-project-use-as-default]');
+
+    const style = activeDocument.createElement('style');
+    style.textContent = css;
+    const controlsElement = activeDocument.createElement('div');
+    controlsElement.className = 'abyss-collection-controls';
+    controlsElement.createEl('input', { cls: 'abyss-collection-search' });
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(controlsElement);
+    try {
+      expect(controlsElement.querySelector('.abyss-collection-search')?.parentElement).toBe(
+        controlsElement,
+      );
+    } finally {
+      controlsElement.remove();
+      style.remove();
+    }
+  });
 });

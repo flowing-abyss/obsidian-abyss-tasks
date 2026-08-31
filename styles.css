@@ -6685,9 +6685,6 @@ body.abyss-modal-open .popover.hover-popover {
   background: var(--background-modifier-hover);
   color: var(--text-normal);
 }
-.abyss-project-scope-controls > [data-project-use-as-default] {
-  margin-inline-start: auto;
-}
 .abyss-project-layout-controls {
   display: inline-flex;
   align-items: center;
@@ -6702,7 +6699,6 @@ body.abyss-modal-open .popover.hover-popover {
   margin-left: 0;
   padding: 6px 4px;
   flex-wrap: wrap;
-  border-block: 1px solid var(--background-modifier-border);
 }
 .abyss-collection-action {
   display: inline-flex;
