@@ -170,8 +170,9 @@ describe('ProjectsTableView', () => {
     expect(root.textContent).toContain('changed elsewhere');
   });
 
-  it('cancels an in-progress property draft with Escape without writing or losing focus control', () => {
+  it('cancels an in-progress property draft with Escape without writing and restores its presentational cell', () => {
     const root = freshContainer();
+    activeDocument.body.append(root);
     const project = snapshot(1);
     project.project.frontmatter = { title: 'Original' };
     const write = vi.fn();
@@ -191,9 +192,65 @@ describe('ProjectsTableView', () => {
     editor.focus();
     editor.value = 'Draft';
     editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(editor.value).toBe('Original');
     expect(write).not.toHaveBeenCalled();
-    expect(activeDocument.activeElement).not.toBe(editor);
+    expect(root.querySelector('[data-property-editor="title"]')).toBeNull();
+    expect(cell.textContent).toBe('Original');
+    expect(activeDocument.activeElement).toBe(cell);
+    root.remove();
+  });
+
+  it('routes Description and append-only Comments through their guarded callbacks', async () => {
+    const root = freshContainer();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.table = {
+      version: 1,
+      columns: [
+        { propertyId: 'description', visible: true },
+        { propertyId: 'comments', visible: true },
+      ],
+      collapsedGroups: [],
+    };
+    const project = snapshot(1);
+    project.project.frontmatter = {
+      description: 'Original description',
+      comments: ['2026-08-31: Existing comment'],
+    };
+    const description = vi.fn().mockResolvedValue({ type: 'ok' });
+    const appendComment = vi.fn().mockResolvedValue({ type: 'ok' });
+    const genericWrite = vi.fn();
+    renderProjectsTable(root, [project], {
+      settings,
+      onOpen: vi.fn(),
+      onWriteProperty: genericWrite,
+      onSetDescription: description,
+      onAppendComment: appendComment,
+    });
+
+    const descriptionCell = root.querySelector<HTMLElement>(
+      '[role="cell"][data-table-column="description"]',
+    )!;
+    const commentsCell = root.querySelector<HTMLElement>(
+      '[role="cell"][data-table-column="comments"]',
+    )!;
+    descriptionCell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const descriptionEditor = root.querySelector<HTMLInputElement>(
+      '[data-property-editor="description"]',
+    )!;
+    descriptionEditor.value = 'Updated description';
+    descriptionEditor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    commentsCell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    const commentEditor = root.querySelector<HTMLInputElement>(
+      '[data-property-editor="comments"]',
+    )!;
+    expect(commentEditor.value).toBe('');
+    expect(commentEditor.placeholder).toBe('Add comment');
+    commentEditor.value = 'A new comment';
+    commentEditor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(description).toHaveBeenCalledWith('Projects/1.md', 'Updated description');
+    expect(appendComment).toHaveBeenCalledWith('Projects/1.md', 'A new comment');
+    expect(genericWrite).not.toHaveBeenCalled();
   });
 
   it('routes built-in status, priority, and range edits through their guarded callbacks', async () => {
@@ -240,12 +297,13 @@ describe('ProjectsTableView', () => {
     const root = freshContainer();
     const openProject = vi.fn();
     const openNote = vi.fn();
-    const items: Array<{ title: string; activate: () => void }> = [];
+    const items: Array<{ title: string; disabled: boolean; activate: () => void }> = [];
     vi.spyOn(Menu.prototype, 'showAtMouseEvent').mockImplementation(function (this: Menu) {
       return this;
     });
     vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
       let title = '';
+      let disabled = false;
       let activate = (): void => undefined;
       let recorded = false;
       const item = {
@@ -257,6 +315,9 @@ describe('ProjectsTableView', () => {
               get title() {
                 return title;
               },
+              get disabled() {
+                return disabled;
+              },
               activate: () => activate(),
             });
           }
@@ -266,6 +327,10 @@ describe('ProjectsTableView', () => {
           return this;
         },
         setChecked() {
+          return this;
+        },
+        setDisabled(value: boolean) {
+          disabled = value;
           return this;
         },
         onClick(callback: () => void) {
@@ -280,12 +345,18 @@ describe('ProjectsTableView', () => {
       return item as unknown as Menu;
     });
     try {
-      renderProjectsTable(root, [snapshot(1)], {
-        settings: structuredClone(DEFAULT_SETTINGS),
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const project = snapshot(1);
+      project.project.statusId = settings.projects.statuses[0]!.id;
+      project.project.priority = 'C';
+      const setStatus = vi.fn().mockResolvedValue({ type: 'ok' });
+      const setPriority = vi.fn().mockResolvedValue({ type: 'ok' });
+      renderProjectsTable(root, [project], {
+        settings,
         onOpen: openProject,
         onOpenNote: openNote,
-        onSetStatus: vi.fn().mockResolvedValue({ type: 'ok' }),
-        onSetPriority: vi.fn().mockResolvedValue({ type: 'ok' }),
+        onSetStatus: setStatus,
+        onSetPriority: setPriority,
       });
       root.querySelector<HTMLButtonElement>('[aria-label="Project actions"]')!.click();
       const titles = items.map(({ title }) => title);
@@ -294,8 +365,24 @@ describe('ProjectsTableView', () => {
       expect(titles.indexOf('Status')).toBeLessThan(titles.indexOf('Priority'));
       items.find(({ title }) => title === 'Open project')!.activate();
       items.find(({ title }) => title === 'Open note')!.activate();
+      const currentStatus = items.find(
+        ({ title }) => title === settings.projects.statuses[0]!.label,
+      )!;
+      const targetStatus = items.find(
+        ({ title }) => title === settings.projects.statuses[1]!.label,
+      )!;
+      const currentPriority = items.find(({ title }) => title === 'C')!;
+      const targetPriority = items.find(({ title }) => title === 'A')!;
+      expect(currentStatus.disabled).toBe(true);
+      expect(currentPriority.disabled).toBe(true);
+      currentStatus.activate();
+      currentPriority.activate();
+      targetStatus.activate();
+      targetPriority.activate();
       expect(openProject).toHaveBeenCalledWith('Projects/1.md');
       expect(openNote).toHaveBeenCalledWith('Projects/1.md');
+      expect(setStatus).toHaveBeenCalledWith('Projects/1.md', settings.projects.statuses[1]!.id);
+      expect(setPriority).toHaveBeenCalledWith('Projects/1.md', 'A');
     } finally {
       vi.restoreAllMocks();
     }

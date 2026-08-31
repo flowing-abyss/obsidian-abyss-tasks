@@ -176,6 +176,21 @@ export function projectStatusMenuModel(
   }));
 }
 
+const PROJECT_PRIORITIES = ['A', 'B', 'C', 'D', 'E', 'F'] as const;
+
+/** Canonical Project priority action model shared by Project table and Board menus. */
+export function projectPriorityMenuModel(
+  project: Pick<Project, 'priority'>,
+): readonly BoardStatusAction[] {
+  return PROJECT_PRIORITIES.map((priority) => ({
+    columnKey: priority,
+    label: priority,
+    icon: 'flag',
+    checked: priority === project.priority,
+    disabled: priority === project.priority,
+  }));
+}
+
 export function createTaskBoardMutation(
   statuses: readonly TaskStatusDef[],
   command: (task: TaskSnapshot, symbol: string) => Promise<BoardMutationResult>,

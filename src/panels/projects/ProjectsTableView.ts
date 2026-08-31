@@ -23,6 +23,7 @@ import {
   setTableGroupCollapsed,
 } from '../../ui/table/TablePreferences';
 import { renderVirtualTable, type VirtualTableHandle } from '../../ui/table/VirtualTable';
+import { projectPriorityMenuModel, projectStatusMenuModel } from './boardProjection';
 
 const DEFAULT_COLUMNS = [
   ['project', 'Project'],
@@ -68,6 +69,11 @@ export interface ProjectsTableOptions {
     endpoint: 'start' | 'end',
     raw: string | null,
   ) => Promise<{ readonly type: string }>;
+  readonly onSetDescription?: (
+    path: string,
+    description: string | null,
+  ) => Promise<{ readonly type: string }>;
+  readonly onAppendComment?: (path: string, body: string) => Promise<{ readonly type: string }>;
   /** Optional public Bases descriptors augment native frontmatter inference. */
   readonly bases?: readonly PublicBasesDescriptor[];
 }
@@ -188,21 +194,38 @@ function makeCellFocusable(cell: HTMLElement, value: string, activate: () => voi
   });
 }
 
-function makeEditableCell(cell: HTMLElement, value: string, renderEditor: () => void): void {
+function makeEditableCell(
+  cell: HTMLElement,
+  value: string,
+  renderEditor: (cancel: (nextValue?: string) => void) => void,
+): void {
+  let presentValue = value;
+  const present = (): void => {
+    cell.empty();
+    cell.title = presentValue;
+    if (presentValue) cell.setAttribute('aria-label', presentValue);
+    else cell.removeAttribute('aria-label');
+    if (presentValue) cell.createSpan({ text: presentValue, attr: { title: presentValue } });
+  };
   const activate = (): void => {
     cell.empty();
-    renderEditor();
+    renderEditor((nextValue = presentValue) => {
+      presentValue = nextValue;
+      present();
+      cell.focus({ preventScroll: true });
+    });
     cell.querySelector<HTMLElement>('input, select, textarea, button')?.focus({
       preventScroll: true,
     });
   };
-  makeCellFocusable(cell, value, activate);
-  cell.addEventListener('dblclick', (event) => {
+  const onDoubleClick = (event: MouseEvent): void => {
     event.preventDefault();
     event.stopPropagation();
     activate();
-  });
-  if (value) cell.createSpan({ text: value, attr: { title: value } });
+  };
+  makeCellFocusable(cell, presentValue, activate);
+  cell.addEventListener('dblclick', onDoubleClick);
+  present();
 }
 
 function propertyDescriptor(
@@ -243,6 +266,7 @@ function renderPropertyEditor(
   observed: unknown,
   path: string,
   options: ProjectsTableOptions,
+  onCancel: (nextValue?: string) => void,
 ): void {
   const type = editorType(descriptor.kind);
   if (!type || !descriptor.writable) return;
@@ -312,8 +336,7 @@ function renderPropertyEditor(
     event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();
-      restore();
-      input.blur();
+      onCancel(projectPropertyEditorValue(descriptor, settled));
     } else if (event.key === 'Enter' && type !== 'checkbox') {
       event.preventDefault();
       void commit();
@@ -328,6 +351,7 @@ function renderOwnedSelect(
   value: string | null,
   entries: readonly { readonly value: string; readonly label: string }[],
   onCommit: ((next: string | null) => Promise<{ readonly type: string }>) | undefined,
+  onCancel: (nextValue?: string) => void,
 ): void {
   const select = cell.createEl('select', {
     cls: 'abyss-table-property-editor',
@@ -354,8 +378,7 @@ function renderOwnedSelect(
     event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();
-      restore();
-      select.blur();
+      onCancel(select.selectedOptions[0]?.textContent ?? '');
     }
   });
   select.addEventListener('change', () => {
@@ -387,12 +410,135 @@ function renderOwnedSelect(
   });
 }
 
+function renderDescriptionEditor(
+  cell: HTMLElement,
+  value: string,
+  path: string,
+  options: ProjectsTableOptions,
+  onCancel: (nextValue?: string) => void,
+): void {
+  const input = cell.createEl('input', {
+    cls: 'abyss-table-property-editor',
+    attr: {
+      type: 'text',
+      'data-property-editor': 'description',
+      'aria-label': 'Edit description',
+    },
+  });
+  let settled = value;
+  const restore = (): void => {
+    input.value = settled;
+    if (settled) {
+      input.title = settled;
+      input.setAttribute('aria-label', `Edit description: ${settled}`);
+    }
+  };
+  restore();
+  const feedback = cell.createSpan({
+    cls: 'abyss-table-property-feedback',
+    attr: { role: 'status', 'aria-live': 'polite' },
+  });
+  const commit = async (): Promise<void> => {
+    if (!options.onSetDescription) {
+      feedback.textContent = 'Property editing is unavailable.';
+      restore();
+      return;
+    }
+    input.disabled = true;
+    feedback.textContent = 'Saving…';
+    try {
+      const result = await options.onSetDescription(path, input.value || null);
+      if (result.type === 'ok' || result.type === 'unchanged') {
+        settled = input.value;
+        feedback.textContent = '';
+      } else {
+        feedback.textContent = 'This property could not be saved.';
+        restore();
+      }
+    } catch {
+      feedback.textContent = 'This property could not be saved.';
+      restore();
+    } finally {
+      input.disabled = false;
+    }
+  };
+  input.addEventListener('click', (event) => event.stopPropagation());
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel(settled);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      void commit();
+    }
+  });
+  input.addEventListener('change', () => void commit());
+}
+
+function renderCommentAppender(
+  cell: HTMLElement,
+  path: string,
+  options: ProjectsTableOptions,
+  onCancel: (nextValue?: string) => void,
+  presentValue: string,
+): void {
+  const input = cell.createEl('input', {
+    cls: 'abyss-table-property-editor',
+    attr: {
+      type: 'text',
+      placeholder: 'Add comment',
+      'data-property-editor': 'comments',
+      'aria-label': 'Add comment',
+    },
+  });
+  const feedback = cell.createSpan({
+    cls: 'abyss-table-property-feedback',
+    attr: { role: 'status', 'aria-live': 'polite' },
+  });
+  const commit = async (): Promise<void> => {
+    const body = input.value.trim();
+    if (!body) return;
+    if (!options.onAppendComment) {
+      feedback.textContent = 'Comment editing is unavailable.';
+      return;
+    }
+    input.disabled = true;
+    feedback.textContent = 'Saving…';
+    try {
+      const result = await options.onAppendComment(path, body);
+      if (result.type === 'ok' || result.type === 'unchanged') {
+        input.value = '';
+        feedback.textContent = '';
+      } else {
+        feedback.textContent = 'This comment could not be saved.';
+      }
+    } catch {
+      feedback.textContent = 'This comment could not be saved.';
+    } finally {
+      input.disabled = false;
+    }
+  };
+  input.addEventListener('click', (event) => event.stopPropagation());
+  input.addEventListener('keydown', (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel(presentValue);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      void commit();
+    }
+  });
+}
+
 function renderRangeEditor(
   cell: HTMLElement,
   endpoint: 'start' | 'end',
   raw: string | undefined,
   options: ProjectsTableOptions,
   path: string,
+  onCancel: (nextValue?: string) => void,
 ): void {
   const input = cell.createEl('input', {
     cls: 'abyss-table-property-editor',
@@ -440,8 +586,7 @@ function renderRangeEditor(
     event.stopPropagation();
     if (event.key === 'Escape') {
       event.preventDefault();
-      restore();
-      input.blur();
+      onCancel(settled);
     } else if (event.key === 'Enter') {
       event.preventDefault();
       void commit();
@@ -475,26 +620,38 @@ function showProjectMenu(
   const statusMenu = (
     menu.addItem((item) => item.setTitle('Status')) as unknown as { setSubmenu(): Menu }
   ).setSubmenu();
-  for (const status of options.settings.projects.statuses) {
+  for (const status of projectStatusMenuModel(
+    options.settings.projects.statuses,
+    snapshot.project,
+  )) {
     statusMenu.addItem((item) =>
       item
         .setTitle(status.label)
-        .setChecked(snapshot.project.statusId === status.id)
+        .setIcon(status.icon)
+        .setChecked(status.checked)
+        .setDisabled(status.disabled)
         .onClick(() => {
-          if (options.onSetStatus) void options.onSetStatus(snapshot.project.path, status.id);
+          if (!status.disabled && options.onSetStatus)
+            void options.onSetStatus(snapshot.project.path, status.columnKey);
         }),
     );
   }
   const priorityMenu = (
     menu.addItem((item) => item.setTitle('Priority')) as unknown as { setSubmenu(): Menu }
   ).setSubmenu();
-  for (const priority of ['A', 'B', 'C', 'D', 'E', 'F'] as const) {
+  for (const priority of projectPriorityMenuModel(snapshot.project)) {
     priorityMenu.addItem((item) =>
       item
-        .setTitle(priority)
-        .setChecked(snapshot.project.priority === priority)
+        .setTitle(priority.label)
+        .setIcon(priority.icon)
+        .setChecked(priority.checked)
+        .setDisabled(priority.disabled)
         .onClick(() => {
-          if (options.onSetPriority) void options.onSetPriority(snapshot.project.path, priority);
+          if (!priority.disabled && options.onSetPriority)
+            void options.onSetPriority(
+              snapshot.project.path,
+              priority.columnKey as ProjectWorkspaceSnapshot['project']['priority'],
+            );
         }),
     );
   }
@@ -576,7 +733,7 @@ export function renderProjectsTable(
                 ?.label ??
               snapshot.project.rawStatus ??
               '';
-            makeEditableCell(cell, value, () =>
+            makeEditableCell(cell, value, (cancel) =>
               renderOwnedSelect(
                 cell,
                 'Status',
@@ -591,13 +748,14 @@ export function renderProjectsTable(
                         ? options.onSetStatus!(snapshot.project.path, next)
                         : Promise.resolve({ type: 'invalid' })
                   : undefined,
+                cancel,
               ),
             );
             continue;
           }
           case 'priority': {
             const value = snapshot.project.priority ?? '';
-            makeEditableCell(cell, value, () =>
+            makeEditableCell(cell, value, (cancel) =>
               renderOwnedSelect(
                 cell,
                 'Priority',
@@ -613,6 +771,7 @@ export function renderProjectsTable(
                         next as ProjectWorkspaceSnapshot['project']['priority'],
                       )
                   : undefined,
+                cancel,
               ),
             );
             continue;
@@ -628,25 +787,53 @@ export function renderProjectsTable(
               ? 'Next action'
               : '';
             break;
+          case 'description': {
+            value = adapter.display(snapshot.project.frontmatter['description']);
+            const rawDescription = snapshot.project.frontmatter['description'];
+            if (rawDescription === undefined || typeof rawDescription === 'string') {
+              makeEditableCell(cell, value, (cancel) =>
+                renderDescriptionEditor(cell, value, snapshot.project.path, options, cancel),
+              );
+              continue;
+            }
+            break;
+          }
+          case 'comments': {
+            value = adapter.display(snapshot.project.frontmatter['comments']);
+            const rawComments = snapshot.project.frontmatter['comments'];
+            if (
+              rawComments === undefined ||
+              (Array.isArray(rawComments) &&
+                rawComments.every((entry) => typeof entry === 'string'))
+            ) {
+              makeEditableCell(cell, value, (cancel) =>
+                renderCommentAppender(cell, snapshot.project.path, options, cancel, value),
+              );
+              continue;
+            }
+            break;
+          }
           case 'start':
-            makeEditableCell(cell, snapshot.project.range.start?.raw ?? '', () =>
+            makeEditableCell(cell, snapshot.project.range.start?.raw ?? '', (cancel) =>
               renderRangeEditor(
                 cell,
                 'start',
                 snapshot.project.range.start?.raw,
                 options,
                 snapshot.project.path,
+                cancel,
               ),
             );
             continue;
           case 'end':
-            makeEditableCell(cell, snapshot.project.range.end?.raw ?? '', () =>
+            makeEditableCell(cell, snapshot.project.range.end?.raw ?? '', (cancel) =>
               renderRangeEditor(
                 cell,
                 'end',
                 snapshot.project.range.end?.raw,
                 options,
                 snapshot.project.path,
+                cancel,
               ),
             );
             continue;
@@ -659,13 +846,14 @@ export function renderProjectsTable(
             );
             value = adapter.display(snapshot.project.frontmatter[column.id]);
             if (descriptor.writable && editorType(descriptor.kind)) {
-              makeEditableCell(cell, value, () =>
+              makeEditableCell(cell, value, (cancel) =>
                 renderPropertyEditor(
                   cell,
                   descriptor,
                   snapshot.project.frontmatter[column.id],
                   snapshot.project.path,
                   options,
+                  cancel,
                 ),
               );
               continue;

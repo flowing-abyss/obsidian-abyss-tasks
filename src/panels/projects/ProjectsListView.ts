@@ -12,7 +12,7 @@ import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { BoundedWindow } from './BoundedWindow';
 import type { ProjectCaptureSession } from './ProjectWorkspaceSession';
 import { renderProjectsToolbar } from './ProjectsToolbar';
-import { projectStatusMenuModel } from './boardProjection';
+import { projectPriorityMenuModel, projectStatusMenuModel } from './boardProjection';
 import { renderProgressBar } from './progressBar';
 import type { ProjectsListContext } from './viewContext';
 
@@ -515,12 +515,11 @@ export function renderProjectRow(
   const firstLine = row.createDiv({
     cls: 'abyss-project-row-line abyss-project-row-line--primary',
   });
-  // Board keeps its established keyboard/DnD identity carrier while sharing
-  // the same priority presentation slot as the portfolio table.
-  new EntityPresentation({
-    priority: project.priority === 'D' ? undefined : project.priority,
-  }).render(firstLine);
-  firstLine.createSpan({
+  const priorityElement =
+    project.priority === 'D'
+      ? undefined
+      : firstLine.createSpan({ cls: 'abyss-project-priority', text: project.priority ?? '' });
+  const healthElement = firstLine.createSpan({
     cls: `abyss-project-health abyss-project-health--${health.severity}`,
     attr: {
       role: 'img',
@@ -540,8 +539,10 @@ export function renderProjectRow(
   if ((nameCounts.get(project.name) ?? 0) > 1) {
     nameWrap.setAttribute('title', `${project.name} — ${parentFolder(project.path)}`);
   }
+  let progressElement: HTMLElement | undefined;
   if (snapshot.taskRollup.total > 0) {
     const taskProgress = firstLine.createDiv({ cls: 'abyss-project-task-progress' });
+    progressElement = taskProgress;
     renderProgressBar(
       taskProgress,
       snapshot.taskRollup.done,
@@ -564,6 +565,9 @@ export function renderProjectRow(
     Number(health.flags.malformedNextAction) +
     Number(health.flags.rangeIssue !== undefined);
   const meaningfulReason = health.reason.type !== 'insufficient-actionable-evidence';
+  let dateElement: HTMLElement | undefined;
+  let relationsElement: HTMLElement | undefined;
+  let secondaryElement: HTMLElement | undefined;
   if (nextAction || meaningfulReason || date || workNoteCount > 0 || diagnosticCount > 0) {
     const secondLine = row.createDiv({
       cls: 'abyss-project-row-line abyss-project-row-line--secondary',
@@ -585,12 +589,17 @@ export function renderProjectRow(
         event.stopPropagation();
         ctx.state.set('taskStack', [nextAction.task]);
       });
+      secondaryElement = next;
     } else if (meaningfulReason) {
-      secondLine.createSpan({ cls: 'abyss-project-health-reason', text: reason });
+      secondaryElement = secondLine.createSpan({
+        cls: 'abyss-project-health-reason',
+        text: reason,
+      });
     }
-    if (date) secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
+    if (date) dateElement = secondLine.createSpan({ cls: 'abyss-project-date-signal', text: date });
     if (workNoteCount > 0 || diagnosticCount > 0) {
       const exceptions = secondLine.createSpan({ cls: 'abyss-project-exceptions' });
+      relationsElement = exceptions;
       if (workNoteCount > 0) {
         exceptions.createSpan({
           cls: 'abyss-project-work-note-count',
@@ -621,7 +630,20 @@ export function renderProjectRow(
   }
 
   const actions = row.createDiv({ cls: 'abyss-project-row-actions' });
-  new EntityPresentation({
+  const presentation = new EntityPresentation({
+    identity: project.name,
+    priority: project.priority === 'D' ? undefined : project.priority,
+    health: reason,
+    progress:
+      snapshot.taskRollup.total > 0
+        ? `${String(snapshot.taskRollup.done)}/${String(snapshot.taskRollup.total)}`
+        : undefined,
+    date,
+    relations:
+      workNoteCount > 0 || diagnosticCount > 0
+        ? `${String(workNoteCount)} Work Notes; ${String(diagnosticCount)} project diagnostics`
+        : undefined,
+    secondary: nextAction?.task.title ?? (meaningfulReason ? reason : undefined),
     actions: [
       {
         label: 'Project actions',
@@ -656,19 +678,38 @@ export function renderProjectRow(
               setSubmenu(): Menu;
             }
           ).setSubmenu();
-          for (const priority of ['A', 'B', 'C', 'D', 'E', 'F'] as const) {
+          for (const priority of projectPriorityMenuModel(project)) {
             priorityMenu.addItem((item) =>
               item
-                .setTitle(priority)
-                .setChecked(project.priority === priority)
-                .onClick(() => ctx.onSetPriority?.(project.path, priority)),
+                .setTitle(priority.label)
+                .setIcon(priority.icon)
+                .setChecked(priority.checked)
+                .setDisabled(priority.disabled)
+                .onClick(() => {
+                  if (!priority.disabled)
+                    ctx.onSetPriority?.(
+                      project.path,
+                      priority.columnKey as NonNullable<Project['priority']>,
+                    );
+                }),
             );
           }
           showMenuAtMouseEventWithFocus(menu, e);
         },
       },
     ],
-  }).renderActions(actions);
+  });
+  presentation.bind({
+    identity: nameWrap,
+    priority: priorityElement,
+    health: healthElement,
+    progress: progressElement,
+    date: dateElement,
+    relations: relationsElement,
+    secondary: secondaryElement,
+    actions,
+  });
+  presentation.renderActions(actions);
 
   nameWrap.addEventListener('click', () => {
     ctx.state.set('projectsPanel', { view: 'dashboard', path: project.path });

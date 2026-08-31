@@ -3,7 +3,10 @@ import { readFileSync } from 'node:fs';
 import { Menu, TFile, type MenuItem } from 'obsidian';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppState } from '../src/app/AppState';
-import { createProjectBoardMutation } from '../src/panels/projects/boardProjection';
+import {
+  createProjectBoardMutation,
+  projectPriorityMenuModel,
+} from '../src/panels/projects/boardProjection';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
@@ -271,6 +274,45 @@ describe('renderProjectsList', () => {
     expect(el.querySelector('[data-project-portfolio-layout="overview"]')).not.toBeNull();
     expect(el.querySelector('[data-project-status-filter]')).not.toBeNull();
     expect(el.querySelector('[aria-label="New project"]')).not.toBeNull();
+  });
+
+  it('binds a Board card to the complete shared Project semantic slot contract', () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const project = proj({ priority: 'A', range: parseProjectRange('2026-08-31', undefined) });
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [
+        workspace(project, {
+          overdue: { tasks: 1, workNotes: 0 },
+          workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+        }),
+      ],
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+    });
+    const card = el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
+    const slots = Array.from(card.querySelectorAll<HTMLElement>('[data-entity-slot]')).map(
+      ({ dataset }) => dataset['entitySlot'],
+    );
+    for (const slot of [
+      'identity',
+      'priority',
+      'health',
+      'progress',
+      'date',
+      'relations',
+      'actions',
+    ])
+      expect(slots).toContain(slot);
+  });
+
+  it('marks the current shared Project priority action disabled', () => {
+    expect(projectPriorityMenuModel(proj({ priority: 'B' })).slice(0, 2)).toMatchObject([
+      { label: 'A', checked: false, disabled: false },
+      { label: 'B', checked: true, disabled: true },
+    ]);
   });
 
   it('renders terminal and regular collapsed rails while removing hidden columns from the DOM', () => {
@@ -2566,6 +2608,85 @@ describe('ProjectsPanel dispatch', () => {
         'Projects overview table',
       );
       expect(el.querySelectorAll('[data-project-table-row]').length).toBeLessThan(120);
+    } finally {
+      panel.destroy();
+    }
+  });
+
+  it('settles Overview Description and append-only Comments through ProjectCommandService callbacks', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'overview';
+    settings.projects.view.table = {
+      version: 1,
+      columns: [
+        { propertyId: 'description', visible: true },
+        { propertyId: 'comments', visible: true },
+      ],
+      collapsedGroups: [],
+    };
+    const project = proj({
+      frontmatter: { description: 'Original', comments: ['2026-08-31: Existing'] },
+    });
+    const refresh = vi.fn();
+    const setDescription = vi.fn().mockResolvedValue({ type: 'ok' });
+    const appendComment = vi.fn().mockResolvedValue({ type: 'ok' });
+    const panel = new ProjectsPanel(
+      new AppState(),
+      {
+        list: () => [project],
+        get: () => project,
+        activeForLeftPanel: () => [],
+        onUpdate: () => () => {},
+        refresh,
+      } as never,
+      stubMgr,
+      settings,
+      null as never,
+      {
+        snapshots: [workspace(project)],
+        projectCommands: {
+          setDescription,
+          appendComment,
+          observeComments: vi
+            .fn()
+            .mockReturnValue({ path: project.path, value: project.frontmatter.comments }),
+        } as never,
+      },
+    );
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      const description = el.querySelector<HTMLElement>(
+        '[role="cell"][data-table-column="description"]',
+      )!;
+      description.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const descriptionEditor = el.querySelector<HTMLInputElement>(
+        '[data-property-editor="description"]',
+      )!;
+      descriptionEditor.value = 'Updated';
+      descriptionEditor.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+      const comments = el.querySelector<HTMLElement>(
+        '[role="cell"][data-table-column="comments"]',
+      )!;
+      comments.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const commentEditor = el.querySelector<HTMLInputElement>(
+        '[data-property-editor="comments"]',
+      )!;
+      commentEditor.value = 'New comment';
+      commentEditor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+
+      expect(setDescription).toHaveBeenCalledWith(
+        { path: project.path, value: 'Original' },
+        'Updated',
+      );
+      expect(appendComment).toHaveBeenCalledWith(
+        { path: project.path, value: project.frontmatter.comments },
+        'New comment',
+      );
+      expect(refresh).toHaveBeenCalledTimes(2);
     } finally {
       panel.destroy();
     }

@@ -24,4 +24,32 @@ describe('EntityPresentation', () => {
     root.querySelector<HTMLButtonElement>('[aria-label="Project actions"]')!.click();
     expect(open).toHaveBeenCalledOnce();
   });
+
+  it('keeps relation badges and secondary metadata in the shared semantic hierarchy', () => {
+    const root = freshContainer();
+    new EntityPresentation({
+      identity: 'Project',
+      status: 'Active',
+      priority: 'A',
+      progress: '50%',
+      date: '2026-09-01',
+      health: 'At risk',
+      relations: '2 Work Notes',
+      secondary: 'Next action: Plan launch',
+    }).render(root);
+    expect(
+      Array.from(root.querySelectorAll<HTMLElement>('[data-entity-slot]')).map(
+        (element) => element.dataset['entitySlot'],
+      ),
+    ).toEqual([
+      'identity',
+      'status',
+      'priority',
+      'progress',
+      'date',
+      'health',
+      'relations',
+      'secondary',
+    ]);
+  });
 });

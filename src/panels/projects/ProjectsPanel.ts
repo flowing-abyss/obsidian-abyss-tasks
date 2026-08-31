@@ -211,6 +211,28 @@ export class ProjectsPanel {
     return result;
   }
 
+  private async setDescription(path: string, description: string | null) {
+    const project = this.snapshots.find((snapshot) => snapshot.project.path === path)?.project;
+    if (!project || !this.projectCommands) return { type: 'invalid', field: 'path' } as const;
+    const result = await this.projectCommands.setDescription(
+      { path, value: project.observed?.description ?? project.frontmatter['description'] },
+      description,
+    );
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
+  }
+
+  private async appendComment(path: string, body: string) {
+    const project = this.snapshots.find((snapshot) => snapshot.project.path === path)?.project;
+    if (!project || !this.projectCommands) return { type: 'invalid', field: 'path' } as const;
+    const result = await this.projectCommands.appendComment(
+      this.projectCommands.observeComments(project),
+      body,
+    );
+    if (result.type === 'ok') this.projectStore.refresh();
+    return result;
+  }
+
   private async setRangeEndpoint(
     path: string,
     endpoint: 'start' | 'end',
@@ -722,6 +744,8 @@ export class ProjectsPanel {
             onSetStatus: (path, statusId) => this.setStatus(path, statusId),
             onSetPriority: (path, priority) => this.setPriority(path, priority ?? null),
             onSetRange: (path, endpoint, raw) => this.setRangeEndpoint(path, endpoint, raw),
+            onSetDescription: (path, description) => this.setDescription(path, description),
+            onAppendComment: (path, body) => this.appendComment(path, body),
           });
           return { destroy: () => table.destroy() };
         },
