@@ -236,7 +236,7 @@ describe('Task inspector semantic wrapper layout', () => {
     shell.innerHTML = `
       <header class="abyss-right-header">
         <div class="abyss-inspector-field-row abyss-right-status-field"><span>Status</span><div><button>Status</button></div></div>
-        <div class="abyss-inspector-field-row abyss-right-title-field"><span>Title</span><div><div class="abyss-right-title abyss-right-title-view">${'A long Task title '.repeat(40)}</div></div></div>
+        <div class="abyss-inspector-field-row abyss-right-title-field"><span>Title</span><div class="abyss-inspector-field-content"><div class="abyss-right-title abyss-right-title-view">${'A long Task title '.repeat(40)}</div></div></div>
         <div class="abyss-right-header-actions"><button>More</button></div>
       </header>
       <div class="abyss-chips-row"><div class="abyss-inspector-field-row abyss-task-chip-field"><span>Date</span><div><button class="abyss-chip">Date</button></div></div></div>`;
@@ -251,8 +251,11 @@ describe('Task inspector semantic wrapper layout', () => {
         expect(computed.marginTop).toBe('0px');
       }
       const title = shell.querySelector<HTMLElement>('.abyss-right-title-view')!;
+      const titleContent = title.parentElement!;
       const actions = shell.querySelector<HTMLElement>('.abyss-right-header-actions')!;
+      expect(getComputedStyle(titleContent).display).toBe('contents');
       expect(getComputedStyle(title).flexGrow).toBe('1');
+      expect(getComputedStyle(title).minWidth).toBe('0px');
       expect(getComputedStyle(actions).flexShrink).toBe('0');
       expect(getComputedStyle(title).overflowWrap).toBe('anywhere');
       expect(getComputedStyle(shell).fontSize).toBe('200%');

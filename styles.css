@@ -8440,6 +8440,14 @@ body.is-phone.is-mobile .abyss-creation-feedback {
   margin: 0;
 }
 
+/* Legacy header controls need their content wrapper flattened too: title remains the flex item. */
+.abyss-entity-inspector
+  .abyss-inspector-field-row.abyss-right-title-field
+  > .abyss-inspector-field-content {
+  display: contents;
+  min-width: 0;
+}
+
 /* Field rows are deliberately semantic, not card-within-card decoration. */
 .abyss-entity-inspector .abyss-inspector-field-row {
   display: grid;

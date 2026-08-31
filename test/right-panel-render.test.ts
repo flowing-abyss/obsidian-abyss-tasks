@@ -23,6 +23,7 @@ import { InteractionRegistry, type InteractionOwnershipPort } from '../src/ui/in
 import { rootTaskRef, taskNodeLine } from '../src/ui/taskSelection';
 import {
   createAppWithFiles,
+  deferred,
   flushMicrotasks,
   freshContainer,
   queryApiForTasks,
@@ -824,6 +825,60 @@ describe('RightPanel.renderTask', () => {
     },
   );
 
+  it.each([
+    {
+      label: 'change',
+      act: (input: HTMLInputElement) => {
+        input.value = '2h';
+        input.dispatchEvent(new Event('change'));
+      },
+    },
+    {
+      label: 'clear',
+      act: (input: HTMLInputElement) =>
+        click(input.closest<HTMLElement>('.abyss-popover-input-row')!.querySelector('button')!),
+    },
+  ])('keeps duration $label feedback in the initiating Time row', async ({ act }) => {
+    const selected = task({
+      title: 'Timed duration',
+      planning: { time: '09:00', duration: 30 },
+    });
+    const pending = deferred<Awaited<ReturnType<TaskApplicationApi['execute']>>>();
+    const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(pending.promise);
+    const { panel, state, el } = await makePanel({}, {
+      queries: taskQueryApi(),
+      execute,
+    } as unknown as TaskApplicationApi);
+    activeDocument.body.append(el);
+    state.set('taskStack', [selected]);
+
+    const time = el.querySelector<HTMLButtonElement>('.abyss-chip-time')!;
+    click(time);
+    const duration = el.querySelector<HTMLInputElement>('.abyss-duration-input')!;
+    act(duration);
+    await flushMicrotasks();
+
+    const timeRow = el.querySelector<HTMLElement>('[data-inspector-field-instance="date-time"]')!;
+    expect(
+      timeRow
+        .querySelector('[data-task-field-feedback="date"]')
+        ?.getAttribute('data-task-field-instance'),
+    ).toBe('date-time');
+    expect(time.disabled).toBe(true);
+    expect(
+      el.querySelector('[data-inspector-field="progress"] [data-task-field-feedback]'),
+    ).toBeNull();
+
+    pending.resolve({ type: 'conflict', current: selected });
+    await flushMicrotasks();
+    expect(
+      timeRow.querySelector('[data-task-field-feedback="date"]')?.getAttribute('data-result-type'),
+    ).toBe('conflict');
+    expect(activeDocument.activeElement).toBe(time);
+    panel.destroy();
+    el.remove();
+  });
+
   it('joins the common inspector entity and field contract without removing Task-only sections', async () => {
     const { state, el } = await makePanel();
     state.set('taskStack', [task({ title: 'Contract task', recurrence: 'every week' })]);
@@ -860,6 +915,11 @@ describe('RightPanel.renderTask', () => {
         (row) => row.dataset['inspectorFieldInstance'],
       ),
     ).toEqual(['date-due', 'date-time', 'date-plan', 'date-start']);
+    const header = el.querySelector<HTMLElement>('.abyss-right-header')!;
+    const title = header.querySelector<HTMLElement>('.abyss-right-title')!;
+    expect(title.parentElement?.classList.contains('abyss-inspector-field-content')).toBe(true);
+    expect(title.closest('[data-inspector-field="title"]')?.parentElement).toBe(header);
+    expect(header.querySelector('.abyss-right-header-actions')?.parentElement).toBe(header);
   });
 
   it('keeps semantic section headings without a decorative divider element', async () => {

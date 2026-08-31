@@ -2798,18 +2798,24 @@ export class RightPanel {
     if (result.changed) this.onSuccessfulMutation?.(result.outcome.task.ref);
   }
 
-  private async updateDuration(task: TaskSnapshot, minutes: number): Promise<void> {
+  private async updateDuration(
+    task: TaskSnapshot,
+    minutes: number,
+    binding?: TaskFieldBinding,
+  ): Promise<void> {
     try {
-      await this.executePlanningPatch(task, {
-        duration: { type: 'set', value: durationMinutes(minutes) },
-      });
+      await this.executePlanningPatch(
+        task,
+        { duration: { type: 'set', value: durationMinutes(minutes) } },
+        binding,
+      );
     } catch {
       // Invalid input leaves the existing duration unchanged.
     }
   }
 
-  private async clearDuration(task: TaskSnapshot): Promise<void> {
-    await this.executePlanningPatch(task, { duration: { type: 'clear' } });
+  private async clearDuration(task: TaskSnapshot, binding?: TaskFieldBinding): Promise<void> {
+    await this.executePlanningPatch(task, { duration: { type: 'clear' } }, binding);
   }
 
   private setStatus(task: TaskLike, symbol: string): Promise<void> {
@@ -2901,7 +2907,9 @@ export class RightPanel {
       });
       durationInput.addEventListener('change', () => {
         const minutes = parseDurationToMinutes(durationInput.value);
-        const done = minutes ? this.updateDuration(task, minutes) : this.clearDuration(task);
+        const done = minutes
+          ? this.updateDuration(task, minutes, binding)
+          : this.clearDuration(task, binding);
         void done.then(() => this.removeAnchoredSurface(pop));
       });
       const clearDurationBtn = durationRow.createEl('button', {
@@ -2911,7 +2919,7 @@ export class RightPanel {
       setIcon(clearDurationBtn, 'x');
       clearDurationBtn.addEventListener('mousedown', (e) => e.preventDefault());
       clearDurationBtn.addEventListener('click', () => {
-        void this.clearDuration(task).then(() => this.removeAnchoredSurface(pop));
+        void this.clearDuration(task, binding).then(() => this.removeAnchoredSurface(pop));
       });
     }
 
