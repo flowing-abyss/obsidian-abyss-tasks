@@ -51,7 +51,8 @@ export function showMenuAtMouseEventWithFocus(
       ) {
         keyboardEvent.preventDefault();
         const delta =
-          keyboardEvent.key === 'ArrowDown' || (keyboardEvent.key === 'Tab' && !keyboardEvent.shiftKey)
+          keyboardEvent.key === 'ArrowDown' ||
+          (keyboardEvent.key === 'Tab' && !keyboardEvent.shiftKey)
             ? 1
             : -1;
         focusItem(items[(index + delta + items.length) % items.length]!);
