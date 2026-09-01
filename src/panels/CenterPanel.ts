@@ -58,6 +58,7 @@ import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { renderEntityActionLayer } from '../ui/entity/EntityActionLayer';
 import { EntityPresentation } from '../ui/entity/EntityPresentation';
 import { inspectorSelectionKey, type InspectorSelection } from '../ui/inspector/InspectorSelection';
+import { nextOptimisticPublicationSequence } from '../ui/interaction/OptimisticOverlayStore';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
 import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
@@ -301,6 +302,8 @@ export class CenterPanel {
   // ProjectsPanel does not. Keep Board Undo only for that redraw boundary, never in settings.
   private pendingProjectBoardUndo: PendingProjectBoardUndo | undefined;
   private pendingProjectBoardUndoObservedNext = false;
+  private projectPublicationSequence = 0;
+  private readonly projectPathSuccessors = new Map<string, string>();
   private readonly projectWorkspaceSession: ProjectWorkspaceSession;
   private projectTaskList: MountedProjectTaskList | null = null;
   private projectTaskListCleanup: (() => void) | null = null;
@@ -346,6 +349,8 @@ export class CenterPanel {
     private readonly awaitProjectMembership?: ConstructorParameters<typeof NextActionService>[2],
   ) {
     this.projectWorkspaceSession = collectionState;
+    if (projectSnapshots.length > 0)
+      this.projectPublicationSequence = nextOptimisticPublicationSequence(this.app);
     this.onSaveSettings = onSaveSettings ?? (async (): Promise<void> => {});
     this.persistsSettings = onSaveSettings !== undefined;
     this.projectWorkspaceSession.bindCollectionPreferences(
@@ -722,10 +727,29 @@ export class CenterPanel {
 
   renameProjectWorkspacePath(sourcePath: string, destinationPath: string): void {
     this.projectWorkspaceSession.renamePath(sourcePath, destinationPath);
+    this.projectPathSuccessors.set(sourcePath, destinationPath);
+    if (this.pendingProjectBoardUndo?.path === sourcePath) {
+      this.pendingProjectBoardUndo = {
+        ...this.pendingProjectBoardUndo,
+        path: destinationPath,
+      };
+    }
   }
 
   setProjectSnapshots(snapshots: readonly ProjectWorkspaceSnapshot[]): void {
     this.projectSnapshots = snapshots;
+    this.projectPublicationSequence = nextOptimisticPublicationSequence(this.app);
+  }
+
+  private isProjectPathSuccessor(sourcePath: string, destinationPath: string): boolean {
+    const visited = new Set<string>();
+    let current: string | undefined = sourcePath;
+    while (current && !visited.has(current)) {
+      if (current === destinationPath) return true;
+      visited.add(current);
+      current = this.projectPathSuccessors.get(current);
+    }
+    return false;
   }
 
   projectCaptureContext(projectPath: string, requestedStatusSymbol?: string): CaptureContext {
@@ -1208,8 +1232,22 @@ export class CenterPanel {
         const placement: BarCapturePlacement = { type: 'project', path, statusSymbol };
         this.openCapture(placement, this.projectCaptureContext(path, statusSymbol));
       };
+      const canonicalActions =
+        this.projectSnapshots.length === 0
+          ? allActions
+          : [
+              ...new Map(
+                this.projectSnapshots
+                  .flatMap((snapshot) => snapshot.tasks)
+                  .map((action) => [taskPresentationKey(action.task.ref), action] as const),
+              ).values(),
+            ];
       board = renderProjectTasksBoard(boardHost, {
         actions,
+        canonicalActions,
+        ...(this.projectPublicationSequence > 0 && {
+          publicationSequence: this.projectPublicationSequence,
+        }),
         statuses,
         visibleColumnKeys: visibleStatusIds,
         onMoveStatus: (task, symbol) => this.setTaskStatus(task, symbol, false),
@@ -1545,11 +1583,20 @@ export class CenterPanel {
               ),
             snapshots: this.projectSnapshots,
             ...(this.persistsSettings ? { onSaveSettings: this.onSaveSettings } : {}),
-            pendingBoardUndo: this.pendingProjectBoardUndo,
+            pendingBoardUndo: this.pendingProjectBoardUndoObservedNext
+              ? this.pendingProjectBoardUndo
+              : undefined,
+            ...(this.projectPublicationSequence > 0 && {
+              publicationSequence: this.projectPublicationSequence,
+            }),
+            pathSuccessor: (observedPath, publishedPath) =>
+              this.isProjectPathSuccessor(observedPath, publishedPath),
             onBoardUndoPending: (pending) => {
               this.pendingProjectBoardUndo = pending;
               this.pendingProjectBoardUndoObservedNext = false;
-              this.projectStore?.refresh();
+              this.reconcilePendingProjectBoardUndo();
+              if (this.pendingProjectBoardUndoObservedNext) this.refresh();
+              else this.projectStore?.refresh();
             },
             boardUndoOwner: {
               started: (pending) => {

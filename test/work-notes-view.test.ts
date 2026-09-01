@@ -920,6 +920,52 @@ describe('renderWorkNotesView', () => {
 });
 
 describe('Work Note board adapter', () => {
+  it('reconciles a stable Work Note id across a rename publication', async () => {
+    const root = freshContainer();
+    const scope = {};
+    const announcements: string[] = [];
+    const statuses = DEFAULT_SETTINGS.projects.statuses;
+    const original = note(1, { id: 'work-note-stable-id', statusId: statuses[0]!.id });
+    let handle = renderWorkNotesView(root, {
+      notes: [original],
+      canonicalNotes: [original],
+      publicationSequence: 1,
+      statuses,
+      layout: 'board',
+      onSetStatus: vi.fn().mockResolvedValue({ type: 'ok', path: original.path }),
+      openNote: vi.fn(),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+    });
+    const focus = root.querySelector<HTMLElement>('[data-board-item-focus]')!;
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    handle.destroy();
+
+    const renamed = {
+      ...original,
+      path: 'Archive/Renamed work note.md',
+      statusId: statuses[2]!.id,
+    };
+    handle = renderWorkNotesView(root, {
+      notes: [renamed],
+      canonicalNotes: [renamed],
+      publicationSequence: 2,
+      statuses,
+      layout: 'board',
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+    });
+
+    expect(announcements.filter((message) => message === 'Item moved.')).toHaveLength(1);
+    expect(root.querySelector(`[data-board-item-surface="${renamed.path}"]`)).not.toBeNull();
+    handle.destroy();
+  });
+
   it('uses the shared keyboard controller and canonical Work Note order', async () => {
     const root = freshContainer();
     const statuses = DEFAULT_SETTINGS.projects.statuses;

@@ -105,6 +105,8 @@ export interface BoardViewOptions<T> {
   readonly itemLabel?: (item: T) => string;
   /** Canonical cross-column order used for landing and temporary post-move projection. */
   readonly canonicalItems?: readonly T[];
+  /** Complete source batch used only for publication/deletion reconciliation. */
+  readonly canonicalPublicationItems?: readonly T[];
   readonly announce?: (message: string) => void;
   /** Application-owned status projection retained while a guarded write waits for source publication. */
   readonly optimisticOverlay?: {
@@ -113,7 +115,7 @@ export interface BoardViewOptions<T> {
     readonly keyOf: (item: T) => string;
     readonly revision: (item: T) => string;
     /** Ordered source generation when the entity provider exposes one. */
-    readonly publicationSequence?: (item: T) => number | undefined;
+    readonly publicationSequence?: number;
     /** Proven entity continuity when a canonical source key changes. */
     readonly continuity?: (observed: T, published: T) => boolean;
     /** Explicit capability for publication text; omitted preserves legacy generic boards. */
@@ -133,6 +135,9 @@ export interface BoardViewHandle {
 
 export interface WorkNotesBoardOptions {
   readonly notes: readonly WorkNoteSnapshot[];
+  readonly canonicalNotes?: readonly WorkNoteSnapshot[];
+  readonly publicationSequence?: number;
+  readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
   readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly onMoveStatus: (
     note: WorkNoteSnapshot,
@@ -153,6 +158,8 @@ export interface WorkNotesBoardOptions {
 
 export interface ProjectTasksBoardOptions {
   readonly actions: readonly ProjectAction[];
+  readonly canonicalActions?: readonly ProjectAction[];
+  readonly publicationSequence?: number;
   readonly statuses: readonly TaskStatusDef[];
   readonly onMoveStatus: (task: TaskSnapshot, symbol: string) => Promise<BoardMutationResult>;
   readonly renderItem: (host: HTMLElement, action: ProjectAction) => HTMLElement;
@@ -251,9 +258,13 @@ export function renderBoard<T>(
   const pendingOverlayUndos = new Map<
     number,
     {
-      readonly authority: UndoAuthority;
+      readonly item: T;
+      readonly columnKey: string;
       readonly evidence: string;
       readonly move: BoardMoveIntent<string, string>;
+      readonly controller: boolean;
+      published: boolean;
+      result?: BoardMutationResult;
     }
   >();
   const presentationEnabled = options.presentationEnabled ?? options.mutationEnabled !== false;
@@ -265,6 +276,7 @@ export function renderBoard<T>(
         .map((item) => [options.itemKey(item), item] as const),
     ).values(),
   ];
+  const canonicalPublicationItems = options.canonicalPublicationItems ?? sourceItems;
   const overlayKey = (item: T): string =>
     options.optimisticOverlay?.keyOf(item) ?? options.itemKey(item);
   const overlayOwner = {
@@ -273,29 +285,48 @@ export function renderBoard<T>(
     undoAvailable: options.optimisticOverlay?.undoAvailable,
   };
   let destroyed = false;
+  const releasePublishedUndo = (transactionId: number): void => {
+    const pendingUndo = pendingOverlayUndos.get(transactionId);
+    if (!pendingUndo?.published || pendingUndo.result === undefined) return;
+    pendingOverlayUndos.delete(transactionId);
+    const authority = {
+      item: pendingUndo.item,
+      columnKey: pendingUndo.columnKey,
+      result: pendingUndo.result,
+    };
+    if (pendingUndo.controller) {
+      interactionController?.acceptPublishedUndo(authority, pendingUndo.evidence, pendingUndo.move);
+    } else {
+      undoPending = authority;
+    }
+  };
   const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe((settlement) => {
     if (settlement) {
       const pendingUndo = pendingOverlayUndos.get(settlement.transactionId);
-      pendingOverlayUndos.delete(settlement.transactionId);
-      if (settlement.published && pendingUndo) {
-        interactionController?.acceptPublishedUndo(
-          pendingUndo.authority,
-          pendingUndo.evidence,
-          pendingUndo.move,
-        );
+      if (!settlement.published) {
+        pendingOverlayUndos.delete(settlement.transactionId);
+      } else if (pendingUndo) {
+        pendingUndo.published = true;
+        releasePublishedUndo(settlement.transactionId);
       }
     }
     queueMicrotask(() => {
       if (!destroyed) render();
     });
   }, overlayOwner);
-  for (const item of sourceItems) {
+  for (const item of canonicalPublicationItems) {
     options.optimisticOverlay?.store.observePublication(
       overlayKey(item),
       item,
       options.optimisticOverlay.revision(item),
-      options.optimisticOverlay.publicationSequence?.(item),
+      options.optimisticOverlay.publicationSequence,
       options.optimisticOverlay.continuity,
+    );
+  }
+  if (options.optimisticOverlay) {
+    options.optimisticOverlay.store.reconcileCanonicalKeys(
+      new Set(canonicalPublicationItems.map((item) => overlayKey(item))),
+      options.optimisticOverlay.publicationSequence,
     );
   }
   const configuredColumnIds =
@@ -796,6 +827,16 @@ export function renderBoard<T>(
             intent.destination.columnId,
             overlayOwner,
           );
+        if (transaction && options.undo) {
+          pendingOverlayUndos.set(transaction.id, {
+            item,
+            columnKey: intent.destination.columnId,
+            evidence: intent.destination.evidence,
+            move: intent,
+            controller: true,
+            published: false,
+          });
+        }
         if (transaction) queueMicrotask(() => !destroyed && render());
         let result: BoardMutationResult;
         try {
@@ -844,12 +885,10 @@ export function renderBoard<T>(
         }
         if (transaction) {
           const authority = { item, columnKey: intent.destination.columnId, result };
-          if (options.undo) {
-            pendingOverlayUndos.set(transaction.id, {
-              authority,
-              evidence: intent.destination.evidence,
-              move: intent,
-            });
+          const pendingUndo = pendingOverlayUndos.get(transaction.id);
+          if (pendingUndo) {
+            pendingUndo.result = result;
+            releasePublishedUndo(transaction.id);
           }
           options.onMutation?.(item, intent.destination.columnId, result);
           queueMicrotask(() => !destroyed && render());
@@ -934,11 +973,32 @@ export function renderBoard<T>(
         columnKey,
         overlayOwner,
       );
+    if (transaction && options.undo) {
+      const source = observedPosition(item);
+      if (source) {
+        pendingOverlayUndos.set(transaction.id, {
+          item,
+          columnKey,
+          evidence: source.evidence,
+          move: Object.freeze({
+            itemId: options.itemKey(item),
+            observedSource: source,
+            destination: {
+              columnId: columnKey,
+              position: source.position,
+              evidence: source.evidence,
+            },
+            interactionEpoch: 0,
+          }),
+          controller: false,
+          published: false,
+        });
+      }
+    }
     if (transaction) queueMicrotask(() => !destroyed && render());
     const pending = options.executeMutation?.(command, initiator) ?? command();
     void pending
       .then((result) => {
-        if (destroyed) return;
         if (transaction && result === undefined) {
           options.optimisticOverlay?.store.cancel(
             overlayKey(item),
@@ -946,7 +1006,7 @@ export function renderBoard<T>(
             transaction.id,
             transaction.token,
           );
-          render();
+          if (!destroyed) render();
           return;
         }
         if (transaction && result !== undefined) {
@@ -960,25 +1020,30 @@ export function renderBoard<T>(
         if (!successful(result)) return;
         if (transaction) {
           dragging = null;
+          const pendingUndo = pendingOverlayUndos.get(transaction.id);
+          if (pendingUndo) {
+            pendingUndo.result = result;
+            releasePublishedUndo(transaction.id);
+          }
           options.onMutation?.(item, columnKey, result);
-          render();
+          if (!destroyed) render();
           return;
         }
         overrides.set(options.itemKey(item), columnKey);
         dragging = null;
         if (options.undo) undoPending = { item, columnKey, result };
         options.onMutation?.(item, columnKey, result);
-        render();
+        if (!destroyed) render();
       })
       .catch(() => {
-        if (!transaction || destroyed) return;
+        if (!transaction) return;
         options.optimisticOverlay?.store.cancel(
           overlayKey(item),
           'io',
           transaction.id,
           transaction.token,
         );
-        render();
+        if (!destroyed) render();
       });
   };
 
@@ -1607,6 +1672,11 @@ export function renderWorkNotesBoard(
   container: HTMLElement,
   options: WorkNotesBoardOptions,
 ): BoardViewHandle {
+  const canonicalNotes = options.canonicalNotes ?? options.notes;
+  const idCounts = new Map<string, number>();
+  for (const note of canonicalNotes) {
+    if (note.id) idCounts.set(note.id, (idCounts.get(note.id) ?? 0) + 1);
+  }
   const mutation = createWorkNoteBoardMutation(options.statuses, options.onMoveStatus);
   const optimisticOverlay = options.overlayScope
     ? {
@@ -1644,6 +1714,14 @@ export function renderWorkNotesBoard(
             relatedPaths: note.relatedPaths,
             diagnostics: note.diagnostics,
           }),
+        ...(options.publicationSequence !== undefined && {
+          publicationSequence: options.publicationSequence,
+        }),
+        continuity: (observed: WorkNoteSnapshot, published: WorkNoteSnapshot) =>
+          (observed.id !== undefined &&
+            observed.id === published.id &&
+            idCounts.get(published.id) === 1) ||
+          options.pathSuccessor?.(observed.path, published.path) === true,
         columnKey: (note: WorkNoteSnapshot) => note.statusId ?? 'unmapped',
         undoAvailable: false,
         presentationAnnouncement: true,
@@ -1661,6 +1739,7 @@ export function renderWorkNotesBoard(
     interactionController: true,
     manageStatusMenu: true,
     canonicalItems: options.notes,
+    canonicalPublicationItems: canonicalNotes,
     itemLabel: ({ path }) => path.split('/').pop()?.replace(/\.md$/u, '') ?? path,
     announce: options.announce,
     ...(optimisticOverlay && { optimisticOverlay }),
@@ -1692,7 +1771,8 @@ export function renderProjectTasksBoard(
   const mutation = createProjectActionBoardMutation(options.statuses, options.onMoveStatus);
   const statusById = new Map(options.statuses.map((status) => [status.id, status]));
   const taskIdCounts = new Map<string, number>();
-  for (const { task } of options.actions) {
+  const canonicalActions = options.canonicalActions ?? options.actions;
+  for (const { task } of canonicalActions) {
     const id = task.dependency?.id;
     if (id) taskIdCounts.set(id, (taskIdCounts.get(id) ?? 0) + 1);
   }
@@ -1702,18 +1782,6 @@ export function renderProjectTasksBoard(
     const id = task.dependency?.id;
     if (id && taskIdCounts.get(id) === 1) return `id:${id}`;
     return `source:${task.ref.filePath}:${String(task.ref.line)}`;
-  };
-  const taskPublicationSequence = (revision: string): number | undefined => {
-    const prefix = 'task-ref:1:';
-    if (!revision.startsWith(prefix)) return undefined;
-    try {
-      const parsed = JSON.parse(revision.slice(prefix.length)) as unknown;
-      if (!Array.isArray(parsed) || typeof parsed[1] !== 'string') return undefined;
-      const generation = Number.parseInt(parsed[1], 36);
-      return Number.isSafeInteger(generation) ? generation : undefined;
-    } catch {
-      return undefined;
-    }
   };
   const optimisticOverlay = options.overlayScope
     ? {
@@ -1742,8 +1810,9 @@ export function renderProjectTasksBoard(
         ),
         keyOf: stableTaskStatusKey,
         revision: ({ task }: ProjectAction) => task.ref.revision,
-        publicationSequence: ({ task }: ProjectAction) =>
-          taskPublicationSequence(task.ref.revision),
+        ...(options.publicationSequence !== undefined && {
+          publicationSequence: options.publicationSequence,
+        }),
         ...(options.taskSuccessor && {
           continuity: (observed: ProjectAction, published: ProjectAction) =>
             options.taskSuccessor!(observed.task, published.task),
@@ -1758,6 +1827,7 @@ export function renderProjectTasksBoard(
     columns: projectActionBoardColumns(options.statuses, options.actions),
     visibleColumnKeys: options.visibleColumnKeys,
     canonicalItems: options.actions,
+    canonicalPublicationItems: canonicalActions,
     mutation,
     itemKey: ({ task }) => taskPresentationKey(task.ref),
     itemLabel: ({ task }) => task.title,
@@ -1817,6 +1887,8 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
   readonly session?: WorkNoteBoardSession;
   readonly onAnnounce?: (message: string) => void;
   readonly overlayScope?: object;
+  readonly publicationSequence?: number;
+  readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
 }
 
 /** Adapts Project lifecycle records to the shared board shell. */
@@ -1934,6 +2006,13 @@ export function renderProjectsBoard(
             observed: project.observed,
             diagnostics: project.metadataDiagnostics,
           }),
+        ...(options.publicationSequence !== undefined && {
+          publicationSequence: options.publicationSequence,
+        }),
+        ...(options.pathSuccessor && {
+          continuity: (observed: (typeof projects)[number], published: (typeof projects)[number]) =>
+            options.pathSuccessor!(observed.path, published.path),
+        }),
         columnKey: (project: (typeof projects)[number]) => project.statusId ?? 'unmapped',
         presentationAnnouncement: true,
       }
@@ -1993,6 +2072,7 @@ export function renderProjectsBoard(
         false,
         true,
         false,
+        'board-card',
       );
     },
     session: options.session,

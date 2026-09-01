@@ -2944,6 +2944,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       nextStatusId: 'published',
     });
     let onProjectStoreUpdate = (): void => {};
+    let suppressProjectStoreRefresh = false;
     const subscribeToProjectStore = (listener: () => void): (() => void) => {
       onProjectStoreUpdate = listener;
       return () => {};
@@ -2953,7 +2954,9 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       get: () => project,
       activeForLeftPanel: () => [project],
       onUpdate: subscribeToProjectStore,
-      refresh: () => onProjectStoreUpdate(),
+      refresh: () => {
+        if (!suppressProjectStoreRefresh) onProjectStoreUpdate();
+      },
     } as never;
     const state = new AppState();
     state.set('mode', 'projects');
@@ -2987,7 +2990,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
 
       // The synchronous refresh still carries the optimistic previous snapshot. It must not be
       // mistaken for an external rollback while the Project index catches up.
-      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+      expect(container.querySelector('[data-board-undo]')).toBeNull();
 
       project.statusId = 'published';
       publishProjectSnapshot();
@@ -3001,17 +3004,32 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       project.statusId = activeStatusId;
       publishProjectSnapshot();
       await flushMicrotasks();
+      const publicationFirst = deferred<{
+        readonly type: 'ok';
+        readonly previousStatusId: string;
+        readonly nextStatusId: string;
+      }>();
+      setStatus.mockReturnValueOnce(publicationFirst.promise);
       const nextCard = container.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
       const nextTarget = container.querySelector<HTMLElement>('[data-board-column="published"]')!;
       nextCard.dispatchEvent(new Event('dragstart', { bubbles: true }));
       nextTarget.dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
       await flushMicrotasks();
-      expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+      expect(container.querySelector('[data-board-undo]')).toBeNull();
 
       project.statusId = 'published';
       publishProjectSnapshot();
       await flushMicrotasks();
+      expect(container.querySelector('[data-board-undo]')).toBeNull();
+      suppressProjectStoreRefresh = true;
+      publicationFirst.resolve({
+        type: 'ok',
+        previousStatusId: activeStatusId,
+        nextStatusId: 'published',
+      });
+      await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+      suppressProjectStoreRefresh = false;
 
       project.statusId = settings.projects.statuses[2]!.id;
       publishProjectSnapshot();
@@ -3089,6 +3107,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       await flushMicrotasks();
       project.statusId = 'published';
       panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      panel.refresh();
       await flushMicrotasks();
 
       container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
@@ -3203,6 +3222,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       await flushMicrotasks();
       project.statusId = 'published';
       panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
+      panel.refresh();
       container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
       await flushMicrotasks();
       panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);

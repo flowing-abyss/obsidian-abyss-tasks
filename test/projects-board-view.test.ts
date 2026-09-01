@@ -99,6 +99,187 @@ describe('shared board view', () => {
     ).toHaveLength(1);
   });
 
+  it('gates native-drag Undo on the matching canonical publication', async () => {
+    const el = freshContainer();
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    const render = (items: readonly (typeof todo)[], revision: string, sequence: number): void => {
+      el.empty();
+      renderBoard(el, {
+        columns: [
+          {
+            key: 'todo',
+            label: 'todo',
+            role: 'regular',
+            items: items.filter(({ status }) => status === 'todo'),
+          },
+          {
+            key: 'doing',
+            label: 'doing',
+            role: 'regular',
+            items: items.filter(({ status }) => status === 'doing'),
+          },
+        ],
+        mutation: { move: vi.fn().mockResolvedValue({ type: 'ok' }), menuItems: () => [] },
+        itemKey: ({ id }) => id,
+        renderItem: (host, current) => host.createEl('button', { text: current.name }),
+        undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+        optimisticOverlay: {
+          store: overlays,
+          keyOf: ({ id }) => id,
+          revision: () => revision,
+          publicationSequence: sequence,
+          columnKey: ({ status }) => status,
+        },
+      });
+    };
+
+    render([todo], 'one', 1);
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+    expect(overlays.active('a')).toBeDefined();
+
+    overlays.observePublication('a', { ...todo, status: 'doing' }, 'two', 2);
+    await flushMicrotasks();
+    expect(el.querySelector('[data-board-undo]')).not.toBeNull();
+  });
+
+  it('keeps native-drag Undo when publication wins the race with command completion', async () => {
+    const el = freshContainer();
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'ok' }>();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    overlays.observePublication('a', { ...todo, status: 'doing' }, 'two', 2);
+    completion.resolve({ type: 'ok' });
+    await flushMicrotasks();
+
+    expect(el.querySelector('[data-board-undo]')).not.toBeNull();
+  });
+
+  it('keeps controller Undo when publication wins the race with command completion', async () => {
+    const el = freshContainer();
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'ok' }>();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      interactionController: true,
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    const item = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    overlays.observePublication('a', { ...todo, status: 'doing' }, 'two', 2);
+    completion.resolve({ type: 'ok' });
+    await flushMicrotasks();
+
+    expect(el.querySelector('[data-board-undo]')).not.toBeNull();
+  });
+
+  it('finishes a native move after its renderer is replaced by publication', async () => {
+    const el = freshContainer();
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'ok' }>();
+    const onMutation = vi.fn();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    const board = renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      onMutation,
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    overlays.observePublication('a', { ...todo, status: 'doing' }, 'two', 2);
+    board.destroy();
+    completion.resolve({ type: 'ok' });
+    await flushMicrotasks();
+
+    expect(onMutation).toHaveBeenCalledOnce();
+  });
+
   it('rolls back an undefined board command once instead of leaving an overlay pending', async () => {
     const el = freshContainer();
     const announcements: string[] = [];
@@ -294,6 +475,115 @@ describe('shared board view', () => {
     expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(1);
     expect(el.querySelector('[data-board-column="done"] [data-board-item-surface]')).not.toBeNull();
     board.destroy();
+  });
+
+  it('reconciles a TaskRef successor after a line shift and file rename', async () => {
+    const scope = {};
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const original = task({ source: { filePath: 'Projects/A.md', line: 12 } });
+    const action = (current: typeof original): ProjectAction => ({
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    });
+    const statuses = [
+      { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo' as const, icon: '', core: true },
+      { id: 'done', symbol: 'x', name: 'Done', type: 'done' as const, icon: 'check', core: true },
+    ];
+    let board = renderProjectTasksBoard(el, {
+      actions: [action(original)],
+      canonicalActions: [action(original)],
+      publicationSequence: 1,
+      statuses,
+      onMoveStatus: vi.fn().mockResolvedValue({ type: 'ok', changed: true }),
+      renderItem: (host, current) => host.createEl('button', { text: current.task.title }),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+      taskSuccessor: (_observed, published) => published.ref.revision === 'revision:successor',
+    });
+    const focus = el.querySelector<HTMLElement>('[data-board-item-focus]')!;
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    board.destroy();
+
+    const successor = {
+      ...original,
+      ref: {
+        ...original.ref,
+        filePath: 'Archive/A.md',
+        line: 19,
+        revision: 'revision:successor',
+      },
+      source: { ...original.source, filePath: 'Archive/A.md', line: 19 },
+      status: 'done' as const,
+      statusSymbol: 'x',
+    };
+    board = renderProjectTasksBoard(el, {
+      actions: [action(successor)],
+      canonicalActions: [action(successor)],
+      publicationSequence: 2,
+      statuses,
+      onMoveStatus: vi.fn(),
+      renderItem: (host, current) => host.createEl('button', { text: current.task.title }),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+      taskSuccessor: (_observed, published) => published.ref.revision === 'revision:successor',
+    });
+
+    expect(announcements.filter((message) => message === 'Item moved.')).toHaveLength(1);
+    expect(el.querySelector('[data-board-column="done"] [data-board-item-surface]')).not.toBeNull();
+    board.destroy();
+  });
+
+  it('keeps a filtered task transaction when the complete canonical batch still contains it', async () => {
+    const scope = {};
+    const el = freshContainer();
+    const original = task({ source: { filePath: 'Projects/A.md', line: 12 } });
+    const announcements: string[] = [];
+    const action: ProjectAction = {
+      task: original,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
+    const statuses = [
+      { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo' as const, icon: '', core: true },
+      { id: 'done', symbol: 'x', name: 'Done', type: 'done' as const, icon: 'check', core: true },
+    ];
+    const handle = renderProjectTasksBoard(el, {
+      actions: [action],
+      canonicalActions: [action],
+      publicationSequence: 1,
+      statuses,
+      onMoveStatus: vi.fn().mockResolvedValue({ type: 'ok', changed: true }),
+      renderItem: (host, current) => host.createEl('button', { text: current.task.title }),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+    });
+    const focus = el.querySelector<HTMLElement>('[data-board-item-focus]')!;
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    handle.destroy();
+    el.empty();
+
+    renderProjectTasksBoard(el, {
+      actions: [],
+      canonicalActions: [action],
+      publicationSequence: 2,
+      statuses,
+      onMoveStatus: vi.fn(),
+      renderItem: (host, current) => host.createEl('button', { text: current.task.title }),
+      overlayScope: scope,
+      announce: (message) => announcements.push(message),
+    });
+
+    expect(announcements).not.toContain('Item changed outside the board');
   });
 
   it('exposes one roving selected tab/tabpanel and reaches both terminal bookends by keyboard', () => {

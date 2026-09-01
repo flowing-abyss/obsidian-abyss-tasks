@@ -297,6 +297,7 @@ describe('renderProjectsList', () => {
     const hierarchy = card.querySelector<HTMLElement>('.abyss-entity-presentation')!;
     expect(hierarchy).not.toBeNull();
     expect(hierarchy.parentElement).toBe(card);
+    expect(hierarchy.classList.contains('abyss-entity-presentation--board-card')).toBe(true);
     const slots = Array.from(card.querySelectorAll<HTMLElement>('[data-entity-slot]')).map(
       ({ dataset }) => dataset['entitySlot'],
     );
@@ -311,6 +312,70 @@ describe('renderProjectsList', () => {
     ])
       expect(slots).toContain(slot);
     expect(hierarchy.querySelector('[data-entity-slot="identity"]')?.textContent).toBe('A');
+  });
+
+  it('reconciles a Project move across a proven note rename publication', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const scope = {};
+    const announcements: string[] = [];
+    const el = freshContainer();
+    let handle = renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace()],
+      onMoveStatus: vi.fn().mockResolvedValue({
+        type: 'ok',
+        previousStatusId: ACTIVE_ID,
+        nextStatusId: 'published',
+      }),
+      onUndoStatus: vi.fn(),
+      overlayScope: scope,
+      publicationSequence: 1,
+      pathSuccessor: (before, after) =>
+        before === 'Projects/A.md' && after === 'Archive/Renamed A.md',
+      onAnnounce: (message) => announcements.push(message),
+    });
+    el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="published"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    handle.destroy();
+
+    const renamed = proj({
+      path: 'Archive/Renamed A.md',
+      name: 'Renamed A',
+      statusId: 'published',
+    });
+    handle = renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace(renamed)],
+      onMoveStatus: vi.fn(),
+      onUndoStatus: vi.fn(),
+      overlayScope: scope,
+      publicationSequence: 2,
+      pathSuccessor: (before, after) =>
+        before === 'Projects/A.md' && after === 'Archive/Renamed A.md',
+      onAnnounce: (message) => announcements.push(message),
+    });
+
+    expect(
+      announcements.filter((message) => message === 'Item moved. Undo available.'),
+    ).toHaveLength(1);
+    expect(el.querySelector('[data-board-item="Archive/Renamed A.md"]')).not.toBeNull();
+    handle.destroy();
   });
 
   it('marks the current shared Project priority action disabled', () => {
@@ -1136,7 +1201,7 @@ describe('renderProjectsList', () => {
     }
   });
 
-  it('contains dense Board evidence in the same two-line Project card without metadata overflow', () => {
+  it('contains dense Board evidence in the shared two-line card without metadata overflow', () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
     const style = activeDocument.head.createEl('style');
@@ -1166,17 +1231,15 @@ describe('renderProjectsList', () => {
 
       const row = el.querySelector<HTMLElement>('.abyss-project-row')!;
       const presentation = row.querySelector<HTMLElement>('.abyss-entity-presentation')!;
-      const lines = row.querySelectorAll<HTMLElement>('.abyss-project-row-line');
-      expect(lines).toHaveLength(2);
-      expect(presentation.classList.contains('abyss-entity-presentation--project-row')).toBe(true);
-      expect(
-        presentation.classList.contains('abyss-entity-presentation--project-row-two-line'),
-      ).toBe(true);
-      expect(getComputedStyle(presentation).display).toBe('grid');
-      expect(getComputedStyle(presentation).gridRow).toBe('1 / -1');
-      expect(Array.from(lines).every((line) => getComputedStyle(line).overflow === 'hidden')).toBe(
-        true,
+      const lines = row.querySelectorAll<HTMLElement>(
+        '.abyss-entity-presentation--board-card > .abyss-entity-primary, .abyss-entity-presentation--board-card > .abyss-entity-secondary',
       );
+      expect(lines).toHaveLength(2);
+      expect(presentation.classList.contains('abyss-entity-presentation--board-card')).toBe(true);
+      expect(getComputedStyle(presentation).display).toBe('grid');
+      expect(
+        Array.from(lines).every((line) => /^0(?:px)?$/u.test(getComputedStyle(line).minWidth)),
+      ).toBe(true);
       expect(row.querySelector('.abyss-project-row-meta')).toBeNull();
       expect(row.textContent).not.toMatch(/\bTasks\b|\bWork Notes\b/u);
     } finally {

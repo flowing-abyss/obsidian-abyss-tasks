@@ -27,6 +27,10 @@ export const WORK_NOTE_OVERSCAN = 4;
 
 export interface WorkNotesViewOptions {
   readonly notes: readonly WorkNoteSnapshot[];
+  /** Complete source publication, independent of the current filter/query. */
+  readonly canonicalNotes?: readonly WorkNoteSnapshot[];
+  readonly publicationSequence?: number;
+  readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
   readonly statuses: readonly WorkNoteStatusDefinition[];
   readonly layout: 'list' | 'board';
   readonly viewState?: WorkNotesViewState;
@@ -538,6 +542,11 @@ function renderWorkNoteBoard(
   };
   return renderWorkNotesBoard(container, {
     notes,
+    ...(options.canonicalNotes && { canonicalNotes: options.canonicalNotes }),
+    ...(options.publicationSequence !== undefined && {
+      publicationSequence: options.publicationSequence,
+    }),
+    ...(options.pathSuccessor && { pathSuccessor: options.pathSuccessor }),
     statuses: options.statuses,
     onMoveStatus: (note, statusId) => Promise.resolve(options.onSetStatus(note, statusId)),
     renderItem: (host, note) =>

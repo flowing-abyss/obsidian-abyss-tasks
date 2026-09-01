@@ -48,6 +48,8 @@ export interface OptimisticOverlayStore<
     sequence?: number,
     continuity?: (observed: TSnapshot, published: TSnapshot) => boolean,
   ): void;
+  /** Reconciles one complete canonical batch; stale omissions cannot cancel newer authority. */
+  reconcileCanonicalKeys(keys: ReadonlySet<string>, sequence?: number): void;
   observeCommandResult(key: string, result: TResult, transactionId: number, token?: object): void;
   read(key: string): TSnapshot | undefined;
   cancel(
@@ -103,6 +105,14 @@ interface Entry<TSnapshot, TPatch> {
 }
 
 const applicationStores = new WeakMap<object, Map<string, { dispose(): void }>>();
+const applicationPublicationSequences = new WeakMap<object, number>();
+
+/** Allocates one source-batch watermark shared by every pane and entity store in an application. */
+export function nextOptimisticPublicationSequence(application: object): number {
+  const sequence = (applicationPublicationSequences.get(application) ?? 0) + 1;
+  applicationPublicationSequences.set(application, sequence);
+  return sequence;
+}
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (value === null || typeof value !== 'object' || seen.has(value)) return value;
@@ -236,7 +246,6 @@ export function createOptimisticOverlayStore<
     },
 
     observePublication(key, snapshot, revision, suppliedSequence, continuity) {
-      const sequence = suppliedSequence ?? ++nextPublicationSequence;
       let entry = entries.get(key);
       // A TaskRef may receive a proven successor after a status write, line shift or
       // rename. Rebind only when the entity adapter supplies that authoritative proof;
@@ -248,10 +257,12 @@ export function createOptimisticOverlayStore<
         );
         if (previous) {
           entry = previous[1];
+          entries.delete(previous[0]);
           entries.set(key, entry);
         }
       }
       if (!entry) {
+        const sequence = suppliedSequence ?? ++nextPublicationSequence;
         entries.set(key, {
           canonical: snapshot,
           announced: false,
@@ -259,6 +270,7 @@ export function createOptimisticOverlayStore<
         });
         return;
       }
+      const sequence = suppliedSequence ?? ++nextPublicationSequence;
       if (entry.lastPublicationSequence !== undefined && sequence <= entry.lastPublicationSequence)
         return;
       entry.lastPublicationSequence = sequence;
@@ -311,6 +323,25 @@ export function createOptimisticOverlayStore<
 
     active(key) {
       return entries.get(key)?.transaction;
+    },
+
+    reconcileCanonicalKeys(keys, suppliedSequence) {
+      const present = new Set<Entry<TSnapshot, TPatch>>();
+      for (const key of keys) {
+        const entry = entries.get(key);
+        if (entry) present.add(entry);
+      }
+      const sequence = suppliedSequence ?? ++nextPublicationSequence;
+      for (const [key, entry] of entries) {
+        if (
+          entry.transaction &&
+          !present.has(entry) &&
+          (entry.lastPublicationSequence === undefined || sequence > entry.lastPublicationSequence)
+        ) {
+          entry.lastPublicationSequence = sequence;
+          settle(key, 'competing-publication');
+        }
+      }
     },
 
     subscribe(listener, owner) {
@@ -368,4 +399,5 @@ export function disposeOptimisticOverlayStores(application: object): void {
   if (!stores) return;
   for (const store of stores.values()) store.dispose();
   applicationStores.delete(application);
+  applicationPublicationSequences.delete(application);
 }

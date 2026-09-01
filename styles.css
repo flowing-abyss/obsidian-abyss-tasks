@@ -3327,9 +3327,10 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 }
 
 /* Board cards retain their draggable outer host while EntityPresentation owns content slots. */
-.abyss-entity-presentation--board-card {
+.abyss-entity-presentation.abyss-entity-presentation--board-card {
   min-width: 0;
   display: grid;
+  grid-row: 1 / -1;
   gap: 4px;
 }
 

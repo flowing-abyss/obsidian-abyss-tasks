@@ -97,6 +97,9 @@ export interface ProjectsPanelOptions {
   nextActionState?: (
     task: ProjectWorkspaceSnapshot['tasks'][number]['task'],
   ) => boolean | undefined;
+  /** Monotonic ProjectWorkspaceReadModel publication owned by CenterPanel. */
+  publicationSequence?: number;
+  pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
 }
 
 export interface PendingProjectBoardUndo {
@@ -133,6 +136,8 @@ export class ProjectsPanel {
   private readonly onAnnounce: (message: string) => void;
   private readonly onTaskContextMenu: ProjectsPanelOptions['onTaskContextMenu'];
   private readonly nextActionState: ProjectsPanelOptions['nextActionState'];
+  private readonly publicationSequence: number | undefined;
+  private readonly pathSuccessor: ProjectsPanelOptions['pathSuccessor'];
   private viewCleanup: (() => void) | null = null;
   /** The dashboard owns a mounted collection instance until an actual close. */
   private dashboardSessionPath: string | null = null;
@@ -171,6 +176,8 @@ export class ProjectsPanel {
     this.onAnnounce = opts.onAnnounce ?? ((): void => {});
     this.onTaskContextMenu = opts.onTaskContextMenu;
     this.nextActionState = opts.nextActionState;
+    this.publicationSequence = opts.publicationSequence;
+    this.pathSuccessor = opts.pathSuccessor;
   }
 
   private async createProject(name: string): Promise<ProjectCreateResult> {
@@ -293,6 +300,7 @@ export class ProjectsPanel {
     viewState: WorkNotesViewState,
     layout: 'list' | 'board',
     milestoneRollups: ReadonlyMap<string, MilestoneRollup>,
+    canonicalNotes: ProjectWorkspaceSnapshot['workNotes'] = notes,
   ): ProjectChildRenderHandle {
     if (!this.workNoteCommands) return { destroy: () => undefined };
     const capabilities = this.workNoteCommands.capabilities();
@@ -327,6 +335,11 @@ export class ProjectsPanel {
     let isNarrow = narrow();
     let child = renderWorkNotesView(host, {
       notes,
+      canonicalNotes,
+      ...(this.publicationSequence !== undefined && {
+        publicationSequence: this.publicationSequence,
+      }),
+      ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
       statuses: this.workNoteCommands.statuses(),
       layout,
       viewState,
@@ -369,6 +382,11 @@ export class ProjectsPanel {
           child.destroy();
           child = renderWorkNotesView(host, {
             notes,
+            canonicalNotes,
+            ...(this.publicationSequence !== undefined && {
+              publicationSequence: this.publicationSequence,
+            }),
+            ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
             statuses: this.workNoteCommands!.statuses(),
             layout,
             viewState,
@@ -539,6 +557,15 @@ export class ProjectsPanel {
           reason: 'Work Notes setup needs validation',
         };
       }
+      // The overlay registry is application-owned, so disappearance is proven
+      // against the complete cross-Project publication, not the active filter.
+      const canonicalWorkNotes = [
+        ...new Map(
+          this.snapshots
+            .flatMap((candidate) => [...candidate.workNotes, ...candidate.milestones])
+            .map((note) => [note.path, note] as const),
+        ).values(),
+      ];
       const dashboard = renderProjectDashboard(container, snapshot, {
         state: this.state,
         settings: this.settings,
@@ -589,6 +616,7 @@ export class ProjectsPanel {
                   viewState,
                   'list',
                   snapshot.milestoneRollups,
+                  canonicalWorkNotes,
                 ),
               renderWorkNoteBoard: (host, path, notes) =>
                 this.renderWorkNotes(
@@ -598,6 +626,7 @@ export class ProjectsPanel {
                   this.workspaceSession.collectionView(path, 'work-notes'),
                   'board',
                   snapshot.milestoneRollups,
+                  canonicalWorkNotes,
                 ),
               renderWorkNoteTimeline: (host, _path, notes) =>
                 this.renderWorkNoteTimeline(host, notes),
@@ -765,6 +794,10 @@ export class ProjectsPanel {
         session: this.workspaceSession.portfolioBoard,
         onAnnounce: this.onAnnounce,
         overlayScope: this.app,
+        ...(this.publicationSequence !== undefined && {
+          publicationSequence: this.publicationSequence,
+        }),
+        ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
       });
       this.viewCleanup = () => board.destroy();
     } else {

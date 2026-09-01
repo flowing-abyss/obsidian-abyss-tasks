@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createOptimisticOverlayStore,
   disposeOptimisticOverlayStores,
+  nextOptimisticPublicationSequence,
   optimisticOverlayStoreFor,
   type CommandResult,
 } from '../src/ui/interaction/OptimisticOverlayStore';
@@ -149,7 +150,7 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store();
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
-    overlays.observePublication(observed.id, published, 'revision:2');
+    overlays.observePublication(observed.id, published, 'revision:2', 2);
     const second = overlays.begin(published, 'revision:2', 'done');
 
     overlays.observeCommandResult(observed.id, { type: 'conflict' }, first.id);
@@ -178,12 +179,13 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store();
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
-    overlays.observePublication(observed.id, published, 'revision:2', 2);
+    overlays.observePublication(observed.id, published, 'revision:2');
     const second = overlays.begin(published, 'revision:2', 'done');
 
     // The old source batch arrived after r2. Its sequence, not its arrival time,
     // proves that it cannot settle or cancel the second command.
     overlays.observePublication(observed.id, observed, 'revision:1', 1);
+    overlays.reconcileCanonicalKeys(new Set(), 1);
     overlays.observePublication(observed.id, published, 'revision:2', 2);
 
     expect(overlays.active(observed.id)?.id).toBe(second.id);
@@ -191,6 +193,42 @@ describe('OptimisticOverlayStore', () => {
     overlays.observePublication(observed.id, { ...published, status: 'done' }, 'revision:3', 3);
     expect(overlays.active(observed.id)).toBeUndefined();
     expect(first.token).not.toBe(second.token);
+  });
+
+  it('accepts a newer complete batch when presentation data changes without a revision change', () => {
+    const overlays = store();
+    overlays.observePublication(observed.id, observed, 'revision:1', 1);
+    const dependencyChanged = {
+      ...observed,
+      note: { ...observed.note, tags: ['keep', 'blocked'] },
+    };
+
+    overlays.observePublication(observed.id, dependencyChanged, 'revision:1', 2);
+
+    expect(overlays.read(observed.id)).toBe(dependencyChanged);
+  });
+
+  it('does not let an omitted key from a delayed older complete batch cancel a newer move', () => {
+    const overlays = store();
+    overlays.observePublication(observed.id, observed, 'revision:1', 10);
+    overlays.begin(observed, 'revision:1', 'doing');
+
+    overlays.reconcileCanonicalKeys(new Set(), 9);
+
+    expect(overlays.active(observed.id)).toBeDefined();
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'doing' });
+  });
+
+  it('rolls back an unproven moved or deleted entity as soon as a complete batch omits it', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    overlays.begin(observed, 'revision:1', 'doing');
+
+    overlays.reconcileCanonicalKeys(new Set(), 2);
+
+    expect(overlays.active(observed.id)).toBeUndefined();
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'todo' });
+    expect(announce).toHaveBeenCalledWith('Item changed outside the board');
   });
 
   it('requires the immutable transaction token when a result races a later transaction', () => {
@@ -223,6 +261,34 @@ describe('OptimisticOverlayStore', () => {
     expect(overlays.read(renamed.id)).toBe(renamed);
     expect(overlays.active(observed.id)).toBeUndefined();
     expect(transaction.key).toBe(observed.id);
+  });
+
+  it('releases a predecessor key when a proven successor is rebound', () => {
+    const overlays = store();
+    overlays.begin(observed, 'revision:1', 'doing');
+    const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
+
+    overlays.observePublication(
+      renamed.id,
+      renamed,
+      'revision:2',
+      2,
+      (before, after) => before.id === observed.id && after.id === renamed.id,
+    );
+    const reusedPath = { ...observed, status: 'todo' };
+    overlays.observePublication(observed.id, reusedPath, 'revision:new-entity', 3);
+
+    expect(overlays.read(renamed.id)).toBe(renamed);
+    expect(overlays.read(observed.id)).toBe(reusedPath);
+  });
+
+  it('allocates publication sequences monotonically for an application lifetime', () => {
+    const application = {};
+    const otherApplication = {};
+
+    expect(nextOptimisticPublicationSequence(application)).toBe(1);
+    expect(nextOptimisticPublicationSequence(application)).toBe(2);
+    expect(nextOptimisticPublicationSequence(otherApplication)).toBe(1);
   });
 
   it('keeps an initiating owner, falls back only to a live mount, and never calls a closed pane', () => {

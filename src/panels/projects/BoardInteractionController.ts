@@ -258,6 +258,7 @@ export class BoardInteractionController<
   private readonly maxAutoscrollSpeed: number;
   private active?: ActiveInteraction<ItemId, ColumnId>;
   private undoToken?: StoredUndo<ItemId, ColumnId, UndoAuthority>;
+  private publishedUndoToken?: StoredUndo<ItemId, ColumnId, UndoAuthority>;
   private undoPending = false;
   private epoch = 0;
 
@@ -592,8 +593,19 @@ export class BoardInteractionController<
     evidence: string,
     move: BoardMoveIntent<ItemId, ColumnId>,
   ): boolean {
-    if (this.active || this.undoPending || this.undoToken) return false;
-    this.undoToken = Object.freeze({ authority, evidence, move });
+    if (this.undoPending || this.undoToken) return false;
+    const token = Object.freeze({ authority, evidence, move });
+    if (this.active) {
+      if (
+        !this.active.pending ||
+        this.active.itemId !== move.itemId ||
+        this.active.epoch !== move.interactionEpoch
+      )
+        return false;
+      this.publishedUndoToken = token;
+      return true;
+    }
+    this.undoToken = token;
     this.publish();
     return true;
   }
@@ -748,13 +760,17 @@ export class BoardInteractionController<
     this.active = undefined;
     if (result.type === 'success') {
       this.undoToken =
-        result.settled !== false && result.undo ? { ...result.undo, move: intent } : undefined;
+        result.settled !== false && result.undo
+          ? { ...result.undo, move: intent }
+          : this.publishedUndoToken;
+      this.publishedUndoToken = undefined;
       this.ports.restoreFocus?.(active.itemId, destination.columnId);
       if (result.settled !== false) {
         this.ports.announce({ type: 'success' });
         if (this.undoToken) this.ports.announce({ type: 'undo-available' });
       }
     } else {
+      this.publishedUndoToken = undefined;
       if (!result.announced) this.ports.announce({ type: result.type, reason: result.reason });
       this.ports.restoreFocus?.(active.itemId, active.source.columnId);
     }
@@ -766,6 +782,7 @@ export class BoardInteractionController<
     const active = this.active;
     if (!active) return;
     this.active = undefined;
+    this.publishedUndoToken = undefined;
     this.epoch += 1;
     if (releasePointer && active.pointerId !== undefined && active.pointerCaptured) {
       this.ports.releasePointer?.(active.pointerId);

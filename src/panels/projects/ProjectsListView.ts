@@ -503,6 +503,7 @@ export function renderProjectRow(
   ownsArrowNavigation = true,
   showStatusControl = true,
   spaceActivates = true,
+  presentationLayout: 'row' | 'board-card' = 'row',
 ): HTMLElement {
   const project = snapshot.project;
   const row = parent.createDiv({
@@ -555,13 +556,26 @@ export function renderProjectRow(
     secondary = { value: reason, className: 'abyss-project-health-reason' };
   }
 
+  const boardCard = presentationLayout === 'board-card';
+  let layout: 'board-card' | 'project-row-two-line' | 'project-row-single-line';
+  if (boardCard) layout = 'board-card';
+  else if (hasSecondaryMetadata) layout = 'project-row-two-line';
+  else layout = 'project-row-single-line';
   const presentation = new EntityPresentation({
-    layout: hasSecondaryMetadata ? 'project-row-two-line' : 'project-row-single-line',
+    layout,
     actionsClassName: 'abyss-project-row-actions',
-    primarySlots: ['health', 'identity', 'priority', 'progress'],
-    secondarySlots: ['secondary', 'date', 'relations'],
-    primaryClassName: 'abyss-project-row-line abyss-project-row-line--primary',
-    secondaryClassName: 'abyss-project-row-line abyss-project-row-line--secondary',
+    primarySlots: boardCard
+      ? ['identity', 'priority', 'date']
+      : ['health', 'identity', 'priority', 'progress'],
+    secondarySlots: boardCard
+      ? ['progress', 'health', 'relations', 'secondary']
+      : ['secondary', 'date', 'relations'],
+    primaryClassName: boardCard
+      ? 'abyss-entity-primary'
+      : 'abyss-project-row-line abyss-project-row-line--primary',
+    secondaryClassName: boardCard
+      ? 'abyss-entity-secondary'
+      : 'abyss-project-row-line abyss-project-row-line--secondary',
     identity: {
       value: project.name,
       text: '',
