@@ -13,9 +13,25 @@ interface WorkNoteDeletionSource {
   get(path: string): WorkNoteSnapshot | undefined;
 }
 
+interface WorkNoteDeletionPreviewState {
+  readonly note: WorkNoteSnapshot;
+  readonly tasks: readonly TaskSnapshot[];
+  readonly identity: WorkNoteDeletionIdentity;
+  readonly frontmatterRaw: string;
+  readonly attemptGeneration: number;
+}
+
 type ExpectedTaskRevision = TaskRef;
 
 type WorkNoteDeletionAction = 'cancel' | 'move-to-project' | 'move-to-work-note';
+
+interface VaultDeletionTransactions {
+  readonly tails: Map<string, Promise<void>>;
+  readonly generations: Map<string, number>;
+  readonly recoveryOnly: Map<string, number>;
+}
+
+const vaultDeletionTransactions = new WeakMap<object, VaultDeletionTransactions>();
 
 export interface WorkNoteDeletionRecovery {
   readonly notePath: string;
@@ -28,6 +44,8 @@ export interface WorkNoteDeletionRecovery {
   readonly copiedSourceRemains: readonly MoveRecovery[];
   /** Exact source observation at the partial boundary; restart is a CAS operation. */
   readonly sourceIdentity: WorkNoteDeletionIdentity;
+  /** Consumed-attempt generation; only this explicit recovery may continue the partial move. */
+  readonly attemptGeneration: number;
 }
 
 export interface WorkNoteDeletionIdentity {
@@ -215,12 +233,7 @@ class ObsidianWorkNoteDeletionPort implements WorkNoteDeletionPort {
  * The recovery record is caller-owned and can be passed back after an external edit is resolved.
  */
 export class WorkNoteDeletionCoordinator {
-  private previewed?: {
-    readonly note: WorkNoteSnapshot;
-    readonly tasks: readonly TaskSnapshot[];
-    readonly identity: WorkNoteDeletionIdentity;
-    readonly frontmatterRaw: string;
-  };
+  private previewed?: WorkNoteDeletionPreviewState;
   private readonly deletion: WorkNoteDeletionPort;
 
   constructor(
@@ -230,6 +243,15 @@ export class WorkNoteDeletionCoordinator {
     deletion?: WorkNoteDeletionPort,
   ) {
     this.deletion = deletion ?? new ObsidianWorkNoteDeletionPort(app);
+  }
+
+  private transactions(): VaultDeletionTransactions {
+    let transactions = vaultDeletionTransactions.get(this.app.vault);
+    if (!transactions) {
+      transactions = { tails: new Map(), generations: new Map(), recoveryOnly: new Map() };
+      vaultDeletionTransactions.set(this.app.vault, transactions);
+    }
+    return transactions;
   }
 
   async preview(note: WorkNoteSnapshot): Promise<WorkNoteDeletionPreview> {
@@ -256,6 +278,7 @@ export class WorkNoteDeletionCoordinator {
       tasks,
       identity,
       frontmatterRaw: rawFrontmatter(identity.content),
+      attemptGeneration: this.transactions().generations.get(note.path) ?? 0,
     };
     return tasks.length === 0
       ? { type: 'ready', taskCount: 0 }
@@ -295,6 +318,10 @@ export class WorkNoteDeletionCoordinator {
     remaining: readonly TaskRef[],
     copiedSourceRemains: readonly MoveRecovery[] = [],
   ): WorkNoteDeletionRecovery {
+    const attemptGeneration = this.transactions().generations.get(notePath) ?? 0;
+    if (copiedSourceRemains.length > 0) {
+      this.transactions().recoveryOnly.set(notePath, attemptGeneration);
+    }
     return {
       notePath,
       destinationPath,
@@ -303,6 +330,7 @@ export class WorkNoteDeletionCoordinator {
       settledTaskCount: settled.length,
       remainingTaskCount: remaining.length,
       sourceIdentity: { ...sourceIdentity },
+      attemptGeneration,
       copiedSourceRemains: copiedSourceRemains.map((entry) => ({
         ...entry,
         source: { ...entry.source },
@@ -315,24 +343,69 @@ export class WorkNoteDeletionCoordinator {
     note: WorkNoteSnapshot,
     command: WorkNoteDeleteCommand,
     identity: WorkNoteDeletionIdentity | null,
+    previewed: WorkNoteDeletionPreviewState,
   ): boolean {
-    const previewed = this.previewed;
     return (
       !identity ||
-      !previewed ||
       !sameIdentity(identity, command.recovery?.sourceIdentity ?? previewed.identity) ||
       rawFrontmatter(identity.content) !== previewed.frontmatterRaw ||
       this.workNotes.get(note.path)?.projectPath !== previewed.note.projectPath
     );
   }
 
+  private enqueue<T>(notePath: string, operation: () => Promise<T>): Promise<T> {
+    const { tails } = this.transactions();
+    const previous = tails.get(notePath) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    const tail = current.then(
+      () => undefined,
+      () => undefined,
+    );
+    tails.set(notePath, tail);
+    void tail.then(() => {
+      if (tails?.get(notePath) === tail) tails.delete(notePath);
+    });
+    return current;
+  }
+
+  delete(command: WorkNoteDeleteCommand): Promise<WorkNoteDeletionResult> {
+    if (command.action === 'cancel') return Promise.resolve({ type: 'cancelled' });
+    const previewed = this.previewed;
+    const note = command.note ?? previewed?.note;
+    if (!note || !previewed || previewed.note.path !== note.path) {
+      return Promise.resolve({
+        type: 'invalid-decision',
+        reason: 'Preview the Work Note first.',
+      });
+    }
+    return this.enqueue(note.path, () => this.deleteInTransaction(command, note, previewed));
+  }
+
   // The explicit phases keep every destructive boundary and recovery identity auditable together.
   // eslint-disable-next-line sonarjs/cognitive-complexity
-  async delete(command: WorkNoteDeleteCommand): Promise<WorkNoteDeletionResult> {
-    if (command.action === 'cancel') return { type: 'cancelled' };
-    const note = command.note ?? this.previewed?.note;
-    if (!note || !this.previewed || this.previewed.note.path !== note.path) {
-      return { type: 'invalid-decision', reason: 'Preview the Work Note first.' };
+  private async deleteInTransaction(
+    command: WorkNoteDeleteCommand,
+    note: WorkNoteSnapshot,
+    previewed: WorkNoteDeletionPreviewState,
+  ): Promise<WorkNoteDeletionResult> {
+    const transactions = this.transactions();
+    const currentGeneration = transactions.generations.get(note.path) ?? 0;
+    const expectedGeneration = command.recovery?.attemptGeneration ?? previewed.attemptGeneration;
+    const recoveryOnlyGeneration = transactions.recoveryOnly.get(note.path);
+    if (
+      recoveryOnlyGeneration !== undefined &&
+      command.recovery?.attemptGeneration !== recoveryOnlyGeneration
+    ) {
+      return {
+        type: 'invalid-decision',
+        reason: 'A partial copy exists. Use its explicit deletion recovery.',
+      };
+    }
+    if (expectedGeneration !== currentGeneration) {
+      return {
+        type: 'invalid-decision',
+        reason: 'This deletion preview was already consumed. Use its explicit recovery.',
+      };
     }
     const decision = this.decision(note, command);
     if ('type' in decision) return decision;
@@ -345,7 +418,7 @@ export class WorkNoteDeletionCoordinator {
     }
 
     const initialIdentity = await this.deletion.observe(note.path);
-    if (this.sourceChangedBeforeSettlement(note, command, initialIdentity)) {
+    if (this.sourceChangedBeforeSettlement(note, command, initialIdentity, previewed)) {
       return {
         type: 'partial',
         path: note.path,
@@ -353,17 +426,19 @@ export class WorkNoteDeletionCoordinator {
         recovery: this.recovery(
           note.path,
           decision.destinationPath,
-          initialIdentity ?? this.previewed.identity,
+          initialIdentity ?? previewed.identity,
           command.recovery?.settledTaskRefs ?? [],
           command.expectedTaskRevisions,
           command.recovery?.copiedSourceRemains ?? [],
         ),
       };
     }
+    if (command.recovery) transactions.recoveryOnly.delete(note.path);
+    transactions.generations.set(note.path, currentGeneration + 1);
 
     let settlementIdentity = initialIdentity!;
     const settled = [...(command.recovery?.settledTaskRefs ?? [])];
-    const previewTasks = new Map(this.previewed.tasks.map((task) => [taskKey(task.ref), task]));
+    const previewTasks = new Map(previewed.tasks.map((task) => [taskKey(task.ref), task]));
     const expectedSourceLine = (task: TaskSnapshot): number => {
       const original = previewTasks.get(taskKey(task.ref)) ?? task;
       return settled.reduce((line, ref) => {
@@ -372,6 +447,17 @@ export class WorkNoteDeletionCoordinator {
           ? line - blockLineCount(removed)
           : line;
       }, original.source.line);
+    };
+    const stablePreviewTask = (task: TaskSnapshot): TaskSnapshot | undefined => {
+      const exact = previewTasks.get(taskKey(task.ref));
+      if (exact && !settled.some((ref) => taskKey(ref) === taskKey(exact.ref))) return exact;
+      const candidates = previewed.tasks.filter(
+        (candidate) =>
+          !settled.some((ref) => taskKey(ref) === taskKey(candidate.ref)) &&
+          candidate.source.originalBlock === task.source.originalBlock &&
+          expectedSourceLine(candidate) === task.source.line,
+      );
+      return candidates.length === 1 ? candidates[0] : undefined;
     };
     const copiedSourceRemains = [...(command.recovery?.copiedSourceRemains ?? [])];
     for (let index = 0; index < copiedSourceRemains.length; index += 1) {
@@ -431,6 +517,24 @@ export class WorkNoteDeletionCoordinator {
           ),
         };
       }
+      const stableSourceTask = stablePreviewTask(sourceTask);
+      if (!stableSourceTask) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'ambiguous-task',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            command.expectedTaskRevisions.filter(
+              (ref) => !settled.some((done) => taskKey(done) === taskKey(ref)),
+            ),
+            copiedSourceRemains.slice(index),
+          ),
+        };
+      }
       const cleanup = await this.tasks.execute({ type: 'delete', ref: recovery.source });
       const afterCleanup = await this.deletion.observe(note.path);
       if (cleanup.type !== 'ok') {
@@ -454,8 +558,8 @@ export class WorkNoteDeletionCoordinator {
         !expectedTaskTransition(
           settlementIdentity,
           afterCleanup,
-          sourceTask,
-          expectedSourceLine(sourceTask),
+          stableSourceTask,
+          expectedSourceLine(stableSourceTask),
         )
       ) {
         return {
@@ -468,12 +572,12 @@ export class WorkNoteDeletionCoordinator {
             settlementIdentity,
             settled,
             command.expectedTaskRevisions,
-            copiedSourceRemains.slice(index + 1),
+            copiedSourceRemains.slice(index),
           ),
         };
       }
       settlementIdentity = afterCleanup;
-      settled.push(recovery.source);
+      settled.push(stableSourceTask.ref);
     }
 
     const currentTasks = this.tasks.queries.list({ filePath: note.path });
@@ -618,7 +722,7 @@ export class WorkNoteDeletionCoordinator {
     const finalIdentity = await this.deletion.observe(note.path);
     if (
       !sameIdentity(finalIdentity, settlementIdentity) ||
-      rawFrontmatter(finalIdentity!.content) !== this.previewed.frontmatterRaw
+      rawFrontmatter(finalIdentity!.content) !== previewed.frontmatterRaw
     ) {
       return {
         type: 'partial',

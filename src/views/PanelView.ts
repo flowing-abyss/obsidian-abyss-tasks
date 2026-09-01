@@ -215,6 +215,7 @@ export class PanelView extends ItemView {
       readonly recovery: WorkNoteDeletionRecovery;
     }
   >();
+  private readonly pendingWorkNoteDeletions = new Set<string>();
 
   private inspectorReturnTarget(origin: InspectorFocusOrigin | null): HTMLElement | null {
     if (origin?.element?.isConnected) return origin.element;
@@ -233,40 +234,45 @@ export class PanelView extends ItemView {
     expectedTaskRevisions: readonly TaskRef[],
     recovery?: WorkNoteDeletionRecovery,
   ): Promise<void> {
-    if (!this.workNoteDeletion) return;
-    const result = await this.workNoteDeletion.delete({
-      note,
-      action: destinationPath === note.projectPath ? 'move-to-project' : 'move-to-work-note',
-      ...(destinationPath !== note.projectPath && {
-        destinationWorkNotePath: destinationPath,
-      }),
-      expectedTaskRevisions,
-      ...(recovery && { recovery }),
-    });
-    if (result.type === 'ok') {
-      this.workNoteDeletionRecovery.delete(note.path);
-      new Notice(`${note.kind === 'milestone' ? 'Milestone' : 'Work note'} deleted.`);
-      this.state.batch(() => {
-        this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
-        this.state.set('inspectorOrigin', null);
-      });
-      this.center.refresh();
-      return;
-    }
-    if (result.type === 'partial') {
-      this.workNoteDeletionRecovery.set(note.path, {
-        destinationPath,
+    if (!this.workNoteDeletion || this.pendingWorkNoteDeletions.has(note.path)) return;
+    this.pendingWorkNoteDeletions.add(note.path);
+    try {
+      const result = await this.workNoteDeletion.delete({
+        note,
+        action: destinationPath === note.projectPath ? 'move-to-project' : 'move-to-work-note',
+        ...(destinationPath !== note.projectPath && {
+          destinationWorkNotePath: destinationPath,
+        }),
         expectedTaskRevisions,
-        recovery: result.recovery,
+        ...(recovery && { recovery }),
       });
-      new Notice(
-        `Deletion paused: ${String(result.recovery.remainingTaskCount)} tasks remain. The note was kept.`,
-      );
-      return;
+      if (result.type === 'ok') {
+        this.workNoteDeletionRecovery.delete(note.path);
+        new Notice(`${note.kind === 'milestone' ? 'Milestone' : 'Work note'} deleted.`);
+        this.state.batch(() => {
+          this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
+          this.state.set('inspectorOrigin', null);
+        });
+        this.center.refresh();
+        return;
+      }
+      if (result.type === 'partial') {
+        this.workNoteDeletionRecovery.set(note.path, {
+          destinationPath,
+          expectedTaskRevisions,
+          recovery: result.recovery,
+        });
+        new Notice(
+          `Deletion paused: ${String(result.recovery.remainingTaskCount)} tasks remain. The note was kept.`,
+        );
+        return;
+      }
+      this.workNoteDeletionRecovery.delete(note.path);
+      if (result.type !== 'cancelled')
+        new Notice('Work note was not deleted. Review changes and retry.');
+    } finally {
+      this.pendingWorkNoteDeletions.delete(note.path);
     }
-    this.workNoteDeletionRecovery.delete(note.path);
-    if (result.type !== 'cancelled')
-      new Notice('Work note was not deleted. Review changes and retry.');
   }
 
   private async requestWorkNoteDeletion(

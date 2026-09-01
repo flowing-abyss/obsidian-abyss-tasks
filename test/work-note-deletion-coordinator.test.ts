@@ -6,7 +6,7 @@ import {
 } from '../src/projects/work-notes/WorkNoteDeletionCoordinator';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import type { TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
-import { createAppWithFiles, task } from './helpers';
+import { createAppWithFiles, deferred, task } from './helpers';
 
 function note(path = 'Work/A.md', kind: WorkNoteSnapshot['kind'] = 'ordinary'): WorkNoteSnapshot {
   return {
@@ -152,6 +152,98 @@ describe('WorkNoteDeletionCoordinator', () => {
       })),
     );
     expect(await exists(h.app, note().path)).toBe(false);
+  });
+
+  it('serializes concurrent deletion transactions across coordinators for the same vault note', async () => {
+    const snapshots = [ownedTask(1)];
+    const h = await fixture(snapshots);
+    const release = deferred<void>();
+    h.tasks.execute.mockImplementationOnce(async (command) => {
+      await release.promise;
+      return h.settleTask(command);
+    });
+    const peer = new WorkNoteDeletionCoordinator(h.app, h.tasks as never, h.workNotes);
+    await Promise.all([h.coordinator.preview(note()), peer.preview(note())]);
+    const command = {
+      action: 'move-to-project' as const,
+      expectedTaskRevisions: expectedRevisions(snapshots),
+    };
+
+    const first = h.coordinator.delete(command);
+    const overlapping = peer.delete(command);
+    await vi.waitFor(() => expect(h.tasks.execute).toHaveBeenCalledTimes(1));
+    expect(await exists(h.app, note().path)).toBe(true);
+    release.resolve();
+
+    await expect(first).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
+    await expect(overlapping).resolves.toMatchObject({ type: 'invalid-decision' });
+    expect(h.tasks.execute).toHaveBeenCalledTimes(1);
+    expect(await exists(h.app, note().path)).toBe(false);
+  });
+
+  it('invalidates an overlapping preview after a partial copy and allows only explicit cleanup recovery', async () => {
+    const source = ownedTask(1);
+    const copiedTask = ownedTask(8, 'Projects/P.md');
+    const h = await fixture([source]);
+    const peer = new WorkNoteDeletionCoordinator(h.app, h.tasks as never, h.workNotes);
+    const partialMove = deferred<TaskCommandResult>();
+    h.tasks.execute.mockImplementationOnce(() => partialMove.promise);
+    await h.coordinator.preview(note());
+    const command = {
+      action: 'move-to-project' as const,
+      expectedTaskRevisions: expectedRevisions([source]),
+    };
+
+    const first = h.coordinator.delete(command);
+    await vi.waitFor(() => expect(h.tasks.execute).toHaveBeenCalledOnce());
+    await peer.preview(note());
+    const overlapping = peer.delete(command);
+    partialMove.resolve({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: source.ref,
+        targetPath: 'Projects/P.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    const firstResult = await first;
+    if (firstResult.type !== 'partial') throw new Error('Expected recovery');
+    await expect(overlapping).resolves.toMatchObject({ type: 'invalid-decision' });
+    expect(h.tasks.execute).toHaveBeenCalledOnce();
+
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) =>
+      query?.filePath === 'Projects/P.md' ? [copiedTask] : [source],
+    );
+    h.tasks.execute.mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'deleted', ref: source.ref },
+    });
+    const failedCleanup = await h.coordinator.delete({
+      ...command,
+      recovery: firstResult.recovery,
+    });
+    expect(failedCleanup).toMatchObject({
+      type: 'partial',
+      recovery: { copiedSourceRemains: [{ source: source.ref }] },
+    });
+    if (failedCleanup.type !== 'partial') throw new Error('Expected cleanup recovery');
+    await peer.preview(note());
+    await expect(peer.delete(command)).resolves.toMatchObject({ type: 'invalid-decision' });
+    expect(h.tasks.execute).toHaveBeenCalledTimes(2);
+
+    h.tasks.execute.mockImplementation(h.settleTask);
+    await expect(
+      h.coordinator.delete({ ...command, recovery: failedCleanup.recovery }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
+    expect(h.tasks.execute.mock.calls.map(([executed]) => executed.type)).toEqual([
+      'move',
+      'delete',
+      'delete',
+    ]);
   });
 
   it('refuses an ok command that did not remove the exact guarded root block', async () => {
@@ -365,6 +457,67 @@ describe('WorkNoteDeletionCoordinator', () => {
       }),
     ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
     expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+  });
+
+  it('restarts a later copied-source-remains move using its stable preview Task identity', async () => {
+    const firstTask = ownedTask(1);
+    const secondTask = ownedTask(2);
+    const copiedTask = ownedTask(8, 'Projects/P.md');
+    const rebasedSecond = task({
+      ...secondTask,
+      ref: { ...secondTask.ref, line: 1, revision: 'rebased-second' },
+      source: { ...secondTask.source, line: 1 },
+    });
+    const h = await fixture([firstTask, secondTask]);
+    h.tasks.execute.mockImplementationOnce(h.settleTask).mockResolvedValueOnce({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: rebasedSecond.ref,
+        targetPath: 'Projects/P.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    await h.coordinator.preview(note());
+    const first = await h.coordinator.delete({
+      action: 'move-to-project',
+      expectedTaskRevisions: expectedRevisions([firstTask, secondTask]),
+    });
+    if (first.type !== 'partial') throw new Error('Expected recovery');
+    let sourcePresent = true;
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) => {
+      if (query?.filePath === 'Projects/P.md') return [copiedTask];
+      return sourcePresent ? [rebasedSecond] : [];
+    });
+    h.tasks.execute.mockImplementation(async (command) => {
+      if (command.type !== 'delete') throw new Error('Recovery must not recopy the Task');
+      sourcePresent = false;
+      const file = await fileAt(h.app, note().path);
+      await h.app.vault.modify(
+        file,
+        (await h.app.vault.read(file)).replace(`${secondTask.source.originalBlock}\n`, ''),
+      );
+      return {
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'deleted', ref: rebasedSecond.ref },
+      };
+    });
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([firstTask, secondTask]),
+        recovery: first.recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 2 });
+    expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual([
+      'move',
+      'move',
+      'delete',
+    ]);
   });
 
   it('rejects a recovery restart when prose changed after the partial settlement', async () => {

@@ -153,7 +153,7 @@ function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
-  it('persists structured Work Note deletion recovery and forwards it on the next retry', async () => {
+  it('persists deletion recovery and ignores overlapping UI deletion attempts', async () => {
     const app = await createAppWithFiles({});
     const taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS);
     const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
@@ -167,6 +167,7 @@ describe('PanelView', () => {
       remainingTaskCount: 0,
       copiedSourceRemains: [],
       sourceIdentity,
+      attemptGeneration: 1,
     };
     const deletion = {
       delete: vi.fn().mockResolvedValue({
@@ -234,6 +235,21 @@ describe('PanelView', () => {
       expect.objectContaining({ recovery, expectedTaskRevisions: [] }),
     );
     expect(deletion.preview).not.toHaveBeenCalled();
+
+    deletion.delete.mockClear();
+    const pendingDelete = deferred<{
+      type: 'partial';
+      path: string;
+      reason: 'io-error';
+      recovery: typeof recovery;
+    }>();
+    deletion.delete.mockImplementation(() => pendingDelete.promise);
+    const firstAttempt = internal.executeWorkNoteDeletion(workNote, workNote.projectPath, []);
+    const overlappingAttempt = internal.executeWorkNoteDeletion(workNote, workNote.projectPath, []);
+    expect(deletion.delete).toHaveBeenCalledOnce();
+    pendingDelete.resolve({ type: 'partial', path: workNote.path, reason: 'io-error', recovery });
+    await Promise.all([firstAttempt, overlappingAttempt]);
+    expect(deletion.delete).toHaveBeenCalledOnce();
   });
 
   it('forwards application dependency IDs into a calendar TaskModal', async () => {
