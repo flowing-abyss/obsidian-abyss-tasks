@@ -381,6 +381,78 @@ export class WorkNoteDeletionCoordinator {
     return recovery;
   }
 
+  /** Reconciles only the exact guarded source-block deletion already paired with its target copy. */
+  private reconcileCommittedCleanup(
+    notePath: string,
+    destinationPath: string,
+    identity: WorkNoteDeletionIdentity,
+    recovery: WorkNoteDeletionRecovery,
+    expectedTaskRevisions: readonly TaskRef[],
+    previewed: WorkNoteDeletionPreviewState,
+  ): WorkNoteDeletionRecovery | undefined {
+    if (sameIdentity(identity, recovery.sourceIdentity) || identity.path !== notePath) return;
+    let predictedContent = recovery.sourceIdentity.content;
+    const settled = [...recovery.settledTaskRefs];
+    const expectedKeys = new Set(expectedTaskRevisions.map(taskKey));
+    const remainingKeys = new Set(recovery.remainingTaskRefs.map(taskKey));
+    const sourceTasks = this.tasks.queries.list({ filePath: notePath });
+
+    for (let index = 0; index < recovery.copiedSourceRemains.length; index += 1) {
+      const copied = recovery.copiedSourceRemains[index]!;
+      const destinationExists = this.tasks.queries
+        .list({ filePath: copied.targetPath })
+        .some(({ ref }) => taskKey(ref) === taskKey(copied.copiedTask.ref));
+      if (!destinationExists) return;
+      if (sourceTasks.some(({ ref }) => taskKey(ref) === taskKey(copied.source))) return;
+
+      const candidates = previewed.tasks.filter((candidate) => {
+        if (
+          !expectedKeys.has(taskKey(candidate.ref)) ||
+          !remainingKeys.has(taskKey(candidate.ref))
+        ) {
+          return false;
+        }
+        if (settled.some((ref) => taskKey(ref) === taskKey(candidate.ref))) return false;
+        const expectedLine = settled.reduce((line, ref) => {
+          const removed = previewed.tasks.find((task) => taskKey(task.ref) === taskKey(ref));
+          return removed && removed.source.line < candidate.source.line
+            ? line - blockLineCount(removed)
+            : line;
+        }, candidate.source.line);
+        return expectedLine === copied.source.line;
+      });
+      if (candidates.length !== 1) return;
+      const candidate = candidates[0]!;
+      const expectedLine = settled.reduce((line, ref) => {
+        const removed = previewed.tasks.find((task) => taskKey(task.ref) === taskKey(ref));
+        return removed && removed.source.line < candidate.source.line
+          ? line - blockLineCount(removed)
+          : line;
+      }, candidate.source.line);
+      const afterRemoval = expectedContentAfterTaskRemoval(
+        predictedContent,
+        candidate,
+        expectedLine,
+      );
+      if (afterRemoval === null) return;
+      predictedContent = afterRemoval;
+      settled.push(candidate.ref);
+      if (predictedContent === identity.content) {
+        const settledKeys = new Set(settled.map(taskKey));
+        return this.recovery(
+          notePath,
+          destinationPath,
+          identity,
+          settled,
+          expectedTaskRevisions.filter((ref) => !settledKeys.has(taskKey(ref))),
+          recovery.copiedSourceRemains.slice(index + 1),
+        );
+      }
+    }
+    // eslint-disable-next-line sonarjs/no-redundant-jump -- explicit undefined satisfies noImplicitReturns.
+    return undefined;
+  }
+
   private sourceChangedBeforeSettlement(
     note: WorkNoteSnapshot,
     command: WorkNoteDeleteCommand,
@@ -460,6 +532,19 @@ export class WorkNoteDeletionCoordinator {
     }
 
     const initialIdentity = await this.deletion.observe(note.path);
+    if (command.recovery && initialIdentity) {
+      const reconciled = this.reconcileCommittedCleanup(
+        note.path,
+        decision.destinationPath,
+        initialIdentity,
+        command.recovery,
+        command.expectedTaskRevisions,
+        previewed,
+      );
+      if (reconciled) {
+        return this.deleteInTransaction({ ...command, recovery: reconciled }, note, previewed);
+      }
+    }
     if (this.sourceChangedBeforeSettlement(note, command, initialIdentity, previewed)) {
       return {
         type: 'partial',

@@ -597,6 +597,78 @@ describe('WorkNoteDeletionCoordinator', () => {
     expect(h.coordinator.pendingRecovery(note().path)).toBeUndefined();
   });
 
+  it('reconciles an exact committed cleanup when its post-delete observation rejects', async () => {
+    const source = ownedTask(1);
+    const copiedTask = ownedTask(8, 'Projects/P.md');
+    const h = await fixture([source]);
+    let sourcePresent = true;
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) => {
+      if (query?.filePath === 'Projects/P.md') return [copiedTask];
+      return sourcePresent ? [source] : [];
+    });
+    h.tasks.execute.mockResolvedValueOnce({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: source.ref,
+        targetPath: 'Projects/P.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    await h.coordinator.preview(note());
+    const first = await h.coordinator.delete({
+      action: 'move-to-project',
+      expectedTaskRevisions: expectedRevisions([source]),
+    });
+    if (first.type !== 'partial') throw new Error('Expected recovery');
+
+    h.tasks.execute.mockImplementation(async (command) => {
+      const result = await h.settleTask(command);
+      if (command.type === 'delete') sourcePresent = false;
+      return result;
+    });
+    const read = h.app.vault.read.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'read')
+      .mockImplementationOnce(read)
+      .mockImplementationOnce(read)
+      .mockImplementationOnce(read)
+      .mockRejectedValueOnce(new Error('post-delete observation failed'));
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery: first.recovery,
+      }),
+    ).rejects.toThrow('post-delete observation failed');
+    expect(sourcePresent).toBe(false);
+    expect(h.coordinator.pendingRecovery(note().path)).toEqual(first.recovery);
+
+    const reopened = new WorkNoteDeletionCoordinator(h.app, h.tasks as never, h.workNotes);
+    await reopened.preview(note());
+    await expect(
+      reopened.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: [],
+      }),
+    ).resolves.toMatchObject({ type: 'invalid-decision' });
+    expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+
+    const recovery = reopened.pendingRecovery(note().path);
+    if (!recovery) throw new Error('Expected coordinator-owned recovery');
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
+    expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+    expect(await exists(h.app, note().path)).toBe(false);
+    expect(h.coordinator.pendingRecovery(note().path)).toBeUndefined();
+  });
+
   it('restarts a later copied-source-remains move using its stable preview Task identity', async () => {
     const firstTask = ownedTask(1);
     const secondTask = ownedTask(2);
