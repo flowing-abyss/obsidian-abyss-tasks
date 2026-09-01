@@ -475,9 +475,10 @@ export class WorkNoteDeletionCoordinator {
         ),
       };
     }
-    transactions.recoveryOnly.delete(note.path);
-    transactions.recoveries.delete(note.path);
-    transactions.generations.set(note.path, currentGeneration + 1);
+    if (!command.recovery) {
+      transactions.recoveries.delete(note.path);
+      transactions.generations.set(note.path, currentGeneration + 1);
+    }
 
     let settlementIdentity = initialIdentity!;
     const settled = [...(command.recovery?.settledTaskRefs ?? [])];
@@ -812,6 +813,11 @@ export class WorkNoteDeletionCoordinator {
       }
       const removed = await this.deletion.remove(quarantined.identity);
       if (removed.type === 'ok') {
+        transactions.recoveryOnly.delete(note.path);
+        transactions.recoveries.delete(note.path);
+        if (command.recovery) {
+          transactions.generations.set(note.path, currentGeneration + 1);
+        }
         return { type: 'ok', path: note.path, movedTaskCount: settled.length };
       }
       await this.deletion.restore(quarantined.identity);
