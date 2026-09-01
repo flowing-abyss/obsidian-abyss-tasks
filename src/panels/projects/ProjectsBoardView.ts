@@ -282,7 +282,7 @@ export function renderBoard<T>(
   const overlayOwner = {
     id: boardId,
     announce: options.announce,
-    undoAvailable: options.optimisticOverlay?.undoAvailable,
+    undoAvailable: options.undo !== undefined && options.optimisticOverlay?.undoAvailable !== false,
   };
   let destroyed = false;
   const releasePublishedUndo = (transactionId: number): void => {
@@ -314,19 +314,15 @@ export function renderBoard<T>(
       if (!destroyed) render();
     });
   }, overlayOwner);
-  for (const item of canonicalPublicationItems) {
-    options.optimisticOverlay?.store.observePublication(
-      overlayKey(item),
-      item,
-      options.optimisticOverlay.revision(item),
+  if (options.optimisticOverlay) {
+    options.optimisticOverlay.store.observeCanonicalBatch(
+      canonicalPublicationItems.map((item) => ({
+        key: overlayKey(item),
+        snapshot: item,
+        revision: options.optimisticOverlay!.revision(item),
+      })),
       options.optimisticOverlay.publicationSequence,
       options.optimisticOverlay.continuity,
-    );
-  }
-  if (options.optimisticOverlay) {
-    options.optimisticOverlay.store.reconcileCanonicalKeys(
-      new Set(canonicalPublicationItems.map((item) => overlayKey(item))),
-      options.optimisticOverlay.publicationSequence,
     );
   }
   const configuredColumnIds =
@@ -818,7 +814,7 @@ export function renderBoard<T>(
         const command = (): Promise<BoardMutationResult> =>
           options.mutation.move(item, intent.destination.columnId);
         if (options.optimisticOverlay?.store.active(overlayKey(item))) {
-          return { type: 'failure', reason: 'Move is already pending', announced: true };
+          return { type: 'failure', reason: 'Move is already pending', announced: false };
         }
         const transaction: OptimisticTransaction<T, string> | undefined =
           options.optimisticOverlay?.store.begin(
@@ -2058,8 +2054,9 @@ export function renderProjectsBoard(
     },
     itemKey: (project) => project.path,
     renderItem: (host, project) => {
-      const snapshot = snapshotByPath.get(project.path);
-      if (!snapshot) return host.createDiv();
+      const canonical = snapshotByPath.get(project.path);
+      if (!canonical) return host.createDiv();
+      const snapshot = { ...canonical, project };
       return renderProjectRow(
         host,
         snapshot,

@@ -53,7 +53,7 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store(announce);
     const transaction = overlays.begin(observed, 'revision:1', 'doing');
 
-    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id);
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
     expect(overlays.read(observed.id)).toMatchObject({ status: 'doing' });
     expect(announce).not.toHaveBeenCalled();
 
@@ -75,8 +75,8 @@ describe('OptimisticOverlayStore', () => {
       const overlays = store(announce);
       const transaction = overlays.begin(observed, 'revision:1', 'doing');
 
-      overlays.observeCommandResult(observed.id, result, transaction.id);
-      overlays.observeCommandResult(observed.id, result, transaction.id);
+      overlays.observeCommandResult(observed.id, result, transaction.id, transaction.token);
+      overlays.observeCommandResult(observed.id, result, transaction.id, transaction.token);
 
       expect(overlays.read(observed.id)).toMatchObject({ status: 'todo', note: observed.note });
       expect(announce).toHaveBeenCalledTimes(1);
@@ -102,13 +102,14 @@ describe('OptimisticOverlayStore', () => {
     const announce = vi.fn();
     const overlays = store(announce);
     const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
 
     // A renderer can unmount and remount while this application-scoped store remains pending.
     expect(overlays.read(observed.id)).toMatchObject({ status: 'doing' });
     const canonical = { ...observed, status: 'doing' };
     overlays.observePublication(observed.id, canonical, 'revision:2');
     overlays.observePublication(observed.id, canonical, 'revision:2');
-    overlays.cancel(observed.id, 'timeout', transaction.id);
+    overlays.cancel(observed.id, 'timeout', transaction.id, transaction.token);
 
     expect(overlays.read(observed.id)).toBe(canonical);
     expect(announce).toHaveBeenCalledTimes(1);
@@ -150,10 +151,11 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store();
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, first.id, first.token);
     overlays.observePublication(observed.id, published, 'revision:2', 2);
     const second = overlays.begin(published, 'revision:2', 'done');
 
-    overlays.observeCommandResult(observed.id, { type: 'conflict' }, first.id);
+    overlays.observeCommandResult(observed.id, { type: 'conflict' }, first.id, first.token);
 
     expect(second.id).not.toBe(first.id);
     expect(overlays.active(observed.id)?.id).toBe(second.id);
@@ -165,10 +167,11 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store(vi.fn(), { timeoutMs: 100 });
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, first.id, first.token);
     overlays.observePublication(observed.id, published, 'revision:2');
     const second = overlays.begin(published, 'revision:2', 'done');
 
-    overlays.cancel(observed.id, 'timeout', first.id);
+    overlays.cancel(observed.id, 'timeout', first.id, first.token);
 
     expect(overlays.active(observed.id)?.id).toBe(second.id);
     expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
@@ -179,6 +182,7 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store();
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, first.id, first.token);
     overlays.observePublication(observed.id, published, 'revision:2');
     const second = overlays.begin(published, 'revision:2', 'done');
 
@@ -190,6 +194,7 @@ describe('OptimisticOverlayStore', () => {
 
     expect(overlays.active(observed.id)?.id).toBe(second.id);
     expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, second.id, second.token);
     overlays.observePublication(observed.id, { ...published, status: 'done' }, 'revision:3', 3);
     expect(overlays.active(observed.id)).toBeUndefined();
     expect(first.token).not.toBe(second.token);
@@ -227,7 +232,7 @@ describe('OptimisticOverlayStore', () => {
     overlays.reconcileCanonicalKeys(new Set(), 2);
 
     expect(overlays.active(observed.id)).toBeUndefined();
-    expect(overlays.read(observed.id)).toMatchObject({ status: 'todo' });
+    expect(overlays.read(observed.id)).toBeUndefined();
     expect(announce).toHaveBeenCalledWith('Item changed outside the board');
   });
 
@@ -235,6 +240,7 @@ describe('OptimisticOverlayStore', () => {
     const overlays = store();
     const first = overlays.begin(observed, 'revision:1', 'doing');
     const published = { ...observed, status: 'doing' };
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, first.id, first.token);
     overlays.observePublication(observed.id, published, 'revision:2', 2);
     const second = overlays.begin(published, 'revision:2', 'done');
 
@@ -247,6 +253,7 @@ describe('OptimisticOverlayStore', () => {
   it('settles a proven successor under a changed canonical key without fuzzy matching', () => {
     const overlays = store();
     const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
     const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
 
     overlays.observePublication(
@@ -263,9 +270,303 @@ describe('OptimisticOverlayStore', () => {
     expect(transaction.key).toBe(observed.id);
   });
 
+  it('correlates a command failure by immutable token after successor rebinding', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
+
+    overlays.observePublication(
+      renamed.id,
+      renamed,
+      'revision:2',
+      2,
+      (before, after) => before.id === observed.id && after.id === renamed.id,
+    );
+    overlays.observeCommandResult(
+      observed.id,
+      { type: 'conflict' },
+      transaction.id,
+      transaction.token,
+    );
+
+    expect(overlays.active(renamed.id)).toBeUndefined();
+    expect(announce).toHaveBeenCalledWith('Item changed outside the board');
+  });
+
+  it('correlates a timeout by immutable token after successor rebinding', () => {
+    vi.useFakeTimers();
+    const announce = vi.fn();
+    const overlays = store(announce, { timeoutMs: 100 });
+    overlays.begin(observed, 'same-revision', 'doing');
+    const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
+    overlays.observeCanonicalBatch(
+      [{ key: renamed.id, snapshot: renamed, revision: 'same-revision' }],
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    vi.advanceTimersByTime(100);
+
+    expect(overlays.active(renamed.id)).toBeUndefined();
+    expect(overlays.read(observed.id)).toBeUndefined();
+    expect(announce).toHaveBeenCalledWith('Item move timed out');
+    vi.useRealTimers();
+  });
+
+  it('rebinds a complete successor batch atomically when task locations overlap', () => {
+    const overlays = store();
+    const first = { ...observed, id: 'Tasks.md:1', note: { ...observed.note, title: 'A' } };
+    const second = { ...observed, id: 'Tasks.md:2', note: { ...observed.note, title: 'B' } };
+    overlays.begin(first, 'same-revision', 'doing');
+    overlays.begin(second, 'same-revision', 'doing');
+    const shiftedFirst = { ...first, id: 'Tasks.md:2', status: 'doing' };
+    const shiftedSecond = { ...second, id: 'Tasks.md:3', status: 'doing' };
+
+    overlays.observeCanonicalBatch(
+      [
+        { key: shiftedFirst.id, snapshot: shiftedFirst, revision: 'same-revision' },
+        { key: shiftedSecond.id, snapshot: shiftedSecond, revision: 'same-revision' },
+      ],
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    expect(overlays.active(shiftedFirst.id)).toBeDefined();
+    expect(overlays.active(shiftedSecond.id)).toBeDefined();
+    expect(overlays.active(first.id)).toBeUndefined();
+    expect(overlays.read(shiftedFirst.id)).toMatchObject({ status: 'doing', note: { title: 'A' } });
+    expect(overlays.read(shiftedSecond.id)).toMatchObject({
+      status: 'doing',
+      note: { title: 'B' },
+    });
+  });
+
+  it('does not orphan a transaction when a successor collision invalidates a move chain', () => {
+    const overlays = store();
+    const cards = ['A', 'B', 'C', 'D'].map((title, index) => ({
+      ...observed,
+      id: `Tasks.md:${String(index + 1)}`,
+      note: { ...observed.note, title },
+    }));
+    for (const card of cards) overlays.begin(card, 'same-revision', 'doing');
+    const publication = [
+      { ...cards[0]!, id: 'Tasks.md:2', status: 'doing' },
+      { ...cards[1]!, id: 'Tasks.md:3', status: 'doing' },
+      // C and the unchanged D collide at D's location.
+      { ...cards[2]!, id: 'Tasks.md:4', status: 'doing' },
+    ];
+
+    overlays.observeCanonicalBatch(
+      publication.map((snapshot) => ({
+        key: snapshot.id,
+        snapshot,
+        revision: 'same-revision',
+      })),
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    expect(overlays.active('Tasks.md:2')).toBeUndefined();
+    expect(overlays.read('Tasks.md:2')?.note.title).toBe('A');
+    expect(overlays.read('Tasks.md:3')?.note.title).toBe('B');
+    expect(overlays.read('Tasks.md:4')?.note.title).toBe('C');
+  });
+
+  it('competes when an unrelated entity reuses an active transaction key without continuity proof', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    const original = {
+      ...observed,
+      id: 'Tasks.md:1',
+      note: { ...observed.note, title: 'Original' },
+    };
+    const transaction = overlays.begin(original, 'original-revision', 'doing');
+    overlays.observeCommandResult(original.id, { type: 'ok' }, transaction.id, transaction.token);
+    const replacement = {
+      ...original,
+      status: 'doing',
+      note: { ...original.note, title: 'Replacement' },
+    };
+
+    overlays.observeCanonicalBatch(
+      [{ key: replacement.id, snapshot: replacement, revision: 'replacement-revision' }],
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    expect(overlays.active(original.id)).toBeUndefined();
+    expect(overlays.read(original.id)).toBe(replacement);
+    expect(announce).toHaveBeenCalledWith('Item changed outside the board');
+    expect(announce).not.toHaveBeenCalledWith('Item moved.');
+  });
+
+  it('requires continuity proof for same-key replacement through single-publication API', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    const original = {
+      ...observed,
+      note: { ...observed.note, title: 'Original' },
+    };
+    const transaction = overlays.begin(original, 'original-revision', 'doing');
+    overlays.observeCommandResult(original.id, { type: 'ok' }, transaction.id, transaction.token);
+    const replacement = {
+      ...original,
+      status: 'doing',
+      note: { ...original.note, title: 'Replacement' },
+    };
+
+    overlays.observePublication(
+      replacement.id,
+      replacement,
+      'replacement-revision',
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    expect(overlays.active(original.id)).toBeUndefined();
+    expect(overlays.read(original.id)).toBe(replacement);
+    expect(announce).toHaveBeenCalledWith('Item changed outside the board');
+  });
+
+  it('treats a same-revision relocated successor as a matching publication', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    const transaction = overlays.begin(observed, 'same-revision', 'doing');
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
+    const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
+
+    overlays.observeCanonicalBatch(
+      [{ key: renamed.id, snapshot: renamed, revision: 'same-revision' }],
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    expect(overlays.active(renamed.id)).toBeUndefined();
+    expect(overlays.read(renamed.id)).toBe(renamed);
+    expect(announce).toHaveBeenCalledOnce();
+  });
+
+  it('waits silently for command success after a matching publication', () => {
+    const announce = vi.fn();
+    const settlements = vi.fn();
+    const overlays = store(announce);
+    overlays.subscribe(settlements);
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+
+    overlays.observeCanonicalBatch(
+      [{ key: observed.id, snapshot: published, revision: 'revision:2' }],
+      2,
+    );
+    expect(overlays.active(observed.id)).toBe(transaction);
+    expect(announce).not.toHaveBeenCalled();
+    expect(settlements).not.toHaveBeenCalled();
+
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
+    expect(overlays.active(observed.id)).toBeUndefined();
+    expect(overlays.read(observed.id)).toBe(published);
+    expect(announce).toHaveBeenCalledOnce();
+  });
+
+  it('rolls back when a command conflicts after a matching publication', () => {
+    const announce = vi.fn();
+    const overlays = store(announce);
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+    overlays.observeCanonicalBatch(
+      [{ key: observed.id, snapshot: published, revision: 'revision:2' }],
+      2,
+    );
+
+    overlays.observeCommandResult(
+      observed.id,
+      { type: 'conflict' },
+      transaction.id,
+      transaction.token,
+    );
+
+    expect(overlays.active(observed.id)).toBeUndefined();
+    expect(announce).toHaveBeenCalledWith('Item changed outside the board');
+  });
+
+  it('removes canonical-only and predecessor records across mass rename and deletion batches', () => {
+    const overlays = store();
+    const initial = Array.from({ length: 50 }, (_, index) => ({
+      ...observed,
+      id: `Tasks.md:${String(index)}`,
+      note: { ...observed.note, title: `Task ${String(index)}` },
+    }));
+    overlays.observeCanonicalBatch(
+      initial.map((snapshot) => ({ key: snapshot.id, snapshot, revision: 'one' })),
+      1,
+    );
+    const moved = initial.map((snapshot, index) => ({
+      ...snapshot,
+      id: `Archive.md:${String(index + 100)}`,
+    }));
+
+    overlays.observeCanonicalBatch(
+      moved.map((snapshot) => ({ key: snapshot.id, snapshot, revision: 'two' })),
+      2,
+    );
+    overlays.observeCanonicalBatch([], 3);
+
+    for (const snapshot of [...initial, ...moved])
+      expect(overlays.read(snapshot.id)).toBeUndefined();
+  });
+
+  it('does not resurrect a deleted canonical entry from a delayed older complete batch', () => {
+    const overlays = store();
+    overlays.observeCanonicalBatch([{ key: observed.id, snapshot: observed, revision: 'one' }], 8);
+    overlays.observeCanonicalBatch([], 10);
+
+    overlays.observeCanonicalBatch([{ key: observed.id, snapshot: observed, revision: 'one' }], 9);
+
+    expect(overlays.read(observed.id)).toBeUndefined();
+  });
+
+  it('settles overlapping mass line shifts without retaining predecessor aliases', () => {
+    const overlays = store();
+    const initial = Array.from({ length: 30 }, (_, index) => ({
+      ...observed,
+      id: `Tasks.md:${String(index)}`,
+      note: { ...observed.note, title: `Task ${String(index)}` },
+    }));
+    for (const snapshot of initial) {
+      const transaction = overlays.begin(snapshot, 'preserved-revision', 'doing');
+      overlays.observeCommandResult(snapshot.id, { type: 'ok' }, transaction.id, transaction.token);
+    }
+    const shifted = initial.map((snapshot, index) => ({
+      ...snapshot,
+      id: `Tasks.md:${String(index + 1)}`,
+      status: 'doing',
+    }));
+
+    overlays.observeCanonicalBatch(
+      shifted.map((snapshot) => ({
+        key: snapshot.id,
+        snapshot,
+        revision: 'preserved-revision',
+      })),
+      2,
+      (before, after) => before.note.title === after.note.title,
+    );
+
+    for (const snapshot of initial) {
+      const successor = shifted.find((candidate) => candidate.note.title === snapshot.note.title)!;
+      expect(overlays.active(successor.id)).toBeUndefined();
+      expect(overlays.read(successor.id)).toBe(successor);
+    }
+    expect(overlays.read(initial[0]!.id)).toBeUndefined();
+    overlays.observeCanonicalBatch([], 3);
+    for (const snapshot of shifted) expect(overlays.read(snapshot.id)).toBeUndefined();
+  });
+
   it('releases a predecessor key when a proven successor is rebound', () => {
     const overlays = store();
-    overlays.begin(observed, 'revision:1', 'doing');
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
     const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
 
     overlays.observePublication(
@@ -330,7 +631,12 @@ describe('OptimisticOverlayStore', () => {
       options(currentAnnounce),
     );
 
-    remounted.observeCommandResult(observed.id, { type: 'conflict' }, transaction.id);
+    remounted.observeCommandResult(
+      observed.id,
+      { type: 'conflict' },
+      transaction.id,
+      transaction.token,
+    );
 
     expect(firstAnnounce).not.toHaveBeenCalled();
     expect(currentAnnounce).toHaveBeenCalledTimes(1);
@@ -350,7 +656,8 @@ describe('OptimisticOverlayStore', () => {
     const releaseClosedMount = overlays.subscribe(closedMount);
     releaseClosedMount();
     overlays.subscribe(activeMount);
-    overlays.begin(observed, 'revision:1', 'doing');
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
 
     overlays.observePublication(observed.id, { ...observed, status: 'doing' }, 'revision:2');
 

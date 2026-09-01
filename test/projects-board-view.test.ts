@@ -94,9 +94,8 @@ describe('shared board view', () => {
 
     render([{ ...todo, status: 'doing' }], 'two');
 
-    expect(
-      announcements.filter((message) => message === 'Item moved. Undo available.'),
-    ).toHaveLength(1);
+    expect(announcements.filter((message) => message === 'Item moved.')).toHaveLength(1);
+    expect(announcements).not.toContain('Item moved. Undo available.');
   });
 
   it('gates native-drag Undo on the matching canonical publication', async () => {
@@ -235,6 +234,212 @@ describe('shared board view', () => {
     await flushMicrotasks();
 
     expect(el.querySelector('[data-board-undo]')).not.toBeNull();
+  });
+
+  it('does not announce success or expose Undo when publication precedes a conflict', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'conflict' }>();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+      announce: (message) => announcements.push(message),
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      interactionController: true,
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+      announce: (message) => announcements.push(message),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    const item = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    overlays.observeCanonicalBatch(
+      [{ key: 'a', snapshot: { ...todo, status: 'doing' }, revision: 'two' }],
+      2,
+    );
+    expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(0);
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+
+    completion.resolve({ type: 'conflict' });
+    await flushMicrotasks();
+
+    expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(0);
+    expect(
+      announcements.filter((message) => message === 'Item changed outside the board'),
+    ).toHaveLength(1);
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+  });
+
+  it('clears pending Undo when publication precedes a rejected command', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    let rejectCompletion!: (reason: unknown) => void;
+    const completion = new Promise<{ type: 'ok' }>((_resolve, reject) => {
+      rejectCompletion = reject;
+    });
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+      announce: (message) => announcements.push(message),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    overlays.observeCanonicalBatch(
+      [{ key: 'a', snapshot: { ...todo, status: 'doing' }, revision: 'two' }],
+      2,
+    );
+    rejectCompletion(new Error('disk unavailable'));
+    await flushMicrotasks();
+
+    expect(announcements.filter((message) => message === 'Item could not be moved')).toHaveLength(
+      1,
+    );
+    expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(0);
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+  });
+
+  it('clears pending Undo when publication precedes an undefined command result', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'ok' } | undefined>();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      undo: vi.fn().mockResolvedValue({ type: 'ok' }),
+      announce: (message) => announcements.push(message),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        publicationSequence: 1,
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    el.querySelector<HTMLElement>('[data-board-item="a"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    overlays.observeCanonicalBatch(
+      [{ key: 'a', snapshot: { ...todo, status: 'doing' }, revision: 'two' }],
+      2,
+    );
+    completion.resolve(undefined);
+    await flushMicrotasks();
+
+    expect(announcements.filter((message) => message === 'Item could not be moved')).toHaveLength(
+      1,
+    );
+    expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(0);
+    expect(el.querySelector('[data-board-undo]')).toBeNull();
+  });
+
+  it('announces one terminal failure when a second controller move finds an active transaction', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const completion = deferred<{ type: 'ok' }>();
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+        { key: 'done', label: 'done', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockReturnValue(completion.promise), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      interactionController: true,
+      announce: (message) => announcements.push(message),
+      optimisticOverlay: {
+        store: overlays,
+        keyOf: ({ id }) => id,
+        revision: () => 'one',
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    const nativeCard = el.querySelector<HTMLElement>('[data-board-item="a"]')!;
+    nativeCard.dispatchEvent(new Event('dragstart', { bubbles: true }));
+    el.querySelector<HTMLElement>('[data-board-column="doing"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+    const projected = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    projected.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    projected.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    projected.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(announcements.filter((message) => message === 'Move is already pending')).toHaveLength(
+      1,
+    );
+    expect(el.querySelector('[aria-busy="true"]')).toBeNull();
+    completion.resolve({ type: 'ok' });
   });
 
   it('finishes a native move after its renderer is replaced by publication', async () => {

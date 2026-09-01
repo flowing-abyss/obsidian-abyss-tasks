@@ -314,6 +314,46 @@ describe('renderProjectsList', () => {
     expect(hierarchy.querySelector('[data-entity-slot="identity"]')?.textContent).toBe('A');
   });
 
+  it('renders Project card semantics from the optimistic snapshot in its projected column', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.statuses.push({
+      ...settings.projects.statuses[0]!,
+      id: 'published',
+      label: 'Published',
+      behavior: 'published',
+      match: { kind: 'property', property: 'status', value: 'published' },
+    });
+    settings.projects.view.visibleStatusIds.push('published');
+    const completion = deferred<{ type: 'ok'; previousStatusId: string; nextStatusId: string }>();
+    const el = freshContainer();
+    renderProjectsBoard(el, {
+      ...ctx,
+      settings,
+      snapshots: [workspace()],
+      overlayScope: {},
+      onMoveStatus: vi.fn().mockReturnValue(completion.promise),
+      onUndoStatus: vi.fn(),
+    });
+
+    el.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!.dispatchEvent(
+      new Event('dragstart', { bubbles: true }),
+    );
+    el.querySelector<HTMLElement>('[data-board-column="published"]')!.dispatchEvent(
+      new Event('drop', { bubbles: true, cancelable: true }),
+    );
+    await flushMicrotasks();
+
+    const projected = el.querySelector<HTMLElement>(
+      '[data-board-column="published"] [data-board-item="Projects/A.md"]',
+    )!;
+    expect(projected).not.toBeNull();
+    expect(
+      projected.querySelector('[data-project-identity-control]')?.getAttribute('aria-label'),
+    ).toContain('status Published');
+    completion.resolve({ type: 'ok', previousStatusId: ACTIVE_ID, nextStatusId: 'published' });
+  });
+
   it('reconciles a Project move across a proven note rename publication', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
