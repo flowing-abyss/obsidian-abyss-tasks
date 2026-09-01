@@ -4,7 +4,10 @@ import { AppState } from '../src/app/AppState';
 import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import type { ProjectsPanelOptions } from '../src/panels/projects/ProjectsPanel';
-import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
+import {
+  disposeProjectWorkspacePreferenceAuthority,
+  ProjectWorkspaceSession,
+} from '../src/panels/projects/ProjectWorkspaceSession';
 import type {
   ProjectChildRenderHandle,
   ProjectsDashboardContext,
@@ -156,6 +159,304 @@ describe('Project Tasks workspace', () => {
       ).layoutPreferences['board']?.board,
     ).toEqual(workNoteBoard);
   });
+
+  it.each([
+    ['tasks', 'success'],
+    ['tasks', 'failure'],
+    ['work-notes', 'success'],
+    ['work-notes', 'failure'],
+  ] as const)(
+    'keeps a renamed %s preference transaction locked and publishes destination %s',
+    async (scope, outcome) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const owner = {};
+      const source = 'Projects/A.md';
+      const destination = 'Projects/Renamed.md';
+      let resolveSave!: () => void;
+      let rejectSave!: (error: unknown) => void;
+      const pendingSave = new Promise<void>((resolve, reject) => {
+        resolveSave = resolve;
+        rejectSave = reject;
+      });
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => pendingSave)
+        .mockResolvedValue(undefined);
+      const paneA = new ProjectWorkspaceSession(owner);
+      const paneB = new ProjectWorkspaceSession(owner);
+      paneA.bindCollectionPreferences(settings, onSaveSettings);
+      paneB.bindCollectionPreferences(settings, onSaveSettings);
+      paneA.openProject(source);
+      paneB.openProject(source);
+      const boardPreference = (session: ProjectWorkspaceSession, path: string) =>
+        scope === 'tasks'
+          ? (session.collectionPreference(path, scope) as ProjectTasksCollectionPreference)
+              .layoutPreferences['board']?.board
+          : (session.collectionPreference(path, scope) as WorkNotesCollectionPreference)
+              .layoutPreferences['board']?.board;
+      const initialBoard = {
+        version: 1 as const,
+        columnOrder: ['one', 'two'],
+        hiddenColumnIds: [],
+        collapsedColumnIds: [],
+        terminalDefaultsApplied: true,
+      };
+      await paneA.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layout: 'board',
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: { board: initialBoard },
+        },
+      }));
+      const publications = vi.fn();
+      const failures = vi.fn();
+      const mutations = vi.fn();
+      const offs = [
+        paneB.subscribeCollectionPreference(source, scope, publications),
+        paneB.subscribeCollectionPreferenceFailure(source, scope, failures),
+        paneB.subscribeCollectionPreferenceMutation(source, scope, mutations),
+      ];
+      const operation = paneA.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: {
+            board: { ...initialBoard, collapsedColumnIds: ['one'] },
+          },
+        },
+      }));
+      await flushMicrotasks();
+
+      paneA.renameProject(source, destination);
+      paneB.renameProject(source, destination);
+      expect(paneB.collectionPreferenceSaving(destination, scope)).toBe(true);
+      expect(boardPreference(paneB, destination)).toEqual(initialBoard);
+
+      if (outcome === 'success') resolveSave();
+      else rejectSave(new Error('disk unavailable'));
+      if (outcome === 'success') await expect(operation).resolves.toBeDefined();
+      else await expect(operation).rejects.toThrow('disk unavailable');
+      await flushMicrotasks();
+
+      expect(paneB.collectionPreferenceSaving(destination, scope)).toBe(false);
+      const settled = boardPreference(paneB, destination);
+      expect(settled?.collapsedColumnIds).toEqual(outcome === 'success' ? ['one'] : []);
+      expect(boardPreference(paneB, source)).toBeUndefined();
+      expect(publications).toHaveBeenCalled();
+      expect(failures).toHaveBeenCalledTimes(outcome === 'success' ? 0 : 1);
+      expect(mutations).toHaveBeenCalled();
+
+      offs.forEach((off) => off());
+      const publicationCount = publications.mock.calls.length;
+      const mutationCount = mutations.mock.calls.length;
+      await paneA.updateCollectionPreference(destination, scope, (current) => ({
+        ...current,
+        group: current.group === 'none' ? 'status' : 'none',
+      }));
+      expect(publications).toHaveBeenCalledTimes(publicationCount);
+      expect(mutations).toHaveBeenCalledTimes(mutationCount);
+
+      paneA.destroy();
+      paneB.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    },
+  );
+
+  it.each(['tasks', 'work-notes'] as const)(
+    'rekeys a queued %s preference before its port commit begins',
+    async (scope) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const owner = {};
+      const source = 'Projects/A.md';
+      const destination = 'Projects/B.md';
+      const blocker = deferred<void>();
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => blocker.promise)
+        .mockResolvedValue(undefined);
+      const pane = new ProjectWorkspaceSession(owner);
+      pane.bindCollectionPreferences(settings, onSaveSettings);
+      pane.openProject(source);
+      const board = {
+        version: 1 as const,
+        columnOrder: ['one'],
+        hiddenColumnIds: [],
+        collapsedColumnIds: [],
+        terminalDefaultsApplied: true,
+      };
+      await pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: { ...current.layoutPreferences, board: { board } },
+      }));
+
+      const blockingSave = pane.updatePortfolioPreference((current) => ({
+        ...current,
+        group: current.group === 'none' ? 'status' : 'none',
+      }));
+      await flushMicrotasks();
+      const queuedSave = pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: { board: { ...board, collapsedColumnIds: ['one'] } },
+        },
+      }));
+      pane.renameProject(source, destination);
+      expect(pane.collectionPreferenceSaving(destination, scope)).toBe(true);
+
+      blocker.resolve();
+      await blockingSave;
+      await queuedSave;
+      const settled =
+        scope === 'tasks'
+          ? (pane.collectionPreference(destination, scope) as ProjectTasksCollectionPreference)
+          : (pane.collectionPreference(destination, scope) as WorkNotesCollectionPreference);
+      expect(settled.layoutPreferences['board']?.board?.collapsedColumnIds).toEqual(['one']);
+      expect(settings.projects.view.collectionPreferences[source]).toBeUndefined();
+
+      pane.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    },
+  );
+
+  it.each(['tasks', 'work-notes'] as const)(
+    'retries a queued renamed %s preference after a pending destination read and save failure',
+    async (scope) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const owner = {};
+      const source = 'Projects/A.md';
+      const destination = 'Projects/B.md';
+      const blocker = deferred<void>();
+      let rejectScopedSave!: (error: unknown) => void;
+      const scopedSave = new Promise<void>((_resolve, reject) => {
+        rejectScopedSave = reject;
+      });
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => blocker.promise)
+        .mockImplementationOnce(() => scopedSave)
+        .mockResolvedValue(undefined);
+      const pane = new ProjectWorkspaceSession(owner);
+      pane.bindCollectionPreferences(settings, onSaveSettings);
+      pane.openProject(source);
+      const board = {
+        version: 1 as const,
+        columnOrder: ['one'],
+        hiddenColumnIds: [],
+        collapsedColumnIds: [],
+        terminalDefaultsApplied: true,
+      };
+      const preferenceBoard = (path: string) =>
+        scope === 'tasks'
+          ? (pane.collectionPreference(path, scope) as ProjectTasksCollectionPreference)
+              .layoutPreferences['board']?.board
+          : (pane.collectionPreference(path, scope) as WorkNotesCollectionPreference)
+              .layoutPreferences['board']?.board;
+      await pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: { ...current.layoutPreferences, board: { board } },
+      }));
+
+      const blockingSave = pane.updatePortfolioPreference((current) => ({
+        ...current,
+        group: current.group === 'none' ? 'status' : 'none',
+      }));
+      await flushMicrotasks();
+      const queuedSave = pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: { board: { ...board, collapsedColumnIds: ['one'] } },
+        },
+      }));
+      pane.renameProject(source, destination);
+      blocker.resolve();
+      await blockingSave;
+      await flushMicrotasks();
+
+      expect(preferenceBoard(destination)).toEqual(board);
+      rejectScopedSave(new Error('disk unavailable'));
+      await expect(queuedSave).rejects.toThrow('disk unavailable');
+      await pane.updateCollectionPreference(destination, scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: { board: { ...board, hiddenColumnIds: ['one'] } },
+        },
+      }));
+
+      expect(preferenceBoard(destination)?.hiddenColumnIds).toEqual(['one']);
+      expect(settings.projects.view.collectionPreferences[source]).toBeUndefined();
+      pane.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    },
+  );
+
+  it.each(['tasks', 'work-notes'] as const)(
+    'keeps a reverse-renamed %s preference locked and rolls back at the final path',
+    async (scope) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const owner = {};
+      const source = 'Projects/A.md';
+      const intermediate = 'Projects/B.md';
+      let rejectSave!: (error: unknown) => void;
+      const pendingSave = new Promise<void>((_resolve, reject) => {
+        rejectSave = reject;
+      });
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockImplementationOnce(() => pendingSave);
+      const pane = new ProjectWorkspaceSession(owner);
+      pane.bindCollectionPreferences(settings, onSaveSettings);
+      pane.openProject(source);
+      const board = {
+        version: 1 as const,
+        columnOrder: ['one'],
+        hiddenColumnIds: [],
+        collapsedColumnIds: [],
+        terminalDefaultsApplied: true,
+      };
+      await pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: { ...current.layoutPreferences, board: { board } },
+      }));
+      const failures = vi.fn();
+      const off = pane.subscribeCollectionPreferenceFailure(source, scope, failures);
+      const operation = pane.updateCollectionPreference(source, scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          board: { board: { ...board, collapsedColumnIds: ['one'] } },
+        },
+      }));
+      await flushMicrotasks();
+
+      pane.renameProject(source, intermediate);
+      pane.renameProject(intermediate, source);
+      expect(pane.collectionPreferenceSaving(source, scope)).toBe(true);
+      rejectSave(new Error('disk unavailable'));
+      await expect(operation).rejects.toThrow('disk unavailable');
+      await flushMicrotasks();
+
+      const settled =
+        scope === 'tasks'
+          ? (pane.collectionPreference(source, scope) as ProjectTasksCollectionPreference)
+          : (pane.collectionPreference(source, scope) as WorkNotesCollectionPreference);
+      expect(settled.layoutPreferences['board']?.board).toEqual(board);
+      expect(pane.collectionPreferenceSaving(source, scope)).toBe(false);
+      expect(settings.projects.view.collectionPreferences[intermediate]).toBeUndefined();
+      expect(failures).toHaveBeenCalledOnce();
+
+      off();
+      pane.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    },
+  );
 
   it('hides the Tasks Table layout and Fields control in the Work Notes scope', async () => {
     const container = freshContainer();

@@ -159,6 +159,8 @@ export interface WorkNotesBoardOptions {
   readonly announce?: (message: string) => void;
   readonly columnPreference?: BoardViewPreference;
   readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
+  readonly columnPreferenceSaving?: boolean;
+  readonly autoPersistInitialColumnPreference?: boolean;
   readonly overlayScope?: object;
 }
 
@@ -183,6 +185,8 @@ export interface ProjectTasksBoardOptions {
   readonly session?: WorkNoteBoardSession;
   readonly columnPreference?: BoardViewPreference;
   readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
+  readonly columnPreferenceSaving?: boolean;
+  readonly autoPersistInitialColumnPreference?: boolean;
   readonly focusedItemKey?: () => string | null;
   readonly shouldRestoreItemFocus?: () => boolean;
   readonly onItemFocus?: (action: ProjectAction) => void;
@@ -1825,6 +1829,10 @@ export function renderWorkNotesBoard(
         terminalLeftIds: [],
         terminalRightIds: [],
         onChange: (next: BoardViewPreference) => options.onColumnPreferenceChange?.(next),
+        ...(options.columnPreferenceSaving === true && { saving: true }),
+        ...(options.autoPersistInitialColumnPreference === false && {
+          autoPersistInitialPreference: false,
+        }),
       },
     }),
     executeMutation:
@@ -1933,6 +1941,10 @@ export function renderProjectTasksBoard(
         terminalLeftIds: [],
         terminalRightIds: [],
         onChange: (next: BoardViewPreference) => options.onColumnPreferenceChange?.(next),
+        ...(options.columnPreferenceSaving === true && { saving: true }),
+        ...(options.autoPersistInitialColumnPreference === false && {
+          autoPersistInitialPreference: false,
+        }),
       },
     }),
     ...(options.renderColumnAdd && {

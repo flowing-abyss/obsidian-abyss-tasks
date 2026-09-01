@@ -9,12 +9,18 @@ import {
 } from '../src/panels/projects/boardProjection';
 import { BoundedWindow, computeBoundedWindow } from '../src/panels/projects/BoundedWindow';
 import { renderProgressBar } from '../src/panels/projects/progressBar';
-import { renderProjectsBoard } from '../src/panels/projects/ProjectsBoardView';
+import {
+  renderProjectsBoard,
+  renderProjectTasksBoard,
+} from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectDashboard } from '../src/panels/projects/ProjectsDashboardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { ProjectsPanel } from '../src/panels/projects/ProjectsPanel';
 import { renderProjectsTable } from '../src/panels/projects/ProjectsTableView';
-import { ProjectWorkspaceSession } from '../src/panels/projects/ProjectWorkspaceSession';
+import {
+  disposeProjectWorkspacePreferenceAuthority,
+  ProjectWorkspaceSession,
+} from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectChildRenderHandle } from '../src/panels/projects/viewContext';
 import { selectWorkNotes } from '../src/panels/projects/WorkNotesView';
 import { parseProjectRange } from '../src/projects/projectDates';
@@ -22,6 +28,10 @@ import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { computeWorkNotePresetFingerprint } from '../src/projects/work-notes/compatibility';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import type {
+  ProjectTasksCollectionPreference,
+  WorkNotesCollectionPreference,
+} from '../src/settings/types';
 import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 const ACTIVE_ID = DEFAULT_SETTINGS.projects.statuses[0]!.id;
@@ -918,6 +928,465 @@ describe('renderProjectsList', () => {
         ?.classList.contains('is-column-collapsed'),
     ).toBe(true);
     replacement.panel.destroy();
+  });
+
+  it('shares committed Board preferences across live panes while keeping their interaction sessions local', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      terminalDefaultsApplied: true,
+    };
+    const regular = settings.projects.statuses.filter(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    );
+    const owner = {};
+    const sessionA = new ProjectWorkspaceSession(owner);
+    const sessionB = new ProjectWorkspaceSession(owner);
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const mount = (workspaceSession: ProjectWorkspaceSession) => {
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        new AppState(),
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [workspace()],
+          workspaceSession,
+          onSaveSettings,
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+    const paneA = mount(sessionA);
+    const paneB = mount(sessionB);
+    try {
+      sessionA.openProject('Projects/A.md');
+      sessionB.openProject('Projects/A.md');
+      sessionA.scopeSession('tasks').textQuery = 'pane A only';
+      expect(sessionB.scopeSession('tasks').textQuery).toBe('');
+
+      paneA.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular[0]!.id}"]`)!
+        .click();
+      await flushMicrotasks();
+
+      expect(settings.projects.view.board.collapsedColumnIds).toContain(regular[0]!.id);
+      for (const { root } of [paneA, paneB]) {
+        expect(
+          root
+            .querySelector(`[data-board-column="${regular[0]!.id}"]`)
+            ?.classList.contains('is-column-collapsed'),
+        ).toBe(true);
+      }
+
+      paneB.root
+        .querySelector<HTMLButtonElement>(`[data-board-hide-column="${regular[1]!.id}"]`)!
+        .click();
+      await flushMicrotasks();
+
+      expect(settings.projects.view.board.collapsedColumnIds).toContain(regular[0]!.id);
+      expect(settings.projects.view.board.hiddenColumnIds).toContain(regular[1]!.id);
+      expect(paneA.root.querySelector(`[data-board-column="${regular[1]!.id}"]`)).toBeNull();
+      expect(onSaveSettings).toHaveBeenCalledTimes(2);
+
+      const restartedOwner = {};
+      const restarted = new ProjectWorkspaceSession(restartedOwner);
+      restarted.bindCollectionPreferences(settings);
+      expect(restarted.portfolioPreference().layoutPreferences['board']?.board).toMatchObject({
+        collapsedColumnIds: expect.arrayContaining([regular[0]!.id]),
+        hiddenColumnIds: expect.arrayContaining([regular[1]!.id]),
+      });
+      restarted.destroy();
+      disposeProjectWorkspacePreferenceAuthority(restartedOwner);
+    } finally {
+      paneA.panel.destroy();
+      paneB.panel.destroy();
+      sessionA.destroy();
+      sessionB.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    }
+  });
+
+  it('serializes cross-pane Board saves, publishes rollback to every live pane, and removes closed listeners', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      terminalDefaultsApplied: true,
+    };
+    const regular = settings.projects.statuses.filter(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    );
+    const owner = {};
+    const sessionA = new ProjectWorkspaceSession(owner);
+    const sessionB = new ProjectWorkspaceSession(owner);
+    let rejectSave!: (error: unknown) => void;
+    const save = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    const onSaveSettings = vi.fn(() => save);
+    const announcementsA: string[] = [];
+    const announcementsB: string[] = [];
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const mount = (workspaceSession: ProjectWorkspaceSession, announcements: string[]) => {
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        new AppState(),
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [workspace()],
+          workspaceSession,
+          onSaveSettings,
+          onAnnounce: (message) => announcements.push(message),
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+    const paneA = mount(sessionA, announcementsA);
+    const paneB = mount(sessionB, announcementsB);
+    try {
+      paneA.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular[0]!.id}"]`)!
+        .click();
+      // A same-turn stale action cannot silently enqueue another persistence write.
+      paneB.root
+        .querySelector<HTMLButtonElement>(`[data-board-hide-column="${regular[1]!.id}"]`)!
+        .click();
+      await flushMicrotasks();
+      expect(onSaveSettings).toHaveBeenCalledOnce();
+      expect(
+        paneA.root.querySelector<HTMLButtonElement>(
+          `[data-board-collapse-column="${regular[0]!.id}"]`,
+        )?.disabled,
+      ).toBe(true);
+      expect(
+        paneB.root.querySelector<HTMLButtonElement>(
+          `[data-board-collapse-column="${regular[0]!.id}"]`,
+        )?.disabled,
+      ).toBe(true);
+      expect(
+        announcementsA.filter((message) => message.includes('changed elsewhere')),
+      ).toHaveLength(1);
+      expect(
+        announcementsB.filter((message) => message.includes('changed elsewhere')),
+      ).toHaveLength(1);
+
+      rejectSave(new Error('disk unavailable'));
+      await flushMicrotasks();
+      await flushMicrotasks();
+      expect(settings.projects.view.board.collapsedColumnIds).not.toContain(regular[0]!.id);
+      for (const { root } of [paneA, paneB]) {
+        expect(
+          root
+            .querySelector(`[data-board-column="${regular[0]!.id}"]`)
+            ?.classList.contains('is-column-collapsed'),
+        ).toBe(false);
+      }
+      expect(announcementsA.filter((message) => message.includes('not saved'))).toHaveLength(2);
+      expect(announcementsB.filter((message) => message.includes('not saved'))).toHaveLength(2);
+
+      paneB.panel.destroy();
+      const priorClosedAnnouncements = announcementsB.length;
+      const retry = sessionA.updatePortfolioBoardPreference({
+        ...settings.projects.view.board,
+        collapsedColumnIds: [regular[0]!.id],
+      });
+      await expect(retry).rejects.toThrow('disk unavailable');
+      expect(announcementsB).toHaveLength(priorClosedAnnouncements);
+    } finally {
+      paneA.panel.destroy();
+      paneB.panel.destroy();
+      sessionA.destroy();
+      sessionB.destroy();
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    }
+  });
+
+  it('publishes a Project Task Board preference across two live project panes before the second edit derives', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const owner = {};
+    const path = 'Projects/A.md';
+    let rejectSave!: (error: unknown) => void;
+    const save = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    const onSaveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => save)
+      .mockResolvedValue(undefined);
+    const sessions = [new ProjectWorkspaceSession(owner), new ProjectWorkspaceSession(owner)];
+    for (const session of sessions) session.bindCollectionPreferences(settings, onSaveSettings);
+    const statusIds = settings.taskStatuses.map(({ id }) => id);
+    const initialBoard = {
+      version: 1 as const,
+      columnOrder: statusIds,
+      hiddenColumnIds: [],
+      collapsedColumnIds: [],
+      terminalDefaultsApplied: true,
+    };
+    await sessions[0]!.updateCollectionPreference(path, 'tasks', (current) => ({
+      ...current,
+      layout: 'board',
+      layoutPreferences: { ...current.layoutPreferences, board: { board: initialBoard } },
+    }));
+    const action = {
+      task: task({ title: 'Shared task board item' }),
+      projectPath: path,
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path },
+    };
+    const snapshot = workspace(proj({ path }), { tasks: [action] });
+    const store = {
+      list: () => [snapshot.project],
+      get: () => snapshot.project,
+      activeForLeftPanel: () => [snapshot.project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const announcements: string[][] = [[], []];
+    const mount = (session: ProjectWorkspaceSession, messages: string[]) => {
+      session.openProject(path);
+      const state = new AppState();
+      state.set('projectsPanel', { view: 'dashboard', path });
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        state,
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [snapshot],
+          workspaceSession: session,
+          onSaveSettings,
+          onAnnounce: (message) => messages.push(message),
+          renderTaskBoard: (host, projectPath, actions) => {
+            const preference = session.collectionPreference(
+              projectPath,
+              'tasks',
+            ) as ProjectTasksCollectionPreference;
+            return renderProjectTasksBoard(host, {
+              actions,
+              statuses: settings.taskStatuses,
+              onMoveStatus: vi.fn(),
+              renderItem: (card, current) => card.createDiv({ text: current.task.title }),
+              columnPreference: preference.layoutPreferences['board']?.board,
+              onColumnPreferenceChange: (next) =>
+                session
+                  .updateCollectionPreference(projectPath, 'tasks', (current) => ({
+                    ...current,
+                    layoutPreferences: {
+                      ...current.layoutPreferences,
+                      board: { board: next },
+                    },
+                  }))
+                  .then(() => undefined),
+              columnPreferenceSaving: session.collectionPreferenceSaving(projectPath, 'tasks'),
+              autoPersistInitialColumnPreference: session.shouldAutoPersistCollectionPreference(
+                projectPath,
+                'tasks',
+              ),
+              announce: (message) => messages.push(message),
+            });
+          },
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+    const paneA = mount(sessions[0]!, announcements[0]!);
+    const paneB = mount(sessions[1]!, announcements[1]!);
+    try {
+      paneA.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${statusIds[0]}"]`)!
+        .click();
+      await flushMicrotasks();
+      for (const pane of [paneA, paneB]) {
+        expect(
+          pane.root.querySelector<HTMLButtonElement>(
+            `[data-board-collapse-column="${statusIds[0]}"]`,
+          )?.disabled,
+        ).toBe(true);
+      }
+      rejectSave(new Error('disk unavailable'));
+      await flushMicrotasks();
+      await flushMicrotasks();
+      for (const [pane, messages] of [
+        [paneA, announcements[0]],
+        [paneB, announcements[1]],
+      ] as const) {
+        expect(
+          pane.root
+            .querySelector(`[data-board-column="${statusIds[0]}"]`)
+            ?.classList.contains('is-column-collapsed'),
+        ).toBe(false);
+        expect(messages?.filter((message) => message.includes('not saved'))).toHaveLength(1);
+      }
+
+      paneA.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${statusIds[0]}"]`)!
+        .click();
+      await flushMicrotasks();
+      expect(
+        paneB.root
+          .querySelector(`[data-board-column="${statusIds[0]}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(true);
+
+      paneB.root
+        .querySelector<HTMLButtonElement>(`[data-board-hide-column="${statusIds[1]}"]`)!
+        .click();
+      await flushMicrotasks();
+      const settled = sessions[0]!.collectionPreference(
+        path,
+        'tasks',
+      ) as ProjectTasksCollectionPreference;
+      expect(settled.layoutPreferences['board']?.board).toMatchObject({
+        collapsedColumnIds: expect.arrayContaining([statusIds[0]]),
+        hiddenColumnIds: expect.arrayContaining([statusIds[1]]),
+      });
+    } finally {
+      paneA.panel.destroy();
+      paneB.panel.destroy();
+      sessions.forEach((session) => session.destroy());
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    }
+  });
+
+  it('publishes a Work Note Board preference across two live project panes before the second edit derives', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const owner = {};
+    const path = 'Projects/A.md';
+    const save = deferred<void>();
+    const onSaveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => save.promise)
+      .mockResolvedValue(undefined);
+    const sessions = [new ProjectWorkspaceSession(owner), new ProjectWorkspaceSession(owner)];
+    for (const session of sessions) session.bindCollectionPreferences(settings, onSaveSettings);
+    const statusIds = settings.projects.statuses.map(({ id }) => id);
+    const initialBoard = {
+      version: 1 as const,
+      columnOrder: statusIds,
+      hiddenColumnIds: [],
+      collapsedColumnIds: [],
+      terminalDefaultsApplied: true,
+    };
+    await sessions[0]!.updateCollectionPreference(path, 'work-notes', (current) => ({
+      ...current,
+      layout: 'board',
+      layoutPreferences: { ...current.layoutPreferences, board: { board: initialBoard } },
+    }));
+    const note = workNote('Work Notes/Shared.md', statusIds[0]!, '2026-09-01');
+    const snapshot = workspace(proj({ path }), {
+      workNotes: [note],
+      workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+    });
+    const store = {
+      list: () => [snapshot.project],
+      get: () => snapshot.project,
+      activeForLeftPanel: () => [snapshot.project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const commands = {
+      capabilities: () => ({ update: true, create: true }),
+      statuses: () => settings.projects.statuses,
+      observe: (current: WorkNoteSnapshot) => current,
+      setStatus: vi.fn(),
+      create: vi.fn(),
+    };
+    const mount = (session: ProjectWorkspaceSession) => {
+      session.openProject(path);
+      session.scope = 'work-notes';
+      const state = new AppState();
+      state.set('projectsPanel', { view: 'dashboard', path });
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        state,
+        store as never,
+        manager as never,
+        settings,
+        { vault: { getAbstractFileByPath: () => null } } as never,
+        {
+          snapshots: [snapshot],
+          workspaceSession: session,
+          onSaveSettings,
+          workNoteCommands: commands as never,
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+    const paneA = mount(sessions[0]!);
+    const paneB = mount(sessions[1]!);
+    try {
+      paneA.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${statusIds[0]}"]`)!
+        .click();
+      await flushMicrotasks();
+      for (const pane of [paneA, paneB]) {
+        expect(
+          pane.root.querySelector<HTMLButtonElement>(
+            `[data-board-collapse-column="${statusIds[0]}"]`,
+          )?.disabled,
+        ).toBe(true);
+      }
+      save.resolve();
+      await flushMicrotasks();
+      expect(
+        paneB.root
+          .querySelector(`[data-board-column="${statusIds[0]}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(true);
+
+      paneB.root
+        .querySelector<HTMLButtonElement>(`[data-board-hide-column="${statusIds[1]}"]`)!
+        .click();
+      await flushMicrotasks();
+      const settled = sessions[0]!.collectionPreference(
+        path,
+        'work-notes',
+      ) as WorkNotesCollectionPreference;
+      expect(settled.layoutPreferences['board']?.board).toMatchObject({
+        collapsedColumnIds: expect.arrayContaining([statusIds[0]]),
+        hiddenColumnIds: expect.arrayContaining([statusIds[1]]),
+      });
+    } finally {
+      paneA.panel.destroy();
+      paneB.panel.destroy();
+      sessions.forEach((session) => session.destroy());
+      disposeProjectWorkspacePreferenceAuthority(owner);
+    }
   });
 
   it('does not resubmit a rejected legacy Board normalization after remount and allows one manual retry', async () => {

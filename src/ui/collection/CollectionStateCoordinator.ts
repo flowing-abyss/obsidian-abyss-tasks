@@ -21,6 +21,14 @@ export class CollectionPreferenceConflictError extends Error {
 }
 
 export interface CollectionPreferencePort<TPreference> {
+  /** Optional alias resolver for application-owned identities that survive note renames. */
+  resolveScope?(scope: CollectionScopeKey): CollectionScopeKey;
+  /**
+   * Reserve an application-owned identity before this coordinator defers the write.
+   * The returned release callback must follow any identity rebind which happens
+   * while the write is queued or in flight.
+   */
+  reserveScope?(scope: CollectionScopeKey): () => void;
   read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<TPreference>;
   update(
     scope: CollectionScopeKey,
@@ -111,11 +119,16 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     },
   ) {}
 
+  private preferenceScope(scope: CollectionScopeKey): CollectionScopeKey {
+    return this.ports.preferences.resolveScope?.(scope) ?? scope;
+  }
+
   preference(scope: CollectionScopeKey): TPreference {
     return this.preferenceSnapshot(scope).preference;
   }
 
   preferenceSnapshot(scope: CollectionScopeKey): CollectionPreferenceSnapshot<TPreference> {
+    scope = this.preferenceScope(scope);
     const cached = this.migrated.get(scope);
     if (cached) return cached;
     const current = this.ports.preferences.read(scope);
@@ -134,6 +147,9 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
   }
 
   invalidatePreference(scope: CollectionScopeKey): void {
+    const original = scope;
+    scope = this.preferenceScope(scope);
+    this.migrated.delete(original);
     this.migrated.delete(scope);
   }
 
@@ -142,6 +158,8 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     expected: CollectionPreferenceSnapshot<TPreference>,
     next: TPreference,
   ): Promise<CollectionPreferenceSnapshot<TPreference>> {
+    scope = this.preferenceScope(scope);
+    const releaseScope = this.ports.preferences.reserveScope?.(scope);
     const previousWrite = this.writeQueues.get(scope) ?? Promise.resolve();
     const result = previousWrite.then(async () => {
       const settled = await this.ports.preferences.update(scope, expected, next);
@@ -150,8 +168,13 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
         revision: settled.revision,
         preference: this.ports.migratePreference(settled.preference),
       };
-      if (this.migrated.get(scope)?.persistenceIdentity === expected.persistenceIdentity)
-        this.migrated.set(scope, migrated);
+      const settledScope = this.preferenceScope(scope);
+      const cachedIdentity = this.migrated.get(settledScope)?.persistenceIdentity;
+      if (
+        cachedIdentity === expected.persistenceIdentity ||
+        cachedIdentity === migrated.persistenceIdentity
+      )
+        this.migrated.set(settledScope, migrated);
       return migrated;
     });
     const queue = result.then(
@@ -162,7 +185,7 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     void queue.finally(() => {
       if (this.writeQueues.get(scope) === queue) this.writeQueues.delete(scope);
     });
-    return result;
+    return result.finally(releaseScope);
   }
 
   subscribePreference(
@@ -170,13 +193,14 @@ export class CollectionStateCoordinator<TPreference extends AnyCollectionPrefere
     listener: (next: CollectionPreferenceSnapshot<TPreference>) => void,
   ): () => void {
     return this.ports.preferences.subscribe(scope, (next) => {
+      const settledScope = this.preferenceScope(scope);
       const migrated = {
         persistenceIdentity: next.persistenceIdentity,
         revision: next.revision,
         preference: this.ports.migratePreference(next.preference),
       };
-      if (this.migrated.get(scope)?.persistenceIdentity === next.persistenceIdentity)
-        this.migrated.set(scope, migrated);
+      if (this.migrated.get(settledScope)?.persistenceIdentity === next.persistenceIdentity)
+        this.migrated.set(settledScope, migrated);
       listener(migrated);
     });
   }

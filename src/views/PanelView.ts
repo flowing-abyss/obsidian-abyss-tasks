@@ -217,6 +217,7 @@ export class PanelView extends ItemView {
     private readonly projectClock?: NonNullable<
       ConstructorParameters<typeof ProjectCommandService>[2]
     >,
+    private readonly projectWorkspacePreferenceOwner?: object,
   ) {
     super(leaf);
   }
@@ -239,7 +240,7 @@ export class PanelView extends ItemView {
 
     this.state = new AppState();
     this.interactionRegistry = new InteractionRegistry<ShortcutActionId>();
-    this.collectionState = new ProjectWorkspaceSession();
+    this.collectionState = new ProjectWorkspaceSession(this.projectWorkspacePreferenceOwner);
     this.collectionState.bindCollectionPreferences(this.settings, this.onSaveSettings);
     this.panelNavigation = new PanelNavigator(
       this.state,
@@ -848,6 +849,8 @@ export class PanelView extends ItemView {
     this.left?.destroy();
     this.center?.destroy();
     this.right?.destroy();
+    this.collectionState?.destroy();
+    this.collectionState = undefined;
     this.interactionRegistry?.destroy();
     this.interactionRegistry = undefined;
     this.contentEl.empty();

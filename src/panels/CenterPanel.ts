@@ -1262,6 +1262,12 @@ export class CenterPanel {
               },
             }))
             .then(() => undefined),
+        columnPreferenceSaving: this.projectWorkspaceSession.collectionPreferenceSaving(
+          path,
+          'tasks',
+        ),
+        autoPersistInitialColumnPreference:
+          this.projectWorkspaceSession.shouldAutoPersistCollectionPreference(path, 'tasks'),
         focusedItemKey: () => {
           const focused = session.focusedRef();
           return focused ? taskPresentationKey(focused) : null;

@@ -141,6 +141,8 @@ export class ProjectsPanel {
   private readonly publicationSequence: number | undefined;
   private readonly pathSuccessor: ProjectsPanelOptions['pathSuccessor'];
   private viewCleanup: (() => void) | null = null;
+  private scopedPreferencePath: string | null = null;
+  private scopedPreferenceOffs: Array<() => void> = [];
   /** The dashboard owns a mounted collection instance until an actual close. */
   private dashboardSessionPath: string | null = null;
   private readonly portfolioScroll = new Map<string, number>();
@@ -188,6 +190,31 @@ export class ProjectsPanel {
 
   private async createProject(name: string): Promise<ProjectCreateResult> {
     return await this.projectManager.create(name);
+  }
+
+  private syncScopedPreferenceSubscriptions(path: string | null): void {
+    if (this.scopedPreferencePath === path) return;
+    this.scopedPreferenceOffs.forEach((off) => off());
+    this.scopedPreferenceOffs = [];
+    this.scopedPreferencePath = path;
+    if (!path) return;
+    for (const scope of ['tasks', 'work-notes'] as const) {
+      this.scopedPreferenceOffs.push(
+        this.workspaceSession.subscribeCollectionPreference(path, scope, () => this.render()),
+        this.workspaceSession.subscribeCollectionPreferenceMutation(path, scope, () =>
+          this.render(),
+        ),
+        this.workspaceSession.subscribeCollectionPreferenceFailure(path, scope, (error) => {
+          const conflict =
+            error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+          this.onAnnounce(
+            conflict
+              ? 'Project collection changed elsewhere. Your change was not saved; review the settled view.'
+              : 'Project collection preference was not saved. Nothing changed; try again.',
+          );
+        }),
+      );
+    }
   }
 
   mount(el: HTMLElement): void {
@@ -367,6 +394,12 @@ export class ProjectsPanel {
       overlayScope: this.app,
       boardPreference: boardPreference(),
       onBoardPreferenceChange: persistBoardPreference,
+      boardPreferenceSaving: this.workspaceSession.collectionPreferenceSaving(
+        projectPath,
+        'work-notes',
+      ),
+      autoPersistInitialBoardPreference:
+        this.workspaceSession.shouldAutoPersistCollectionPreference(projectPath, 'work-notes'),
       isNarrow,
       coarsePointer,
       milestoneRollups,
@@ -414,6 +447,15 @@ export class ProjectsPanel {
             overlayScope: this.app,
             boardPreference: boardPreference(),
             onBoardPreferenceChange: persistBoardPreference,
+            boardPreferenceSaving: this.workspaceSession.collectionPreferenceSaving(
+              projectPath,
+              'work-notes',
+            ),
+            autoPersistInitialBoardPreference:
+              this.workspaceSession.shouldAutoPersistCollectionPreference(
+                projectPath,
+                'work-notes',
+              ),
             isNarrow,
             coarsePointer,
             milestoneRollups,
@@ -542,14 +584,14 @@ export class ProjectsPanel {
   // The panel's existing top-level view switch is intentionally exhaustive.
   // eslint-disable-next-line sonarjs/cognitive-complexity
   private render(): void {
+    const view = this.state.get('projectsPanel');
+    this.syncScopedPreferenceSubscriptions(view.view === 'dashboard' ? view.path : null);
     const portfolioFocus = this.portfolioFocusIntent ?? this.capturePortfolioContinuity();
     this.portfolioFocusIntent = null;
     this.viewCleanup?.();
     this.viewCleanup = null;
     this.el.empty();
     this.el.addClass('abyss-projects-panel');
-    const view = this.state.get('projectsPanel');
-
     if (view.view === 'dashboard') {
       const container = this.el.createDiv();
       const snapshot = this.snapshots.find(({ project }) => project.path === view.path);
@@ -877,6 +919,9 @@ export class ProjectsPanel {
     }
     this.offs.forEach((f) => f());
     this.offs = [];
+    this.scopedPreferenceOffs.forEach((off) => off());
+    this.scopedPreferenceOffs = [];
+    this.scopedPreferencePath = null;
     this.el?.empty();
   }
 }

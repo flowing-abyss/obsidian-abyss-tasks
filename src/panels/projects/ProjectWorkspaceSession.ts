@@ -20,6 +20,7 @@ import {
   type CollectionPreferencePort,
   type CollectionPreferenceSnapshot,
   type CollectionScopeKey,
+  type CollectionSessionPort,
 } from '../../ui/collection/CollectionStateCoordinator';
 import type { BoardViewPreference } from './boardPreferences';
 import { MeasuredWindow } from './BoundedWindow';
@@ -149,52 +150,53 @@ function timelineViewport<S extends TimelineScope>(scope: S): TimelinePresentati
 }
 
 function updateCollectionSession(
-  coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  sessions: CollectionSessionPort,
   instanceKey: () => string,
   changes: Partial<CollectionSessionState>,
 ): void {
-  coordinator.updateSession(instanceKey(), { ...coordinator.session(instanceKey()), ...changes });
+  sessions.update(instanceKey(), { ...sessions.read(instanceKey()), ...changes });
 }
 
 function scopeSession<TViewState>(
   coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  sessions: CollectionSessionPort,
   initialInstanceKey: string,
 ): ManagedProjectWorkspaceScopeSession<TViewState> {
   let instanceKey = initialInstanceKey;
   const selectionState: ScopeSelectionSession = {
     get selectedKeys(): string[] {
-      const selected = coordinator.session(instanceKey).selectionKey;
+      const selected = sessions.read(instanceKey).selectionKey;
       return selected ? [selected] : [];
     },
     set selectedKeys(next: string[]) {
-      updateCollectionSession(coordinator, () => instanceKey, { selectionKey: next[0] ?? null });
+      updateCollectionSession(sessions, () => instanceKey, { selectionKey: next[0] ?? null });
     },
     get focusedKey(): string | null {
-      return coordinator.session(instanceKey).focusedKey;
+      return sessions.read(instanceKey).focusedKey;
     },
     set focusedKey(next: string | null) {
-      updateCollectionSession(coordinator, () => instanceKey, { focusedKey: next });
+      updateCollectionSession(sessions, () => instanceKey, { focusedKey: next });
     },
     get inspectorKey(): string | null {
-      return coordinator.session(instanceKey).selectionKey;
+      return sessions.read(instanceKey).selectionKey;
     },
     set inspectorKey(next: string | null) {
-      updateCollectionSession(coordinator, () => instanceKey, { selectionKey: next });
+      updateCollectionSession(sessions, () => instanceKey, { selectionKey: next });
     },
   };
   const localViewport = viewport();
   const viewportState: LogicalViewportSession = {
     get firstKey(): string | null {
-      return coordinator.session(instanceKey).scrollAnchor;
+      return sessions.read(instanceKey).scrollAnchor;
     },
     set firstKey(next: string | null) {
-      updateCollectionSession(coordinator, () => instanceKey, { scrollAnchor: next });
+      updateCollectionSession(sessions, () => instanceKey, { scrollAnchor: next });
     },
     get focusedKey(): string | null {
-      return coordinator.session(instanceKey).focusedKey;
+      return sessions.read(instanceKey).focusedKey;
     },
     set focusedKey(next: string | null) {
-      updateCollectionSession(coordinator, () => instanceKey, { focusedKey: next });
+      updateCollectionSession(sessions, () => instanceKey, { focusedKey: next });
     },
     get firstIndex(): number {
       return localViewport.firstIndex;
@@ -229,21 +231,21 @@ function scopeSession<TViewState>(
         .catch(() => undefined);
     },
     get textQuery(): string {
-      return coordinator.session(instanceKey).query;
+      return sessions.read(instanceKey).query;
     },
     set textQuery(next: string) {
-      updateCollectionSession(coordinator, () => instanceKey, { query: next });
+      updateCollectionSession(sessions, () => instanceKey, { query: next });
     },
     get openSurface(): string | null {
-      return coordinator.session(instanceKey).openSurface;
+      return sessions.read(instanceKey).openSurface;
     },
     set openSurface(next: string | null) {
-      updateCollectionSession(coordinator, () => instanceKey, { openSurface: next });
+      updateCollectionSession(sessions, () => instanceKey, { openSurface: next });
     },
     rebindCollectionInstance(nextInstanceKey: string): void {
-      const current = coordinator.session(instanceKey);
-      coordinator.updateSession(nextInstanceKey, current);
-      coordinator.release(instanceKey);
+      const current = sessions.read(instanceKey);
+      sessions.update(nextInstanceKey, current);
+      sessions.release(instanceKey);
       instanceKey = nextInstanceKey;
     },
   } satisfies ManagedProjectWorkspaceScopeSession<TViewState>;
@@ -252,15 +254,21 @@ function scopeSession<TViewState>(
 
 function workspaceEntry(
   coordinator: CollectionStateCoordinator<WorkspacePreference>,
+  sessions: CollectionSessionPort,
   projectPath: string,
 ): ProjectWorkspaceEntry {
   const workNotesScope = scopeSession<WorkNotesViewState>(
     coordinator,
+    sessions,
     `project:${projectPath}:work-notes`,
   );
   return {
     scope: 'tasks',
-    tasksScope: scopeSession<ProjectTasksViewState>(coordinator, `project:${projectPath}:tasks`),
+    tasksScope: scopeSession<ProjectTasksViewState>(
+      coordinator,
+      sessions,
+      `project:${projectPath}:tasks`,
+    ),
     workNotesScope,
     tasks: new ProjectTaskCollectionSession(),
     taskBoard: {
@@ -431,8 +439,14 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   >();
   private readonly pending = new Map<
     CollectionScopeKey,
-    CollectionPreferenceSnapshot<WorkspacePreference>
+    {
+      persistenceIdentity: string;
+      revision: number;
+      preference: WorkspacePreference;
+    }
   >();
+  private readonly scopeAliases = new Map<CollectionScopeKey, CollectionScopeKey>();
+  private readonly queued = new Map<CollectionScopeKey, number>();
   private saveQueue: Promise<void> = Promise.resolve();
   private mainTaskListKey = 'today';
 
@@ -451,6 +465,16 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
 
   activeMainTaskList(): string {
     return this.mainTaskListKey;
+  }
+
+  resolveScope(scope: CollectionScopeKey): CollectionScopeKey {
+    let current = scope;
+    const visited = new Set<CollectionScopeKey>();
+    while (this.scopeAliases.has(current) && !visited.has(current)) {
+      visited.add(current);
+      current = this.scopeAliases.get(current)!;
+    }
+    return current;
   }
 
   private revisionKey(scope: CollectionScopeKey, mainTaskListKey = this.mainTaskListKey): string {
@@ -545,6 +569,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   }
 
   read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<WorkspacePreference> {
+    scope = this.resolveScope(scope);
     const pending = this.pending.get(scope);
     if (pending) {
       return {
@@ -568,6 +593,17 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     };
   }
 
+  reserveScope(scope: CollectionScopeKey): () => void {
+    const reservedScope = this.resolveScope(scope);
+    this.queued.set(reservedScope, (this.queued.get(reservedScope) ?? 0) + 1);
+    return () => {
+      const settledScope = this.resolveScope(scope);
+      const remaining = (this.queued.get(settledScope) ?? 1) - 1;
+      if (remaining > 0) this.queued.set(settledScope, remaining);
+      else this.queued.delete(settledScope);
+    };
+  }
+
   update(
     scope: CollectionScopeKey,
     expected: CollectionPreferenceSnapshot<WorkspacePreference>,
@@ -578,8 +614,9 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       this.commit(scope, expected, next, mainTaskListKey),
     );
     const result = operation.catch((error: unknown) => {
-      const authoritative = this.read(scope);
-      for (const listener of this.listeners.get(scope) ?? []) listener(authoritative);
+      const settledScope = this.resolveScope(scope);
+      const authoritative = this.read(settledScope);
+      for (const listener of this.listeners.get(settledScope) ?? []) listener(authoritative);
       throw error;
     });
     this.saveQueue = result.then(
@@ -593,14 +630,17 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     scope: CollectionScopeKey,
     listener: (next: CollectionPreferenceSnapshot<WorkspacePreference>) => void,
   ): () => void {
+    scope = this.resolveScope(scope);
     const scoped =
       this.listeners.get(scope) ??
       new Set<(next: CollectionPreferenceSnapshot<WorkspacePreference>) => void>();
     scoped.add(listener);
     this.listeners.set(scope, scoped);
     return () => {
-      scoped.delete(listener);
-      if (scoped.size === 0) this.listeners.delete(scope);
+      for (const [key, listeners] of this.listeners) {
+        listeners.delete(listener);
+        if (listeners.size === 0) this.listeners.delete(key);
+      }
     };
   }
 
@@ -610,9 +650,13 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     next: WorkspacePreference,
     mainTaskListKey: string | null,
   ): Promise<CollectionPreferenceSnapshot<WorkspacePreference>> {
-    const revisionKey = expected.persistenceIdentity;
+    scope = this.resolveScope(scope);
+    const revisionKey =
+      scope === 'tasks:main' ? expected.persistenceIdentity : this.revisionKey(scope);
     const identityMatchesScope =
-      scope === 'tasks:main' ? mainTaskListKey !== null : revisionKey === scope;
+      scope === 'tasks:main'
+        ? mainTaskListKey !== null
+        : this.resolveScope(expected.persistenceIdentity as CollectionScopeKey) === scope;
     if (!identityMatchesScope) throw new CollectionPreferenceConflictError();
     const revision = this.revisions.get(revisionKey) ?? 0;
     if (revision !== expected.revision) throw new CollectionPreferenceConflictError();
@@ -623,11 +667,12 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     }
 
     const pending = {
-      persistenceIdentity: expected.persistenceIdentity,
+      persistenceIdentity: revisionKey,
       revision: expected.revision,
       preference: structuredClone(expected.preference),
     };
-    this.pending.set(scope, pending);
+    const pendingScope = this.resolveScope(scope);
+    this.pending.set(pendingScope, pending);
     const restore = this.stage(settings, scope, next, mainTaskListKey ?? this.mainTaskListKey);
     try {
       await this.onSaveSettings();
@@ -635,9 +680,15 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       restore();
       throw error;
     } finally {
-      if (this.pending.get(scope) === pending) this.pending.delete(scope);
+      const settledScope = this.resolveScope(scope);
+      if (this.pending.get(settledScope) === pending) this.pending.delete(settledScope);
     }
-    return this.publish(scope, revisionKey, revision, next);
+    const settledScope = this.resolveScope(scope);
+    const settledRevisionKey = this.revisionKey(
+      settledScope,
+      mainTaskListKey ?? this.mainTaskListKey,
+    );
+    return this.publish(settledScope, settledRevisionKey, revision, next);
   }
 
   private stage(
@@ -730,14 +781,16 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     };
     records[parts.path] = staged;
     return () => {
+      const settledParts = scopeParts(this.resolveScope(scope));
+      if (!settledParts || settledParts.kind !== parts.kind) return;
       if (
         settings.projects.view !== view ||
         view.collectionPreferences !== records ||
-        records[parts.path] !== staged
+        records[settledParts.path] !== staged
       )
         return;
-      if (hadPrior && prior) records[parts.path] = prior;
-      else delete records[parts.path];
+      if (hadPrior && prior) records[settledParts.path] = prior;
+      else delete records[settledParts.path];
     };
   }
 
@@ -761,27 +814,181 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     const settings = this.settings;
     if (!settings || sourcePath === destinationPath) return;
     const source = settings.projects.view.collectionPreferences[sourcePath];
-    if (!source) return;
-    settings.projects.view.collectionPreferences[destinationPath] = source;
-    delete settings.projects.view.collectionPreferences[sourcePath];
+    if (source) {
+      settings.projects.view.collectionPreferences[destinationPath] = source;
+      delete settings.projects.view.collectionPreferences[sourcePath];
+    }
+    for (const kind of ['tasks', 'work-notes'] as const) {
+      const sourceScope = `project:${sourcePath}:${kind}` as CollectionScopeKey;
+      const destinationScope = `project:${destinationPath}:${kind}` as CollectionScopeKey;
+      this.rekeyScope(sourceScope, destinationScope);
+    }
   }
+
+  private rekeyScope(source: CollectionScopeKey, destination: CollectionScopeKey): void {
+    const sourceIdentity = this.resolveScope(source);
+    if (sourceIdentity === destination) return;
+    const pending = this.pending.get(sourceIdentity);
+    const queued = this.queued.get(sourceIdentity) ?? 0;
+    if (pending || queued > 0) {
+      // A reverse rename may target a raw key currently aliased to the source. Remove
+      // that edge first so A→B→A converges on A instead of forming an alias cycle.
+      this.scopeAliases.delete(destination);
+      for (const [alias, target] of this.scopeAliases) {
+        if (this.resolveScope(target) === sourceIdentity) this.scopeAliases.set(alias, destination);
+      }
+      this.scopeAliases.set(source, destination);
+    }
+    const revision = this.revisions.get(sourceIdentity);
+    if (revision !== undefined) this.revisions.set(destination, revision);
+    this.revisions.delete(sourceIdentity);
+    const fallback = this.fallback.get(sourceIdentity);
+    if (fallback) this.fallback.set(destination, fallback);
+    this.fallback.delete(sourceIdentity);
+    if (pending) {
+      pending.persistenceIdentity = destination;
+      this.pending.set(destination, pending);
+      this.pending.delete(sourceIdentity);
+    }
+    if (queued > 0) {
+      this.queued.set(destination, (this.queued.get(destination) ?? 0) + queued);
+      this.queued.delete(sourceIdentity);
+    }
+    const sourceListeners = this.listeners.get(sourceIdentity);
+    if (sourceListeners) {
+      const existingDestination = this.listeners.get(destination);
+      const destinationListeners = existingDestination ?? sourceListeners;
+      if (existingDestination) {
+        for (const listener of sourceListeners) destinationListeners.add(listener);
+      }
+      this.listeners.set(destination, destinationListeners);
+      this.listeners.delete(sourceIdentity);
+    }
+  }
+
+  releaseScopeAliases(scope: CollectionScopeKey): void {
+    const target = this.resolveScope(scope);
+    if (this.pending.has(target) || (this.queued.get(target) ?? 0) > 0) return;
+    for (const alias of [...this.scopeAliases.keys()]) {
+      if (this.resolveScope(alias) === target) this.scopeAliases.delete(alias);
+    }
+  }
+
+  dispose(): void {
+    this.settings = null;
+    this.onSaveSettings = undefined;
+    this.fallback.clear();
+    this.revisions.clear();
+    this.listeners.clear();
+    this.pending.clear();
+    this.scopeAliases.clear();
+    this.queued.clear();
+  }
+}
+
+interface ProjectWorkspacePreferenceAuthority {
+  readonly preferencePort: ProjectWorkspacePreferencePort;
+  readonly coordinator: CollectionStateCoordinator<WorkspacePreference>;
+  readonly portfolioPreferenceFailureListeners: Set<(error: unknown) => void>;
+  readonly portfolioBoardPreferenceMutationListeners: Set<() => void>;
+  readonly collectionPreferenceFailureListeners: Map<
+    CollectionScopeKey,
+    Set<(error: unknown) => void>
+  >;
+  readonly collectionPreferenceMutationListeners: Map<CollectionScopeKey, Set<() => void>>;
+  readonly collectionPreferenceMutationStates: Map<
+    CollectionScopeKey,
+    'idle' | 'pending' | 'failed'
+  >;
+  portfolioBoardPreferenceMutationState: 'idle' | 'pending' | 'failed';
+  acquisitions: number;
+  disposed: boolean;
+}
+
+const projectWorkspacePreferenceAuthorities = new WeakMap<
+  object,
+  ProjectWorkspacePreferenceAuthority
+>();
+
+function createProjectWorkspacePreferenceAuthority(): ProjectWorkspacePreferenceAuthority {
+  const preferencePort = new ProjectWorkspacePreferencePort();
+  return {
+    preferencePort,
+    coordinator: new CollectionStateCoordinator<WorkspacePreference>({
+      preferences: preferencePort,
+      // Transient selection/focus state stays pane-local in ProjectWorkspaceSession.
+      sessions: new InMemoryCollectionSessionPort(),
+      migratePreference: (current) => current,
+    }),
+    portfolioPreferenceFailureListeners: new Set(),
+    portfolioBoardPreferenceMutationListeners: new Set(),
+    collectionPreferenceFailureListeners: new Map(),
+    collectionPreferenceMutationListeners: new Map(),
+    collectionPreferenceMutationStates: new Map(),
+    portfolioBoardPreferenceMutationState: 'idle',
+    acquisitions: 0,
+    disposed: false,
+  };
+}
+
+function acquireProjectWorkspacePreferenceAuthority(
+  owner?: object,
+): ProjectWorkspacePreferenceAuthority {
+  if (!owner) {
+    const local = createProjectWorkspacePreferenceAuthority();
+    local.acquisitions = 1;
+    return local;
+  }
+  const current = projectWorkspacePreferenceAuthorities.get(owner);
+  const authority = current?.disposed ? undefined : current;
+  if (authority) {
+    authority.acquisitions += 1;
+    return authority;
+  }
+  const created = createProjectWorkspacePreferenceAuthority();
+  created.acquisitions = 1;
+  projectWorkspacePreferenceAuthorities.set(owner, created);
+  return created;
+}
+
+function releaseProjectWorkspacePreferenceAuthority(
+  authority: ProjectWorkspacePreferenceAuthority,
+): void {
+  authority.acquisitions = Math.max(0, authority.acquisitions - 1);
+}
+
+/** Plugin lifecycle boundary for application-scoped collection preference state. */
+export function disposeProjectWorkspacePreferenceAuthority(owner: object): void {
+  const authority = projectWorkspacePreferenceAuthorities.get(owner);
+  if (!authority) return;
+  projectWorkspacePreferenceAuthorities.delete(owner);
+  authority.disposed = true;
+  authority.portfolioPreferenceFailureListeners.clear();
+  authority.portfolioBoardPreferenceMutationListeners.clear();
+  authority.collectionPreferenceFailureListeners.clear();
+  authority.collectionPreferenceMutationListeners.clear();
+  authority.collectionPreferenceMutationStates.clear();
+  authority.preferencePort.dispose();
+  authority.coordinator.invalidatePreferences();
 }
 
 /** Ephemeral Project workspace continuity; never persisted to settings or the vault. */
 export class ProjectWorkspaceSession {
-  private readonly preferencePort = new ProjectWorkspacePreferencePort();
-  private readonly coordinator = new CollectionStateCoordinator<WorkspacePreference>({
-    preferences: this.preferencePort,
+  private readonly preferenceAuthority: ProjectWorkspacePreferenceAuthority;
+  private readonly preferencePort: ProjectWorkspacePreferencePort;
+  private readonly coordinator: CollectionStateCoordinator<WorkspacePreference>;
+  private readonly mainTaskPreferencePort = new ProjectWorkspacePreferencePort();
+  private readonly mainTaskCoordinator = new CollectionStateCoordinator<WorkspacePreference>({
+    preferences: this.mainTaskPreferencePort,
     sessions: new InMemoryCollectionSessionPort(),
     migratePreference: (current) => current,
   });
+  private readonly sessionPort = new InMemoryCollectionSessionPort();
   private readonly sessions = new Map<string, ProjectWorkspaceEntry>();
-  private readonly idle = workspaceEntry(this.coordinator, '__idle__');
+  private readonly idle: ProjectWorkspaceEntry;
   private readonly recoveries: ProjectWorkspaceRecoveryEntry[] = [];
-  private readonly portfolioPreferenceFailureListeners = new Set<(error: unknown) => void>();
-  private readonly portfolioBoardPreferenceMutationListeners = new Set<() => void>();
-  private portfolioBoardPreferenceMutationState: 'idle' | 'pending' | 'failed' = 'idle';
   private projectPath: string | null = null;
+  private destroyed = false;
   /** Portfolio continuity is independent of whichever Project workspace is open. */
   readonly portfolioTimeline = timelineViewport('portfolio');
   /** Portfolio Board continuity is independent of Project dashboard scope/layout state. */
@@ -799,21 +1006,30 @@ export class ProjectWorkspaceSession {
     createdPath: null,
   };
 
+  constructor(preferenceOwner?: object) {
+    this.preferenceAuthority = acquireProjectWorkspacePreferenceAuthority(preferenceOwner);
+    this.preferencePort = this.preferenceAuthority.preferencePort;
+    this.coordinator = this.preferenceAuthority.coordinator;
+    this.idle = workspaceEntry(this.coordinator, this.sessionPort, '__idle__');
+  }
+
   bindCollectionPreferences(
     settings: CalendarSettings,
     onSaveSettings?: () => Promise<void>,
   ): void {
     this.preferencePort.bind(settings, onSaveSettings);
+    this.mainTaskPreferencePort.bind(settings, onSaveSettings);
     this.coordinator.invalidatePreferences();
+    this.mainTaskCoordinator.invalidatePreferences();
   }
 
   activateMainTaskCollection(listKey: string): void {
-    this.preferencePort.activateMainTaskList(listKey);
-    this.coordinator.invalidatePreference('tasks:main');
+    this.mainTaskPreferencePort.activateMainTaskList(listKey);
+    this.mainTaskCoordinator.invalidatePreference('tasks:main');
   }
 
   mainTaskPreferenceSnapshot(): CollectionPreferenceSnapshot<MainTasksCollectionPreference> {
-    return this.coordinator.preferenceSnapshot(
+    return this.mainTaskCoordinator.preferenceSnapshot(
       'tasks:main',
     ) as CollectionPreferenceSnapshot<MainTasksCollectionPreference>;
   }
@@ -832,26 +1048,26 @@ export class ProjectWorkspaceSession {
   updateMainTaskPreference(
     mutate: (current: MainTasksCollectionPreference) => MainTasksCollectionPreference,
   ): Promise<CollectionPreferenceSnapshot<MainTasksCollectionPreference>> {
-    const listKey = this.preferencePort.activeMainTaskList();
+    const listKey = this.mainTaskPreferencePort.activeMainTaskList();
     const current = this.mainTaskPreferenceSnapshot();
     const next = mutate(current.preference);
     return (
-      this.coordinator.updatePreference('tasks:main', current, next) as Promise<
+      this.mainTaskCoordinator.updatePreference('tasks:main', current, next) as Promise<
         CollectionPreferenceSnapshot<MainTasksCollectionPreference>
       >
     ).then((settled) => {
-      if (this.preferencePort.activeMainTaskList() !== listKey)
-        this.coordinator.invalidatePreference('tasks:main');
+      if (this.mainTaskPreferencePort.activeMainTaskList() !== listKey)
+        this.mainTaskCoordinator.invalidatePreference('tasks:main');
       return settled;
     });
   }
 
   mainTaskSession(): CollectionSessionState {
-    return this.coordinator.session('tasks:main');
+    return this.sessionPort.read('tasks:main');
   }
 
   updateMainTaskSession(changes: Partial<CollectionSessionState>): void {
-    this.coordinator.updateSession('tasks:main', { ...this.mainTaskSession(), ...changes });
+    this.sessionPort.update('tasks:main', { ...this.mainTaskSession(), ...changes });
   }
 
   portfolioPreferenceSnapshot(): CollectionPreferenceSnapshot<PortfolioCollectionPreference> {
@@ -878,11 +1094,20 @@ export class ProjectWorkspaceSession {
   updatePortfolioBoardPreference(
     next: BoardViewPreference,
   ): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
-    this.portfolioBoardPreferenceMutationState = 'pending';
+    if (this.preferenceAuthority.portfolioBoardPreferenceMutationState === 'pending') {
+      const conflict = new CollectionPreferenceConflictError();
+      queueMicrotask(() => {
+        for (const listener of this.preferenceAuthority.portfolioPreferenceFailureListeners)
+          listener(conflict);
+      });
+      return Promise.reject(conflict);
+    }
+    this.preferenceAuthority.portfolioBoardPreferenceMutationState = 'pending';
     // Automatic normalization starts before renderBoard() returns its handle. Defer the
     // remount notification so ProjectsPanel can first own and later destroy that handle.
     queueMicrotask(() => {
-      for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
+      for (const listener of this.preferenceAuthority.portfolioBoardPreferenceMutationListeners)
+        listener();
     });
     return this.updatePortfolioPreference((current) => ({
       ...current,
@@ -892,14 +1117,17 @@ export class ProjectWorkspaceSession {
       },
     })).then(
       (settled) => {
-        this.portfolioBoardPreferenceMutationState = 'idle';
-        for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
+        this.preferenceAuthority.portfolioBoardPreferenceMutationState = 'idle';
+        for (const listener of this.preferenceAuthority.portfolioBoardPreferenceMutationListeners)
+          listener();
         return settled;
       },
       (error: unknown) => {
-        this.portfolioBoardPreferenceMutationState = 'failed';
-        for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
-        for (const listener of this.portfolioPreferenceFailureListeners) listener(error);
+        this.preferenceAuthority.portfolioBoardPreferenceMutationState = 'failed';
+        for (const listener of this.preferenceAuthority.portfolioBoardPreferenceMutationListeners)
+          listener();
+        for (const listener of this.preferenceAuthority.portfolioPreferenceFailureListeners)
+          listener(error);
         throw error;
       },
     );
@@ -912,21 +1140,22 @@ export class ProjectWorkspaceSession {
   }
 
   subscribePortfolioPreferenceFailure(listener: (error: unknown) => void): () => void {
-    this.portfolioPreferenceFailureListeners.add(listener);
-    return () => this.portfolioPreferenceFailureListeners.delete(listener);
+    this.preferenceAuthority.portfolioPreferenceFailureListeners.add(listener);
+    return () => this.preferenceAuthority.portfolioPreferenceFailureListeners.delete(listener);
   }
 
   subscribePortfolioBoardPreferenceMutation(listener: () => void): () => void {
-    this.portfolioBoardPreferenceMutationListeners.add(listener);
-    return () => this.portfolioBoardPreferenceMutationListeners.delete(listener);
+    this.preferenceAuthority.portfolioBoardPreferenceMutationListeners.add(listener);
+    return () =>
+      this.preferenceAuthority.portfolioBoardPreferenceMutationListeners.delete(listener);
   }
 
   portfolioBoardPreferenceSaving(): boolean {
-    return this.portfolioBoardPreferenceMutationState === 'pending';
+    return this.preferenceAuthority.portfolioBoardPreferenceMutationState === 'pending';
   }
 
   shouldAutoPersistPortfolioBoardPreference(): boolean {
-    return this.portfolioBoardPreferenceMutationState === 'idle';
+    return this.preferenceAuthority.portfolioBoardPreferenceMutationState === 'idle';
   }
 
   collectionScopeKey(path: string, scope: ProjectWorkspaceScope): CollectionScopeKey {
@@ -934,7 +1163,7 @@ export class ProjectWorkspaceSession {
   }
 
   collectionSession(path: string, scope: ProjectWorkspaceScope): CollectionSessionState {
-    return this.coordinator.session(this.collectionScopeKey(path, scope));
+    return this.sessionPort.read(this.collectionScopeKey(path, scope));
   }
 
   subscribeCollectionSession(
@@ -942,7 +1171,7 @@ export class ProjectWorkspaceSession {
     scope: ProjectWorkspaceScope,
     listener: (next: CollectionSessionState) => void,
   ): () => void {
-    return this.coordinator.subscribeSession(this.collectionScopeKey(path, scope), listener);
+    return this.sessionPort.subscribe(this.collectionScopeKey(path, scope), listener);
   }
 
   collectionPreference(path: string, scope: ProjectWorkspaceScope): WorkspacePreference {
@@ -954,9 +1183,8 @@ export class ProjectWorkspaceSession {
     scope: ProjectWorkspaceScope,
     listener: (next: WorkspacePreference) => void,
   ): () => void {
-    return this.coordinator.subscribePreference(this.collectionScopeKey(path, scope), (next) =>
-      listener(next.preference),
-    );
+    const key = this.preferencePort.resolveScope(this.collectionScopeKey(path, scope));
+    return this.coordinator.subscribePreference(key, (next) => listener(next.preference));
   }
 
   updateCollectionPreference<S extends ProjectWorkspaceScope>(
@@ -964,13 +1192,109 @@ export class ProjectWorkspaceSession {
     scope: S,
     mutate: (current: WorkspacePreferenceFor<S>) => WorkspacePreferenceFor<S>,
   ): Promise<WorkspacePreferenceFor<S>> {
-    const key = this.collectionScopeKey(path, scope);
+    const key = this.preferencePort.resolveScope(this.collectionScopeKey(path, scope));
+    if (this.preferenceAuthority.collectionPreferenceMutationStates.get(key) === 'pending') {
+      const conflict = new CollectionPreferenceConflictError();
+      queueMicrotask(() => {
+        for (const listener of this.preferenceAuthority.collectionPreferenceFailureListeners.get(
+          key,
+        ) ?? [])
+          listener(conflict);
+      });
+      return Promise.reject(conflict);
+    }
+    this.preferenceAuthority.collectionPreferenceMutationStates.set(key, 'pending');
+    queueMicrotask(() => {
+      for (const listener of this.preferenceAuthority.collectionPreferenceMutationListeners.get(
+        key,
+      ) ?? [])
+        listener();
+    });
     const current = this.coordinator.preferenceSnapshot(key) as CollectionPreferenceSnapshot<
       WorkspacePreferenceFor<S>
     >;
-    return this.coordinator
-      .updatePreference(key, current, mutate(current.preference))
-      .then((next) => next.preference as WorkspacePreferenceFor<S>);
+    return this.coordinator.updatePreference(key, current, mutate(current.preference)).then(
+      (next) => {
+        const settledKey = this.preferencePort.resolveScope(key);
+        this.preferenceAuthority.collectionPreferenceMutationStates.set(settledKey, 'idle');
+        for (const listener of this.preferenceAuthority.collectionPreferenceMutationListeners.get(
+          settledKey,
+        ) ?? [])
+          listener();
+        this.preferencePort.releaseScopeAliases(key);
+        return next.preference as WorkspacePreferenceFor<S>;
+      },
+      (error: unknown) => {
+        const settledKey = this.preferencePort.resolveScope(key);
+        this.preferenceAuthority.collectionPreferenceMutationStates.set(settledKey, 'failed');
+        for (const listener of this.preferenceAuthority.collectionPreferenceMutationListeners.get(
+          settledKey,
+        ) ?? [])
+          listener();
+        for (const listener of this.preferenceAuthority.collectionPreferenceFailureListeners.get(
+          settledKey,
+        ) ?? [])
+          listener(error);
+        this.preferencePort.releaseScopeAliases(key);
+        throw error;
+      },
+    );
+  }
+
+  subscribeCollectionPreferenceFailure(
+    path: string,
+    scope: ProjectWorkspaceScope,
+    listener: (error: unknown) => void,
+  ): () => void {
+    const key = this.preferencePort.resolveScope(this.collectionScopeKey(path, scope));
+    const listeners =
+      this.preferenceAuthority.collectionPreferenceFailureListeners.get(key) ?? new Set();
+    listeners.add(listener);
+    this.preferenceAuthority.collectionPreferenceFailureListeners.set(key, listeners);
+    return () => {
+      for (const [listenerKey, scoped] of this.preferenceAuthority
+        .collectionPreferenceFailureListeners) {
+        scoped.delete(listener);
+        if (scoped.size === 0)
+          this.preferenceAuthority.collectionPreferenceFailureListeners.delete(listenerKey);
+      }
+    };
+  }
+
+  subscribeCollectionPreferenceMutation(
+    path: string,
+    scope: ProjectWorkspaceScope,
+    listener: () => void,
+  ): () => void {
+    const key = this.preferencePort.resolveScope(this.collectionScopeKey(path, scope));
+    const listeners =
+      this.preferenceAuthority.collectionPreferenceMutationListeners.get(key) ?? new Set();
+    listeners.add(listener);
+    this.preferenceAuthority.collectionPreferenceMutationListeners.set(key, listeners);
+    return () => {
+      for (const [listenerKey, scoped] of this.preferenceAuthority
+        .collectionPreferenceMutationListeners) {
+        scoped.delete(listener);
+        if (scoped.size === 0)
+          this.preferenceAuthority.collectionPreferenceMutationListeners.delete(listenerKey);
+      }
+    };
+  }
+
+  collectionPreferenceSaving(path: string, scope: ProjectWorkspaceScope): boolean {
+    return (
+      this.preferenceAuthority.collectionPreferenceMutationStates.get(
+        this.preferencePort.resolveScope(this.collectionScopeKey(path, scope)),
+      ) === 'pending'
+    );
+  }
+
+  shouldAutoPersistCollectionPreference(path: string, scope: ProjectWorkspaceScope): boolean {
+    return (
+      (this.preferenceAuthority.collectionPreferenceMutationStates.get(
+        this.preferencePort.resolveScope(this.collectionScopeKey(path, scope)),
+      ) ?? 'idle') === 'idle'
+    );
   }
 
   collectionView(path: string, scope: 'tasks'): ProjectTasksViewState;
@@ -1011,15 +1335,21 @@ export class ProjectWorkspaceSession {
   }
 
   releaseCollectionSessions(path: string): void {
-    this.coordinator.release(this.collectionScopeKey(path, 'tasks'));
-    this.coordinator.release(this.collectionScopeKey(path, 'work-notes'));
+    this.sessionPort.release(this.collectionScopeKey(path, 'tasks'));
+    this.sessionPort.release(this.collectionScopeKey(path, 'work-notes'));
   }
 
   destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
     for (const path of this.sessions.keys()) this.releaseProject(path);
-    this.coordinator.release('project:__idle__:tasks');
-    this.coordinator.release('project:__idle__:work-notes');
+    this.sessionPort.release('tasks:main');
+    this.sessionPort.release('project:__idle__:tasks');
+    this.sessionPort.release('project:__idle__:work-notes');
     this.projectPath = null;
+    this.mainTaskPreferencePort.dispose();
+    this.mainTaskCoordinator.invalidatePreferences();
+    releaseProjectWorkspacePreferenceAuthority(this.preferenceAuthority);
   }
 
   get size(): number {
@@ -1073,7 +1403,7 @@ export class ProjectWorkspaceSession {
 
   openProject(path: string): void {
     const existing = this.sessions.get(path);
-    const entry = existing ?? workspaceEntry(this.coordinator, path);
+    const entry = existing ?? workspaceEntry(this.coordinator, this.sessionPort, path);
     if (!existing) this.sessions.set(path, entry);
     else {
       this.sessions.delete(path);
@@ -1113,7 +1443,16 @@ export class ProjectWorkspaceSession {
     if (sourcePath === destinationPath) return;
     const source = this.sessions.get(sourcePath);
     if (!source) return;
+    const scopedMoves = (['tasks', 'work-notes'] as const).map((scope) => ({
+      source: this.collectionScopeKey(sourcePath, scope),
+      destination: this.collectionScopeKey(destinationPath, scope),
+    }));
     this.preferencePort.renameProject(sourcePath, destinationPath);
+    for (const { source: sourceScope, destination: destinationScope } of scopedMoves) {
+      this.rekeySharedCollectionAuthority(sourceScope, destinationScope);
+      this.coordinator.invalidatePreference(sourceScope);
+      this.coordinator.invalidatePreference(destinationScope);
+    }
     const destination = this.sessions.get(destinationPath);
     if (destination) {
       if (this.isDirty(destination)) {
@@ -1133,8 +1472,8 @@ export class ProjectWorkspaceSession {
       reconcileSafeArrays(source.tasksScope, destination.tasksScope);
       reconcileSafeArrays(source.workNotesScope, destination.workNotesScope);
       this.sessions.delete(destinationPath);
-      this.coordinator.release(this.collectionScopeKey(destinationPath, 'tasks'));
-      this.coordinator.release(this.collectionScopeKey(destinationPath, 'work-notes'));
+      this.sessionPort.release(this.collectionScopeKey(destinationPath, 'tasks'));
+      this.sessionPort.release(this.collectionScopeKey(destinationPath, 'work-notes'));
     }
     this.sessions.delete(sourcePath);
     source.tasksScope.rebindCollectionInstance(this.collectionScopeKey(destinationPath, 'tasks'));
@@ -1144,6 +1483,29 @@ export class ProjectWorkspaceSession {
     this.sessions.set(destinationPath, source);
     if (this.projectPath === sourcePath) this.projectPath = destinationPath;
     this.evictCleanSessions();
+  }
+
+  private rekeySharedCollectionAuthority(
+    source: CollectionScopeKey,
+    destination: CollectionScopeKey,
+  ): void {
+    const states = this.preferenceAuthority.collectionPreferenceMutationStates;
+    const sourceState = states.get(source);
+    if (sourceState !== undefined) states.set(destination, sourceState);
+    states.delete(source);
+    const moveListeners = <T>(map: Map<CollectionScopeKey, Set<T>>): void => {
+      const sourceListeners = map.get(source);
+      if (!sourceListeners) return;
+      const existingDestination = map.get(destination);
+      const destinationListeners = existingDestination ?? sourceListeners;
+      if (existingDestination) {
+        for (const listener of sourceListeners) destinationListeners.add(listener);
+      }
+      map.set(destination, destinationListeners);
+      map.delete(source);
+    };
+    moveListeners(this.preferenceAuthority.collectionPreferenceMutationListeners);
+    moveListeners(this.preferenceAuthority.collectionPreferenceFailureListeners);
   }
 
   renamePath(sourcePath: string, destinationPath: string): void {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Notice, TFile, WorkspaceLeaf, type App } from 'obsidian';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppState, type ListSelection } from '../src/app/AppState';
+import { disposeProjectWorkspacePreferenceAuthority } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { Project, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings } from '../src/settings/types';
@@ -326,6 +327,90 @@ describe('PanelView', () => {
 
     await view.onClose();
     taskApplication.index.destroy();
+  });
+
+  it('shares a deferred Portfolio Board preference between two live PanelViews owned by one plugin', async () => {
+    const app = await createAppWithFiles({});
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      terminalDefaultsApplied: true,
+    };
+    const regular = settings.projects.statuses.find(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    )!;
+    const taskApplication = configuredTaskApplication(app, settings);
+    await taskApplication.index.initialize();
+    const snapshot = joinedProjectSnapshot(['open']);
+    const projectStore = {
+      list: () => [snapshot.project],
+      get: () => snapshot.project,
+      activeForLeftPanel: () => [snapshot.project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    } as never;
+    const projectWorkspace = {
+      list: () => [snapshot],
+      get: () => snapshot,
+      onUpdate: () => () => undefined,
+      absorbOwnCommit: () => undefined,
+    } as never;
+    const save = deferred<void>();
+    const onSaveSettings = vi.fn(() => save.promise);
+    const applicationOwner = {};
+    const createView = (): PanelView =>
+      new PanelView(
+        new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app),
+        settings,
+        makeTagManager(app, settings),
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+        onSaveSettings,
+        undefined,
+        undefined,
+        undefined,
+        projectStore,
+        projectWorkspace,
+        undefined,
+        undefined,
+        undefined,
+        applicationOwner,
+      );
+    const paneA = createView();
+    const paneB = createView();
+    try {
+      await paneA.onOpen();
+      await paneB.onOpen();
+      (paneA as unknown as { state: AppState }).state.set('mode', 'projects');
+      (paneB as unknown as { state: AppState }).state.set('mode', 'projects');
+
+      paneA.contentEl
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!
+        .click();
+      await flushMicrotasks();
+      expect(onSaveSettings).toHaveBeenCalledOnce();
+      expect(
+        paneB.contentEl
+          .querySelector(`[data-board-column="${regular.id}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(false);
+
+      save.resolve();
+      await flushMicrotasks();
+      expect(
+        paneB.contentEl
+          .querySelector(`[data-board-column="${regular.id}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(true);
+    } finally {
+      await paneA.onClose();
+      await paneB.onClose();
+      disposeProjectWorkspacePreferenceAuthority(applicationOwner);
+      taskApplication.index.destroy();
+    }
   });
 
   describe('empty vault suite', () => {

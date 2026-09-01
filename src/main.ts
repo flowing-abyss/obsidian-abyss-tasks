@@ -1,6 +1,7 @@
 import { Plugin } from 'obsidian';
 import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
+import { disposeProjectWorkspacePreferenceAuthority } from './panels/projects/ProjectWorkspaceSession';
 import { DependencyIndex } from './projects/dependencies/DependencyIndex';
 import { DependencyPolicy } from './projects/dependencies/DependencyPolicy';
 import { ProjectCommandService } from './projects/ProjectCommandService';
@@ -166,6 +167,7 @@ export default class TaskCalendarPlugin extends Plugin {
           this.workNoteCommands,
           this.dependencyPolicy,
           clock,
+          this,
         ),
     );
 
@@ -216,6 +218,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   onunload(): void {
+    disposeProjectWorkspacePreferenceAuthority(this);
     disposeOptimisticOverlayStores(this.app);
     this.projectWorkspace.destroy();
     this.projectStore.destroy();
