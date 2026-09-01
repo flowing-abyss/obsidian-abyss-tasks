@@ -172,6 +172,32 @@ describe('shared Timeline view', () => {
     expect(container.querySelector('.abyss-timeline-today-line')).not.toBeNull();
   });
 
+  it('uses the local civil date for Task and Work Note Today controls', () => {
+    const previousTimezone = process.env.TZ;
+    process.env.TZ = 'Asia/Novosibirsk';
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-31T18:30:00.000Z'));
+    try {
+      for (const scope of ['tasks', 'workNotes'] as const) {
+        const container = freshContainer();
+        const session = {
+          firstKey: null,
+          firstIndex: 0,
+          focusedKey: null,
+          restoreFocus: false,
+          focalDate: '2026-08-31',
+        };
+        renderTimeline(container, { entries: [point(scope, '2026-09-01')], scope, session });
+        container.querySelector<HTMLButtonElement>('[data-timeline-today]')!.click();
+        expect(session.focalDate).toBe('2026-09-01');
+      }
+    } finally {
+      vi.useRealTimers();
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
   it('opens a portfolio Project dashboard from its one native title button', () => {
     const container = freshContainer();
     const state = new AppState();
@@ -1382,6 +1408,37 @@ describe('shared Timeline view', () => {
     expect(preview.textContent).toContain('2026-08-28 – 2026-08-30');
   });
 
+  it('updates only transient geometry on pointermove and keeps both edge controls accessible', () => {
+    const container = freshContainer();
+    const onRowsRendered = vi.fn();
+    renderTimeline(container, {
+      entries: [range('Pointer')],
+      onSetDate: () => ({ type: 'ok' }),
+      onSetRange: () => ({ type: 'ok' }),
+      onRowsRendered,
+    });
+    const initialRenderCount = onRowsRendered.mock.calls.length;
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(pointerEvent('pointerdown', { pointerId: 71, clientX: 100 }));
+    activeDocument.dispatchEvent(pointerEvent('pointermove', { pointerId: 71, clientX: 112 }));
+    activeDocument.dispatchEvent(pointerEvent('pointermove', { pointerId: 71, clientX: 126 }));
+
+    expect(onRowsRendered).toHaveBeenCalledTimes(initialRenderCount);
+    expect(container.querySelector<HTMLElement>('[data-timeline-preview]')?.title).toBe(
+      '2026-08-30 – 2026-09-01',
+    );
+    const start = container.querySelector<HTMLButtonElement>(
+      '[data-timeline-target="start-edge"]',
+    )!;
+    const end = container.querySelector<HTMLButtonElement>('[data-timeline-target="end-edge"]')!;
+    expect(start.getAttribute('aria-label')).toBe('Resize Pointer start date');
+    expect(end.getAttribute('aria-label')).toBe('Resize Pointer end date');
+    expect(start.disabled).toBe(false);
+    expect(end.disabled).toBe(false);
+    expect(start.textContent).toBe('');
+    expect(end.textContent).toBe('');
+  });
+
   it('deduplicates all controller announcement phases through the live region', async () => {
     const container = freshContainer();
     const pending = deferred<{ readonly type: 'ok' }>();
@@ -2157,6 +2214,414 @@ describe('shared Timeline view', () => {
     expect(writes).toHaveBeenCalledOnce();
   });
 
+  it('rolls a deferred Project range move back in the live remount after one conflict settlement', async () => {
+    const container = freshContainer();
+    const replacement = freshContainer();
+    const pending = deferred<{ readonly type: 'conflict'; readonly field: 'start' }>();
+    const project: Project = {
+      path: 'Projects/Pending.md',
+      name: 'Pending',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27T09:30:00+07:00', '2026-08-29T17:00:00+07:00'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: () => ({ path: project.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const options = { projects: [project], commands, overlayScope: {} };
+    const first = renderProjectsTimeline(container, options);
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+    renderProjectsTimeline(replacement, options);
+    expect(replacement.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28T09:30:00+07:00 – 2026-08-30T17:00:00+07:00',
+    );
+    pending.resolve({ type: 'conflict', field: 'start' });
+    await flushMicrotasks();
+    expect(replacement.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-27T09:30:00+07:00 – 2026-08-29T17:00:00+07:00',
+    );
+    expect(replacement.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates changed elsewhere. Your move was not applied.',
+    );
+  });
+
+  it('keeps a successful Project move visible until its matching canonical publication settles once', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const pending = deferred<{ readonly type: 'ok' }>();
+    const project: Project = {
+      path: 'Projects/Publication.md',
+      name: 'Publication',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: () => ({ path: project.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const first = renderProjectsTimeline(container, {
+      projects: [project],
+      commands,
+      overlayScope,
+      publicationSequence: 1,
+    });
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28 – 2026-08-30',
+    );
+
+    pending.resolve({ type: 'ok' });
+    await flushMicrotasks();
+
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28 – 2026-08-30',
+    );
+    first.destroy();
+    const published = {
+      ...project,
+      range: parseProjectRange('2026-08-28', '2026-08-30'),
+    };
+    renderProjectsTimeline(container, {
+      projects: [published],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+    });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28 – 2026-08-30',
+    );
+    expect(container.querySelectorAll('[data-timeline-feedback]')).toHaveLength(1);
+    expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates updated.',
+    );
+  });
+
+  it('settles a renamed Project publication that arrives before its deferred command result', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const pending = deferred<{ readonly type: 'ok' }>();
+    const project: Project = {
+      path: 'Projects/Before.md',
+      name: 'Before',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: (value: Project) => ({ path: value.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const pathSuccessor = (observedPath: string, publishedPath: string) =>
+      observedPath === project.path && publishedPath === 'Projects/After.md';
+    const first = renderProjectsTimeline(container, {
+      projects: [project],
+      commands,
+      overlayScope,
+      publicationSequence: 1,
+      pathSuccessor,
+    });
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+
+    const renamed: Project = {
+      ...project,
+      path: 'Projects/After.md',
+      name: 'After',
+      range: parseProjectRange('2026-08-28', '2026-08-30'),
+    };
+    renderProjectsTimeline(container, {
+      projects: [renamed],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+      pathSuccessor,
+    });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28 – 2026-08-30',
+    );
+
+    pending.resolve({ type: 'ok' });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-key]')?.dataset.timelineKey).toBe(
+      'project:Projects/After.md',
+    );
+    expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates updated.',
+    );
+  });
+
+  it('uses a newer competing Project publication as the exact rollback and ignores the late result', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const pending = deferred<{ readonly type: 'ok' }>();
+    const project: Project = {
+      path: 'Projects/Competing.md',
+      name: 'Competing',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: () => ({ path: project.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const first = renderProjectsTimeline(container, {
+      projects: [project],
+      commands,
+      overlayScope,
+      publicationSequence: 1,
+    });
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+
+    const competing = {
+      ...project,
+      range: parseProjectRange('2026-09-02', '2026-09-04'),
+    };
+    renderProjectsTimeline(container, {
+      projects: [competing],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+    });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-09-02 – 2026-09-04',
+    );
+    expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates changed elsewhere. Your move was not applied.',
+    );
+
+    pending.resolve({ type: 'ok' });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-09-02 – 2026-09-04',
+    );
+    expect(container.querySelectorAll('[data-timeline-feedback]')).toHaveLength(1);
+  });
+
+  it('does not treat a filtered Timeline subset as a complete canonical application batch', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const pending = deferred<{ readonly type: 'conflict'; readonly field: 'start' }>();
+    const hidden: Project = {
+      path: 'Projects/Hidden.md',
+      name: 'Hidden',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const visible: Project = {
+      ...hidden,
+      path: 'Projects/Visible.md',
+      name: 'Visible',
+      range: parseProjectRange('2026-09-10', '2026-09-12'),
+    };
+    const commands = {
+      observeRange: (project: Project) => ({ path: project.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const first = renderProjectsTimeline(container, {
+      projects: [hidden],
+      canonicalProjects: [hidden, visible],
+      commands,
+      overlayScope,
+      publicationSequence: 1,
+    } as never);
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+    const filtered = renderProjectsTimeline(container, {
+      projects: [visible],
+      canonicalProjects: [hidden, visible],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+    } as never);
+    filtered.destroy();
+    renderProjectsTimeline(container, {
+      projects: [hidden],
+      canonicalProjects: [hidden, visible],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+    } as never);
+
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-28 – 2026-08-30',
+    );
+    pending.resolve({ type: 'conflict', field: 'start' });
+  });
+
+  it('rolls back to the latest full Project publication when guarded non-date state changes', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const pending = deferred<{ readonly type: 'conflict'; readonly field: 'start' }>();
+    const observed: Project = {
+      path: 'Projects/Revision.md',
+      name: 'Before',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: (project: Project) => ({ path: project.path }),
+      setRange: () => pending.promise,
+    } as never;
+    const first = renderProjectsTimeline(container, {
+      projects: [observed],
+      canonicalProjects: [observed],
+      commands,
+      overlayScope,
+      publicationSequence: 1,
+    } as never);
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+    const latest = { ...observed, name: 'After', priority: 'A' as const };
+    renderProjectsTimeline(container, {
+      projects: [latest],
+      canonicalProjects: [latest],
+      commands,
+      overlayScope,
+      publicationSequence: 2,
+    } as never);
+    pending.resolve({ type: 'conflict', field: 'start' });
+    await flushMicrotasks();
+
+    expect(container.querySelector<HTMLElement>('.abyss-timeline-title')?.textContent).toBe(
+      'After',
+    );
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-27 – 2026-08-29',
+    );
+  });
+
+  it('restores the observed Project dates in the live remount after one I/O announcement', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    let reject!: (error: Error) => void;
+    const operation = new Promise<never>((_resolve, fail) => {
+      reject = fail;
+    });
+    const project: Project = {
+      path: 'Projects/IO.md',
+      name: 'IO',
+      frontmatter: {},
+      tags: [],
+      statusId: null,
+      rawStatus: null,
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+      stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+    };
+    const commands = {
+      observeRange: () => ({ path: project.path }),
+      setRange: () => operation,
+    } as never;
+    const first = renderProjectsTimeline(container, {
+      projects: [project],
+      commands,
+      overlayScope,
+    });
+    const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    first.destroy();
+    renderProjectsTimeline(container, { projects: [project], commands, overlayScope });
+
+    reject(new Error('disk unavailable'));
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+      '2026-08-27 – 2026-08-29',
+    );
+    expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates could not be updated. The observed dates were restored.',
+    );
+    expect(container.querySelectorAll('[data-timeline-feedback]')).toHaveLength(1);
+  });
+
+  it('times out one deferred Project overlay and restores its exact observed dates', async () => {
+    vi.useFakeTimers();
+    try {
+      const container = freshContainer();
+      const project: Project = {
+        path: 'Projects/Timeout.md',
+        name: 'Timeout',
+        frontmatter: {},
+        tags: [],
+        statusId: null,
+        rawStatus: null,
+        range: parseProjectRange('2026-08-27', '2026-08-29'),
+        stats: { total: 0, done: 0, cancelled: 0, inProgress: 0, open: 0, progress: null },
+      };
+      renderProjectsTimeline(container, {
+        projects: [project],
+        commands: {
+          observeRange: () => ({ path: project.path }),
+          setRange: () => new Promise(() => undefined),
+        } as never,
+        overlayScope: {},
+      });
+      const move = container.querySelector<HTMLElement>('[data-timeline-target="range-move"]')!;
+      move.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      move.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+        '2026-08-28 – 2026-08-30',
+      );
+
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+        '2026-08-27 – 2026-08-29',
+      );
+      expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+        'Timeline date update timed out. The observed dates were restored.',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves Project datetime precision and offsets during a whole-range move', async () => {
     const container = freshContainer();
     const project: Project = {
@@ -2264,6 +2729,73 @@ describe('shared Timeline view', () => {
     );
   });
 
+  it.each([
+    ['start-edge', '2026-08-28 – 2026-08-29', '2026-08-28', '2026-08-29'],
+    ['end-edge', '2026-08-27 – 2026-08-30', '2026-08-27', '2026-08-30'],
+  ] as const)(
+    'keeps a deferred Work Note %s resize visible through remount and publication',
+    async (target, optimisticTitle, publishedStart, publishedEnd) => {
+      const container = freshContainer();
+      const overlayScope = {};
+      const pending = deferred<{ readonly type: 'ok'; readonly path: string }>();
+      const note = workNote('Work Notes/Resize.md', {
+        range: parseProjectRange('2026-08-27', '2026-08-29'),
+      });
+      const commands = {
+        observeRange: (value: WorkNoteSnapshot) => ({
+          observed: { path: value.path },
+          start: value.range.start,
+          end: value.range.end,
+        }),
+        setRange: () => pending.promise,
+      } as never;
+      const first = renderWorkNotesTimeline(container, {
+        notes: [note],
+        commands,
+        overlayScope,
+        publicationSequence: 1,
+      });
+      const edge = container.querySelector<HTMLElement>(`[data-timeline-target="${target}"]`)!;
+      edge.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      edge.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await flushMicrotasks();
+      expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+        optimisticTitle,
+      );
+      first.destroy();
+      renderWorkNotesTimeline(container, {
+        notes: [note],
+        commands,
+        overlayScope,
+        publicationSequence: 1,
+      });
+      expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+        optimisticTitle,
+      );
+
+      pending.resolve({ type: 'ok', path: note.path });
+      await flushMicrotasks();
+      const published = {
+        ...note,
+        range: parseProjectRange(publishedStart, publishedEnd),
+      };
+      const publicationContainer = freshContainer();
+      renderWorkNotesTimeline(publicationContainer, {
+        notes: [published],
+        commands,
+        overlayScope,
+        publicationSequence: 2,
+      });
+      await flushMicrotasks();
+      expect(container.querySelector<HTMLElement>('[data-timeline-range]')?.title).toBe(
+        optimisticTitle,
+      );
+      expect(
+        publicationContainer.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent,
+      ).toBe('Timeline dates updated.');
+    },
+  );
+
   it('passes a Task range through one atomic adapter operation', async () => {
     const container = freshContainer();
     const snapshot = task({
@@ -2296,6 +2828,127 @@ describe('shared Timeline view', () => {
     await flushMicrotasks();
 
     expect(state).toEqual({ start: '2026-08-28', due: '2026-08-30', writes: 1 });
+  });
+
+  it('keeps a deferred Task point move correlated across source relocation and publication-first settlement', async () => {
+    const container = freshContainer();
+    const overlayScope = {};
+    const snapshot = task({
+      title: 'Relocating task',
+      planning: { due: '2026-08-27' },
+      dependency: { id: 'relocating-task', dependsOn: [] },
+      source: { filePath: 'Projects/A.md', line: 4 },
+    });
+    const pending = deferred<{
+      readonly type: 'ok';
+      readonly changed: true;
+      readonly outcome: { readonly type: 'task'; readonly task: typeof snapshot };
+    }>();
+    const action = {
+      task: snapshot,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' as const },
+      owner: { type: 'project' as const, path: 'Projects/A.md' },
+    };
+    const first = renderTasksTimeline(container, {
+      actions: [action],
+      onSetDate: () => pending.promise,
+      onSetRange: vi.fn(),
+      overlayScope,
+      publicationSequence: 1,
+      taskSuccessor: (observed, published) => observed.dependency?.id === published.dependency?.id,
+    });
+    const point = container.querySelector<HTMLElement>('[data-timeline-role="due"]')!;
+    point.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    point.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-point]')?.title).toBe('2026-08-28');
+    first.destroy();
+
+    const published = task({
+      ...snapshot,
+      planning: { due: '2026-08-28' },
+      dependency: { id: 'relocating-task', dependsOn: [] },
+      source: { filePath: 'Projects/A.md', line: 12 },
+    });
+    renderTasksTimeline(container, {
+      actions: [{ ...action, task: published }],
+      onSetDate: () => pending.promise,
+      onSetRange: vi.fn(),
+      overlayScope,
+      publicationSequence: 2,
+      taskSuccessor: (observed, next) => observed.dependency?.id === next.dependency?.id,
+    });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-point]')?.title).toBe('2026-08-28');
+
+    pending.resolve({ type: 'ok', changed: true, outcome: { type: 'task', task: published } });
+    await flushMicrotasks();
+    expect(container.querySelector<HTMLElement>('[data-timeline-key]')?.dataset.timelineKey).toBe(
+      'task:Projects/A.md:12',
+    );
+    expect(container.querySelector<HTMLElement>('[data-timeline-feedback]')?.textContent).toBe(
+      'Timeline dates updated.',
+    );
+  });
+
+  it('does not collide duplicate Task IDs hidden in separate Timeline subsets', async () => {
+    const overlayScope = {};
+    const pending = deferred<{
+      readonly type: 'ok';
+      readonly changed: true;
+      readonly outcome: { readonly type: 'task'; readonly task: ReturnType<typeof task> };
+    }>();
+    const firstTask = task({
+      title: 'First duplicate',
+      planning: { due: '2026-08-27' },
+      dependency: { id: 'duplicate', dependsOn: [] },
+      source: { filePath: 'Projects/A.md', line: 4 },
+    });
+    const secondTask = task({
+      title: 'Second duplicate',
+      planning: { due: '2026-09-10' },
+      dependency: { id: 'duplicate', dependsOn: [] },
+      source: { filePath: 'Projects/B.md', line: 7 },
+    });
+    const action = (snapshot: typeof firstTask): ProjectAction => ({
+      task: snapshot,
+      projectPath: snapshot.source.filePath,
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: snapshot.source.filePath },
+    });
+    const canonicalActions = [action(firstTask), action(secondTask)];
+    const firstContainer = freshContainer();
+    renderTasksTimeline(firstContainer, {
+      actions: [canonicalActions[0]!],
+      canonicalActions,
+      onSetDate: () => pending.promise,
+      onSetRange: vi.fn(),
+      overlayScope,
+      publicationSequence: 1,
+    } as never);
+    const point = firstContainer.querySelector<HTMLElement>('[data-timeline-role="due"]')!;
+    point.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    point.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    const secondContainer = freshContainer();
+    renderTasksTimeline(secondContainer, {
+      actions: [canonicalActions[1]!],
+      canonicalActions,
+      onSetDate: vi.fn(),
+      onSetRange: vi.fn(),
+      overlayScope,
+      publicationSequence: 1,
+    } as never);
+    expect(secondContainer.querySelector<HTMLElement>('[data-timeline-point]')?.title).toBe(
+      '2026-09-10',
+    );
+    pending.resolve({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: firstTask },
+    });
   });
 
   it('keeps a start-only Task dated and moves only its owned start field', async () => {

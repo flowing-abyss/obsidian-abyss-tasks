@@ -1283,20 +1283,8 @@ export class CenterPanel {
           this.selectionLiveRegion().textContent = message;
         },
         overlayScope: this.app,
-        taskSuccessor: (observed, published) => {
-          const resolution = this.queries.resolve(observed.ref);
-          let current: TaskSnapshot | undefined;
-          if (resolution.type === 'exact') current = resolution.task;
-          else if (resolution.type === 'rebased' || resolution.type === 'visual') {
-            current = resolution.current;
-          }
-          return (
-            current !== undefined &&
-            current.ref.filePath === published.ref.filePath &&
-            current.ref.line === published.ref.line &&
-            current.ref.revision === published.ref.revision
-          );
-        },
+        taskSuccessor: (observed, published) =>
+          this.isTaskPublicationSuccessor(observed, published),
         renderItem: (container, action, statusGuard) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
@@ -1375,6 +1363,21 @@ export class CenterPanel {
     return result;
   }
 
+  private isTaskPublicationSuccessor(observed: TaskSnapshot, published: TaskSnapshot): boolean {
+    const resolution = this.queries.resolve(observed.ref);
+    let current: TaskSnapshot | undefined;
+    if (resolution.type === 'exact') current = resolution.task;
+    else if (resolution.type === 'rebased' || resolution.type === 'visual') {
+      current = resolution.current;
+    }
+    return (
+      current !== undefined &&
+      current.ref.filePath === published.ref.filePath &&
+      current.ref.line === published.ref.line &&
+      current.ref.revision === published.ref.revision
+    );
+  }
+
   private renderProjectTaskTimeline(
     host: HTMLElement,
     path: string,
@@ -1388,12 +1391,25 @@ export class CenterPanel {
     const session = this.projectWorkspaceSession.tasks;
     session.setResolver((ref) => this.queries.resolve(ref));
     session.reconcile(actions, allActions);
+    const canonicalActions =
+      this.projectSnapshots.length === 0
+        ? allActions
+        : [
+            ...new Map(
+              this.projectSnapshots
+                .flatMap((snapshot) => snapshot.tasks)
+                .map((action) => [taskPresentationKey(action.task.ref), action] as const),
+            ).values(),
+          ];
     const timeline = renderContainerResponsiveTimeline(host, (isNarrow) =>
       renderTasksTimeline(host, {
         actions,
+        canonicalActions,
         ...(this.projectSnapshots.length > 0 && {
           overlayScope: this.app,
           publicationSequence: this.projectPublicationSequence,
+          taskSuccessor: (observed: TaskSnapshot, published: TaskSnapshot) =>
+            this.isTaskPublicationSuccessor(observed, published),
         }),
         collectionSession: session,
         session: this.projectWorkspaceSession.timelines.tasks,

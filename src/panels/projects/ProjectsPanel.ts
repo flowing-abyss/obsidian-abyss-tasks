@@ -15,7 +15,7 @@ import type { ProjectPriority, ProjectWorkspaceSnapshot } from '../../projects/t
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import { isAuditAccepted } from '../../projects/work-notes/compatibility';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
-import type { WorkNoteCommandResult } from '../../projects/work-notes/types';
+import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import type {
   CalendarSettings,
   ProjectTasksViewState,
@@ -489,18 +489,21 @@ export class ProjectsPanel {
   private renderWorkNoteTimeline(
     host: HTMLElement,
     notes: ProjectWorkspaceSnapshot['workNotes'],
+    canonicalNotes: readonly WorkNoteSnapshot[] = notes,
   ): ProjectChildRenderHandle {
     const commands = this.workNoteCommands;
     if (!commands) return { destroy: () => undefined };
     return renderContainerResponsiveTimeline(host, (isNarrow) =>
       renderWorkNotesTimeline(host, {
         notes,
+        canonicalNotes,
         commands,
         commandsEnabled: commands.capabilities().update,
         overlayScope: this.app,
         ...(this.publicationSequence !== undefined && {
           publicationSequence: this.publicationSequence,
         }),
+        ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
         session: this.workspaceSession.timelines.workNotes,
         isNarrow,
         scale: this.settings.projects.view.timeline.workNotes.dateRange,
@@ -688,7 +691,7 @@ export class ProjectsPanel {
                   canonicalWorkNotes,
                 ),
               renderWorkNoteTimeline: (host, _path, notes) =>
-                this.renderWorkNoteTimeline(host, notes),
+                this.renderWorkNoteTimeline(host, notes, canonicalWorkNotes),
             }
           : {}),
       });
@@ -767,11 +770,13 @@ export class ProjectsPanel {
         renderProjectsTimeline(timelineHost, {
           projects: timelineSnapshots.map(({ project }) => project),
           snapshots: timelineSnapshots,
+          canonicalSnapshots: this.snapshots,
           commands: projectCommands,
           overlayScope: this.app,
           ...(this.publicationSequence !== undefined && {
             publicationSequence: this.publicationSequence,
           }),
+          ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
           ...(this.workNoteCommands?.capabilities().update === true
             ? { milestoneCommands: this.workNoteCommands }
             : {}),

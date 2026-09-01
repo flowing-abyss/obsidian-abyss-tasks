@@ -90,6 +90,8 @@ interface TimelineRepairProposal {
 
 export interface TimelineViewOptions<T> {
   readonly entries: readonly TimelineEntry<T>[];
+  /** Complete application publication; presentation entries may be filtered or project-local. */
+  readonly canonicalPublicationEntries?: readonly TimelineEntry<T>[];
   readonly onSetDate?: (
     entry: TimelineEntry<T>,
     role: TimelinePointRole,
@@ -134,8 +136,10 @@ export interface TimelineViewOptions<T> {
       TimelineEntry<T>,
       Readonly<Partial<Record<TimelinePointRole, string>>>
     >;
+    readonly keyOf: (entry: TimelineEntry<T>) => string;
     readonly revision: (entry: TimelineEntry<T>) => string;
     readonly publicationSequence?: number;
+    readonly continuity?: (observed: TimelineEntry<T>, published: TimelineEntry<T>) => boolean;
   };
 }
 
@@ -143,6 +147,8 @@ export interface TimelineViewHandle {
   reflow?(): void;
   destroy(): void;
 }
+
+let nextTimelineOverlayOwnerId = 0;
 
 /** Container-query bridge for production hosts; keeps responsive mode out of global viewport CSS. */
 export function renderContainerResponsiveTimeline(
@@ -183,6 +189,8 @@ export function renderContainerResponsiveTimeline(
 export interface ProjectsTimelineOptions {
   readonly projects: readonly Project[];
   readonly snapshots?: readonly ProjectWorkspaceSnapshot[];
+  readonly canonicalProjects?: readonly Project[];
+  readonly canonicalSnapshots?: readonly ProjectWorkspaceSnapshot[];
   readonly commands: ProjectCommandService;
   readonly milestoneCommands?: WorkNoteCommandService;
   readonly session?: LogicalViewportSession;
@@ -200,10 +208,12 @@ export interface ProjectsTimelineOptions {
   }) => void | Promise<void>;
   readonly overlayScope?: object;
   readonly publicationSequence?: number;
+  readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
 }
 
 export interface WorkNotesTimelineOptions {
   readonly notes: readonly WorkNoteSnapshot[];
+  readonly canonicalNotes?: readonly WorkNoteSnapshot[];
   readonly commands: WorkNoteCommandService;
   readonly commandsEnabled?: boolean;
   readonly session?: LogicalViewportSession;
@@ -219,10 +229,12 @@ export interface WorkNotesTimelineOptions {
   }) => void | Promise<void>;
   readonly overlayScope?: object;
   readonly publicationSequence?: number;
+  readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
 }
 
 export interface TasksTimelineOptions {
   readonly actions: readonly ProjectAction[];
+  readonly canonicalActions?: readonly ProjectAction[];
   readonly session?: LogicalViewportSession;
   readonly collectionSession?: ProjectTaskCollectionSession;
   readonly isNarrow?: boolean;
@@ -245,6 +257,7 @@ export interface TasksTimelineOptions {
   }) => void | Promise<void>;
   readonly overlayScope?: object;
   readonly publicationSequence?: number;
+  readonly taskSuccessor?: (observed: TaskSnapshot, published: TaskSnapshot) => boolean;
 }
 
 type TimelineSessionState = LogicalViewportSession &
@@ -346,19 +359,65 @@ function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
 }
 
+function stableTimelineFingerprint(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableTimelineFingerprint).join(',')}]`;
+  if (value instanceof Map) {
+    return stableTimelineFingerprint(
+      [...value.entries()].sort(([left], [right]) => String(left).localeCompare(String(right))),
+    );
+  }
+  if (value instanceof Set) {
+    return stableTimelineFingerprint(
+      [...value].sort((left, right) => String(left).localeCompare(String(right))),
+    );
+  }
+  if (value !== null && typeof value === 'object') {
+    const fields = Object.entries(value as Record<string, unknown>)
+      .filter(([, field]) => field !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, field]) => `${JSON.stringify(key)}:${stableTimelineFingerprint(field)}`);
+    return `{${fields.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
+function applyTimelineDatePatch<T>(
+  entry: TimelineEntry<T>,
+  patch: Readonly<Partial<Record<TimelinePointRole, string>>>,
+): TimelineEntry<T> {
+  const dateByRole = { ...entry.dateByRole, ...patch };
+  const item = (() => {
+    if (entry.item.kind === 'range') {
+      const start = dateByRole.start && parseProjectDate(dateByRole.start);
+      const end = dateByRole.end && parseProjectDate(dateByRole.end);
+      return start && end
+        ? { ...entry.item, startMs: start.instantMs, endMs: end.instantMs }
+        : entry.item;
+    }
+    if (entry.item.kind === 'point') {
+      const at = dateByRole[entry.item.role];
+      const parsed = at && parseProjectDate(at);
+      return parsed ? { ...entry.item, atMs: parsed.instantMs } : entry.item;
+    }
+    return entry.item;
+  })();
+  return { ...entry, item, dateByRole };
+}
+
 function timelineOptimisticOverlay<T>(
   scope: object | undefined,
   name: string,
-  entries: readonly TimelineEntry<T>[],
   publicationSequence?: number,
+  keyOf: (entry: TimelineEntry<T>) => string = (entry) => entry.item.key,
+  continuity?: (observed: TimelineEntry<T>, published: TimelineEntry<T>) => boolean,
 ): TimelineViewOptions<T>['optimisticOverlay'] | undefined {
   if (!scope) return undefined;
   const store = optimisticOverlayStoreFor<
     TimelineEntry<T>,
     Readonly<Partial<Record<TimelinePointRole, string>>>
   >(scope, `timeline:${name}`, {
-    keyOf: (entry) => entry.item.key,
-    apply: (entry, patch) => ({ ...entry, dateByRole: { ...entry.dateByRole, ...patch } }),
+    keyOf,
+    apply: applyTimelineDatePatch,
     matches: (entry, patch) =>
       Object.entries(patch).every(
         ([role, value]) => entry.dateByRole[role as TimelinePointRole] === value,
@@ -366,15 +425,13 @@ function timelineOptimisticOverlay<T>(
     isSuccess: successful,
     timeoutMs: 15_000,
   });
-  store.observeCanonicalBatch(
-    entries.map((entry) => ({
-      key: entry.item.key,
-      snapshot: entry,
-      revision: JSON.stringify(entry.dateByRole),
-    })),
+  return {
+    store,
+    keyOf,
+    revision: stableTimelineFingerprint,
     publicationSequence,
-  );
-  return { store, revision: (entry) => JSON.stringify(entry.dateByRole), publicationSequence };
+    ...(continuity && { continuity }),
+  };
 }
 
 function timelineIdentityAttributes(key: string): Record<string, string> {
@@ -536,10 +593,63 @@ function bindTimelineRepair<T>(
   confirm.addEventListener('click', () => void repair(entry, confirm));
 }
 
+function timelineSettlementMessage(
+  reason: 'published' | 'conflict' | 'io' | 'timeout' | 'competing-publication',
+): string {
+  if (reason === 'published') return 'Timeline dates updated.';
+  if (reason === 'timeout')
+    return 'Timeline date update timed out. The observed dates were restored.';
+  if (reason === 'io')
+    return 'Timeline dates could not be updated. The observed dates were restored.';
+  return 'Timeline dates changed elsewhere. Your move was not applied.';
+}
+
 /** Semantically neutral bounded Timeline shell shared by Project, Work Note, and Task adapters. */
 export function renderTimeline<T>(
   container: HTMLElement,
   options: TimelineViewOptions<T>,
+): TimelineViewHandle {
+  const overlay = options.optimisticOverlay;
+  if (!overlay) return renderTimelineMount(container, options);
+
+  const ownerId = `timeline:${options.scope ?? 'workNotes'}:${String(++nextTimelineOverlayOwnerId)}`;
+  let child: TimelineViewHandle | undefined;
+  let destroyed = false;
+  const render = (
+    settlement?: Parameters<Parameters<typeof overlay.store.subscribe>[0]>[0],
+  ): void => {
+    child?.destroy();
+    if (destroyed) return;
+    child = renderTimelineMount(container, options, ownerId, () =>
+      queueMicrotask(() => !destroyed && render()),
+    );
+    if (!settlement) return;
+    const feedback = container.querySelector<HTMLElement>('[data-timeline-feedback]');
+    if (!feedback) return;
+    feedback.dataset['resultType'] = settlement.reason;
+    feedback.setText(timelineSettlementMessage(settlement.reason));
+  };
+  const unsubscribe = overlay.store.subscribe(
+    (settlement) => queueMicrotask(() => !destroyed && render(settlement)),
+    { id: ownerId },
+  );
+  render();
+  return {
+    reflow: () => child?.reflow?.(),
+    destroy: () => {
+      if (destroyed) return;
+      destroyed = true;
+      unsubscribe();
+      child?.destroy();
+    },
+  };
+}
+
+function renderTimelineMount<T>(
+  container: HTMLElement,
+  options: TimelineViewOptions<T>,
+  overlayOwnerId?: string,
+  onOverlayChanged?: () => void,
 ): TimelineViewHandle {
   container.addClass('abyss-timeline-host');
   const isAgenda = options.isNarrow === true || Platform.isMobile;
@@ -576,17 +686,37 @@ export function renderTimeline<T>(
     });
     scaleButtons.set(candidate, button);
   }
-  const today = options.today ?? new Date().toISOString().slice(0, 10);
-  options.optimisticOverlay?.store.observeCanonicalBatch(
-    options.entries.map((entry) => ({
-      key: entry.item.key,
-      snapshot: entry,
-      revision: options.optimisticOverlay!.revision(entry),
-    })),
-    options.optimisticOverlay.publicationSequence,
-  );
+  const today = options.today ?? localToday();
+  const optimisticOverlay = options.optimisticOverlay;
+  if (optimisticOverlay) {
+    const canonicalPublications = (options.canonicalPublicationEntries ?? options.entries).map(
+      (entry) => ({
+        key: optimisticOverlay.keyOf(entry),
+        snapshot: entry,
+        revision: optimisticOverlay.revision(entry),
+      }),
+    );
+    if (options.canonicalPublicationEntries) {
+      optimisticOverlay.store.observeCanonicalBatch(
+        canonicalPublications,
+        optimisticOverlay.publicationSequence,
+        optimisticOverlay.continuity,
+      );
+    } else {
+      for (const publication of canonicalPublications) {
+        optimisticOverlay.store.observePublication(
+          publication.key,
+          publication.snapshot,
+          publication.revision,
+          optimisticOverlay.publicationSequence,
+          optimisticOverlay.continuity,
+        );
+      }
+    }
+  }
   const entries = options.entries.map(
-    (entry) => options.optimisticOverlay?.store.read(entry.item.key) ?? entry,
+    (entry) =>
+      options.optimisticOverlay?.store.read(options.optimisticOverlay.keyOf(entry)) ?? entry,
   );
   const todayButton = toolbar.createEl('button', {
     cls: 'abyss-timeline-today abyss-timeline-touch-target',
@@ -1287,6 +1417,12 @@ export function renderTimeline<T>(
     ): Promise<boolean> => {
       const entry = entryByKey.get(intent.itemId);
       if (!entry) return false;
+      const overlayKey = options.optimisticOverlay?.keyOf(entry);
+      if (overlayKey && options.optimisticOverlay?.store.active(overlayKey)) {
+        feedback.dataset['resultType'] = 'pending';
+        feedback.setText('A timeline date update is already pending.');
+        return false;
+      }
       let patch: Readonly<Partial<Record<TimelinePointRole, string>>>;
       if ('start' in intent.draft) {
         if (intent.target === 'start-edge') patch = { start: intent.draft.start.raw };
@@ -1299,8 +1435,9 @@ export function renderTimeline<T>(
         entry,
         options.optimisticOverlay.revision(entry),
         patch,
-        { id: `timeline:${scope}` },
+        { id: overlayOwnerId ?? `timeline:${scope}` },
       );
+      if (transaction) onOverlayChanged?.();
       let changed: boolean;
       if ('start' in intent.draft) {
         if (intent.target === 'start-edge') {
@@ -1325,7 +1462,7 @@ export function renderTimeline<T>(
       }
       if (transaction)
         options.optimisticOverlay?.store.observeCommandResult(
-          entry.item.key,
+          options.optimisticOverlay.keyOf(entry),
           { type: changed ? 'ok' : (feedback.dataset['resultType'] ?? 'failure') },
           transaction.id,
           transaction.token,
@@ -1812,6 +1949,13 @@ export function renderProjectsTimeline(
         ...projectTimelineEntry(project),
         value: { kind: 'project' as const, project },
       }));
+  const canonicalEntries: readonly TimelineEntry<PortfolioTimelineValue>[] | undefined =
+    options.canonicalSnapshots
+      ? portfolioTimelineEntries(options.canonicalSnapshots)
+      : options.canonicalProjects?.map((project) => ({
+          ...projectTimelineEntry(project),
+          value: { kind: 'project' as const, project },
+        }));
   const projectObservations = new Map(
     entries.flatMap((entry) =>
       entry.value.kind === 'project'
@@ -1836,11 +1980,26 @@ export function renderProjectsTimeline(
 
   return renderTimeline<PortfolioTimelineValue>(container, {
     entries,
+    ...(canonicalEntries && { canonicalPublicationEntries: canonicalEntries }),
     optimisticOverlay: timelineOptimisticOverlay(
       options.overlayScope,
       'portfolio',
-      entries,
       options.publicationSequence,
+      (entry) => entry.item.key,
+      options.pathSuccessor
+        ? (observed, published) => {
+            if (observed.value.kind !== published.value.kind) return false;
+            const observedPath =
+              observed.value.kind === 'project'
+                ? observed.value.project.path
+                : observed.value.note.path;
+            const publishedPath =
+              published.value.kind === 'project'
+                ? published.value.project.path
+                : published.value.note.path;
+            return options.pathSuccessor!(observedPath, publishedPath);
+          }
+        : undefined,
     ),
     scope: 'portfolio',
     undatedRole: 'start',
@@ -1994,6 +2153,7 @@ export function renderWorkNotesTimeline(
     entry: workNoteTimelineEntry(note),
     observation: options.commandsEnabled === false ? null : options.commands.observeRange(note),
   }));
+  const canonicalEntries = options.canonicalNotes?.map(workNoteTimelineEntry);
   const observations = new Map(
     prepared.map(({ entry, observation }) => [entry.item.key, observation] as const),
   );
@@ -2033,11 +2193,15 @@ export function renderWorkNotesTimeline(
   };
   return renderTimeline<WorkNoteSnapshot>(container, {
     entries: prepared.map(({ entry }) => entry),
+    ...(canonicalEntries && { canonicalPublicationEntries: canonicalEntries }),
     optimisticOverlay: timelineOptimisticOverlay(
       options.overlayScope,
       'work-notes',
-      prepared.map(({ entry }) => entry),
       options.publicationSequence,
+      (entry) => entry.item.key,
+      options.pathSuccessor
+        ? (observed, published) => options.pathSuccessor!(observed.value.path, published.value.path)
+        : undefined,
     ),
     scope: 'workNotes',
     undatedRole: 'start',
@@ -2093,6 +2257,22 @@ export function renderTasksTimeline(
     ...taskTimelineEntry(action.task),
     value: action,
   }));
+  const canonicalActions = options.canonicalActions ?? options.actions;
+  const canonicalEntries = options.canonicalActions?.map((action) => ({
+    ...taskTimelineEntry(action.task),
+    value: action,
+  }));
+  const taskIdCounts = new Map<string, number>();
+  for (const { task } of canonicalActions) {
+    const id = task.dependency?.id;
+    if (id) taskIdCounts.set(id, (taskIdCounts.get(id) ?? 0) + 1);
+  }
+  const stableTaskTimelineKey = (entry: TimelineEntry<ProjectAction>): string => {
+    const task = entry.value.task;
+    const id = task.dependency?.id;
+    if (id && taskIdCounts.get(id) === 1) return `id:${id}`;
+    return `source:${task.ref.filePath}:${String(task.ref.line)}`;
+  };
   const collection = options.collectionSession;
   const focusedItemKey = (): string | null => {
     const focused = collection?.focusedRef();
@@ -2171,11 +2351,15 @@ export function renderTasksTimeline(
   };
   const handle = renderTimeline(container, {
     entries,
+    ...(canonicalEntries && { canonicalPublicationEntries: canonicalEntries }),
     optimisticOverlay: timelineOptimisticOverlay(
       options.overlayScope,
       'tasks',
-      entries,
       options.publicationSequence,
+      stableTaskTimelineKey,
+      options.taskSuccessor
+        ? (observed, published) => options.taskSuccessor!(observed.value.task, published.value.task)
+        : undefined,
     ),
     scope: 'tasks',
     undatedRole: 'scheduled',

@@ -273,6 +273,53 @@ describe('TimelineInteractionController pointer date editing', () => {
 });
 
 describe('TimelineInteractionController commit and cleanup authority', () => {
+  it.each([
+    ['whole range', rangeMove(), 'range'],
+    ['start edge', startEdge(), 'start'],
+    ['end edge', endEdge(), 'end'],
+    ['point', point('2026-03-07'), 'scheduled'],
+  ] as const)(
+    'keeps the exact deferred %s draft pending and settles its one frozen commit',
+    async (_name, target, role) => {
+      const h = harness();
+      let resolve!: (value: { readonly type: 'success' }) => void;
+      h.commit.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+      pickup(h, target, { x: 110, y: 20 });
+      const drafted = h.controller.projection().draftCarrier;
+
+      const release = h.controller.pointerUp({ pointerId: 7, point: { x: 110, y: 20 } });
+
+      expect(h.controller.projection()).toMatchObject({
+        pending: true,
+        draftCarrier: drafted,
+        accessibility: { ownedRole: role },
+      });
+      expect(h.commit).toHaveBeenCalledOnce();
+      expect(Object.isFrozen(h.commit.mock.calls[0]![0])).toBe(true);
+      expect(h.ports.requestAutoscroll).toHaveBeenLastCalledWith({ direction: 0, speed: 0 });
+
+      resolve({ type: 'success' });
+      await release;
+      expect(h.commit).toHaveBeenCalledOnce();
+      expect(h.announcements.filter(({ type }) => type === 'success')).toHaveLength(1);
+    },
+  );
+
+  it('stops horizontal autoscroll while its deferred drop is pending', async () => {
+    const h = harness();
+    let resolve!: (value: { readonly type: 'success' }) => void;
+    h.commit.mockReturnValueOnce(new Promise((done) => (resolve = done)));
+    pickup(h, rangeMove(), { x: 299, y: 20 });
+    expect(h.ports.requestAutoscroll).toHaveBeenLastCalledWith({ direction: 1, speed: 20 });
+
+    const release = h.controller.pointerUp({ pointerId: 7, point: { x: 299, y: 20 } });
+
+    expect(h.ports.requestAutoscroll).toHaveBeenLastCalledWith({ direction: 0, speed: 0 });
+    expect(h.controller.projection().pending).toBe(true);
+    resolve({ type: 'success' });
+    await release;
+  });
+
   it('commits one deeply frozen intent and ignores duplicate release', async () => {
     const h = harness();
     let resolve!: (value: unknown) => void;
@@ -427,13 +474,24 @@ describe('TimelineInteractionController commit and cleanup authority', () => {
 });
 
 describe('TimelineInteractionController keyboard date editing', () => {
-  it('maps Shift+Arrow to one pure visible-scale unit per supported scope/scale', () => {
-    expect(timelineKeyboardUnitDays('portfolio', 'week')).toBe(7);
-    expect(timelineKeyboardUnitDays('portfolio', 'month')).toBe(30);
-    expect(timelineKeyboardUnitDays('portfolio', 'quarter')).toBe(91);
-    expect(timelineKeyboardUnitDays('portfolio', 'year')).toBe(365);
-    expect(timelineKeyboardUnitDays('tasks', 'day')).toBe(1);
-    expect(timelineKeyboardUnitDays('workNotes', 'month')).toBe(30);
+  it.each([
+    ['portfolio', 'day', 1],
+    ['portfolio', 'week', 7],
+    ['portfolio', 'month', 30],
+    ['portfolio', 'quarter', 91],
+    ['portfolio', 'year', 365],
+    ['tasks', 'day', 1],
+    ['tasks', 'week', 7],
+    ['tasks', 'month', 30],
+    ['tasks', 'quarter', 91],
+    ['tasks', 'year', 365],
+    ['workNotes', 'day', 1],
+    ['workNotes', 'week', 7],
+    ['workNotes', 'month', 30],
+    ['workNotes', 'quarter', 91],
+    ['workNotes', 'year', 365],
+  ] as const)('maps %s %s Shift+Arrow to its pure visible-scale unit', (scope, scale, days) => {
+    expect(timelineKeyboardUnitDays(scope, scale)).toBe(days);
   });
 
   it('Arrow and Shift+Arrow pick up a bar, draft from original, and deduplicate destinations', async () => {
