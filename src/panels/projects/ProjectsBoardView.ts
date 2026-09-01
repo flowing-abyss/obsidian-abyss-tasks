@@ -116,6 +116,8 @@ export interface BoardViewOptions<T> {
     readonly publicationSequence?: (item: T) => number | undefined;
     /** Proven entity continuity when a canonical source key changes. */
     readonly continuity?: (observed: T, published: T) => boolean;
+    /** Explicit capability for publication text; omitted preserves legacy generic boards. */
+    readonly undoAvailable?: boolean;
     /** Returns the configured board column for either an observed or optimistic entity. */
     readonly columnKey: (item: T) => string;
     /** The active Board mount owns the live-region callback for registry-backed stores. */
@@ -265,7 +267,11 @@ export function renderBoard<T>(
   ];
   const overlayKey = (item: T): string =>
     options.optimisticOverlay?.keyOf(item) ?? options.itemKey(item);
-  const overlayOwner = { id: boardId, announce: options.announce };
+  const overlayOwner = {
+    id: boardId,
+    announce: options.announce,
+    undoAvailable: options.optimisticOverlay?.undoAvailable,
+  };
   let destroyed = false;
   const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe((settlement) => {
     if (settlement) {
@@ -954,7 +960,6 @@ export function renderBoard<T>(
         if (!successful(result)) return;
         if (transaction) {
           dragging = null;
-          if (options.undo) undoPending = { item, columnKey, result };
           options.onMutation?.(item, columnKey, result);
           render();
           return;
@@ -1614,7 +1619,6 @@ export function renderWorkNotesBoard(
             matches: (note, statusId) => note.statusId === statusId,
             isSuccess: (result) => result.type === 'ok',
             timeoutMs: 15_000,
-            timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
         keyOf: ({ path }: WorkNoteSnapshot) => path,
@@ -1641,6 +1645,7 @@ export function renderWorkNotesBoard(
             diagnostics: note.diagnostics,
           }),
         columnKey: (note: WorkNoteSnapshot) => note.statusId ?? 'unmapped',
+        undoAvailable: false,
         presentationAnnouncement: true,
       }
     : undefined;
@@ -1733,7 +1738,6 @@ export function renderProjectTasksBoard(
               statusById.get(statusId)?.symbol === action.task.statusSymbol,
             isSuccess: (result) => result.type === 'ok',
             timeoutMs: 15_000,
-            timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
         keyOf: stableTaskStatusKey,
@@ -1746,6 +1750,7 @@ export function renderProjectTasksBoard(
         }),
         columnKey: ({ task }: ProjectAction) =>
           options.statuses.find(({ symbol }) => symbol === task.statusSymbol)?.id ?? 'unmapped',
+        undoAvailable: false,
         presentationAnnouncement: true,
       }
     : undefined;
@@ -1914,7 +1919,6 @@ export function renderProjectsBoard(
             matches: (project, statusId) => project.statusId === statusId,
             isSuccess: (result) => result.type === 'ok',
             timeoutMs: 15_000,
-            timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
         keyOf: ({ path }: (typeof projects)[number]) => path,

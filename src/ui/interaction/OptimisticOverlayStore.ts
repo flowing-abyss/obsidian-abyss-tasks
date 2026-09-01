@@ -26,6 +26,7 @@ interface OptimisticOverlayOwner {
   /** Stable for one mounted board, never a DOM/window identity. */
   readonly id: string;
   readonly announce?: (message: string) => void;
+  readonly undoAvailable?: boolean;
 }
 
 export interface OptimisticOverlayStore<
@@ -98,6 +99,7 @@ interface Entry<TSnapshot, TPatch> {
   matches?: (snapshot: TSnapshot, patch: TPatch) => boolean;
   isSuccess?: (result: CommandResult) => boolean;
   ownerId?: string;
+  undoAvailable?: boolean;
 }
 
 const applicationStores = new WeakMap<object, Map<string, { dispose(): void }>>();
@@ -120,8 +122,12 @@ function rollbackReason(result: CommandResult): OptimisticRollbackReason | undef
   return undefined;
 }
 
-function announcement(reason: OptimisticRollbackReason | 'published'): string {
-  if (reason === 'published') return 'Item moved. Undo available.';
+function announcement(
+  reason: OptimisticRollbackReason | 'published',
+  undoAvailable: boolean | undefined,
+): string {
+  if (reason === 'published')
+    return undoAvailable === false ? 'Item moved.' : 'Item moved. Undo available.';
   if (reason === 'conflict') return 'Item changed outside the board';
   if (reason === 'timeout') return 'Item move timed out';
   if (reason === 'competing-publication') return 'Item changed outside the board';
@@ -177,7 +183,7 @@ export function createOptimisticOverlayStore<
     entry.overlay = undefined;
     if (entry.announced) return;
     entry.announced = true;
-    const message = announcement(reason);
+    const message = announcement(reason, entry.undoAvailable);
     const owner = ownerFor(entry.ownerId);
     // Direct stores retain their explicit callback; application stores use a current,
     // mounted owner so a dead popout can never receive the terminal announcement.
@@ -212,6 +218,7 @@ export function createOptimisticOverlayStore<
         matches: currentOptions.matches,
         isSuccess: currentOptions.isSuccess as (result: CommandResult) => boolean,
         ownerId: owner?.id,
+        undoAvailable: owner?.undoAvailable,
         // Preserve the source watermark across consecutive transactions on one
         // logical entity. Otherwise an old r1 arriving after tx2 could be accepted.
         lastPublicationSequence: existing?.lastPublicationSequence,
