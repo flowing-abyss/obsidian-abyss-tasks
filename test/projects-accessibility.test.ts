@@ -4,16 +4,19 @@ import { renderProgressBar } from '../src/panels/projects/progressBar';
 import { renderBoard } from '../src/panels/projects/ProjectsBoardView';
 import { renderProjectsList } from '../src/panels/projects/ProjectsListView';
 import { renderTimeline } from '../src/panels/projects/ProjectsTimelineView';
+import { renderProjectTasksTable } from '../src/panels/projects/ProjectTasksTableView';
 import { renderWorkNoteInspector } from '../src/panels/projects/WorkNoteInspector';
 import { renderWorkNotesView } from '../src/panels/projects/WorkNotesView';
-import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
+import type { ProjectAction, ProjectWorkspaceSnapshot } from '../src/projects/types';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { DependencyCompletionDecision } from '../src/tasks/application/DependencyPolicyPort';
+import { renderCollectionControls } from '../src/ui/collection/CollectionControls';
 import { renderDependencyBadge } from '../src/ui/dependencyPresentation';
+import { mountInspectorShell } from '../src/ui/inspector/InspectorShell';
 import { renderStatusMarker } from '../src/ui/StatusMarker';
-import { freshContainer } from './helpers';
+import { freshContainer, task } from './helpers';
 
 const registry = new StatusRegistry(DEFAULT_SETTINGS.taskStatuses);
 const blocked: DependencyCompletionDecision = {
@@ -309,5 +312,162 @@ describe('Projects collection accessibility', () => {
     expect(progress.getAttribute('aria-valuemax')).toBe('100');
     expect(progress.getAttribute('aria-valuenow')).toBe('0');
     expect(progress.getAttribute('aria-valuetext')).toBe('No tasks');
+  });
+});
+
+describe('Projects keyboard route accessibility', () => {
+  it('exposes exactly one named collection toolbar with keyboard-native controls', () => {
+    const root = freshContainer();
+    const activate = vi.fn();
+    const query = vi.fn();
+    renderCollectionControls(root, {
+      query: '',
+      searchLabel: 'Search projects',
+      toolbarLabel: 'Projects controls',
+      actions: [
+        {
+          kind: 'filter',
+          label: 'Filter projects',
+          icon: 'filter',
+          onActivate: activate,
+        },
+      ],
+      onQueryInput: query,
+    });
+
+    expect(root.querySelectorAll('[role="toolbar"]')).toHaveLength(1);
+    expect(root.querySelector('[role="toolbar"]')?.getAttribute('aria-label')).toBe(
+      'Projects controls',
+    );
+    const filter = root.querySelector<HTMLButtonElement>('[aria-label="Filter projects"]')!;
+    const search = root.querySelector<HTMLInputElement>('[aria-label="Search projects"]')!;
+    expect(filter.tabIndex).toBe(0);
+    expect(search.tabIndex).toBe(0);
+    filter.click();
+    search.value = 'ship';
+    search.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(activate).toHaveBeenCalledOnce();
+    expect(query).toHaveBeenCalledWith('ship');
+  });
+
+  it('closes a narrow inspector with Escape and restores the invoking control', () => {
+    const fixture = document.createElement('div');
+    document.body.appendChild(fixture);
+    const trigger = fixture.createEl('button', { text: 'Open project' });
+    const host = fixture.createDiv();
+    const close = vi.fn();
+    const shell = mountInspectorShell(host, {
+      label: 'Project inspector',
+      narrow: true,
+      returnFocus: trigger,
+      onRequestClose: close,
+      render: (content) => {
+        content.createEl('input', { attr: { 'aria-label': 'Project title' } });
+      },
+    });
+
+    shell.element.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    expect(close).toHaveBeenCalledOnce();
+    expect(shell.element.isConnected).toBe(false);
+    expect(document.activeElement).toBe(trigger);
+    fixture.remove();
+  });
+
+  it('activates the focused Task table cell with Enter', () => {
+    const root = freshContainer();
+    document.body.appendChild(root);
+    const action: ProjectAction = {
+      task: task({ title: 'Keyboard task' }),
+      projectPath: 'Projects/Accessible.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/Accessible.md' },
+    };
+    const activate = vi.fn();
+    renderProjectTasksTable(root, [action], {
+      settings: structuredClone(DEFAULT_SETTINGS),
+      path: action.projectPath,
+      onActivate: activate,
+    });
+    const cell = root.querySelector<HTMLElement>('[role="cell"][data-table-column="task"]')!;
+
+    cell.focus();
+    cell.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+
+    expect(document.activeElement).toBe(cell);
+    expect(activate).toHaveBeenCalledWith(action);
+    root.remove();
+  });
+
+  it('moves a focused Board card entirely from the keyboard', async () => {
+    const root = freshContainer();
+    const item = { id: 'keyboard-card', label: 'Keyboard card' };
+    const move = vi.fn().mockResolvedValue({ type: 'ok' });
+    renderBoard(root, {
+      columns: [
+        { key: 'todo', label: 'To-do', role: 'regular', items: [item] },
+        { key: 'doing', label: 'Doing', role: 'regular', items: [] },
+      ],
+      mutation: { move, menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ label }) => label,
+      renderItem: (host, { label }) => host.createEl('button', { text: label }),
+      interactionController: true,
+    });
+    const card = root.querySelector<HTMLElement>('[data-board-item-focus="keyboard-card"]')!;
+
+    card.focus();
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+    card.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    card.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(move).toHaveBeenCalledWith(item, 'doing');
+  });
+
+  it('opens and commits a Timeline date editor from the keyboard', async () => {
+    const fixture = document.createElement('div');
+    document.body.appendChild(fixture);
+    const onSetDate = vi.fn().mockResolvedValue({ type: 'ok' });
+    renderTimeline(fixture, {
+      entries: [
+        {
+          value: workNote(),
+          label: 'Keyboard timeline item',
+          item: {
+            kind: 'point',
+            key: 'work-note:keyboard',
+            atMs: Date.parse('2026-08-28T00:00:00Z'),
+            role: 'end',
+          },
+          dateByRole: { end: '2026-08-28' },
+        },
+      ],
+      onSetDate,
+    });
+    const trigger = fixture.querySelector<HTMLElement>('[data-timeline-primary]')!;
+    const editor = fixture.querySelector<HTMLInputElement>('[data-timeline-date-picker="end"]')!;
+
+    trigger.focus();
+    trigger.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }),
+    );
+    expect(document.activeElement).toBe(editor);
+    editor.value = '2026-08-29';
+    editor.dispatchEvent(new Event('change', { bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onSetDate).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Keyboard timeline item' }),
+      'end',
+      '2026-08-29',
+      editor,
+    );
+    fixture.remove();
   });
 });

@@ -8,7 +8,6 @@ import {
   setIcon,
   Setting,
 } from 'obsidian';
-import { computeWorkNoteStructuralFingerprint } from '../projects/work-notes/compatibility';
 import type {
   WorkNoteCompatibilityDisableResult,
   WorkNoteCompatibilityPreset,
@@ -60,16 +59,32 @@ interface WorkNoteSetupState {
   validation?: AuditedWorkNoteValidation;
   validationSignature?: string;
   diagnostics: readonly WorkNoteQueryDiagnostic[];
-  creationRevealed: boolean;
+  propertyDiagnostics: readonly {
+    readonly field:
+      | keyof WorkNoteCompatibilityPreset['fields']
+      | 'kindProperty'
+      | 'creationFolder'
+      | 'templatePath'
+      | 'defaultStatus'
+      | 'ordinaryMarker'
+      | 'milestoneMarker';
+    readonly message: string;
+  }[];
+  auditPreview?: WorkNoteCompatibilityPreview;
   advancedOpen: boolean;
   latestValidationId: number;
   pendingValidation?: { readonly id: number; readonly signature: string };
+  scheduledValidation?: number;
+  automaticAttemptedSignature?: string;
+  automaticRetryCount: number;
+  retryAvailable: boolean;
   applyPending: boolean;
   disablePending: boolean;
   message?: { readonly kind: 'status' | 'error'; readonly text: string };
 }
 
 let nextSettingsTabScope = 0;
+const WORK_NOTE_VALIDATION_DEBOUNCE_MS = 250;
 
 /** Returns an error message if `symbol` is invalid for a status, else null. */
 export function validateStatusSymbol(
@@ -149,6 +164,22 @@ export class CalendarSettingsTab extends PluginSettingTab {
     private plugin: TaskCalendarPlugin,
   ) {
     super(app, plugin);
+  }
+
+  hide(): void {
+    const state = this.workNoteSetupState;
+    if (state?.scheduledValidation !== undefined) {
+      window.clearTimeout(state.scheduledValidation);
+      state.scheduledValidation = undefined;
+    }
+    if (state) {
+      state.latestValidationId += 1;
+      state.pendingValidation = undefined;
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.automaticAttemptedSignature = undefined;
+    }
+    super.hide();
   }
 
   /**
@@ -316,6 +347,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
     body.hidden = !isOpen;
     const bodyInner = body.createDiv({ cls: 'abyss-settings-section-body-inner' });
     renderFn(bodyInner);
+    if (isOpen && title === 'Projects') {
+      const setup = body.querySelector<HTMLElement>('.abyss-work-note-setup');
+      const state = this.workNoteSetupState;
+      if (setup && state && (!state.applied.acceptedAudit || this.workNoteDraftIsDirty(state))) {
+        this.queueWorkNoteValidation(setup, state);
+      }
+    }
 
     header.addEventListener('click', () => {
       const opening = !section.classList.contains('is-open');
@@ -324,6 +362,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
       body.hidden = !opening;
       if (opening) this.openSections.add(title);
       else this.openSections.delete(title);
+      if (opening && title === 'Projects') {
+        const setup = body.querySelector<HTMLElement>('.abyss-work-note-setup');
+        const state = this.workNoteSetupState;
+        if (setup && state && (!state.applied.acceptedAudit || this.workNoteDraftIsDirty(state))) {
+          this.queueWorkNoteValidation(setup, state);
+        }
+      }
     });
   }
 
@@ -907,34 +952,77 @@ export class CalendarSettingsTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Task insert position')
-      .setDesc('Where a task is placed in a project note when created there or moved in.')
-      .addDropdown((d) =>
-        d
-          .addOptions({ append: 'End of note', section: 'Under section heading' })
-          .setValue(projects.taskInsertionMode)
-          .onChange(async (v) => {
-            projects.taskInsertionMode = v as typeof projects.taskInsertionMode;
+      .setName('Project view')
+      .setDesc('The portfolio view restored when projects opens.')
+      .addDropdown((control) =>
+        control
+          .addOptions({ overview: 'Overview', board: 'Board', timeline: 'Timeline' })
+          .setValue(projects.view.portfolioLayout)
+          .onChange(async (portfolioLayout) => {
+            projects.view.portfolioLayout = portfolioLayout as typeof projects.view.portfolioLayout;
             await this.plugin.saveSettings();
-            // eslint-disable-next-line @typescript-eslint/no-deprecated
-            this.display();
           }),
       );
 
-    if (projects.taskInsertionMode === 'section') {
-      new Setting(containerEl)
-        .setName('Task section heading')
-        .setDesc('Tasks are inserted under this heading in the project note. Created if absent.')
-        .addText((t) =>
-          t
-            .setPlaceholder('## Tasks')
-            .setValue(projects.taskInsertionSection)
-            .onChange(async (v) => {
-              projects.taskInsertionSection = v;
+    const tableFields = containerEl.createEl('details', {
+      cls: 'abyss-project-table-settings',
+      attr: { 'data-project-table-settings': '' },
+    });
+    tableFields.createEl('summary', { text: 'Table fields' });
+    const tableBody = tableFields.createDiv({ cls: 'abyss-project-table-settings-body' });
+    const labels: Readonly<Record<string, string>> = {
+      project: 'Project',
+      task: 'Task',
+      status: 'Status',
+      priority: 'Priority',
+      progress: 'Progress',
+      nextAction: 'Next action',
+      start: 'Start',
+      end: 'End',
+      due: 'Due',
+    };
+    const renderColumns = (
+      heading: string,
+      columns: typeof projects.view.table.columns,
+      currentColumns: () => typeof projects.view.table.columns,
+      update: (next: typeof projects.view.table.columns) => void,
+    ): void => {
+      new Setting(tableBody).setName(heading).setHeading();
+      columns.forEach((column, index) => {
+        new Setting(tableBody)
+          .setName(labels[column.propertyId] ?? column.propertyId)
+          .addToggle((control) => {
+            control.setValue(column.visible);
+            // eslint-disable-next-line sonarjs/no-nested-functions -- Each generated column toggle owns its persisted preference update.
+            control.onChange(async (visible) => {
+              const next = currentColumns().map((candidate, candidateIndex) =>
+                candidateIndex === index ? { ...candidate, visible } : candidate,
+              );
+              update(next);
               await this.plugin.saveSettings();
-            }),
-        );
-    }
+            });
+          });
+      });
+    };
+    renderColumns(
+      'Project table',
+      projects.view.table.columns,
+      () => projects.view.table.columns,
+      (columns) => {
+        projects.view.table = { ...projects.view.table, columns };
+      },
+    );
+    renderColumns(
+      'Task table',
+      projects.view.tasks.table.columns,
+      () => projects.view.tasks.table.columns,
+      (columns) => {
+        projects.view.tasks = {
+          ...projects.view.tasks,
+          table: { ...projects.view.tasks.table, columns },
+        };
+      },
+    );
 
     // eslint-disable-next-line obsidianmd/ui/sentence-case
     new Setting(containerEl).setName('Work Notes').setHeading();
@@ -1019,7 +1107,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       const status = new Setting(containerEl)
         // eslint-disable-next-line obsidianmd/ui/sentence-case
         .setName('Work Notes')
-        .setDesc('Enabled. Changes below stay local until you validate and apply them.');
+        .setDesc('Enabled. Safe changes are checked and saved automatically.');
       const disable = status.controlEl.createEl('button', {
         text: 'Disable',
         cls: 'mod-warning',
@@ -1031,7 +1119,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       new Setting(containerEl)
         // eslint-disable-next-line obsidianmd/ui/sentence-case
         .setName('Work Notes')
-        .setDesc('Validate and apply to re-enable the preserved setup.');
+        .setDesc('Checking the preserved setup before re-enabling it.');
     } else {
       const status = new Setting(containerEl)
         // eslint-disable-next-line obsidianmd/ui/sentence-case
@@ -1053,13 +1141,16 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
       this.renderWorkNoteMessage(containerEl, state);
       this.lockWorkNoteControls(containerEl, state.disablePending || state.applyPending);
+      this.assignWorkNoteFocusKeys(containerEl);
       return;
     }
 
     this.renderWorkNotePrimary(containerEl, state);
-    if (state.creationRevealed) this.renderWorkNoteCreation(containerEl, state);
+    this.renderWorkNoteCreation(containerEl, state);
     this.renderWorkNoteAdvanced(containerEl, state);
-    this.lockWorkNoteControls(containerEl, state.disablePending || state.applyPending);
+    this.renderWorkNoteDiagnostics(containerEl, state);
+    this.lockWorkNoteControls(containerEl, state.disablePending);
+    this.assignWorkNoteFocusKeys(containerEl);
   }
 
   private ensureWorkNoteSetupState(): WorkNoteSetupState {
@@ -1069,9 +1160,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
       applied,
       draft: structuredClone(applied),
       diagnostics: [],
-      creationRevealed: applied.enabled && applied.acceptedAudit !== undefined,
+      propertyDiagnostics: [],
+      auditPreview: undefined,
       advancedOpen: false,
       latestValidationId: 0,
+      automaticRetryCount: 0,
+      retryAvailable: false,
       applyPending: false,
       disablePending: false,
     };
@@ -1079,7 +1173,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
   }
 
   private workNoteDraftSignature(preset: WorkNoteCompatibilityPreset): string {
-    return computeWorkNoteStructuralFingerprint(preset, { preserveObjectOrder: true });
+    return JSON.stringify(preset);
   }
 
   private workNoteDraftIsDirty(state: WorkNoteSetupState): boolean {
@@ -1088,10 +1182,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
   private invalidateWorkNoteValidation(state: WorkNoteSetupState): void {
     state.latestValidationId += 1;
+    if (state.scheduledValidation !== undefined) window.clearTimeout(state.scheduledValidation);
+    state.scheduledValidation = undefined;
+    state.automaticAttemptedSignature = undefined;
+    state.automaticRetryCount = 0;
+    state.retryAvailable = false;
     state.pendingValidation = undefined;
     state.validation = undefined;
     state.validationSignature = undefined;
     state.diagnostics = [];
+    state.propertyDiagnostics = [];
+    state.auditPreview = undefined;
     state.message = undefined;
   }
 
@@ -1103,8 +1204,29 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const state = this.ensureWorkNoteSetupState();
     state.draft = draft;
     this.invalidateWorkNoteValidation(state);
-    if (rerender) this.renderWorkNoteSetup(containerEl);
-    else this.syncWorkNoteDraftState(containerEl, state);
+    if (rerender) {
+      this.renderWorkNoteSetup(containerEl);
+      this.queueWorkNoteValidation(containerEl, state);
+    } else {
+      this.syncWorkNoteDraftState(containerEl, state);
+      this.queueWorkNoteValidation(containerEl, state);
+    }
+  }
+
+  private queueWorkNoteValidation(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    if (!state.draft.enabled || state.applyPending || state.disablePending) return;
+    const signature = this.workNoteDraftSignature(state.draft);
+    if (
+      state.pendingValidation?.signature === signature ||
+      state.automaticAttemptedSignature === signature
+    ) {
+      return;
+    }
+    if (state.scheduledValidation !== undefined) window.clearTimeout(state.scheduledValidation);
+    state.scheduledValidation = window.setTimeout(() => {
+      state.scheduledValidation = undefined;
+      void this.validateWorkNoteDraft(this.currentWorkNoteSetupContainer(containerEl));
+    }, WORK_NOTE_VALIDATION_DEBOUNCE_MS);
   }
 
   private currentWorkNoteSetupContainer(fallback: HTMLElement): HTMLElement {
@@ -1113,18 +1235,15 @@ export class CalendarSettingsTab extends PluginSettingTab {
 
   private syncWorkNoteDraftState(containerEl: HTMLElement, state: WorkNoteSetupState): void {
     containerEl.dataset['dirty'] = String(this.workNoteDraftIsDirty(state));
-    const signature = this.workNoteDraftSignature(state.draft);
-    const validate = containerEl.querySelector<HTMLButtonElement>('[data-work-note-validate]');
-    if (validate) validate.disabled = state.pendingValidation?.signature === signature;
-    const reset = containerEl.querySelector<HTMLButtonElement>('[data-work-note-reset]');
-    if (reset) reset.hidden = !this.workNoteDraftIsDirty(state);
-    for (const input of containerEl.querySelectorAll<HTMLInputElement>(
-      '[data-work-note-query-source]',
+    for (const input of containerEl.querySelectorAll<HTMLElement>(
+      '[data-work-note-query-source], [data-work-note-property-field]',
     )) {
       input.removeAttribute('aria-invalid');
       input.removeAttribute('aria-describedby');
     }
-    for (const error of containerEl.querySelectorAll('[data-work-note-query-error]'))
+    for (const error of containerEl.querySelectorAll(
+      '[data-work-note-query-error], [data-work-note-property-error]',
+    ))
       error.remove();
     const slot = containerEl.querySelector<HTMLElement>('.abyss-work-note-validation-slot');
     if (slot) this.renderWorkNoteValidationSlot(slot, state);
@@ -1151,7 +1270,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       });
     this.renderWorkNoteQueryDiagnostic(membership, 'membershipQuery', state);
 
-    new Setting(containerEl)
+    const relation = new Setting(containerEl)
       .setName('Project relation property')
       // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setDesc('Frontmatter property that links a Work Note to its Project.')
@@ -1169,44 +1288,13 @@ export class CalendarSettingsTab extends PluginSettingTab {
           );
         });
         control.inputEl.setAttribute('aria-label', 'Project relation property');
+        control.inputEl.dataset['workNotePropertyField'] = 'project';
       });
-
-    const action = new Setting(containerEl)
-      .setName('Configuration')
-      .setDesc('Validate the exact draft before applying it.');
-    const signature = this.workNoteDraftSignature(state.draft);
-    const validate = action.controlEl.createEl('button', {
-      text: 'Validate',
-      cls: 'mod-cta',
-      attr: { type: 'button', 'data-work-note-validate': '' },
-    });
-    validate.disabled = state.pendingValidation?.signature === signature;
-    validate.addEventListener('click', () => void this.validateWorkNoteDraft(containerEl));
-    const reset = action.controlEl.createEl('button', {
-      text: 'Reset changes',
-      cls: 'abyss-work-note-reset',
-      attr: { type: 'button', 'data-work-note-reset': '' },
-    });
-    reset.disabled = state.applyPending || state.disablePending;
-    reset.hidden = !this.workNoteDraftIsDirty(state);
-    reset.addEventListener('click', () => {
-      const applied = structuredClone(this.plugin.settings.projects.workNoteCompatibility);
-      this.workNoteSetupState = {
-        applied,
-        draft: structuredClone(applied),
-        diagnostics: [],
-        creationRevealed: applied.enabled && applied.acceptedAudit !== undefined,
-        advancedOpen: false,
-        latestValidationId: state.latestValidationId + 1,
-        applyPending: false,
-        disablePending: false,
-      };
-      this.renderWorkNoteSetup(containerEl);
-    });
+    this.renderWorkNotePropertyDiagnostic(relation, 'project', state);
 
     const validation = containerEl.createDiv({
       cls: 'abyss-work-note-validation-slot',
-      attr: { 'aria-live': 'polite', 'aria-atomic': 'true' },
+      attr: { role: 'status', 'aria-live': 'polite', 'aria-atomic': 'true' },
     });
     this.renderWorkNoteValidationSlot(validation, state);
   }
@@ -1218,77 +1306,37 @@ export class CalendarSettingsTab extends PluginSettingTab {
         cls: `abyss-work-note-message is-${state.message.kind}`,
         text: state.message.text,
       });
+      if (state.retryAvailable) {
+        const retry = containerEl.createEl('button', {
+          text: 'Retry',
+          attr: { type: 'button' },
+        });
+        retry.addEventListener('click', () => {
+          state.retryAvailable = false;
+          state.automaticAttemptedSignature = undefined;
+          state.message = { kind: 'status', text: 'Checking changes…' };
+          this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
+          this.queueWorkNoteValidation(this.currentWorkNoteSetupContainer(containerEl), state);
+        });
+      }
       return;
     }
-    const diagnostic = state.diagnostics[0];
-    if (diagnostic) return;
-    const validation = state.validation;
-    if (!validation) {
+    if (state.diagnostics.length > 0 || state.propertyDiagnostics.length > 0) return;
+    if (state.pendingValidation || state.applyPending || state.scheduledValidation !== undefined) {
+      containerEl.createSpan({ cls: 'abyss-work-note-validation-hint', text: 'Checking changes…' });
+      return;
+    }
+    if (this.workNoteDraftIsDirty(state)) {
       containerEl.createSpan({
         cls: 'abyss-work-note-validation-hint',
-        text: state.pendingValidation ? 'Checking this draft…' : 'Validate to review this draft.',
+        text: 'Changes were not saved. Edit a field to try again.',
       });
       return;
     }
-    const { preview } = validation;
-    const ambiguous =
-      preview.kinds.ambiguous +
-      preview.links.ambiguousProject +
-      preview.links.ambiguousRelation +
-      preview.cardinality.multipleProjects +
-      preview.cardinality.multipleMilestones;
-    const result = containerEl.createDiv({ cls: 'abyss-work-note-validation-result' });
-    result.createSpan({
-      cls: 'abyss-work-note-validation-counts',
-      text: `${String(preview.notes.eligible)} matched · ${String(
-        preview.statuses.mapped,
-      )} mapped · ${String(preview.notes.excluded)} excluded · ${String(ambiguous)} ambiguous`,
+    containerEl.createSpan({
+      cls: 'abyss-work-note-validation-hint',
+      text: 'Saved automatically.',
     });
-    const capability = result.createSpan({ cls: 'abyss-work-note-validation-capabilities' });
-    capability.createSpan({
-      text: `Updates ${preview.capabilities.update ? 'available' : 'unavailable'}`,
-    });
-    capability.createSpan({
-      text: `Creation ${preview.capabilities.create ? 'available' : 'unavailable'}`,
-    });
-    const warning = this.strongestWorkNoteWarning(preview);
-    if (warning) result.createSpan({ cls: 'abyss-work-note-validation-warning', text: warning });
-    const apply = result.createEl('button', {
-      text: 'Apply configuration',
-      cls: 'mod-cta',
-      attr: { type: 'button', 'data-work-note-apply': '' },
-    });
-    apply.disabled = state.applyPending || state.disablePending;
-    apply.addEventListener('click', () => void this.applyWorkNoteDraft(containerEl));
-  }
-
-  private strongestWorkNoteWarning(preview: WorkNoteCompatibilityPreview): string | undefined {
-    const candidates: readonly [number, string][] = [
-      [preview.kinds.ambiguous, 'Some notes match more than one kind.'],
-      [preview.links.ambiguousProject, 'Some Project links are ambiguous.'],
-      [preview.links.invalidProjectEntry, 'Some Project links use unsupported values.'],
-      [preview.cardinality.multipleProjects, 'Some notes link to more than one Project.'],
-      [preview.cardinality.multipleMilestones, 'Some notes link to more than one milestone.'],
-      [preview.duplicateBasenames.project, 'Some Project names resolve to more than one note.'],
-      [
-        preview.duplicateBasenames.relation,
-        'Some related-note names resolve to more than one note.',
-      ],
-      [preview.links.ambiguousRelation, 'Some related-note links are ambiguous.'],
-      [preview.statuses.unknown, 'Some statuses are not mapped.'],
-      [preview.statuses.nonScalar, 'Some statuses are not scalar values.'],
-      [preview.statuses.missing, 'Some notes have no status.'],
-      [preview.links.brokenProject, 'Some Project links are broken.'],
-      [preview.links.brokenRelation, 'Some related-note links are broken.'],
-      [preview.links.invalidRelationEntry, 'Some related-note links use unsupported values.'],
-      [preview.cardinality.missingProject, 'Some notes have no Project link.'],
-      [preview.kinds.missing, 'Some notes have no recognized kind.'],
-    ];
-    const strongest = candidates.find(([count]) => count > 0)?.[1];
-    if (strongest) return strongest;
-    return Object.values(preview.diagnostics).some((count) => (count ?? 0) > 0)
-      ? 'Review the remaining audit issue in Advanced.'
-      : undefined;
   }
 
   private describeWorkNoteQueryDiagnostic(diagnostic: WorkNoteQueryDiagnostic): string {
@@ -1313,7 +1361,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const diagnostic = state.diagnostics.find((candidate) => candidate.source === source);
     if (!diagnostic) return;
     setting.settingEl.classList.add('abyss-work-note-query-setting');
-    const input = setting.settingEl.querySelector('input');
+    const input = setting.settingEl.querySelector('input, select');
     const errorId = `abyss-work-note-query-error-${source}`;
     input?.setAttribute('aria-invalid', 'true');
     input?.setAttribute('aria-describedby', errorId);
@@ -1325,19 +1373,145 @@ export class CalendarSettingsTab extends PluginSettingTab {
     error.id = errorId;
   }
 
-  private focusWorkNoteDiagnostic(
-    containerEl: HTMLElement,
-    diagnostic: WorkNoteQueryDiagnostic,
+  private renderWorkNotePropertyDiagnostic(
+    setting: Setting,
+    field: WorkNoteSetupState['propertyDiagnostics'][number]['field'],
+    state: WorkNoteSetupState,
   ): void {
-    const input = containerEl.querySelector<HTMLInputElement>(
-      `[data-work-note-query-source="${diagnostic.source}"]`,
+    const diagnostic = state.propertyDiagnostics.find((candidate) => candidate.field === field);
+    if (!diagnostic) return;
+    const input = setting.settingEl.querySelector('input, select');
+    const errorId = `abyss-work-note-property-error-${field}`;
+    input?.setAttribute('aria-invalid', 'true');
+    input?.setAttribute('aria-describedby', errorId);
+    const error = setting.infoEl.createDiv({
+      cls: 'abyss-work-note-query-error abyss-work-note-property-error',
+      text: diagnostic.message,
+      attr: { 'data-work-note-property-error': '', role: 'alert' },
+    });
+    error.id = errorId;
+  }
+
+  private workNotePropertyDiagnostics(
+    preset: WorkNoteCompatibilityPreset,
+  ): WorkNoteSetupState['propertyDiagnostics'] {
+    const diagnostics: Array<WorkNoteSetupState['propertyDiagnostics'][number]> = [];
+    for (const field of Object.keys(preset.fields) as Array<keyof typeof preset.fields>) {
+      if (preset.fields[field].trim() === '') {
+        diagnostics.push({ field, message: 'Enter a property name.' });
+      }
+    }
+    const marker = preset.creation?.kindMarkers.ordinary;
+    if (marker?.kind === 'property' && marker.property.trim() === '') {
+      diagnostics.push({ field: 'kindProperty', message: 'Enter a property name.' });
+    }
+    const creation = preset.creation;
+    if (!creation) return diagnostics;
+    let creationFolder = creation.folder.trim();
+    while (creationFolder.endsWith('/')) creationFolder = creationFolder.slice(0, -1);
+    if (creationFolder === '') {
+      diagnostics.push({ field: 'creationFolder', message: 'Enter a creation folder.' });
+    }
+    if (
+      !Object.prototype.hasOwnProperty.call(preset.rawStatusByStatusId, creation.defaultStatusId) ||
+      preset.rawStatusByStatusId[creation.defaultStatusId]?.trim() === ''
+    ) {
+      diagnostics.push({
+        field: 'defaultStatus',
+        message: 'Choose a status with a non-empty Work Note mapping.',
+      });
+    }
+    const ordinary = creation.kindMarkers.ordinary.value.trim();
+    const milestone = creation.kindMarkers.milestone.value.trim();
+    if (ordinary === '') {
+      diagnostics.push({ field: 'ordinaryMarker', message: 'Enter an ordinary marker.' });
+    }
+    if (milestone === '') {
+      diagnostics.push({ field: 'milestoneMarker', message: 'Enter a milestone marker.' });
+    }
+    if (ordinary !== '' && ordinary === milestone) {
+      diagnostics.push(
+        { field: 'ordinaryMarker', message: 'Use different ordinary and milestone markers.' },
+        { field: 'milestoneMarker', message: 'Use different ordinary and milestone markers.' },
+      );
+    }
+    return diagnostics;
+  }
+
+  private workNoteCapabilityDiagnostics(
+    preset: WorkNoteCompatibilityPreset,
+    preview: WorkNoteCompatibilityPreview,
+  ): WorkNoteSetupState['propertyDiagnostics'] {
+    if (!preset.creation || preview.capabilities.create) return [];
+    return preset.creation.templatePath?.trim()
+      ? [
+          {
+            field: 'templatePath',
+            message: 'Template is unavailable or conflicts with owned fields.',
+          },
+        ]
+      : [
+          {
+            field: 'creationFolder',
+            message: 'Creation is unavailable with this folder and marker setup.',
+          },
+        ];
+  }
+
+  private renderWorkNoteSetupPreservingFocus(containerEl: HTMLElement): void {
+    const active = containerEl.ownerDocument.activeElement;
+    const control = active instanceof HTMLElement && containerEl.contains(active) ? active : null;
+    const focusKey = control?.dataset['workNoteFocusKey'];
+    const textControl =
+      control?.matches('input, textarea') === true
+        ? (control as HTMLInputElement | HTMLTextAreaElement)
+        : null;
+    const selectionStart = textControl?.selectionStart ?? null;
+    const selectionEnd = textControl?.selectionEnd ?? null;
+    this.renderWorkNoteSetup(containerEl);
+    if (!focusKey) return;
+    const replacement = Array.from(
+      containerEl.querySelectorAll<HTMLElement>('[data-work-note-focus-key]'),
+    ).find((candidate) => candidate.dataset['workNoteFocusKey'] === focusKey);
+    if (!replacement) return;
+    replacement.focus({ preventScroll: true });
+    if (
+      selectionStart !== null &&
+      selectionEnd !== null &&
+      replacement.matches('input, textarea')
+    ) {
+      const replacementText = replacement as HTMLInputElement | HTMLTextAreaElement;
+      replacementText.setSelectionRange(
+        Math.min(selectionStart, replacementText.value.length),
+        Math.min(selectionEnd, replacementText.value.length),
+      );
+    }
+  }
+
+  private assignWorkNoteFocusKeys(containerEl: HTMLElement): void {
+    const controls = containerEl.querySelectorAll<HTMLElement>(
+      'input, select, textarea, button, summary, [tabindex]:not([tabindex="-1"])',
     );
-    if (!input) return;
-    const start = Math.min(diagnostic.offset, input.value.length);
-    const end = Math.min(input.value.length, start + 1);
-    queueMicrotask(() => {
-      input.focus({ preventScroll: true });
-      input.setSelectionRange(start, end);
+    const occurrences = new Map<string, number>();
+    controls.forEach((control) => {
+      const settingName = control
+        .closest('.setting-item')
+        ?.querySelector<HTMLElement>('.setting-item-name')
+        ?.textContent?.trim();
+      const identity = [
+        control.tagName.toLowerCase(),
+        control.dataset['workNotePropertyField'],
+        control.dataset['workNoteQuerySource'],
+        control.getAttribute('aria-label'),
+        control.getAttribute('name'),
+        settingName,
+        control.matches('button') ? control.textContent?.trim() : undefined,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(':');
+      const occurrence = occurrences.get(identity) ?? 0;
+      occurrences.set(identity, occurrence + 1);
+      control.dataset['workNoteFocusKey'] = `${identity}:${String(occurrence)}`;
     });
   }
 
@@ -1345,14 +1519,26 @@ export class CalendarSettingsTab extends PluginSettingTab {
     const state = this.ensureWorkNoteSetupState();
     const signature = this.workNoteDraftSignature(state.draft);
     if (state.pendingValidation?.signature === signature) return;
+    state.automaticAttemptedSignature = signature;
+    const propertyDiagnostics = this.workNotePropertyDiagnostics(state.draft);
+    if (propertyDiagnostics.length > 0) {
+      state.propertyDiagnostics = propertyDiagnostics;
+      state.diagnostics = [];
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.message = undefined;
+      this.renderWorkNoteSetupPreservingFocus(containerEl);
+      return;
+    }
     const id = state.latestValidationId + 1;
     state.latestValidationId = id;
     state.pendingValidation = { id, signature };
     state.validation = undefined;
     state.validationSignature = undefined;
     state.diagnostics = [];
-    state.message = { kind: 'status', text: 'Checking this draft…' };
-    this.renderWorkNoteSetup(containerEl);
+    state.propertyDiagnostics = [];
+    state.message = { kind: 'status', text: 'Checking changes…' };
+    this.renderWorkNoteSetupPreservingFocus(containerEl);
     const candidate = structuredClone(state.draft);
     let result: WorkNoteCompatibilityValidationResult;
     try {
@@ -1360,8 +1546,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
     } catch {
       if (state.latestValidationId !== id) return;
       state.pendingValidation = undefined;
-      state.message = { kind: 'error', text: 'Validation unavailable. Try again.' };
-      this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+      state.retryAvailable = true;
+      state.message = { kind: 'error', text: 'Changes were not saved. Retry when ready.' };
+      this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
+      return;
+    }
+    if (!result) {
+      if (state.latestValidationId !== id) return;
+      state.pendingValidation = undefined;
+      state.retryAvailable = true;
+      state.message = { kind: 'error', text: 'Changes were not saved. Retry when ready.' };
+      this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
       return;
     }
     if (state.latestValidationId !== id || this.workNoteDraftSignature(state.draft) !== signature) {
@@ -1378,16 +1573,24 @@ export class CalendarSettingsTab extends PluginSettingTab {
         state.advancedOpen = true;
       }
       const currentContainer = this.currentWorkNoteSetupContainer(containerEl);
-      this.renderWorkNoteSetup(currentContainer);
-      const diagnostic = result.diagnostics[0];
-      if (diagnostic) this.focusWorkNoteDiagnostic(currentContainer, diagnostic);
+      this.renderWorkNoteSetupPreservingFocus(currentContainer);
+      return;
+    }
+    const capabilityDiagnostics = this.workNoteCapabilityDiagnostics(state.draft, result.preview);
+    if (capabilityDiagnostics.length > 0) {
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.propertyDiagnostics = capabilityDiagnostics;
+      state.auditPreview = result.preview;
+      state.message = undefined;
+      this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
       return;
     }
     state.validation = result;
     state.validationSignature = signature;
     state.diagnostics = [];
-    state.creationRevealed = true;
-    this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+    state.auditPreview = result.preview;
+    await this.applyWorkNoteDraft(this.currentWorkNoteSetupContainer(containerEl));
   }
 
   private async applyWorkNoteDraft(containerEl: HTMLElement): Promise<void> {
@@ -1395,28 +1598,53 @@ export class CalendarSettingsTab extends PluginSettingTab {
     if (state.applyPending || state.disablePending || !state.validation) return;
     if (this.workNoteDraftSignature(state.draft) !== state.validationSignature) return;
     const validation = state.validation;
+    const validatedSignature = state.validationSignature;
     state.applyPending = true;
-    state.message = { kind: 'status', text: 'Applying configuration…' };
-    this.renderWorkNoteSetup(containerEl);
+    state.message = { kind: 'status', text: 'Saving checked changes…' };
+    this.renderWorkNoteSetupPreservingFocus(containerEl);
     let result: WorkNoteValidatedApplyResult;
     try {
       result = await this.plugin.applyValidatedWorkNoteCompatibility(validation.token);
     } catch {
       result = { type: 'revalidation-required', reason: 'save-failed' };
     }
+    if (!result) result = { type: 'revalidation-required', reason: 'save-failed' };
+    if (
+      this.workNoteSetupState === state &&
+      this.workNoteDraftSignature(state.draft) !== validatedSignature
+    ) {
+      state.applyPending = false;
+      state.validation = undefined;
+      state.validationSignature = undefined;
+      state.automaticAttemptedSignature = undefined;
+      state.message = { kind: 'status', text: 'Checking the latest changes…' };
+      const current = this.currentWorkNoteSetupContainer(containerEl);
+      this.renderWorkNoteSetupPreservingFocus(current);
+      this.queueWorkNoteValidation(current, state);
+      return;
+    }
     if (result.type === 'revalidation-required') {
       state.applyPending = false;
       state.validation = undefined;
       state.validationSignature = undefined;
       state.latestValidationId += 1;
+      const canRetryAutomatically =
+        result.reason !== 'save-failed' && result.reason !== 'persistence-unavailable';
+      if (canRetryAutomatically && state.automaticRetryCount < 2) {
+        state.automaticRetryCount += 1;
+        state.automaticAttemptedSignature = undefined;
+        state.message = { kind: 'status', text: 'Checking the latest vault state…' };
+        const current = this.currentWorkNoteSetupContainer(containerEl);
+        this.renderWorkNoteSetupPreservingFocus(current);
+        this.queueWorkNoteValidation(current, state);
+        return;
+      }
+      state.retryAvailable = true;
       state.message = {
         kind: 'error',
-        text:
-          result.reason === 'save-failed'
-            ? 'Could not save this configuration. Validate again.'
-            : 'The audited draft changed. Validate again.',
+        text: 'Changes were not saved. Retry when ready.',
       };
-      this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+      this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
       return;
     }
     const applied = structuredClone(result.preset);
@@ -1424,20 +1652,21 @@ export class CalendarSettingsTab extends PluginSettingTab {
       applied,
       draft: structuredClone(applied),
       diagnostics: [],
-      creationRevealed: true,
+      propertyDiagnostics: [],
+      auditPreview: result.preview,
+      automaticAttemptedSignature: this.workNoteDraftSignature(applied),
+      automaticRetryCount: 0,
+      retryAvailable: false,
       advancedOpen: state.advancedOpen,
       latestValidationId: state.latestValidationId + 1,
       applyPending: false,
       disablePending: false,
       message: {
         kind: 'status',
-        text:
-          result.type === 'applied'
-            ? 'Configuration applied.'
-            : 'Configuration is already applied.',
+        text: result.type === 'applied' ? 'Saved automatically.' : 'Already up to date.',
       },
     };
-    this.renderWorkNoteSetup(this.currentWorkNoteSetupContainer(containerEl));
+    this.renderWorkNoteSetupPreservingFocus(this.currentWorkNoteSetupContainer(containerEl));
   }
 
   private async disableWorkNotes(containerEl: HTMLElement): Promise<void> {
@@ -1458,9 +1687,12 @@ export class CalendarSettingsTab extends PluginSettingTab {
         applied,
         draft: structuredClone(applied),
         diagnostics: [],
-        creationRevealed: false,
+        propertyDiagnostics: [],
+        auditPreview: undefined,
         advancedOpen: false,
         latestValidationId: state.latestValidationId + 1,
+        automaticRetryCount: 0,
+        retryAvailable: false,
         applyPending: false,
         disablePending: false,
       };
@@ -1485,6 +1717,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     state: WorkNoteSetupState,
   ): NonNullable<WorkNoteCompatibilityPreset['creation']> {
     const defaultStatusId =
+      Object.keys(state.draft.rawStatusByStatusId)[0] ||
       this.plugin.settings.projects.defaultStatusId ||
       this.plugin.settings.projects.statuses[0]?.id ||
       '';
@@ -1513,7 +1746,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
     new Setting(section)
       // eslint-disable-next-line obsidianmd/ui/sentence-case
       .setName('Create new Work Notes')
-      .setDesc('Enable creation only after this exact contract is validated and applied.')
+      .setDesc('Create linked work notes with the folder, template, and kind below.')
       .addToggle((control) =>
         control.setValue(configured).onChange((enabled) => {
           this.replaceWorkNoteDraft(
@@ -1533,8 +1766,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
         current: NonNullable<WorkNoteCompatibilityPreset['creation']>,
         value: string,
       ) => NonNullable<WorkNoteCompatibilityPreset['creation']>,
+      propertyField?: WorkNoteSetupState['propertyDiagnostics'][number]['field'],
     ): void => {
-      new Setting(section)
+      const setting = new Setting(section)
         .setName(name)
         .setDesc(description)
         .addText((control) => {
@@ -1551,7 +1785,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
             );
           });
           control.inputEl.setAttribute('aria-label', name);
+          if (propertyField) control.inputEl.dataset['workNotePropertyField'] = propertyField;
         });
+      if (propertyField) this.renderWorkNotePropertyDiagnostic(setting, propertyField, state);
     };
     text(
       'Creation folder',
@@ -1559,6 +1795,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       creation.folder,
       'Work Notes',
       (current, folder) => ({ ...current, folder }),
+      'creationFolder',
     );
     text(
       'Template path',
@@ -1566,6 +1803,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
       creation.templatePath ?? '',
       'Templates/Work Note.md',
       (current, templatePath) => ({ ...current, templatePath }),
+      'templatePath',
     );
 
     new Setting(section).setName('Default kind').addDropdown((control) =>
@@ -1588,7 +1826,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           );
         }),
     );
-    new Setting(section).setName('Default status').addDropdown((control) => {
+    const defaultStatus = new Setting(section).setName('Default status').addDropdown((control) => {
       for (const status of this.plugin.settings.projects.statuses) {
         control.addOption(status.id, status.label);
       }
@@ -1603,7 +1841,9 @@ export class CalendarSettingsTab extends PluginSettingTab {
             false,
           );
         });
+      control.selectEl.dataset['workNotePropertyField'] = 'defaultStatus';
     });
+    this.renderWorkNotePropertyDiagnostic(defaultStatus, 'defaultStatus', state);
     const markerKind = creation.kindMarkers.ordinary.kind;
     new Setting(section).setName('Kind marker').addDropdown((control) =>
       control
@@ -1661,6 +1901,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
             },
           },
         }),
+        'kindProperty',
       );
     }
     text(
@@ -1675,6 +1916,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           ordinary: { ...current.kindMarkers.ordinary, value },
         },
       }),
+      'ordinaryMarker',
     );
     text(
       'Milestone marker',
@@ -1688,23 +1930,29 @@ export class CalendarSettingsTab extends PluginSettingTab {
           milestone: { ...current.kindMarkers.milestone, value },
         },
       }),
+      'milestoneMarker',
     );
   }
 
   private renderWorkNoteAdvanced(containerEl: HTMLElement, state: WorkNoteSetupState): void {
-    const details = containerEl.createEl('details', { cls: 'abyss-work-note-advanced' });
+    const details = containerEl.createEl('details', {
+      cls: 'abyss-work-note-advanced abyss-work-note-fields',
+    });
     details.open = state.advancedOpen;
-    details.createEl('summary', { text: 'Advanced and diagnostics' });
+    details.createEl('summary', { text: 'Work note fields' });
     details.addEventListener('toggle', () => {
       state.advancedOpen = details.open;
     });
-    const body = details.createDiv({ cls: 'abyss-work-note-advanced-body' });
+    const body = details.createDiv({
+      cls: 'abyss-work-note-advanced-body abyss-work-note-fields-body',
+    });
     const text = (
       name: string,
       value: string,
       placeholder: string,
       update: (value: string) => WorkNoteCompatibilityPreset,
       querySource?: WorkNoteQueryDiagnostic['source'],
+      propertyField?: keyof WorkNoteCompatibilityPreset['fields'],
     ): void => {
       const setting = new Setting(body).setName(name).addText((control) => {
         control.setValue(value).setPlaceholder(placeholder);
@@ -1713,8 +1961,10 @@ export class CalendarSettingsTab extends PluginSettingTab {
         );
         control.inputEl.setAttribute('aria-label', name);
         if (querySource) control.inputEl.dataset['workNoteQuerySource'] = querySource;
+        if (propertyField) control.inputEl.dataset['workNotePropertyField'] = propertyField;
       });
       if (querySource) this.renderWorkNoteQueryDiagnostic(setting, querySource, state);
+      if (propertyField) this.renderWorkNotePropertyDiagnostic(setting, propertyField, state);
     };
     text('Source boundary', state.draft.folder, 'Work Notes', (folder) => ({
       ...state.draft,
@@ -1750,10 +2000,17 @@ export class CalendarSettingsTab extends PluginSettingTab {
       ['related', 'Related property'],
     ];
     for (const [field, label] of fields) {
-      text(label, state.draft.fields[field], label.replace(' property', ''), (value) => ({
-        ...state.draft,
-        fields: { ...state.draft.fields, [field]: value },
-      }));
+      text(
+        label,
+        state.draft.fields[field],
+        label.replace(' property', ''),
+        (value) => ({
+          ...state.draft,
+          fields: { ...state.draft.fields, [field]: value },
+        }),
+        undefined,
+        field,
+      );
     }
 
     new Setting(body).setName('Status mapping').setHeading();
@@ -1768,29 +2025,38 @@ export class CalendarSettingsTab extends PluginSettingTab {
         }),
       );
     }
-    if (state.validation) this.renderWorkNoteAuditDetails(body, state.validation.preview);
   }
 
-  private renderWorkNoteAuditDetails(
-    containerEl: HTMLElement,
-    preview: WorkNoteCompatibilityPreview,
-  ): void {
-    new Setting(containerEl).setName('Audit details').setHeading();
-    const details = containerEl.createDiv({ cls: 'abyss-work-note-audit-details' });
-    details.createDiv({
-      text: `${String(preview.notes.scanned)} scanned · ${String(
-        preview.kinds.ordinary,
-      )} ordinary · ${String(preview.kinds.milestone)} milestones`,
+  private renderWorkNoteDiagnostics(containerEl: HTMLElement, state: WorkNoteSetupState): void {
+    const details = containerEl.createEl('details', { cls: 'abyss-work-note-diagnostics' });
+    details.createEl('summary', { text: 'Diagnostics' });
+    const body = details.createDiv({ cls: 'abyss-work-note-diagnostics-body' });
+    const payload = JSON.stringify(
+      {
+        enabled: state.draft.enabled,
+        revision: state.draft.revision,
+        fingerprint: this.workNoteDraftSignature(state.draft),
+        queryErrors: state.diagnostics,
+        propertyErrors: state.propertyDiagnostics,
+        preview: state.auditPreview,
+      },
+      null,
+      2,
+    );
+    body.createEl('pre', { text: payload });
+    const copy = body.createEl('button', {
+      text: 'Copy diagnostics',
+      attr: { type: 'button' },
     });
-    const diagnostics = Object.entries(preview.diagnostics)
-      .filter((entry): entry is [string, number] => typeof entry[1] === 'number' && entry[1] > 0)
-      .sort(([left], [right]) => left.localeCompare(right));
-    if (diagnostics.length === 0) {
-      details.createDiv({ text: 'No diagnostics.' });
-      return;
-    }
-    details.createDiv({
-      text: diagnostics.map(([name, count]) => `${name} ${String(count)}`).join(' · '),
+    copy.addEventListener('click', () => {
+      if (!navigator.clipboard) {
+        new Notice('Clipboard is unavailable.');
+        return;
+      }
+      void navigator.clipboard.writeText(payload).then(
+        () => new Notice('Diagnostics copied.'),
+        () => new Notice('Could not copy diagnostics.'),
+      );
     });
   }
 

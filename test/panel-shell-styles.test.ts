@@ -33,6 +33,22 @@ function normalizeSelector(selector: string): string {
   return normalized.trim();
 }
 
+function selectorBranches(selector: string): string[] {
+  const branches: string[] = [];
+  let start = 0;
+  let depth = 0;
+  for (let index = 0; index < selector.length; index += 1) {
+    if (selector[index] === '(') depth += 1;
+    else if (selector[index] === ')') depth = Math.max(0, depth - 1);
+    else if (selector[index] === ',' && depth === 0) {
+      branches.push(selector.slice(start, index).trim());
+      start = index + 1;
+    }
+  }
+  branches.push(selector.slice(start).trim());
+  return branches;
+}
+
 function withoutComments(source: string): string {
   let clean = '';
   let cursor = 0;
@@ -345,6 +361,21 @@ describe('Projects hardening styles', () => {
     css.indexOf('/* ── Settings:', css.indexOf('/* ── Projects ─')),
   );
 
+  it('keeps light/dark project tokens theme-derived and every Projects rule locally scoped', () => {
+    const light = declarationsFor('.abyss-panel-view');
+    const dark = declarationsFor('.theme-dark .abyss-panel-view');
+    expect(light).toContain('--abyss-calendar-surface: color-mix(');
+    expect(dark).toContain('--abyss-event-fill-strength: 14%');
+
+    const projectRules = parseTopLevelRules(withoutComments(projectsStyles));
+    for (const { selector } of projectRules) {
+      if (selector.startsWith('@')) continue;
+      for (const branch of selectorBranches(selector)) {
+        expect(branch, selector).toMatch(/^\.abyss-/u);
+      }
+    }
+  });
+
   it('keeps the hardened Projects slice theme-derived and preserves dense desktop rows', () => {
     expect(projectsStyles).not.toMatch(/#[\da-f]{3,8}\b|rgba?\(|hsla?\(/iu);
     for (const token of [
@@ -506,6 +537,45 @@ describe('Projects hardening styles', () => {
       ),
     ).toContain('min-inline-size: 44px');
   });
+
+  it.each([1440, 900, 760, 440].flatMap((width) => [1, 2].map((zoom) => ({ width, zoom }))))(
+    'keeps one-line Project identity invariant at $width px and $zoom× zoom',
+    ({ width, zoom }) => {
+      const style = activeDocument.createElement('style');
+      style.textContent = css;
+      const row = activeDocument.createElement('article');
+      row.className = 'abyss-project-row';
+      row.style.inlineSize = `${String(width)}px`;
+      row.style.fontSize = `${String(zoom * 100)}%`;
+      row.innerHTML = `
+      <div class="abyss-project-row-line abyss-project-row-line--primary">
+        <span class="abyss-project-health"></span>
+        <button class="abyss-project-row-name"><span class="abyss-project-name">${'Long project identity '.repeat(30)}</span></button>
+        <span class="abyss-project-priority">A</span>
+        <span class="abyss-project-task-progress">3/10</span>
+      </div>
+      <div class="abyss-project-row-actions"><button aria-label="More"></button></div>`;
+      activeDocument.head.appendChild(style);
+      activeDocument.body.appendChild(row);
+      try {
+        const primary = row.querySelector<HTMLElement>('.abyss-project-row-line--primary')!;
+        const identity = row.querySelector<HTMLElement>('.abyss-project-row-name')!;
+        const title = row.querySelector<HTMLElement>('.abyss-project-name')!;
+        const actions = row.querySelector<HTMLElement>('.abyss-project-row-actions')!;
+        expect(getComputedStyle(row).overflow).toBe('hidden');
+        expect(getComputedStyle(primary).gridTemplateColumns).toContain('minmax(0, 1fr)');
+        expect(getComputedStyle(identity).minWidth).toBe('0px');
+        expect(getComputedStyle(title).whiteSpace).toBe('nowrap');
+        expect(getComputedStyle(title).overflow).toBe('hidden');
+        expect(getComputedStyle(title).textOverflow).toBe('ellipsis');
+        expect(getComputedStyle(actions).position).toBe('absolute');
+        expect(row.style.fontSize).toBe(`${String(zoom * 100)}%`);
+      } finally {
+        row.remove();
+        style.remove();
+      }
+    },
+  );
 
   it('collapses status overflow behind one Show summary without horizontal scrolling', () => {
     const filters = declarationsFor('.abyss-project-status-filters');

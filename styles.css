@@ -7991,7 +7991,7 @@ body.abyss-modal-open .popover.hover-popover {
 
 .abyss-work-note-off,
 .abyss-work-note-validation-slot,
-.abyss-work-note-audit-details {
+.abyss-work-note-diagnostics-body {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
@@ -8003,51 +8003,19 @@ body.abyss-modal-open .popover.hover-popover {
 .abyss-work-note-validation-slot {
   display: flex;
   align-items: center;
-  min-block-size: 72px;
+  min-block-size: 20px;
   min-width: 0;
-  margin: 2px 0 8px;
+  margin: 2px 0 6px;
 }
 
-.abyss-work-note-reset[hidden] {
-  display: none !important;
-}
-
-.abyss-work-note-validation-result {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px 12px;
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-s);
-  background: var(--background-secondary);
-}
-
-.abyss-work-note-validation-counts,
-.abyss-work-note-validation-warning {
-  min-width: 0;
-}
-
-.abyss-work-note-validation-capabilities {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-  color: var(--text-normal);
-}
-
-.abyss-work-note-validation-result > button {
-  margin-inline-start: auto;
-}
-
-.abyss-work-note-validation-warning,
 .abyss-work-note-message.is-error,
-.abyss-work-note-query-error {
+.abyss-work-note-query-error,
+.abyss-work-note-property-error {
   color: var(--text-error);
 }
 
-.abyss-work-note-query-error {
+.abyss-work-note-query-error,
+.abyss-work-note-property-error {
   display: block;
   width: auto;
   margin-top: 4px;
@@ -8060,50 +8028,61 @@ body.abyss-modal-open .popover.hover-popover {
   border-inline-start: 2px solid var(--background-modifier-border);
 }
 
-.abyss-work-note-advanced {
+.abyss-work-note-fields,
+.abyss-work-note-diagnostics,
+.abyss-project-table-settings {
   margin: 4px 0 10px;
   border-top: 1px solid var(--background-modifier-border);
 }
 
-.abyss-work-note-advanced > summary {
+.abyss-work-note-fields > summary,
+.abyss-work-note-diagnostics > summary,
+.abyss-project-table-settings > summary {
   padding: 10px 0;
   color: var(--text-muted);
   font-weight: var(--font-medium);
   cursor: pointer;
 }
 
-.abyss-work-note-advanced > summary:focus-visible {
+.abyss-work-note-fields > summary:focus-visible,
+.abyss-work-note-diagnostics > summary:focus-visible,
+.abyss-project-table-settings > summary:focus-visible {
   outline: 2px solid var(--interactive-accent);
   outline-offset: 2px;
 }
 
-.abyss-work-note-advanced-body {
+.abyss-work-note-fields-body,
+.abyss-work-note-diagnostics-body,
+.abyss-project-table-settings-body {
   padding: 0 0 6px 10px;
   border-inline-start: 2px solid var(--background-modifier-border);
 }
 
-.abyss-work-note-audit-details {
+.abyss-work-note-diagnostics-body {
   display: grid;
-  gap: 3px;
-  padding: 4px 0 8px;
+  gap: 8px;
+  max-block-size: min(24rem, 50vh);
+  overflow: auto;
+}
+
+.abyss-work-note-diagnostics-body pre {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.abyss-work-note-diagnostics-body button {
+  justify-self: end;
 }
 
 @media (max-width: 640px) {
-  .abyss-work-note-validation-slot {
-    min-block-size: 126px;
-  }
-
-  .abyss-work-note-validation-result {
-    align-items: stretch;
-  }
-
-  .abyss-work-note-validation-result > button {
-    width: 100%;
-    margin-inline-start: 0;
-  }
-
   .abyss-work-note-level,
-  .abyss-work-note-advanced-body {
+  .abyss-work-note-fields-body,
+  .abyss-work-note-diagnostics-body,
+  .abyss-project-table-settings-body {
     padding-inline-start: 6px;
   }
 }

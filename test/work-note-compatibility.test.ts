@@ -62,6 +62,26 @@ function source(
 }
 
 describe('Work Note compatibility audit', () => {
+  it('keeps background validation observational until the accepted preset is saved', () => {
+    const candidate = preset();
+    const files = [
+      {
+        path: 'Tasks/A.md',
+        basename: 'A',
+        tags: ['#work-note', '#work-note/task'],
+        frontmatter: { Project: '[[Projects/A]]', Status: 'Active' },
+      },
+    ];
+    const candidateBefore = structuredClone(candidate);
+    const filesBefore = structuredClone(files);
+
+    auditWorkNotes(source(files), candidate);
+
+    expect(candidate).toEqual(candidateBefore);
+    expect(files).toEqual(filesBefore);
+    expect(candidate.acceptedAudit).toBeUndefined();
+  });
+
   it.each([
     ['#work-note', ['Tasks/A.md', 'Tasks/Archived.md']],
     ['Tasks/ AND #work-note', ['Tasks/A.md', 'Tasks/Archived.md']],

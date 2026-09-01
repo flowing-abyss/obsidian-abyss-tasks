@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import TaskCalendarPlugin from '../src/main';
 import { acceptWorkNoteAudit } from '../src/projects/work-notes/compatibility';
 import type { WorkNoteCompatibilityPreset } from '../src/projects/work-notes/types';
+import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { migrateSettings } from '../src/settings/migration';
 import { defaultShortcuts } from '../src/settings/shortcuts';
 import type {
@@ -772,6 +773,36 @@ describe('projects migration', () => {
       groupBy: 'milestone',
       sortBy: { field: 'updated', dir: 'asc' },
       statusIds: [],
+    });
+  });
+
+  it('keeps a 1.2.0 Projects workspace idempotent and preserves future keys without a vault dependency', () => {
+    const raw: Record<string, unknown> = {
+      futureRootKey: { preserve: true },
+      projects: {
+        ...structuredClone(DEFAULT_SETTINGS.projects),
+        futureProjectKey: ['keep'],
+        view: {
+          ...structuredClone(DEFAULT_SETTINGS.projects.view),
+          portfolioLayout: 'timeline',
+          visibleStatusIds: [DEFAULT_SETTINGS.projects.statuses[0]!.id],
+          futureViewKey: { preserve: true },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+    const once = structuredClone(raw);
+    migrateSettings(raw);
+
+    expect(raw).toEqual(once);
+    expect(raw['futureRootKey']).toEqual({ preserve: true });
+    const projects = raw['projects'] as Record<string, unknown>;
+    expect(projects['futureProjectKey']).toEqual(['keep']);
+    expect(projects['view']).toMatchObject({
+      portfolioLayout: 'timeline',
+      visibleStatusIds: [DEFAULT_SETTINGS.projects.statuses[0]!.id],
+      futureViewKey: { preserve: true },
     });
   });
 
