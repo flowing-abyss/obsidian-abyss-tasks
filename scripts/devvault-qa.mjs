@@ -1925,8 +1925,7 @@ async function captureCommand(options) {
     const readOnlySurface = Boolean(scenario.navigationEval);
     if (readOnlySurface && index > 0 && index % 48 === 0) restartObsidianForQa();
     const record = await runCaptureWithRecovery(
-      () =>
-        captureScenario(scenario, out, artifact.source.sha256, fixtureManifestSha256),
+      () => captureScenario(scenario, out, artifact.source.sha256, fixtureManifestSha256),
       restartObsidianForQa,
       readOnlySurface,
     );

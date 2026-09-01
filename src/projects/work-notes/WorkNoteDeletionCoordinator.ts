@@ -449,7 +449,7 @@ export class WorkNoteDeletionCoordinator {
         );
       }
     }
-    // eslint-disable-next-line sonarjs/no-redundant-jump -- explicit undefined satisfies noImplicitReturns.
+
     return undefined;
   }
 

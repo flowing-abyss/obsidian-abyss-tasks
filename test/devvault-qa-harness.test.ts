@@ -92,8 +92,7 @@ function scenarioDocument(): any {
     expectedWindowTitle: 'Abyss Tasks',
     rootSelector: '.abyss-center-panel',
     expectedLandmark: 'Tasks',
-    navigationEval:
-      "document.querySelector('.abyss-rail-btn[aria-label=\"Tasks\"]')?.click()",
+    navigationEval: 'document.querySelector(\'.abyss-rail-btn[aria-label="Tasks"]\')?.click()',
     readyEval: '!!document.querySelector(".abyss-center-panel")',
     setupEval: ['document.body.dataset.qaSurface="tasks"'],
     stateSnapshot: {
