@@ -42,6 +42,23 @@ const REQUIRED_SURFACES = [
   'milestones',
   'settings',
 ];
+const REQUIRED_WORKFLOWS = [
+  'work-note-create',
+  'work-note-ownership',
+  'work-note-relations',
+  'work-note-progress',
+  'work-note-safe-delete',
+  'milestone-assignment',
+  'milestone-progress-filter',
+  'projects-board-move',
+  'projects-board-rollback',
+  'projects-timeline-move-resize',
+  'projects-timeline-rollback',
+  'pending-conflict-undo',
+  'persistence-plugin-reload',
+  'persistence-app-restart',
+  'settings-validation-diagnostics',
+];
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 
 export const FALLBACK_TESTS = Object.freeze({
@@ -75,13 +92,34 @@ function exactMatrix(actual, expected, field) {
   return actual;
 }
 
+function validateEvalSyntax(code, field, expression = false) {
+  try {
+    Function(expression ? `return (async()=>await (${code}))()` : code);
+  } catch (error) {
+    throw new Error(
+      `${field} is not valid JavaScript: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 function validateAction(value, field, contract) {
   const candidate = object(value);
   if (!candidate) throw new Error(`${field} must be an object`);
   const type = nonemptyString(candidate.type, `${field}.type`);
   const allowedTypes =
     contract === 'interaction'
-      ? ['eval', 'key', 'click', 'click-text', 'pointer', 'pointer-drag', 'context-menu']
+      ? [
+          'eval',
+          'key',
+          'click',
+          'click-text',
+          'input',
+          'pointer',
+          'pointer-drag',
+          'context-menu',
+          'plugin-reload',
+          'app-restart',
+        ]
       : ['dom-contains', 'dom-not-contains', 'eval-truthy'];
   if (!allowedTypes.includes(type)) {
     throw new Error(`${field} has unsupported ${contract} type ${type}`);
@@ -91,16 +129,31 @@ function validateAction(value, field, contract) {
     key: ['type', 'key', 'code', 'selector', 'workflow'],
     click: ['type', 'selector', 'workflow'],
     'click-text': ['type', 'value', 'workflow'],
+    input: ['type', 'selector', 'value', 'workflow'],
     pointer: ['type', 'selector', 'workflow'],
-    'pointer-drag': ['type', 'selector', 'targetSelector', 'workflow'],
+    'pointer-drag': [
+      'type',
+      'selector',
+      'targetSelector',
+      'coordinates',
+      'movementThreshold',
+      'dispatchTarget',
+      'requirePointerCapture',
+      'workflow',
+    ],
     'context-menu': ['type', 'selector', 'workflow'],
+    'plugin-reload': ['type', 'workflow'],
+    'app-restart': ['type', 'workflow'],
     'dom-contains': ['type', 'value'],
     'dom-not-contains': ['type', 'value'],
     'eval-truthy': ['type', 'code'],
   };
   const additional = Object.keys(candidate).find((key) => !fieldsByType[type].includes(key));
   if (additional) throw new Error(`${field}.${additional} is an additional field`);
-  if (['eval', 'eval-truthy'].includes(type)) nonemptyString(candidate.code, `${field}.code`);
+  if (['eval', 'eval-truthy'].includes(type)) {
+    const code = nonemptyString(candidate.code, `${field}.code`);
+    validateEvalSyntax(code, `${field}.code`, type === 'eval-truthy');
+  }
   if (type === 'key') {
     nonemptyString(candidate.key, `${field}.key`);
     if (candidate.code !== undefined) nonemptyString(candidate.code, `${field}.code`);
@@ -112,14 +165,132 @@ function validateAction(value, field, contract) {
   if (type === 'pointer-drag') {
     nonemptyString(candidate.selector, `${field}.selector`);
     nonemptyString(candidate.targetSelector, `${field}.targetSelector`);
+    const coordinates = object(candidate.coordinates);
+    const source = object(coordinates?.source);
+    const target = object(coordinates?.target);
+    const validPoint = (point) =>
+      point &&
+      Object.keys(point).length === 2 &&
+      Number.isFinite(point.x) &&
+      point.x >= 0 &&
+      point.x <= 1 &&
+      Number.isFinite(point.y) &&
+      point.y >= 0 &&
+      point.y <= 1;
+    if (!validPoint(source) || !validPoint(target)) {
+      throw new Error(`${field}.coordinates must define normalized source and target points`);
+    }
+    if (!Number.isFinite(candidate.movementThreshold) || candidate.movementThreshold < 3) {
+      throw new Error(`${field}.movementThreshold must be at least 3 pixels`);
+    }
+    if (!['source', 'document'].includes(candidate.dispatchTarget)) {
+      throw new Error(`${field}.dispatchTarget must be source or document`);
+    }
+    if (candidate.requirePointerCapture !== true) {
+      throw new Error(`${field}.requirePointerCapture must be true`);
+    }
   }
   if (['click-text', 'dom-contains', 'dom-not-contains'].includes(type)) {
     nonemptyString(candidate.value, `${field}.value`);
+  }
+  if (type === 'input') {
+    nonemptyString(candidate.selector, `${field}.selector`);
+    if (typeof candidate.value !== 'string') throw new Error(`${field}.value must be a string`);
   }
   if (candidate.workflow !== undefined && typeof candidate.workflow !== 'boolean') {
     throw new Error(`${field}.workflow must be boolean`);
   }
   return structuredClone(candidate);
+}
+
+function validateStateSnapshot(value, field) {
+  const candidate = object(value);
+  if (!candidate) throw new Error(`${field} must be an object`);
+  const extra = Object.keys(candidate).find(
+    (key) => !['beforeEval', 'afterEval', 'expect'].includes(key),
+  );
+  if (extra) throw new Error(`${field}.${extra} is an additional field`);
+  const beforeEval = nonemptyString(candidate.beforeEval, `${field}.beforeEval`);
+  const afterEval = nonemptyString(candidate.afterEval, `${field}.afterEval`);
+  validateEvalSyntax(beforeEval, `${field}.beforeEval`, true);
+  validateEvalSyntax(afterEval, `${field}.afterEval`, true);
+  if (!['changed', 'unchanged'].includes(candidate.expect)) {
+    throw new Error(`${field}.expect must be changed or unchanged`);
+  }
+  if (/innerHTML|outerHTML|document\.body\.textContent/iu.test(`${beforeEval}\n${afterEval}`)) {
+    throw new Error(`${field} must capture canonical domain state, not generic DOM HTML/text`);
+  }
+  return { beforeEval, afterEval, expect: candidate.expect };
+}
+
+function validatePostcondition(value, field) {
+  const candidate = object(value);
+  if (!candidate) throw new Error(`${field} must be an object`);
+  const type = nonemptyString(candidate.type, `${field}.type`);
+  if (!['eval-truthy', 'eval-equals'].includes(type)) {
+    throw new Error(`${field}.type must be eval-truthy or eval-equals`);
+  }
+  const allowed =
+    type === 'eval-equals' ? ['id', 'type', 'code', 'expected'] : ['id', 'type', 'code'];
+  const extra = Object.keys(candidate).find((key) => !allowed.includes(key));
+  if (extra) throw new Error(`${field}.${extra} is an additional field`);
+  const result = {
+    id: nonemptyString(candidate.id, `${field}.id`),
+    type,
+    code: nonemptyString(candidate.code, `${field}.code`),
+  };
+  validateEvalSyntax(result.code, `${field}.code`, true);
+  if (type === 'eval-equals') {
+    if (!Object.prototype.hasOwnProperty.call(candidate, 'expected')) {
+      throw new Error(`${field}.expected is required`);
+    }
+    return { ...result, expected: structuredClone(candidate.expected) };
+  }
+  return result;
+}
+
+function validateMeasurement(value, field) {
+  const candidate = object(value);
+  if (!candidate) throw new Error(`${field} must be an object`);
+  const type = nonemptyString(candidate.type, `${field}.type`);
+  if (!['density', 'native-reference'].includes(type)) {
+    throw new Error(`${field}.type must be density or native-reference`);
+  }
+  const allowed =
+    type === 'density'
+      ? ['id', 'type', 'selector', 'min', 'max']
+      : ['id', 'type', 'selector', 'referenceSelector', 'metric', 'min', 'max'];
+  const extra = Object.keys(candidate).find((key) => !allowed.includes(key));
+  if (extra) throw new Error(`${field}.${extra} is an additional field`);
+  const min = candidate.min;
+  const max = candidate.max;
+  if (!Number.isFinite(min) || !Number.isFinite(max) || min > max) {
+    throw new Error(`${field} must define a finite min/max range`);
+  }
+  const result = {
+    id: nonemptyString(candidate.id, `${field}.id`),
+    type,
+    selector: nonemptyString(candidate.selector, `${field}.selector`),
+    min,
+    max,
+  };
+  if (type === 'density' && (min < 0.1 || max - min > 20)) {
+    throw new Error(`${field} density range must be narrow enough to detect layout regressions`);
+  }
+  if (type === 'native-reference') {
+    if (candidate.metric !== 'height-ratio') {
+      throw new Error(`${field}.metric must be height-ratio`);
+    }
+    if (min <= 0 || max / min > 10) {
+      throw new Error(`${field} native-reference range must be a bounded native comparison`);
+    }
+    return {
+      ...result,
+      referenceSelector: nonemptyString(candidate.referenceSelector, `${field}.referenceSelector`),
+      metric: candidate.metric,
+    };
+  }
+  return result;
 }
 
 /** Validate the compact committed manifest and expand it to exact DevVaultScenario records. */
@@ -135,53 +306,104 @@ export function validateAndExpandScenarios(value) {
   const widths = exactMatrix(matrix.widths, REQUIRED_WIDTHS, 'widths');
   const zooms = exactMatrix(matrix.zooms, REQUIRED_ZOOMS, 'zooms');
   const pointers = exactMatrix(matrix.pointers, REQUIRED_POINTERS, 'pointers');
-  const surfaces = document.surfaces.map((value, index) => {
+  const validateScenario = (value, index, collection) => {
     const surface = object(value);
-    if (!surface) throw new Error(`surfaces[${index}] must be an object`);
-    const id = nonemptyString(surface.id, `surfaces[${index}].id`);
+    if (!surface) throw new Error(`${collection}[${index}] must be an object`);
+    const field = `${collection}[${index}]`;
+    const id = nonemptyString(surface.id, `${field}.id`);
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id)) {
-      throw new Error(`surfaces[${index}].id is invalid: ${id}`);
+      throw new Error(`${field}.id is invalid: ${id}`);
     }
     const setupEval = surface.setupEval;
     if (!Array.isArray(setupEval) || setupEval.some((entry) => typeof entry !== 'string')) {
-      throw new Error(`surfaces[${index}].setupEval must be an array of strings`);
+      throw new Error(`${field}.setupEval must be an array of strings`);
     }
+    setupEval.forEach((code, setupIndex) =>
+      validateEvalSyntax(code, `${field}.setupEval[${setupIndex}]`),
+    );
     const interactions = surface.interactions;
     const assertions = surface.assertions;
-    if (!Array.isArray(interactions) || !Array.isArray(assertions)) {
-      throw new Error(`surfaces[${index}] interactions and assertions must be arrays`);
+    const postconditions = surface.postconditions;
+    const measurements = surface.measurements;
+    if (
+      !Array.isArray(interactions) ||
+      !Array.isArray(assertions) ||
+      !Array.isArray(postconditions) ||
+      !Array.isArray(measurements)
+    ) {
+      throw new Error(
+        `${field} interactions, assertions, postconditions, and measurements must be arrays`,
+      );
+    }
+    if (postconditions.length === 0) {
+      throw new Error(`${field} must declare at least one explicit domain postcondition`);
+    }
+    if (measurements.length === 0) {
+      throw new Error(`${field} must declare at least one UI measurement`);
     }
     const validatedInteractions = interactions.map((action, actionIndex) =>
-      validateAction(action, `surfaces[${index}].interactions[${actionIndex}]`, 'interaction'),
+      validateAction(action, `${field}.interactions[${actionIndex}]`, 'interaction'),
     );
     if (
       !validatedInteractions.some(
         ({ type, workflow }) =>
-          workflow === true && ['key', 'context-menu', 'pointer-drag'].includes(type),
+          workflow === true &&
+          [
+            'key',
+            'click',
+            'click-text',
+            'input',
+            'context-menu',
+            'pointer-drag',
+            'plugin-reload',
+            'app-restart',
+          ].includes(type),
       )
     ) {
-      throw new Error(`surfaces[${index}] must declare a real workflow interaction`);
+      throw new Error(`${field} must declare a real workflow interaction`);
+    }
+    const validatedMeasurements = measurements.map((measurement, measurementIndex) =>
+      validateMeasurement(measurement, `${field}.measurements[${measurementIndex}]`),
+    );
+    const scenarioMeasurementTypes = new Set(validatedMeasurements.map(({ type }) => type));
+    if (
+      !scenarioMeasurementTypes.has('density') ||
+      !scenarioMeasurementTypes.has('native-reference')
+    ) {
+      throw new Error(`${field} must pair density with a native Obsidian reference measurement`);
     }
     return {
       id,
       expectedWindowTitle: nonemptyString(
         surface.expectedWindowTitle,
-        `surfaces[${index}].expectedWindowTitle`,
+        `${field}.expectedWindowTitle`,
       ),
-      rootSelector: nonemptyString(surface.rootSelector, `surfaces[${index}].rootSelector`),
-      expectedLandmark: nonemptyString(
-        surface.expectedLandmark,
-        `surfaces[${index}].expectedLandmark`,
-      ),
+      rootSelector: nonemptyString(surface.rootSelector, `${field}.rootSelector`),
+      expectedLandmark: nonemptyString(surface.expectedLandmark, `${field}.expectedLandmark`),
       setupEval: [...setupEval],
+      stateSnapshot: validateStateSnapshot(surface.stateSnapshot, `${field}.stateSnapshot`),
       interactions: validatedInteractions,
       assertions: assertions.map((action, actionIndex) =>
-        validateAction(action, `surfaces[${index}].assertions[${actionIndex}]`, 'assertion'),
+        validateAction(action, `${field}.assertions[${actionIndex}]`, 'assertion'),
       ),
+      postconditions: postconditions.map((condition, conditionIndex) =>
+        validatePostcondition(condition, `${field}.postconditions[${conditionIndex}]`),
+      ),
+      measurements: validatedMeasurements,
     };
-  });
-  if (new Set(surfaces.map(({ id }) => id)).size !== surfaces.length) {
-    throw new Error('Scenario surface ids must be unique');
+  };
+  const surfaces = document.surfaces.map((value, index) =>
+    validateScenario(value, index, 'surfaces'),
+  );
+  if (!Array.isArray(document.workflows)) {
+    throw new Error('Scenario document workflows must be an array');
+  }
+  const workflows = document.workflows.map((value, index) =>
+    validateScenario(value, index, 'workflows'),
+  );
+  const declared = [...surfaces, ...workflows];
+  if (new Set(declared.map(({ id }) => id)).size !== declared.length) {
+    throw new Error('Scenario ids must be unique across surfaces and workflows');
   }
   const surfaceIds = new Set(surfaces.map(({ id }) => id));
   const missingSurfaces = REQUIRED_SURFACES.filter((id) => !surfaceIds.has(id));
@@ -190,6 +412,20 @@ export function validateAndExpandScenarios(value) {
     throw new Error(
       `Scenario document required surfaces mismatch; missing=${missingSurfaces.join(',')}; unexpected=${unexpectedSurfaces.join(',')}`,
     );
+  }
+  const workflowIds = new Set(workflows.map(({ id }) => id));
+  const missingWorkflows = REQUIRED_WORKFLOWS.filter((id) => !workflowIds.has(id));
+  const unexpectedWorkflows = [...workflowIds].filter((id) => !REQUIRED_WORKFLOWS.includes(id));
+  if (missingWorkflows.length > 0 || unexpectedWorkflows.length > 0) {
+    throw new Error(
+      `Scenario document required workflows mismatch; missing=${missingWorkflows.join(',')}; unexpected=${unexpectedWorkflows.join(',')}`,
+    );
+  }
+  const measurementTypes = new Set(
+    declared.flatMap(({ measurements }) => measurements.map(({ type }) => type)),
+  );
+  if (!measurementTypes.has('density') || !measurementTypes.has('native-reference')) {
+    throw new Error('Scenario document requires both native-reference and density measurements');
   }
   const expanded = [];
   for (const surface of surfaces) {
@@ -208,13 +444,35 @@ export function validateAndExpandScenarios(value) {
               rootSelector: surface.rootSelector,
               expectedLandmark: surface.expectedLandmark,
               setupEval: [...surface.setupEval],
+              stateSnapshot: structuredClone(surface.stateSnapshot),
               interactions: surface.interactions.map((action) => structuredClone(action)),
               assertions: surface.assertions.map((action) => structuredClone(action)),
+              postconditions: surface.postconditions.map((condition) => structuredClone(condition)),
+              measurements: surface.measurements.map((measurement) => structuredClone(measurement)),
             });
           }
         }
       }
     }
+  }
+  for (const workflow of workflows) {
+    expanded.push({
+      id: `${workflow.id}--dark--1440--z1--fine`,
+      surface: workflow.id,
+      theme: 'dark',
+      width: 1440,
+      zoom: 1,
+      pointer: 'fine',
+      expectedWindowTitle: workflow.expectedWindowTitle,
+      rootSelector: workflow.rootSelector,
+      expectedLandmark: workflow.expectedLandmark,
+      setupEval: [...workflow.setupEval],
+      stateSnapshot: structuredClone(workflow.stateSnapshot),
+      interactions: workflow.interactions.map((action) => structuredClone(action)),
+      assertions: workflow.assertions.map((action) => structuredClone(action)),
+      postconditions: workflow.postconditions.map((condition) => structuredClone(condition)),
+      measurements: workflow.measurements.map((measurement) => structuredClone(measurement)),
+    });
   }
   return expanded;
 }
@@ -579,14 +837,124 @@ function validateEvidenceRecord(scenario, value, options) {
     throw new Error(`Scenario ${scenario.id} recorded the wrong requested pointer media`);
   }
   const workflow = object(record.workflow);
-  if (!workflow || !['keyboard', 'context-menu', 'pointer-drag'].includes(workflow.type)) {
+  if (
+    !workflow ||
+    !['keyboard', 'click', 'context-menu', 'pointer-drag', 'plugin-reload', 'app-restart'].includes(
+      workflow.type,
+    )
+  ) {
     throw new Error(`Scenario ${scenario.id} workflow evidence is invalid`);
   }
   if (typeof workflow.changed !== 'boolean') {
     throw new Error(`Scenario ${scenario.id} workflow changed state is invalid`);
   }
+  if (workflow.changed !== (scenario.stateSnapshot.expect === 'changed')) {
+    throw new Error(`Scenario ${scenario.id} workflow violated its declared state expectation`);
+  }
   assertHash(workflow.beforeSha256, `${scenario.id}.workflow.beforeSha256`);
   assertHash(workflow.afterSha256, `${scenario.id}.workflow.afterSha256`);
+  if (!Object.prototype.hasOwnProperty.call(workflow, 'beforeState')) {
+    throw new Error(`Scenario ${scenario.id} workflow canonical beforeState is missing`);
+  }
+  if (!Object.prototype.hasOwnProperty.call(workflow, 'afterState')) {
+    throw new Error(`Scenario ${scenario.id} workflow canonical afterState is missing`);
+  }
+  if (canonicalSnapshotHash(workflow.beforeState) !== workflow.beforeSha256) {
+    throw new Error(`Scenario ${scenario.id} workflow beforeState hash is not canonical`);
+  }
+  if (canonicalSnapshotHash(workflow.afterState) !== workflow.afterSha256) {
+    throw new Error(`Scenario ${scenario.id} workflow afterState hash is not canonical`);
+  }
+  const interaction = object(workflow.interaction);
+  if (interaction) {
+    assertHash(interaction.resultSha256, `${scenario.id}.workflow.interaction.resultSha256`);
+  }
+  if (
+    !interaction ||
+    interaction.actionType !==
+      scenario.interactions.find(({ workflow: selected }) => selected === true)?.type ||
+    canonicalSnapshotHash(interaction.result) !== interaction.resultSha256
+  ) {
+    throw new Error(`Scenario ${scenario.id} interaction evidence is invalid`);
+  }
+  const declaredWorkflow = scenario.interactions.find(
+    ({ workflow: selected }) => selected === true,
+  );
+  if (
+    declaredWorkflow?.type === 'pointer-drag' &&
+    (interaction.result?.pointerCaptured !== true ||
+      interaction.result?.dispatchTarget !== declaredWorkflow.dispatchTarget ||
+      interaction.result?.distance < declaredWorkflow.movementThreshold)
+  ) {
+    throw new Error(`Scenario ${scenario.id} pointer capture/threshold evidence is invalid`);
+  }
+  const expectedPostconditions = new Map(
+    scenario.postconditions.map((condition) => [condition.id, condition]),
+  );
+  if (!Array.isArray(record.postconditions)) {
+    throw new Error(`Scenario ${scenario.id} postcondition evidence is missing`);
+  }
+  const observedPostconditions = new Map();
+  for (const condition of record.postconditions) {
+    const candidate = object(condition);
+    const declared = candidate && expectedPostconditions.get(candidate.id);
+    if (
+      !candidate ||
+      typeof candidate.id !== 'string' ||
+      !declared ||
+      observedPostconditions.has(candidate.id)
+    ) {
+      throw new Error(`Scenario ${scenario.id} postcondition evidence is invalid`);
+    }
+    assertHash(candidate.actualSha256, `${scenario.id}.postconditions.${candidate.id}`);
+    if (canonicalSnapshotHash(candidate.actual) !== candidate.actualSha256) {
+      throw new Error(`Scenario ${scenario.id} postcondition canonical value is invalid`);
+    }
+    const derivedPassed =
+      declared.type === 'eval-truthy'
+        ? Boolean(candidate.actual)
+        : canonicalSnapshotHash(candidate.actual) === canonicalSnapshotHash(declared.expected);
+    if (candidate.passed !== derivedPassed || !derivedPassed) {
+      throw new Error(`Scenario ${scenario.id} postcondition failed: ${candidate.id}`);
+    }
+    observedPostconditions.set(candidate.id, candidate);
+  }
+  if (
+    observedPostconditions.size !== expectedPostconditions.size ||
+    [...expectedPostconditions.keys()].some((id) => !observedPostconditions.has(id))
+  ) {
+    throw new Error(`Scenario ${scenario.id} postcondition evidence does not match declaration`);
+  }
+  const expectedMeasurements = new Map(scenario.measurements.map((entry) => [entry.id, entry]));
+  if (!Array.isArray(record.measurements)) {
+    throw new Error(`Scenario ${scenario.id} measurement evidence is missing`);
+  }
+  const observedMeasurements = new Map();
+  for (const measurement of record.measurements) {
+    const candidate = object(measurement);
+    const declared = candidate && expectedMeasurements.get(candidate.id);
+    if (
+      !candidate ||
+      !declared ||
+      observedMeasurements.has(candidate.id) ||
+      candidate.type !== declared.type ||
+      !Number.isFinite(candidate.value) ||
+      !object(candidate.details) ||
+      candidate.passed !== true ||
+      candidate.value < declared.min ||
+      candidate.value > declared.max
+    ) {
+      throw new Error(`Scenario ${scenario.id} measurement evidence is invalid`);
+    }
+    assertHash(candidate.detailsSha256, `${scenario.id}.measurements.${candidate.id}`);
+    if (canonicalSnapshotHash(candidate.details) !== candidate.detailsSha256) {
+      throw new Error(`Scenario ${scenario.id} measurement source evidence is not canonical`);
+    }
+    observedMeasurements.set(candidate.id, candidate);
+  }
+  if (observedMeasurements.size !== expectedMeasurements.size) {
+    throw new Error(`Scenario ${scenario.id} measurement evidence does not match declaration`);
+  }
   const screenshot = object(record.screenshot);
   if (!screenshot) throw new Error(`Scenario ${scenario.id} screenshot is missing`);
   assertHash(screenshot.sha256, `${scenario.id}.screenshot.sha256`);
@@ -646,9 +1014,6 @@ function validateEvidenceRecord(scenario, value, options) {
     !named.includes(FALLBACK_TESTS.domAccessibility)
   ) {
     throw new Error(`Scenario ${scenario.id} fallback requires named CSS/media and DOM tests`);
-  }
-  if (!workflow.changed || workflow.beforeSha256 === workflow.afterSha256) {
-    throw new Error(`Scenario ${scenario.id} fallback lacks a real state-change workflow`);
   }
   const fallbackRun = object(options.fallbackTestRun);
   if (
@@ -834,7 +1199,10 @@ async function analyzePng(path) {
 export function assertAllowedCommand(command, args) {
   const allowed =
     (command === 'open' && args.length === 2 && args[0] === '-a' && args[1] === 'Obsidian') ||
-    (command === 'osascript' && args.length === 2 && args[0] === '-e') ||
+    (command === 'pgrep' && args.length === 2 && args[0] === '-x' && args[1] === 'Obsidian') ||
+    (command === 'osascript' &&
+      ((args.length === 2 && args[0] === '-e') ||
+        (args.length === 4 && args[0] === '-l' && args[1] === 'JavaScript' && args[2] === '-e'))) ||
     (command === 'obsidian' &&
       args[0] === 'vault=dev-vault' &&
       ['eval', 'plugin:reload', 'dev:dom', 'dev:screenshot'].includes(args[1]) &&
@@ -913,12 +1281,211 @@ function evaluateAction(action) {
     return `(()=>{const el=document.querySelector(${JSON.stringify(action.selector)});if(!el)throw new Error('Missing interaction target');el.dispatchEvent(new MouseEvent(${JSON.stringify(eventType)},{bubbles:true,cancelable:true,button:${action.type === 'context-menu' ? 2 : 0}}));return true})()`;
   }
   if (action.type === 'click-text') {
-    return `(()=>{const label=${JSON.stringify(action.value)};const el=[...document.querySelectorAll('button,[role="button"],[role="tab"],summary')].find(e=>e.textContent?.trim()===label);if(!el)throw new Error('Missing text interaction target '+label);el.click();return true})()`;
+    return `(()=>{const label=${JSON.stringify(action.value)};const el=[...document.querySelectorAll('button,[role="button"],[role="tab"],[role="menuitem"],.menu-item,summary')].find(e=>e.textContent?.trim()===label);if(!el)throw new Error('Missing text interaction target '+label);el.click();return true})()`;
   }
-  if (action.type === 'pointer-drag') {
-    return `(()=>{const source=document.querySelector(${JSON.stringify(action.selector)});const target=document.querySelector(${JSON.stringify(action.targetSelector)});if(!source||!target)throw new Error('Missing pointer drag target');source.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:1,buttons:1}));target.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:1,buttons:1}));target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:1,buttons:0}));return true})()`;
+  if (action.type === 'input') {
+    return `(()=>{const el=document.querySelector(${JSON.stringify(action.selector)});if(!(el instanceof HTMLInputElement||el instanceof HTMLTextAreaElement))throw new Error('Missing input target');el.focus();el.value=${JSON.stringify(action.value)};el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:${JSON.stringify(action.value)}}));el.dispatchEvent(new Event('change',{bubbles:true}));return JSON.stringify({value:el.value,ariaInvalid:el.getAttribute('aria-invalid')})})()`;
   }
   throw new Error(`Unsupported interaction ${action.type}`);
+}
+
+function parseEvalResult(value) {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+/** Runs the native mouse phase with fail-closed release and observer cleanup on every exit. */
+export function runNativePointerPhase(ports, points, maxCaptureAttempts = 20) {
+  let mouseIsDown = false;
+  let releasePoint = points.source;
+  try {
+    mouseIsDown = true;
+    ports.pickup();
+    releasePoint = points.pickup;
+    let captured = false;
+    for (let attempt = 0; attempt < maxCaptureAttempts; attempt += 1) {
+      if (ports.captureObserved()) {
+        captured = true;
+        break;
+      }
+      ports.wait();
+    }
+    if (!captured) throw new Error('Native pointer capture was not observed');
+    releasePoint = points.target;
+    ports.drag();
+    mouseIsDown = false;
+    return true;
+  } finally {
+    if (mouseIsDown) {
+      try {
+        ports.release(releasePoint);
+      } catch {
+        // Best-effort release must not hide the original native-input failure.
+      }
+    }
+    try {
+      ports.cleanup();
+    } catch {
+      // The browser may have exited; native mouse release was already attempted.
+    }
+  }
+}
+
+function executeAction(action, scenario) {
+  if (action.type === 'plugin-reload') {
+    obsidian('plugin:reload', 'id=task-calendar');
+    return { reloaded: 'task-calendar' };
+  }
+  if (action.type === 'pointer-drag') {
+    run('open', ['-a', 'Obsidian']);
+    const expectedWindowTitle = scenario.expectedWindowTitle;
+    const frontmostScript = `tell application "System Events"\nif not (exists process "Obsidian") then return false\ntell process "Obsidian"\nif not frontmost then return false\nif not (exists window whose name contains ${JSON.stringify(expectedWindowTitle)}) then return false\nreturn true\nend tell\nend tell`;
+    let frontmost = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const activation = run('osascript', ['-e', frontmostScript], { optional: true });
+      if (
+        activation.status === 0 &&
+        activation.stdout === 'true' &&
+        obsidianEval(`document.title===${JSON.stringify(expectedWindowTitle)}`) === 'true'
+      ) {
+        frontmost = true;
+        break;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
+    if (!frontmost) throw new Error(`Obsidian window ${expectedWindowTitle} is not frontmost`);
+    const sourcePoint = action.coordinates.source;
+    const targetPoint = action.coordinates.target;
+    const geometry = parseEvalResult(
+      obsidianEval(
+        `(()=>{const source=document.querySelector(${JSON.stringify(action.selector)});const target=document.querySelector(${JSON.stringify(action.targetSelector)});if(!source||!target)throw new Error('Missing pointer drag target');const sr=source.getBoundingClientRect();const tr=target.getBoundingClientRect();const chromeY=window.outerHeight-window.innerHeight;const left=window.screenX+sr.left,top=window.screenY+chromeY+sr.top,right=left+sr.width,bottom=top+sr.height;const sx=left+sr.width*${sourcePoint.x};const sy=top+sr.height*${sourcePoint.y};let tx=window.screenX+tr.left+tr.width*${targetPoint.x};let ty=window.screenY+chromeY+tr.top+tr.height*${targetPoint.y};const threshold=${action.movementThreshold};if(Math.hypot(tx-sx,ty-sy)<threshold){tx=sx+threshold+2;ty=sy;}const pickupDistance=threshold+1;const candidates=[[pickupDistance,0],[-pickupDistance,0],[0,pickupDistance],[0,-pickupDistance]];const pickup=candidates.map(([dx,dy])=>({x:sx+dx,y:sy+dy})).find(({x,y})=>x>left+1&&x<right-1&&y>top+1&&y<bottom-1);if(!pickup)throw new Error('Pointer source is too small for a threshold-crossing pickup');const state={captured:false};const onCapture=()=>{state.captured=true};source.addEventListener('gotpointercapture',onCapture);window.__abyssQaNativePointer={source,state,onCapture};return JSON.stringify({sx,sy,px:pickup.x,py:pickup.y,tx,ty})})()`,
+      ),
+    );
+    const nativeHelpers = `ObjC.import('Cocoa');const point=(x,y)=>$.CGPointMake(x,y);const post=(type,x,y)=>{const event=$.CGEventCreateMouseEvent(null,type,point(x,y),$.kCGMouseButtonLeft);$.CGEventPost($.kCGHIDEventTap,event)}`;
+    const pickupScript = `${nativeHelpers};post($.kCGEventLeftMouseDown,${String(geometry.sx)},${String(geometry.sy)});$.NSThread.sleepForTimeInterval(0.05);post($.kCGEventLeftMouseDragged,${String(geometry.px)},${String(geometry.py)});$.NSThread.sleepForTimeInterval(0.05)`;
+    const dragScript = `${nativeHelpers};const px=${String(geometry.px)},py=${String(geometry.py)},tx=${String(geometry.tx)},ty=${String(geometry.ty)};for(let step=1;step<=8;step+=1){const progress=step/8;post($.kCGEventLeftMouseDragged,px+(tx-px)*progress,py+(ty-py)*progress);$.NSThread.sleepForTimeInterval(0.03)}post($.kCGEventLeftMouseUp,tx,ty);$.NSThread.sleepForTimeInterval(0.05)`;
+    const pointerCaptured = runNativePointerPhase(
+      {
+        pickup: () => run('osascript', ['-l', 'JavaScript', '-e', pickupScript]),
+        captureObserved: () =>
+          obsidianEval(`window.__abyssQaNativePointer?.state.captured===true`) === 'true',
+        drag: () => run('osascript', ['-l', 'JavaScript', '-e', dragScript]),
+        release: ({ x, y }) =>
+          run(
+            'osascript',
+            [
+              '-l',
+              'JavaScript',
+              '-e',
+              `${nativeHelpers};post($.kCGEventLeftMouseUp,${String(x)},${String(y)})`,
+            ],
+            { optional: true },
+          ),
+        cleanup: () =>
+          obsidianEval(
+            `(()=>{const owned=window.__abyssQaNativePointer;if(owned)owned.source.removeEventListener('gotpointercapture',owned.onCapture);delete window.__abyssQaNativePointer;return true})()`,
+          ),
+        wait: () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25),
+      },
+      {
+        source: { x: geometry.sx, y: geometry.sy },
+        pickup: { x: geometry.px, y: geometry.py },
+        target: { x: geometry.tx, y: geometry.ty },
+      },
+    );
+    return {
+      pointerCaptured,
+      distance: Math.hypot(geometry.tx - geometry.sx, geometry.ty - geometry.sy),
+      dispatchTarget: action.dispatchTarget,
+      source: { x: geometry.sx, y: geometry.sy },
+      target: { x: geometry.tx, y: geometry.ty },
+    };
+  }
+  if (action.type === 'app-restart') {
+    const running = run('pgrep', ['-x', 'Obsidian']);
+    const oldPid = Number.parseInt(running.stdout.split(/\s+/u)[0] ?? '', 10);
+    if (!Number.isInteger(oldPid) || oldPid <= 0) throw new Error('Cannot identify Obsidian PID');
+    run('osascript', ['-e', 'tell application "Obsidian" to quit']);
+    let exited = false;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const probe = run('pgrep', ['-x', 'Obsidian'], { optional: true });
+      if (probe.status !== 0 || !probe.stdout.split(/\s+/u).includes(String(oldPid))) {
+        exited = true;
+        break;
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+    }
+    if (!exited) throw new Error(`Obsidian process ${String(oldPid)} did not exit`);
+    run('open', ['-a', 'Obsidian']);
+    let lastError;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      try {
+        proveExactRunningVault();
+        const reopened = run('pgrep', ['-x', 'Obsidian']);
+        const newPid = Number.parseInt(reopened.stdout.split(/\s+/u)[0] ?? '', 10);
+        if (!Number.isInteger(newPid) || newPid <= 0 || newPid === oldPid) {
+          throw new Error('Obsidian process identity did not change');
+        }
+        if (obsidianEval(`app.plugins.enabledPlugins.has('task-calendar')`) !== 'true') {
+          throw new Error('Plugin is not enabled after restart');
+        }
+        return { oldPid, newPid, reopened: 'Obsidian', vault: EXPECTED_DEV_VAULT };
+      } catch (error) {
+        lastError = error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+      }
+    }
+    throw new Error(
+      `Obsidian restart did not reconnect to the exact Dev Vault: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+    );
+  }
+  return parseEvalResult(obsidianEval(evaluateAction(action)));
+}
+
+function domainStateEval(code) {
+  return `(async()=>JSON.stringify(await (${code})))()`;
+}
+
+function capturePostconditions(scenario) {
+  return scenario.postconditions.map((condition) => {
+    const actual = parseEvalResult(obsidianEval(domainStateEval(condition.code)));
+    const passed =
+      condition.type === 'eval-truthy'
+        ? Boolean(actual)
+        : canonicalSnapshotHash(actual) === canonicalSnapshotHash(condition.expected);
+    return {
+      id: condition.id,
+      passed,
+      actualSha256: canonicalSnapshotHash(actual),
+      actual,
+    };
+  });
+}
+
+function captureMeasurements(scenario) {
+  return scenario.measurements.map((measurement) => {
+    const observed = parseEvalResult(
+      obsidianEval(
+        measurement.type === 'density'
+          ? `(()=>{const elements=[...document.querySelectorAll(${JSON.stringify(measurement.selector)})];if(elements.length===0)throw new Error('Missing density target');const top=Math.min(...elements.map(el=>el.getBoundingClientRect().top));const bottom=Math.max(...elements.map(el=>el.getBoundingClientRect().bottom));const height=Math.max(1,bottom-top);return JSON.stringify({value:elements.length*100/height,details:{itemCount:elements.length,spanHeight:height}})})()`
+          : `(()=>{const target=document.querySelector(${JSON.stringify(measurement.selector)});const reference=document.querySelector(${JSON.stringify(measurement.referenceSelector)});if(!target||!reference)throw new Error('Missing native reference measurement target');const targetHeight=target.getBoundingClientRect().height;const referenceHeight=reference.getBoundingClientRect().height;if(!(referenceHeight>0))throw new Error('Native reference has zero height');return JSON.stringify({value:targetHeight/referenceHeight,details:{targetHeight,referenceHeight}})})()`,
+      ),
+    );
+    const value = Number(observed?.value);
+    const details = object(observed?.details) ?? {};
+    return {
+      id: measurement.id,
+      type: measurement.type,
+      value,
+      passed: value >= measurement.min && value <= measurement.max,
+      details,
+      detailsSha256: canonicalSnapshotHash(details),
+    };
+  });
 }
 
 function environmentSetup(scenario) {
@@ -927,10 +1494,6 @@ function environmentSetup(scenario) {
 
 function observationEval(scenario) {
   return `(()=>{const root=document.querySelector(${JSON.stringify(scenario.rootSelector)});const title=document.title;const landmark=root&&((root.getAttribute('aria-label')||root.getAttribute('role')||'').includes(${JSON.stringify(scenario.expectedLandmark)})||root.textContent?.includes(${JSON.stringify(scenario.expectedLandmark)}))?${JSON.stringify(scenario.expectedLandmark)}:null;const pointer=window.matchMedia('(pointer: coarse)').matches?'coarse':window.matchMedia('(hover: none)').matches?'hover-none':'fine';const theme=document.documentElement.classList.contains('theme-dark')?'dark':document.documentElement.classList.contains('theme-light')?'light':'unknown';return JSON.stringify({windowTitle:title,rootSelector:root?${JSON.stringify(scenario.rootSelector)}:null,landmark,dpr:window.devicePixelRatio,zoom:Number.parseFloat(getComputedStyle(document.body).zoom)||1,pointer,theme,viewportWidth:window.innerWidth})})()`;
-}
-
-function workflowSnapshotEval() {
-  return `(()=>{const active=document.activeElement;return JSON.stringify({body:document.body.innerHTML,active:active?{tag:active.tagName,aria:active.getAttribute('aria-label'),text:active.textContent?.trim().slice(0,200),value:'value'in active?active.value:null}:null})})()`;
 }
 
 function assertionFailure(scenario, dom) {
@@ -989,6 +1552,12 @@ export async function verifyEvidenceArtifacts(scenario, record, out) {
   ) {
     throw new Error(`Scenario ${scenario.id} workflow hash mismatch`);
   }
+  if (
+    beforeSha256 !== canonicalSnapshotHash(record.workflow.beforeState) ||
+    afterSha256 !== canonicalSnapshotHash(record.workflow.afterState)
+  ) {
+    throw new Error(`Scenario ${scenario.id} reopened canonical workflow state mismatch`);
+  }
   if (record.workflow.changed !== (beforeSha256 !== afterSha256)) {
     throw new Error(
       `Scenario ${scenario.id} workflow changed flag contradicts state-change evidence`,
@@ -1002,28 +1571,56 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
   const workflowAction =
     scenario.interactions.find(({ workflow }) => workflow === true) ??
     scenario.interactions.find(({ type }) =>
-      ['key', 'context-menu', 'pointer-drag'].includes(type),
+      [
+        'key',
+        'click',
+        'click-text',
+        'input',
+        'context-menu',
+        'pointer-drag',
+        'plugin-reload',
+        'app-restart',
+      ].includes(type),
     );
   if (!workflowAction) throw new Error(`Scenario ${scenario.id} has no real workflow action`);
   let workflowBefore;
   let workflowAfter;
+  let interactionResult;
   for (const action of scenario.interactions) {
     if (action === workflowAction)
-      workflowBefore = JSON.parse(obsidianEval(workflowSnapshotEval()));
-    obsidianEval(evaluateAction(action));
-    if (action === workflowAction) workflowAfter = JSON.parse(obsidianEval(workflowSnapshotEval()));
+      workflowBefore = parseEvalResult(
+        obsidianEval(domainStateEval(scenario.stateSnapshot.beforeEval)),
+      );
+    const result = executeAction(action, scenario);
+    if (action === workflowAction) {
+      interactionResult = result;
+    }
   }
+  workflowAfter = parseEvalResult(obsidianEval(domainStateEval(scenario.stateSnapshot.afterEval)));
   const workflowType =
     workflowAction.type === 'context-menu'
       ? 'context-menu'
       : workflowAction.type === 'pointer-drag'
         ? 'pointer-drag'
-        : 'keyboard';
+        : workflowAction.type === 'plugin-reload'
+          ? 'plugin-reload'
+          : workflowAction.type === 'app-restart'
+            ? 'app-restart'
+            : ['click', 'click-text', 'input'].includes(workflowAction.type)
+              ? 'click'
+              : 'keyboard';
   const workflow = {
     type: workflowType,
     changed: canonicalSnapshotHash(workflowBefore) !== canonicalSnapshotHash(workflowAfter),
     beforeSha256: canonicalSnapshotHash(workflowBefore),
     afterSha256: canonicalSnapshotHash(workflowAfter),
+    beforeState: workflowBefore,
+    afterState: workflowAfter,
+    interaction: {
+      actionType: workflowAction.type,
+      resultSha256: canonicalSnapshotHash(interactionResult),
+      result: interactionResult,
+    },
   };
   const workflowDir = join(out, 'workflow');
   await mkdir(workflowDir, { recursive: true });
@@ -1043,6 +1640,8 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
   await mkdir(dirname(domPath), { recursive: true });
   await writeFile(domPath, `${dom}\n`, 'utf8');
   const screenshot = await analyzePng(screenshotPath);
+  const postconditions = capturePostconditions(scenario);
+  const measurements = captureMeasurements(scenario);
   const observation = JSON.parse(obsidianEval(observationEval(scenario)));
   const ax = captureAx(scenario.expectedWindowTitle);
   const domProjection = JSON.parse(
@@ -1074,24 +1673,23 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
         ? 'Expected root selector was not found.'
         : observation.landmark !== scenario.expectedLandmark
           ? 'Expected accessibility landmark was not found.'
-          : assertionFailure(scenario, dom);
+          : (assertionFailure(scenario, dom) ??
+            postconditions.find(({ passed }) => !passed)?.id ??
+            measurements.find(({ passed }) => !passed)?.id ??
+            (workflowAction.type === 'pointer-drag' &&
+            (interactionResult?.pointerCaptured !== true ||
+              interactionResult?.dispatchTarget !== workflowAction.dispatchTarget ||
+              interactionResult?.distance < workflowAction.movementThreshold)
+              ? 'Pointer drag did not satisfy capture/document/threshold evidence.'
+              : null));
   const pointerFallback = observation.pointer !== scenario.pointer;
   const fallback = accessibility.provider === 'dom-projection' || pointerFallback;
-  const fallbackWithoutWorkflow = fallback && !workflow.changed;
-  const status =
-    mismatch || fallbackWithoutWorkflow
-      ? 'rejected'
-      : fallback
-        ? 'unsupported-with-fallback'
-        : 'accepted';
+  const status = mismatch ? 'rejected' : fallback ? 'unsupported-with-fallback' : 'accepted';
   return {
     scenarioId: scenario.id,
     status,
     reason:
       mismatch ??
-      (fallbackWithoutWorkflow
-        ? 'Platform fallback lacks a real keyboard/context-menu workflow.'
-        : null) ??
       (fallback
         ? 'OS accessibility or requested pointer media was unavailable; deterministic DOM and keyboard fallbacks recorded.'
         : 'Expected Obsidian surface, DOM landmark, accessibility tree, and nonblank pixels were captured.'),
@@ -1108,6 +1706,8 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
     requestedZoom: scenario.zoom,
     requestedPointerMedia: scenario.pointer,
     workflow,
+    postconditions,
+    measurements,
     screenshot,
     domSha256: canonicalSnapshotHash(dom),
     accessibility: { provider: accessibility.provider, sha256: accessibility.sha256 },

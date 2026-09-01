@@ -21,13 +21,47 @@ interface QaModule {
   assertAllowedCommand(command: string, args: string[]): void;
   proveExactRunningVault(execute: (...args: any[]) => any): string;
   assertSafeEvidenceOut(path: string): string;
+  runNativePointerPhase(
+    ports: {
+      pickup(): void;
+      captureObserved(): boolean;
+      drag(): void;
+      release(point: { x: number; y: number }): void;
+      cleanup(): void;
+      wait(): void;
+    },
+    points: {
+      source: { x: number; y: number };
+      pickup: { x: number; y: number };
+      target: { x: number; y: number };
+    },
+    maxCaptureAttempts?: number,
+  ): boolean;
 }
+
+const REQUIRED_WORKFLOWS = [
+  'work-note-create',
+  'work-note-ownership',
+  'work-note-relations',
+  'work-note-progress',
+  'work-note-safe-delete',
+  'milestone-assignment',
+  'milestone-progress-filter',
+  'projects-board-move',
+  'projects-board-rollback',
+  'projects-timeline-move-resize',
+  'projects-timeline-rollback',
+  'pending-conflict-undo',
+  'persistence-plugin-reload',
+  'persistence-app-restart',
+  'settings-validation-diagnostics',
+] as const;
 
 async function qaModule(): Promise<QaModule> {
   return (await import('../scripts/devvault-qa.mjs')) as unknown as QaModule;
 }
 
-function scenarioDocument() {
+function scenarioDocument(): any {
   const ids = [
     'tasks',
     'projects-table',
@@ -44,16 +78,93 @@ function scenarioDocument() {
     'milestones',
     'settings',
   ];
+  const surfaces = ids.map((id) => ({
+    id,
+    expectedWindowTitle: 'Abyss Tasks',
+    rootSelector: '.abyss-center-panel',
+    expectedLandmark: 'Tasks',
+    setupEval: ['document.body.dataset.qaSurface="tasks"'],
+    stateSnapshot: {
+      beforeEval: '({selected:document.activeElement?.getAttribute("aria-label")??null})',
+      afterEval: '({selected:document.activeElement?.getAttribute("aria-label")??null})',
+      expect: 'changed',
+    },
+    interactions: [{ type: 'key', key: 'q', workflow: true }],
+    postconditions: [
+      {
+        id: `${id}-domain-result`,
+        type: 'eval-truthy',
+        code: 'document.body.dataset.qaSurface==="tasks"',
+      },
+    ],
+    assertions: [{ type: 'dom-contains', value: 'Tasks' }],
+    measurements: [
+      {
+        id: `${id}-density`,
+        type: 'density',
+        selector: '.abyss-center-panel',
+        min: 0.5,
+        max: 8,
+      },
+      {
+        id: `${id}-native-reference`,
+        type: 'native-reference',
+        selector: '.abyss-task-card',
+        referenceSelector: '.setting-item',
+        metric: 'height-ratio',
+        min: 0.5,
+        max: 5,
+      },
+    ],
+  }));
   return {
     version: 1,
-    surfaces: ids.map((id) => ({
+    surfaces,
+    workflows: REQUIRED_WORKFLOWS.map((id) => ({
       id,
       expectedWindowTitle: 'Abyss Tasks',
       rootSelector: '.abyss-center-panel',
       expectedLandmark: 'Tasks',
-      setupEval: ['document.body.dataset.qaSurface="tasks"'],
-      interactions: [{ type: 'key', key: 'q', workflow: true }],
+      setupEval: ['document.body.dataset.qaWorkflow="ready"'],
+      stateSnapshot: {
+        beforeEval: '({state:document.body.dataset.qaWorkflow})',
+        afterEval: '({state:document.body.dataset.qaWorkflow})',
+        expect: 'changed',
+      },
+      interactions: [
+        {
+          type: 'key',
+          key: 'q',
+          workflow: true,
+        },
+      ],
+      postconditions: [
+        {
+          id: `${id}-domain-result`,
+          type: 'eval-equals',
+          code: 'document.body.dataset.qaWorkflow',
+          expected: 'ready',
+        },
+      ],
       assertions: [{ type: 'dom-contains', value: 'Tasks' }],
+      measurements: [
+        {
+          id: `${id}-density`,
+          type: 'density',
+          selector: '.abyss-task-card',
+          min: 0.5,
+          max: 8,
+        },
+        {
+          id: `${id}-native-reference`,
+          type: 'native-reference',
+          selector: '.abyss-center-panel',
+          referenceSelector: '.setting-item',
+          metric: 'height-ratio',
+          min: 0.5,
+          max: 5,
+        },
+      ],
     })),
     matrix: {
       themes: ['dark', 'light'],
@@ -68,6 +179,11 @@ function evidenceRecord(
   scenarioId: string,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const beforeState = { selected: null };
+  const afterState = { selected: 'Quick capture' };
+  const interactionResult = false;
+  const canonical = (value: unknown) =>
+    createHash('sha256').update(JSON.stringify(value)).digest('hex');
   return {
     scenarioId,
     status: 'accepted',
@@ -87,9 +203,42 @@ function evidenceRecord(
     workflow: {
       type: 'keyboard',
       changed: true,
-      beforeSha256: '1'.repeat(64),
-      afterSha256: '2'.repeat(64),
+      beforeSha256: canonical(beforeState),
+      afterSha256: canonical(afterState),
+      beforeState,
+      afterState,
+      interaction: {
+        actionType: 'key',
+        resultSha256: canonical(interactionResult),
+        result: interactionResult,
+      },
     },
+    postconditions: [
+      {
+        id: 'tasks-domain-result',
+        passed: true,
+        actualSha256: canonical(true),
+        actual: true,
+      },
+    ],
+    measurements: [
+      {
+        id: 'tasks-density',
+        type: 'density',
+        value: 2,
+        passed: true,
+        details: { itemCount: 4, spanHeight: 20 },
+        detailsSha256: canonical({ itemCount: 4, spanHeight: 20 }),
+      },
+      {
+        id: 'tasks-native-reference',
+        type: 'native-reference',
+        value: 1.5,
+        passed: true,
+        details: { referenceHeight: 24, targetHeight: 36 },
+        detailsSha256: canonical({ referenceHeight: 24, targetHeight: 36 }),
+      },
+    ],
     screenshot: {
       sha256: 'a'.repeat(64),
       width: 2880,
@@ -165,7 +314,7 @@ describe('Dev Vault QA harness scenario contract', () => {
     expect(() =>
       qa.validateAndExpandScenarios({
         ...scenarioDocument(),
-        surfaces: scenarioDocument().surfaces.map((surface, index) =>
+        surfaces: scenarioDocument().surfaces.map((surface: any, index: number) =>
           index === 0
             ? {
                 ...surface,
@@ -180,7 +329,7 @@ describe('Dev Vault QA harness scenario contract', () => {
     expect(() =>
       qa.validateAndExpandScenarios({
         ...scenarioDocument(),
-        surfaces: scenarioDocument().surfaces.map((surface, index) =>
+        surfaces: scenarioDocument().surfaces.map((surface: any, index: number) =>
           index === 0
             ? {
                 ...surface,
@@ -190,6 +339,49 @@ describe('Dev Vault QA harness scenario contract', () => {
         ),
       }),
     ).toThrow(/assertion.*workflow|additional/iu);
+
+    const missingPostconditions = scenarioDocument();
+    missingPostconditions.surfaces[0]!.postconditions = [];
+    expect(() => qa.validateAndExpandScenarios(missingPostconditions)).toThrow(/postcondition/iu);
+
+    const unpairedMeasurements = scenarioDocument();
+    unpairedMeasurements.surfaces[0]!.measurements = [
+      unpairedMeasurements.surfaces[0]!.measurements[0],
+    ];
+    expect(() => qa.validateAndExpandScenarios(unpairedMeasurements)).toThrow(
+      /native Obsidian reference|pair density/iu,
+    );
+
+    const meaninglessDensity = scenarioDocument();
+    meaninglessDensity.surfaces[0]!.measurements[0] = {
+      ...meaninglessDensity.surfaces[0]!.measurements[0],
+      min: 0.01,
+      max: 200,
+    };
+    expect(() => qa.validateAndExpandScenarios(meaninglessDensity)).toThrow(/density range/iu);
+
+    const genericState = scenarioDocument();
+    genericState.surfaces[0]!.stateSnapshot = {
+      beforeEval: 'document.body.innerHTML',
+      afterEval: 'document.body.innerHTML',
+      expect: 'changed',
+    };
+    expect(() => qa.validateAndExpandScenarios(genericState)).toThrow(
+      /canonical.*domain|innerHTML/iu,
+    );
+
+    const pointerWithoutGeometry = scenarioDocument();
+    pointerWithoutGeometry.surfaces[0]!.interactions = [
+      {
+        type: 'pointer-drag',
+        selector: '.source',
+        targetSelector: '.target',
+        workflow: true,
+      },
+    ];
+    expect(() => qa.validateAndExpandScenarios(pointerWithoutGeometry)).toThrow(
+      /coordinates|threshold|capture|document/iu,
+    );
   });
 
   it('expands every required surface across the complete deterministic matrix', async () => {
@@ -199,7 +391,14 @@ describe('Dev Vault QA harness scenario contract', () => {
     const manifestPath = resolve(process.cwd(), 'scripts/devvault-qa/scenarios.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as unknown;
 
-    const scenarios = qa.validateAndExpandScenarios(manifest) as Array<{ id: string }>;
+    const scenarios = qa.validateAndExpandScenarios(manifest) as Array<{
+      id: string;
+      surface: string;
+      interactions: Array<{ type: string; dispatchTarget?: string; workflow?: boolean }>;
+      measurements: Array<{ type: string }>;
+      postconditions: unknown[];
+      stateSnapshot: { expect: string };
+    }>;
     const requiredSurfaces = [
       'tasks',
       'projects-table',
@@ -217,7 +416,9 @@ describe('Dev Vault QA harness scenario contract', () => {
       'settings',
     ];
 
-    expect(scenarios).toHaveLength(requiredSurfaces.length * 2 * 4 * 2 * 3);
+    expect(scenarios).toHaveLength(
+      requiredSurfaces.length * 2 * 4 * 2 * 3 + REQUIRED_WORKFLOWS.length,
+    );
     expect(new Set(scenarios.map(({ id }) => id)).size).toBe(scenarios.length);
     for (const surface of requiredSurfaces) {
       expect(scenarios.some(({ id }) => id === `${surface}--dark--1440--z1--fine`)).toBe(true);
@@ -225,11 +426,87 @@ describe('Dev Vault QA harness scenario contract', () => {
         true,
       );
     }
+    for (const workflow of REQUIRED_WORKFLOWS) {
+      const scenario = scenarios.find(
+        ({ id }: { id: string }) => id === `${workflow}--dark--1440--z1--fine`,
+      ) as { postconditions?: unknown[]; stateSnapshot?: { expect?: string } } | undefined;
+      expect(scenario?.postconditions?.length).toBeGreaterThan(0);
+      expect(['changed', 'unchanged']).toContain(scenario?.stateSnapshot?.expect);
+    }
+    for (const scenario of scenarios) {
+      expect(new Set(scenario.measurements.map(({ type }) => type))).toEqual(
+        new Set(['density', 'native-reference']),
+      );
+    }
+    expect(
+      scenarios.find(({ surface }) => surface === 'projects-board-move')?.interactions,
+    ).toContainEqual(expect.objectContaining({ type: 'pointer-drag', dispatchTarget: 'source' }));
+    expect(
+      scenarios.find(({ surface }) => surface === 'projects-timeline-move-resize')?.interactions,
+    ).toContainEqual(expect.objectContaining({ type: 'pointer-drag', dispatchTarget: 'document' }));
+    expect(
+      scenarios.find(({ surface }) => surface === 'work-note-safe-delete')?.stateSnapshot.expect,
+    ).toBe('changed');
+    expect(
+      scenarios.find(({ surface }) => surface === 'persistence-app-restart')?.interactions,
+    ).toContainEqual(expect.objectContaining({ type: 'app-restart', workflow: true }));
     const incomplete = JSON.parse(JSON.stringify(manifest)) as {
       surfaces: unknown[];
     };
     incomplete.surfaces.pop();
     expect(() => qa.validateAndExpandScenarios(incomplete)).toThrow(/required surface/iu);
+
+    const incompleteWorkflow = JSON.parse(JSON.stringify(manifest)) as {
+      workflows: unknown[];
+    };
+    incompleteWorkflow.workflows.pop();
+    expect(() => qa.validateAndExpandScenarios(incompleteWorkflow)).toThrow(/required workflow/iu);
+  });
+
+  it('requires real pointer geometry and native density/reference measurement contracts', async () => {
+    const qa = await qaModule();
+    const document = scenarioDocument();
+    document.surfaces[0]!.interactions = [
+      {
+        type: 'pointer-drag',
+        selector: '.source',
+        targetSelector: '.target',
+        coordinates: {
+          source: { x: 0.5, y: 0.5 },
+          target: { x: 0.5, y: 0.5 },
+        },
+        movementThreshold: 4,
+        dispatchTarget: 'document',
+        requirePointerCapture: true,
+        workflow: true,
+      },
+    ];
+    document.surfaces[0]!.measurements = [
+      {
+        id: 'native-row-height',
+        type: 'native-reference',
+        selector: '.abyss-task-card',
+        referenceSelector: '.setting-item',
+        metric: 'height-ratio',
+        min: 0.5,
+        max: 1.5,
+      },
+      {
+        id: 'task-density',
+        type: 'density',
+        selector: '.abyss-task-card',
+        min: 1,
+        max: 8,
+      },
+    ];
+
+    const [scenario] = qa.validateAndExpandScenarios(document);
+    expect(scenario.interactions[0]).toMatchObject({
+      movementThreshold: 4,
+      dispatchTarget: 'document',
+      requirePointerCapture: true,
+    });
+    expect(scenario.measurements).toHaveLength(2);
   });
 
   it('rejects every vault except the repository Dev Vault, including the real vault', async () => {
@@ -258,6 +535,10 @@ describe('Dev Vault QA harness scenario contract', () => {
     expect(() =>
       qa.assertAllowedCommand('obsidian', ['vault=dev-vault', 'eval', 'code=1']),
     ).not.toThrow();
+    expect(() => qa.assertAllowedCommand('pgrep', ['-x', 'Obsidian'])).not.toThrow();
+    expect(() =>
+      qa.assertAllowedCommand('osascript', ['-l', 'JavaScript', '-e', 'true']),
+    ).not.toThrow();
     expect(() => qa.assertAllowedCommand('open', ['/Applications/Obsidian.app'])).toThrow(
       /allowlist/iu,
     );
@@ -265,7 +546,50 @@ describe('Dev Vault QA harness scenario contract', () => {
       /allowlist/iu,
     );
     expect(() => qa.assertAllowedCommand('pkill', ['Obsidian'])).toThrow(/allowlist/iu);
+    expect(() => qa.assertAllowedCommand('pgrep', ['-f', 'Obsidian'])).toThrow(/allowlist/iu);
   });
+
+  it.each(['pickup', 'capture', 'drag'] as const)(
+    'always releases native pointer state and removes observers after %s failure',
+    async (failure) => {
+      const qa = await qaModule();
+      const releases: Array<{ x: number; y: number }> = [];
+      let cleanupCount = 0;
+      const invoke = () =>
+        qa.runNativePointerPhase(
+          {
+            pickup: () => {
+              if (failure === 'pickup') throw new Error('pickup failed');
+            },
+            captureObserved: () => failure !== 'capture',
+            drag: () => {
+              if (failure === 'drag') throw new Error('drag failed');
+            },
+            release: (point) => releases.push(point),
+            cleanup: () => {
+              cleanupCount += 1;
+            },
+            wait: () => {},
+          },
+          {
+            source: { x: 1, y: 2 },
+            pickup: { x: 6, y: 2 },
+            target: { x: 50, y: 20 },
+          },
+          2,
+        );
+
+      expect(invoke).toThrow(/pickup|capture|drag/iu);
+      expect(releases).toEqual([
+        failure === 'pickup'
+          ? { x: 1, y: 2 }
+          : failure === 'capture'
+            ? { x: 6, y: 2 }
+            : { x: 50, y: 20 },
+      ]);
+      expect(cleanupCount).toBe(1);
+    },
+  );
 
   it('proves the absolute running vault before recovery and only recovers with open -a Obsidian', async () => {
     const qa = await qaModule();
@@ -394,6 +718,13 @@ describe('Dev Vault QA evidence contract', () => {
         changed: true,
         beforeSha256: unchangedHash,
         afterSha256: unchangedHash,
+        beforeState: unchanged,
+        afterState: unchanged,
+        interaction: {
+          actionType: 'key',
+          resultSha256: qa.canonicalSnapshotHash(false),
+          result: false,
+        },
       },
     });
     await writeFile(join(out, 'screenshots', `${scenario.id}.png`), png);
@@ -422,6 +753,139 @@ describe('Dev Vault QA evidence contract', () => {
     await expect(qa.verifyEvidenceArtifacts(scenario, record, out)).rejects.toThrow(
       /workflow.*changed|state-change/iu,
     );
+  });
+
+  it('rejects evidence without paired canonical domain state and passing postconditions', async () => {
+    const qa = await qaModule();
+    const [scenario] = qa.validateAndExpandScenarios(scenarioDocument());
+    const options = {
+      pluginArtifactSha256: 'd'.repeat(64),
+      fixtureManifestSha256: 'e'.repeat(64),
+      passingFallbackTests: [],
+    };
+    const missingCanonicalPair = evidenceRecord(scenario.id);
+    missingCanonicalPair.workflow = {
+      type: 'keyboard',
+      changed: true,
+      beforeSha256: '1'.repeat(64),
+      afterSha256: '2'.repeat(64),
+    };
+    expect(() => qa.verifyEvidenceMatrix([scenario], [missingCanonicalPair], options)).toThrow(
+      /canonical.*state|beforeState|afterState/iu,
+    );
+
+    const failedPostcondition = evidenceRecord(scenario.id, {
+      postconditions: [
+        {
+          id: 'tasks-domain-result',
+          passed: false,
+          actualSha256: qa.canonicalSnapshotHash(false),
+          actual: false,
+        },
+      ],
+    });
+    expect(() => qa.verifyEvidenceMatrix([scenario], [failedPostcondition], options)).toThrow(
+      /postcondition/iu,
+    );
+
+    const dishonestPostcondition = evidenceRecord(scenario.id, {
+      postconditions: [
+        {
+          id: 'tasks-domain-result',
+          passed: true,
+          actualSha256: qa.canonicalSnapshotHash(false),
+          actual: false,
+        },
+      ],
+    });
+    expect(() => qa.verifyEvidenceMatrix([scenario], [dishonestPostcondition], options)).toThrow(
+      /postcondition/iu,
+    );
+
+    const missingMeasurement = evidenceRecord(scenario.id, { measurements: [] });
+    expect(() => qa.verifyEvidenceMatrix([scenario], [missingMeasurement], options)).toThrow(
+      /measurement/iu,
+    );
+  });
+
+  it('rejects pointer workflow evidence that misses capture, document dispatch, or threshold', async () => {
+    const qa = await qaModule();
+    const document = scenarioDocument();
+    document.surfaces[0]!.interactions = [
+      {
+        type: 'pointer-drag',
+        selector: '.source',
+        targetSelector: '.target',
+        coordinates: {
+          source: { x: 0.5, y: 0.5 },
+          target: { x: 0.5, y: 0.5 },
+        },
+        movementThreshold: 4,
+        dispatchTarget: 'document',
+        requirePointerCapture: true,
+        workflow: true,
+      },
+    ];
+    const [scenario] = qa.validateAndExpandScenarios(document);
+    const result = { pointerCaptured: false, distance: 2, dispatchTarget: 'source' };
+    const record = evidenceRecord(scenario.id, {
+      workflow: {
+        ...(evidenceRecord(scenario.id).workflow as Record<string, unknown>),
+        type: 'pointer-drag',
+        interaction: {
+          actionType: 'pointer-drag',
+          resultSha256: qa.canonicalSnapshotHash(result),
+          result,
+        },
+      },
+    });
+
+    expect(() =>
+      qa.verifyEvidenceMatrix([scenario], [record], {
+        pluginArtifactSha256: 'd'.repeat(64),
+        fixtureManifestSha256: 'e'.repeat(64),
+      }),
+    ).toThrow(/pointer.*capture|threshold|document/iu);
+  });
+
+  it('accepts source-dispatched Board pointer evidence when the declaration requires it', async () => {
+    const qa = await qaModule();
+    const document = scenarioDocument();
+    document.surfaces[0]!.interactions = [
+      {
+        type: 'pointer-drag',
+        selector: '.source',
+        targetSelector: '.target',
+        coordinates: {
+          source: { x: 0.5, y: 0.5 },
+          target: { x: 0.5, y: 0.5 },
+        },
+        movementThreshold: 4,
+        dispatchTarget: 'source',
+        requirePointerCapture: true,
+        workflow: true,
+      },
+    ];
+    const [scenario] = qa.validateAndExpandScenarios(document);
+    const result = { pointerCaptured: true, distance: 12, dispatchTarget: 'source' };
+    const record = evidenceRecord(scenario.id, {
+      workflow: {
+        ...(evidenceRecord(scenario.id).workflow as Record<string, unknown>),
+        type: 'pointer-drag',
+        interaction: {
+          actionType: 'pointer-drag',
+          resultSha256: qa.canonicalSnapshotHash(result),
+          result,
+        },
+      },
+    });
+
+    expect(() =>
+      qa.verifyEvidenceMatrix([scenario], [record], {
+        pluginArtifactSha256: 'd'.repeat(64),
+        fixtureManifestSha256: 'e'.repeat(64),
+      }),
+    ).not.toThrow();
   });
 
   it.each([
@@ -626,23 +1090,25 @@ describe('Dev Vault QA evidence contract', () => {
         options,
       ),
     ).toThrow(/CSS.*DOM|fallback/iu);
+    const unchangedState = { selected: null };
+    const unchangedRecord = evidenceRecord(scenario!.id, {
+      ...record,
+      workflow: {
+        ...(record.workflow as Record<string, unknown>),
+        changed: false,
+        beforeSha256: qa.canonicalSnapshotHash(unchangedState),
+        afterSha256: qa.canonicalSnapshotHash(unchangedState),
+        beforeState: unchangedState,
+        afterState: unchangedState,
+      },
+    });
+    const unchangedScenario = {
+      ...scenario,
+      stateSnapshot: { ...(scenario as any).stateSnapshot, expect: 'unchanged' },
+    };
     expect(() =>
-      qa.verifyEvidenceMatrix(
-        [scenario],
-        [
-          {
-            ...record,
-            workflow: {
-              type: 'keyboard',
-              changed: false,
-              beforeSha256: '1'.repeat(64),
-              afterSha256: '2'.repeat(64),
-            },
-          },
-        ],
-        options,
-      ),
-    ).toThrow(/workflow/iu);
+      qa.verifyEvidenceMatrix([unchangedScenario], [unchangedRecord], options),
+    ).not.toThrow();
   });
 });
 

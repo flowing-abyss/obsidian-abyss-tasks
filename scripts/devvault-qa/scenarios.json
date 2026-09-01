@@ -14,10 +14,52 @@
       "expectedLandmark": "Inbox",
       "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
       "interactions": [
-        { "type": "context-menu", "selector": ".abyss-task-card", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "context-menu",
+          "selector": ".abyss-task-card",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Add task"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "tasks-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-center\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "tasks-density",
+          "type": "density",
+          "selector": ".abyss-task-card",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "tasks-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-task-card",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 4.5
+        }
+      ]
     },
     {
       "id": "projects-table",
@@ -26,11 +68,57 @@
       "expectedLandmark": "Projects",
       "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
       "interactions": [
-        { "type": "click-text", "value": "Table" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "Table"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Projects" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Projects"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "projects-table-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-panel\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-table-density",
+          "type": "density",
+          "selector": ".abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-table-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 4.5
+        }
+      ]
     },
     {
       "id": "projects-board",
@@ -39,15 +127,54 @@
       "expectedLandmark": "Board",
       "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
       "interactions": [
-        { "type": "click-text", "value": "Board" },
         {
-          "type": "pointer-drag",
-          "selector": "[data-board-item-focus]",
-          "targetSelector": ".abyss-board-column:nth-child(2) .abyss-board-items",
+          "type": "click-text",
+          "value": "Board"
+        },
+        {
+          "type": "key",
+          "key": "Home",
+          "code": "Home",
+          "selector": ".abyss-projects-board-host",
           "workflow": true
         }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Add project" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Add project"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "projects-board-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-board-host\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-board-density",
+          "type": "density",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-board-native-card-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 4.5
+        }
+      ]
     },
     {
       "id": "projects-timeline",
@@ -56,11 +183,57 @@
       "expectedLandmark": "Timeline",
       "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
       "interactions": [
-        { "type": "click-text", "value": "Timeline" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "Timeline"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Today" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Today"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "projects-timeline-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-timeline-host\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-timeline-density",
+          "type": "density",
+          "selector": ".abyss-timeline-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-timeline-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-timeline-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "project-task-list",
@@ -72,11 +245,57 @@
         "document.querySelector('[data-project-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "click-text", "value": "List" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "List"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Add task"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-task-list-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-dashboard\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-task-list-density",
+          "type": "density",
+          "selector": ".abyss-task-card",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-task-list-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-task-card",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 4.5
+        }
+      ]
     },
     {
       "id": "project-task-table",
@@ -88,11 +307,57 @@
         "document.querySelector('[data-project-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "click-text", "value": "Table" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "Table"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Tasks" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Tasks"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-task-table-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-dashboard\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-task-table-density",
+          "type": "density",
+          "selector": "[data-project-task-table-row]",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-task-table-native-row-ratio",
+          "type": "native-reference",
+          "selector": "[data-project-task-table-row]",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 4.5
+        }
+      ]
     },
     {
       "id": "project-task-board",
@@ -104,15 +369,54 @@
         "document.querySelector('[data-project-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "click-text", "value": "Board" },
         {
-          "type": "pointer-drag",
-          "selector": "[data-board-item-focus]",
-          "targetSelector": ".abyss-board-column:nth-child(2) .abyss-board-items",
+          "type": "click-text",
+          "value": "Board"
+        },
+        {
+          "type": "key",
+          "key": "Home",
+          "code": "Home",
+          "selector": ".abyss-projects-dashboard .abyss-board",
           "workflow": true
         }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Add task"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-task-board-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-dashboard .abyss-board\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-task-board-density",
+          "type": "density",
+          "selector": ".abyss-board-items > .abyss-task-card",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-task-board-native-card-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-board-items > .abyss-task-card",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "project-task-timeline",
@@ -124,11 +428,57 @@
         "document.querySelector('[data-project-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "click-text", "value": "Timeline" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "Timeline"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Today" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Today"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-task-timeline-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-dashboard .abyss-timeline\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-task-timeline-density",
+          "type": "density",
+          "selector": ".abyss-timeline-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-task-timeline-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-timeline-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "project-work-notes",
@@ -140,11 +490,57 @@
         "document.querySelector('[data-project-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "click-text", "value": "Work Notes" },
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "click-text",
+          "value": "Work Notes"
+        },
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Work Notes" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Work Notes"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-work-notes-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-projects-dashboard\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-work-notes-density",
+          "type": "density",
+          "selector": ".abyss-work-note-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-work-notes-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "task-inspector",
@@ -156,10 +552,53 @@
         "document.querySelector('.abyss-task-card')?.click()"
       ],
       "interactions": [
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Description" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Description"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "task-inspector-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-right\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "task-inspector-density",
+          "type": "density",
+          "selector": ".abyss-inspector-field-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "task-inspector-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-inspector-field-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "project-inspector",
@@ -172,10 +611,53 @@
         "document.querySelector('.abyss-project-inspector-open')?.click()"
       ],
       "interactions": [
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Status" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Status"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "project-inspector-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-project-inspector\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "project-inspector-density",
+          "type": "density",
+          "selector": ".abyss-inspector-field-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "project-inspector-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-inspector-field-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "work-note-inspector",
@@ -187,10 +669,53 @@
         "document.querySelector('.abyss-work-note-identity')?.click()"
       ],
       "interactions": [
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Status" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Status"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "work-note-inspector-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-work-note-inspector\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-inspector-density",
+          "type": "density",
+          "selector": ".abyss-inspector-field-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-inspector-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-inspector-field-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "milestones",
@@ -202,10 +727,53 @@
         "document.querySelector('[data-project-milestone-identity-control]')?.click()"
       ],
       "interactions": [
-        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
-        { "type": "key", "key": "Escape" }
+        {
+          "type": "key",
+          "key": "q",
+          "code": "KeyQ",
+          "workflow": true
+        },
+        {
+          "type": "key",
+          "key": "Escape"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Milestone" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Milestone"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "milestones-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".abyss-work-note-inspector\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "milestones-density",
+          "type": "density",
+          "selector": ".abyss-work-note-inspector-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "milestones-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-inspector-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ]
     },
     {
       "id": "settings",
@@ -214,10 +782,1002 @@
       "expectedLandmark": "Abyss Tasks",
       "setupEval": ["app.setting.open();app.setting.openTabById('task-calendar')"],
       "interactions": [
-        { "type": "key", "key": "Escape", "workflow": true },
-        { "type": "eval", "code": "app.setting.open();app.setting.openTabById('task-calendar')" }
+        {
+          "type": "key",
+          "key": "Escape",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "app.setting.open();app.setting.openTabById('task-calendar')"
+        }
       ],
-      "assertions": [{ "type": "dom-contains", "value": "Projects" }]
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Projects"
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "afterEval": "({pluginEnabled:app.plugins.enabledPlugins.has(\"task-calendar\")})",
+        "expect": "unchanged"
+      },
+      "postconditions": [
+        {
+          "id": "settings-surface-ready",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector(\".vertical-tab-content-container\")"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "settings-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-settings-section-header",
+          "referenceSelector": ".setting-item",
+          "metric": "height-ratio",
+          "min": 0.4,
+          "max": 2.5
+        },
+        {
+          "id": "settings-header-density",
+          "type": "density",
+          "selector": ".abyss-settings-section-header",
+          "min": 0.5,
+          "max": 8
+        }
+      ]
+    }
+  ],
+  "workflows": [
+    {
+      "id": "work-note-create",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Work Notes",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "document.querySelector('.abyss-work-note-create')?.click()",
+        "(()=>{const input=document.querySelector('.abyss-work-note-create-input');if(!input)throw new Error('Missing Work Note create input');input.value=\"QA Harness Create\";input.dispatchEvent(new Event('input',{bubbles:true}));return true})()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Work Notes"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-create-density",
+          "type": "density",
+          "selector": ".abyss-work-note-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-create-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({path:[...app.vault.getMarkdownFiles()].find(file=>file.basename===\"QA Harness Create\")?.path??null})",
+        "afterEval": "({path:[...app.vault.getMarkdownFiles()].find(file=>file.basename===\"QA Harness Create\")?.path??null})",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "key",
+          "key": "Enter",
+          "code": "Enter",
+          "selector": ".abyss-work-note-create-input",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if([...app.vault.getMarkdownFiles()].some(file=>file.basename===\"QA Harness Create\"))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "work-note-created",
+          "type": "eval-truthy",
+          "code": "[...app.vault.getMarkdownFiles()].some(file=>file.basename===\"QA Harness Create\")"
+        }
+      ]
+    },
+    {
+      "id": "work-note-ownership",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Work Notes",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "document.querySelector('.abyss-work-note-create')?.click()",
+        "(()=>{const input=document.querySelector('.abyss-work-note-create-input');if(!input)throw new Error('Missing Work Note create input');input.value=\"QA Harness Ownership\";input.dispatchEvent(new Event('input',{bubbles:true}));return true})()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Work Notes"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-ownership-density",
+          "type": "density",
+          "selector": ".abyss-work-note-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-ownership-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({content:await (async()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename===\"QA Harness Ownership\");return file?await app.vault.read(file):null})()})",
+        "afterEval": "({content:await (async()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename===\"QA Harness Ownership\");return file?await app.vault.read(file):null})()})",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "key",
+          "key": "Enter",
+          "code": "Enter",
+          "selector": ".abyss-work-note-create-input",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if([...app.vault.getMarkdownFiles()].some(file=>file.basename===\"QA Harness Ownership\"))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "ownership-written",
+          "type": "eval-truthy",
+          "code": "(await (async()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename===\"QA Harness Ownership\");return file?await app.vault.read(file):null})()).includes('Regular Project')"
+        }
+      ]
+    },
+    {
+      "id": "work-note-relations",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-work-note-inspector",
+      "expectedLandmark": "Work Note",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "document.querySelector('[data-work-note-path=\"Work Notes QA/Ready Work Note.md\"] [data-work-note-identity-control]')?.click()",
+        "document.querySelector('[aria-label=\"Edit Related relations\"]')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Relations"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-relations-density",
+          "type": "density",
+          "selector": ".abyss-work-note-inspector-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-relations-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-inspector-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Work Notes QA/Ready Work Note.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Work Notes QA/Ready Work Note.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "click-text",
+          "value": "Blocked Work Note",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if(app.metadataCache.getFileCache(app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md'))?.frontmatter?.Related!==undefined)return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "relation-written",
+          "type": "eval-truthy",
+          "code": "String(app.metadataCache.getFileCache(app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md'))?.frontmatter?.Related??'').includes('Blocked Work Note')"
+        }
+      ]
+    },
+    {
+      "id": "work-note-progress",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-work-note-inspector",
+      "expectedLandmark": "Work Note",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "document.querySelector('[data-work-note-path=\"Work Notes QA/Ready Work Note.md\"] [data-work-note-identity-control]')?.click()",
+        "(()=>{const input=document.querySelector('.abyss-work-note-task-input');if(!input)throw new Error('Missing task input');input.value='QA progress task';return true})()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Progress"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-progress-density",
+          "type": "density",
+          "selector": ".abyss-work-note-inspector-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-progress-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-inspector-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Work Notes QA/Ready Work Note.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Work Notes QA/Ready Work Note.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "click",
+          "selector": "[aria-label=\"Create task in work note\"]",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if((await app.vault.read(app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md'))).includes('QA progress task'))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "owned-task-rollup-source",
+          "type": "eval-truthy",
+          "code": "(await app.vault.read(app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md'))).includes('QA progress task')"
+        },
+        {
+          "id": "owned-task-progress-rendered",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector('.abyss-work-note-inspector [data-inspector-field=\"progress\"]')"
+        }
+      ]
+    },
+    {
+      "id": "work-note-safe-delete",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-project-inspector",
+      "expectedLandmark": "Project",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "document.querySelector('[data-work-note-path=\"Work Notes QA/Ready Work Note.md\"] [data-work-note-identity-control]')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Regular Project"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "work-note-safe-delete-density",
+          "type": "density",
+          "selector": ".abyss-inspector-field-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "work-note-safe-delete-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-inspector-field-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const source=app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md');const project=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');return {sourceExists:!!source,source:source?await app.vault.read(source):null,project:project?await app.vault.read(project):null}})()",
+        "afterEval": "(async()=>{const source=app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md');const project=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');return {sourceExists:!!source,source:source?await app.vault.read(source):null,project:project?await app.vault.read(project):null}})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "click",
+          "selector": ".abyss-work-note-delete"
+        },
+        {
+          "type": "click-text",
+          "value": "Move 1 tasks to project and delete",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let attempt=0;attempt<50;attempt+=1){if(!app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md')&&document.querySelector('.abyss-project-inspector'))return true;await new Promise(resolve=>setTimeout(resolve,20))}throw new Error('Safe delete did not settle')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "safe-delete-removes-source-after-owned-task-move",
+          "type": "eval-truthy",
+          "code": "!app.vault.getAbstractFileByPath('Work Notes QA/Ready Work Note.md')"
+        },
+        {
+          "id": "safe-delete-preserves-owned-task-in-project",
+          "type": "eval-truthy",
+          "code": "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');return !!file&&(await app.vault.read(file)).includes('QA progress task')})()"
+        }
+      ]
+    },
+    {
+      "id": "milestone-assignment",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-work-note-inspector",
+      "expectedLandmark": "Milestone",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()",
+        "[...document.querySelectorAll('[data-work-note-path]')].find(el=>el.textContent?.includes('QA Harness Ownership'))?.querySelector('[data-work-note-identity-control]')?.click()",
+        "document.querySelector('[aria-label=\"Edit Milestone relation\"]')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Milestone"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "milestone-assignment-density",
+          "type": "density",
+          "selector": ".abyss-work-note-inspector-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "milestone-assignment-native-field-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-inspector-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename==='QA Harness Ownership');return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename==='QA Harness Ownership');return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "click-text",
+          "value": "Milestone",
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename==='QA Harness Ownership');if(file&&String(app.metadataCache.getFileCache(file)?.frontmatter?.Milestone??'').includes('Milestone'))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "milestone-membership-assigned-authoritatively",
+          "type": "eval-truthy",
+          "code": "(()=>{const file=[...app.vault.getMarkdownFiles()].find(file=>file.basename==='QA Harness Ownership');return !!file&&String(app.metadataCache.getFileCache(file)?.frontmatter?.Milestone??'').includes('Milestone')})()"
+        }
+      ]
+    },
+    {
+      "id": "milestone-progress-filter",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Work Notes",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Work Notes')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Milestone"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "milestone-progress-filter-density",
+          "type": "density",
+          "selector": ".abyss-work-note-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "milestone-progress-filter-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-work-note-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({query:document.querySelector('[aria-label=\"Search Work Notes\"]')?.value??''})",
+        "afterEval": "({query:document.querySelector('[aria-label=\"Search Work Notes\"]')?.value??''})",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "input",
+          "selector": "[aria-label=\"Search Work Notes\"]",
+          "value": "Milestone",
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "milestone-filter-and-progress-visible",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector('[data-work-note-path=\"Work Notes QA/Milestone.md\"] [data-work-note-task-progress], [data-work-note-path=\"Work Notes QA/Milestone.md\"] .abyss-work-note-rollup')"
+        }
+      ]
+    },
+    {
+      "id": "projects-board-move",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-board-host",
+      "expectedLandmark": "Board",
+      "setupEval": [
+        "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing board fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='active'});return true})()",
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Board')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Undo"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-board-move-density",
+          "type": "density",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-board-move-native-card-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "pointer-drag",
+          "selector": "[data-board-item-focus=\"Projects QA/Regular Project.md\"]",
+          "targetSelector": ".abyss-board-column:nth-child(3) .abyss-board-items",
+          "coordinates": {
+            "source": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "target": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          },
+          "movementThreshold": 4,
+          "dispatchTarget": "source",
+          "requirePointerCapture": true,
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if(!!document.querySelector('[data-board-undo]'))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "board-status-moved",
+          "type": "eval-truthy",
+          "code": "!!document.querySelector('[data-board-undo]')"
+        }
+      ]
+    },
+    {
+      "id": "projects-board-rollback",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-board-host",
+      "expectedLandmark": "Board",
+      "setupEval": [
+        "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing board fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='active'});return true})()",
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Board')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Board"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-board-rollback-density",
+          "type": "density",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-board-rollback-native-card-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "unchanged"
+      },
+      "interactions": [
+        {
+          "type": "pointer-drag",
+          "selector": "[data-board-item-focus=\"Projects QA/Regular Project.md\"]",
+          "targetSelector": ".abyss-projects-toolbar",
+          "coordinates": {
+            "source": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "target": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          },
+          "movementThreshold": 4,
+          "dispatchTarget": "source",
+          "requirePointerCapture": true,
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "board-invalid-drop-rolls-back",
+          "type": "eval-truthy",
+          "code": "!document.querySelector('[data-board-drag-preview]')&&document.querySelector('[data-board-item-focus=\"Projects QA/Regular Project.md\"]')?.getAttribute('aria-grabbed')!=='true'"
+        }
+      ]
+    },
+    {
+      "id": "projects-timeline-move-resize",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-timeline-host",
+      "expectedLandmark": "Timeline",
+      "setupEval": [
+        "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing timeline fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='active'});return true})()",
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Timeline')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Today"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-timeline-move-resize-density",
+          "type": "density",
+          "selector": ".abyss-timeline-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-timeline-move-resize-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-timeline-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "pointer-drag",
+          "selector": "[data-timeline-key=\"Projects QA/Regular Project.md\"][data-timeline-target=\"range-end\"]",
+          "targetSelector": "[data-timeline-date-coordinate]:nth-last-child(3)",
+          "coordinates": {
+            "source": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "target": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          },
+          "movementThreshold": 4,
+          "dispatchTarget": "document",
+          "requirePointerCapture": true,
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if(!document.querySelector('.abyss-timeline[aria-busy=true]'))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "timeline-range-resized",
+          "type": "eval-truthy",
+          "code": "!document.querySelector('.abyss-timeline[aria-busy=true]')"
+        }
+      ]
+    },
+    {
+      "id": "projects-timeline-rollback",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-timeline-host",
+      "expectedLandmark": "Timeline",
+      "setupEval": [
+        "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing timeline fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='active'});return true})()",
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Timeline')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Invalid"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "projects-timeline-rollback-density",
+          "type": "density",
+          "selector": ".abyss-timeline-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "projects-timeline-rollback-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-timeline-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "unchanged"
+      },
+      "interactions": [
+        {
+          "type": "pointer-drag",
+          "selector": "[data-timeline-key=\"Projects QA/Regular Project.md\"][data-timeline-target=\"range-end\"]",
+          "targetSelector": "[data-timeline-date-coordinate]",
+          "coordinates": {
+            "source": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "target": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          },
+          "movementThreshold": 4,
+          "dispatchTarget": "document",
+          "requirePointerCapture": true,
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "timeline-invalid-drag-rolls-back",
+          "type": "eval-truthy",
+          "code": "document.querySelector('[data-timeline-feedback]')?.textContent?.includes('cancelled')===true"
+        }
+      ]
+    },
+    {
+      "id": "pending-conflict-undo",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-board-host",
+      "expectedLandmark": "Board",
+      "setupEval": [
+        "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing conflict fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='active'});return true})()",
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "[...document.querySelectorAll('button,[role=tab]')].find(el=>el.textContent?.trim()==='Board')?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Board"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "pending-conflict-undo-density",
+          "type": "density",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "pending-conflict-undo-native-card-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-board-items > .abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "afterEval": "(async()=>{const file=app.vault.getAbstractFileByPath(\"Projects QA/Regular Project.md\");return file?{path:file.path,content:await app.vault.read(file)}:null})()",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "pointer-drag",
+          "selector": "[data-board-item-focus=\"Projects QA/Regular Project.md\"]",
+          "targetSelector": ".abyss-board-column:nth-child(3) .abyss-board-items",
+          "coordinates": {
+            "source": {
+              "x": 0.5,
+              "y": 0.5
+            },
+            "target": {
+              "x": 0.5,
+              "y": 0.5
+            }
+          },
+          "movementThreshold": 4,
+          "dispatchTarget": "source",
+          "requirePointerCapture": true,
+          "workflow": true
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){if(!!document.querySelector('[data-board-undo]'))return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(!file)throw new Error('Missing conflict fixture');await app.fileManager.processFrontMatter(file,fm=>{fm.status='published'});return true})()"
+        },
+        {
+          "type": "click",
+          "selector": "[data-board-undo]"
+        },
+        {
+          "type": "eval",
+          "code": "(async()=>{for(let i=0;i<30;i+=1){const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');if(file&&app.metadataCache.getFileCache(file)?.frontmatter?.status==='published')return true;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('QA settle condition timed out')})()"
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "undo-conflict-preserves-newer-status",
+          "type": "eval-truthy",
+          "code": "(()=>{const file=app.vault.getAbstractFileByPath('Projects QA/Regular Project.md');return !!file&&app.metadataCache.getFileCache(file)?.frontmatter?.status==='published'&&!document.querySelector('.abyss-board[aria-busy=true]')})()"
+        }
+      ]
+    },
+    {
+      "id": "persistence-plugin-reload",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-panel",
+      "expectedLandmark": "Projects",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Projects"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "persistence-plugin-reload-density",
+          "type": "density",
+          "selector": ".abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "persistence-plugin-reload-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({settings:app.plugins.plugins['task-calendar']?.settings?.projects?.view??null})",
+        "afterEval": "({settings:app.plugins.plugins['task-calendar']?.settings?.projects?.view??null})",
+        "expect": "unchanged"
+      },
+      "interactions": [
+        {
+          "type": "plugin-reload",
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "plugin-reload-preserves-workspace",
+          "type": "eval-truthy",
+          "code": "!!app.plugins.plugins['task-calendar']&&!!document.querySelector('.abyss-projects-panel')"
+        }
+      ]
+    },
+    {
+      "id": "persistence-app-restart",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-panel",
+      "expectedLandmark": "Projects",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Projects"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "persistence-app-restart-density",
+          "type": "density",
+          "selector": ".abyss-project-row",
+          "min": 0.5,
+          "max": 8
+        },
+        {
+          "id": "persistence-app-restart-native-row-ratio",
+          "type": "native-reference",
+          "selector": ".abyss-project-row",
+          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "metric": "height-ratio",
+          "min": 0.75,
+          "max": 5
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({settings:app.plugins.plugins['task-calendar']?.settings?.projects?.view??null})",
+        "afterEval": "({settings:app.plugins.plugins['task-calendar']?.settings?.projects?.view??null})",
+        "expect": "unchanged"
+      },
+      "interactions": [
+        {
+          "type": "app-restart",
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "app-restart-preserves-workspace",
+          "type": "eval-truthy",
+          "code": "!!app.plugins.plugins['task-calendar']&&!!document.querySelector('.abyss-projects-panel')"
+        }
+      ]
+    },
+    {
+      "id": "settings-validation-diagnostics",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".vertical-tab-content-container",
+      "expectedLandmark": "Abyss Tasks",
+      "setupEval": [
+        "app.setting.open();app.setting.openTabById('task-calendar')",
+        "[...document.querySelectorAll('.abyss-settings-section-header')].find(el=>el.textContent?.includes('Hotkeys'))?.click()"
+      ],
+      "assertions": [
+        {
+          "type": "dom-contains",
+          "value": "Hotkeys"
+        }
+      ],
+      "measurements": [
+        {
+          "id": "settings-native-density",
+          "type": "native-reference",
+          "selector": ".abyss-settings-section-header",
+          "referenceSelector": ".setting-item",
+          "metric": "height-ratio",
+          "min": 0.4,
+          "max": 2.5
+        },
+        {
+          "id": "settings-validation-density",
+          "type": "density",
+          "selector": ".abyss-settings-section-header",
+          "min": 0.5,
+          "max": 8
+        }
+      ],
+      "stateSnapshot": {
+        "beforeEval": "({invalid:document.querySelectorAll('[aria-invalid=true]').length})",
+        "afterEval": "({invalid:document.querySelectorAll('[aria-invalid=true]').length})",
+        "expect": "changed"
+      },
+      "interactions": [
+        {
+          "type": "input",
+          "selector": ".abyss-hotkey-input, input[aria-label*=\"Quick capture\"]",
+          "value": "Q|Q",
+          "workflow": true
+        }
+      ],
+      "postconditions": [
+        {
+          "id": "settings-conflict-diagnostic-visible",
+          "type": "eval-truthy",
+          "code": "document.querySelectorAll('[aria-invalid=true]').length>0&&!!document.querySelector('[role=status],.abyss-shortcut-issue')"
+        }
+      ]
     }
   ]
 }
