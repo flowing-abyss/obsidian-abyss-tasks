@@ -655,6 +655,98 @@ describe('Project Tasks workspace', () => {
     expect(identities).toEqual([['Ship release'], ['Ship release'], ['Ship release']]);
   });
 
+  it.each([
+    ['none', ['Zulu next', 'Alpha ordinary', 'Beta ordinary']],
+    ['priority', ['Alpha A', 'Zulu next', 'Beta B']],
+    ['date', ['Alpha A', 'Zulu next', 'Beta B']],
+    ['status', ['Alpha A', 'Zulu next', 'Beta B']],
+  ] as const)(
+    'pins Next Action before a losing title sort inside the %s group for List, Board, and Timeline',
+    async (groupBy, expected) => {
+      const container = freshContainer();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const session = new ProjectWorkspaceSession();
+      session.bindCollectionPreferences(settings);
+      session.openProject('Projects/A.md');
+      await session.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+        ...current,
+        group: groupBy,
+        sort: { field: 'title', dir: 'asc' },
+      }));
+      const base = snapshot('dated');
+      const action = (
+        title: string,
+        line: number,
+        priority: 'A' | 'B',
+        due: string,
+        statusSymbol = ' ',
+      ) => ({
+        task: task({
+          title,
+          priority,
+          statusSymbol,
+          planning: { due: due as never },
+          source: { filePath: base.project.path, line },
+        }),
+        projectPath: base.project.path,
+        dependency: { type: 'allowed' as const },
+        owner: { type: 'project' as const, path: base.project.path },
+      });
+      const next = action(
+        'Zulu next',
+        1,
+        'B',
+        groupBy === 'date' ? '2026-09-04' : '2026-08-30',
+        groupBy === 'status' ? '?' : ' ',
+      );
+      const ordinaryB = action(
+        groupBy === 'none' ? 'Beta ordinary' : 'Beta B',
+        2,
+        'B',
+        groupBy === 'date' ? '2026-09-03' : '2026-08-30',
+        groupBy === 'status' ? '!' : ' ',
+      );
+      const ordinaryA = action(
+        groupBy === 'none' ? 'Alpha ordinary' : 'Alpha A',
+        3,
+        'A',
+        groupBy === 'date' ? '2026-09-01' : '2026-08-30',
+      );
+      const identities: string[][] = [];
+      const capture = (
+        _host: HTMLElement,
+        _path: string,
+        actions: ProjectWorkspaceSnapshot['tasks'],
+      ): ProjectChildRenderHandle => {
+        identities.push(actions.map(({ task: current }) => current.title));
+        return { destroy: () => undefined };
+      };
+
+      renderProjectDashboard(
+        container,
+        { ...base, tasks: [ordinaryB, ordinaryA, next] },
+        {
+          state: new AppState(),
+          settings,
+          workspaceSession: session,
+          today: () => '2026-09-01',
+          onSetStatus: vi.fn(),
+          openNote: vi.fn(),
+          nextActionState: (candidate) => candidate.ref.line === next.task.ref.line,
+          renderTasks: capture,
+          renderTaskBoard: capture,
+          renderTaskTimeline: capture,
+        },
+      );
+      container.querySelector<HTMLButtonElement>('[data-project-layout="board"]')!.click();
+      await flushMicrotasks();
+      container.querySelector<HTMLButtonElement>('[data-project-layout="timeline"]')!.click();
+      await flushMicrotasks();
+
+      expect(identities).toEqual([expected, expected, expected]);
+    },
+  );
+
   it('requires the shared cleanup handle from every child renderer hook', () => {
     expectTypeOf<
       ReturnType<NonNullable<ProjectsDashboardContext['renderTasks']>>

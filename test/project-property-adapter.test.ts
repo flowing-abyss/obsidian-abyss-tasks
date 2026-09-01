@@ -4,6 +4,7 @@ import { ProjectCommandService } from '../src/projects/ProjectCommandService';
 import {
   ProjectPropertyAdapter,
   parseProjectPropertyEditorValue,
+  projectPropertyEditorValue,
 } from '../src/projects/properties/ProjectPropertyAdapter';
 import { ProjectPropertyCommands } from '../src/projects/properties/ProjectPropertyCommands';
 import type { ProjectStatus } from '../src/settings/types';
@@ -86,6 +87,54 @@ describe('ProjectPropertyAdapter', () => {
       ),
     ).toEqual({ type: 'invalid' });
   });
+
+  it.each([
+    {
+      observed: '2026-08-31T09:17:42+07:00',
+      editor: '2026-08-31T09:17:42',
+      changed: '2026-09-01T10:18:42',
+      expected: '2026-09-01T10:18:42+07:00',
+    },
+    {
+      observed: '2026-08-31T09:17:05Z',
+      editor: '2026-08-31T09:17:05',
+      changed: '2026-09-01T10:18:05',
+      expected: '2026-09-01T10:18:05Z',
+    },
+    {
+      observed: '2026-08-31T09:17:42.123456+07:00',
+      editor: '2026-08-31T09:17:42.123',
+      changed: '2026-09-01T10:18:42.123',
+      expected: '2026-09-01T10:18:42.123456+07:00',
+    },
+    {
+      observed: '2026-08-31T09:17:42.120456+07:00',
+      editor: '2026-08-31T09:17:42.12',
+      changed: '2026-09-01T10:18:42.12',
+      expected: '2026-09-01T10:18:42.120456+07:00',
+    },
+    {
+      observed: '2026-08-31T09:17:42.000123Z',
+      editor: '2026-08-31T09:17:42',
+      changed: '2026-09-01T10:18:42',
+      expected: '2026-09-01T10:18:42.000123Z',
+    },
+  ])(
+    'round-trips the observed Atom carrier through datetime-local without shifting its civil time',
+    ({ observed, editor, changed, expected }) => {
+      const descriptor = new ProjectPropertyAdapter().describe('reviewedAt', observed);
+
+      expect(projectPropertyEditorValue(descriptor, observed)).toBe(editor);
+      expect(parseProjectPropertyEditorValue(descriptor, editor, false, observed)).toEqual({
+        type: 'value',
+        value: observed,
+      });
+      expect(parseProjectPropertyEditorValue(descriptor, changed, false, observed)).toEqual({
+        type: 'value',
+        value: expected,
+      });
+    },
+  );
 
   it('uses observed values for guarded generic writes without changing unrelated frontmatter', async () => {
     const app = new App();

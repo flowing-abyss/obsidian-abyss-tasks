@@ -135,6 +135,7 @@ export function renderProjectDashboard(
       actions: snapshot.tasks,
       viewState: taskViewState(),
       settings: ctx.settings,
+      today: ctx.today?.() ?? currentLocalDate(),
       ...(ctx.nextActionState && { nextActionState: ctx.nextActionState }),
       ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
     });

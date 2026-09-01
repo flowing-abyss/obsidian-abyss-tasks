@@ -39,6 +39,9 @@ export type ProjectPropertyEditorValue =
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/u;
 const DATETIME = /^\d{4}-\d{2}-\d{2}[T ]/u;
+const ATOM_DATETIME_PARTS =
+  /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}):(\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/u;
+const LOCAL_DATETIME_PARTS = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?$/u;
 const WIKILINK = /^\[\[[^\]]+\]\]$/u;
 const OWNED_PROJECT_PROPERTIES = new Set([
   'status',
@@ -52,6 +55,52 @@ const OWNED_PROJECT_PROPERTIES = new Set([
 
 function titleCase(id: string): string {
   return id.replace(/[-_]/gu, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function trimFraction(fraction: string | undefined): string | undefined {
+  if (!fraction) return undefined;
+  const limited = fraction.slice(0, 3);
+  let end = limited.length;
+  while (end > 0 && limited[end - 1] === '0') end -= 1;
+  return limited.slice(0, end) || undefined;
+}
+
+function fractionSuffix(fraction: string | undefined, maxLength?: number): string {
+  if (!fraction) return '';
+  const displayed = maxLength === undefined ? fraction : trimFraction(fraction);
+  return displayed ? `.${displayed}` : '';
+}
+
+function atomEditorLocal(parts: RegExpExecArray): string {
+  return `${parts[1]}:${parts[2]}${fractionSuffix(parts[3], 3)}`;
+}
+
+function parseDateTimeEditorValue(raw: string, observed: unknown): ProjectPropertyEditorValue {
+  const local = raw.trim();
+  const localParts = LOCAL_DATETIME_PARTS.exec(local);
+  if (!localParts) return { type: 'invalid' };
+  const observedRaw = typeof observed === 'string' ? observed : undefined;
+  const observedParts =
+    observedRaw && parseProjectDate(observedRaw)?.precision === 'datetime'
+      ? ATOM_DATETIME_PARTS.exec(observedRaw)
+      : null;
+  const observedEditorLocal = observedParts ? atomEditorLocal(observedParts) : undefined;
+  const localSeconds = localParts[2] ? `:${localParts[2]}` : '';
+  const normalizedLocal = `${localParts[1]}${localSeconds}${fractionSuffix(localParts[3], 3)}`;
+  if (observedParts && observedRaw !== undefined && normalizedLocal === observedEditorLocal) {
+    return { type: 'value', value: observedRaw };
+  }
+  const seconds = localParts[2] ?? observedParts?.[2] ?? '00';
+  const visibleFraction = trimFraction(localParts[3]);
+  const observedVisibleFraction = trimFraction(observedParts?.[3]);
+  const fraction =
+    observedParts?.[3] && visibleFraction === observedVisibleFraction
+      ? observedParts[3]
+      : visibleFraction;
+  const value = `${localParts[1]}:${seconds}${fractionSuffix(fraction)}${observedParts?.[4] ?? 'Z'}`;
+  return DATETIME.test(value) && parseProjectDate(value)?.precision === 'datetime'
+    ? { type: 'value', value }
+    : { type: 'invalid' };
 }
 
 export function isOwnedProjectProperty(
@@ -72,6 +121,7 @@ export function parseProjectPropertyEditorValue(
   descriptor: ProjectPropertyDescriptor,
   raw: string,
   checked?: boolean,
+  observed?: unknown,
 ): ProjectPropertyEditorValue {
   if (descriptor.kind === 'checkbox') return { type: 'value', value: checked === true };
   if (raw.trim() === '') return { type: 'value', value: null };
@@ -104,12 +154,7 @@ export function parseProjectPropertyEditorValue(
       ? { type: 'value', value: raw }
       : { type: 'invalid' };
   }
-  if (descriptor.kind === 'datetime') {
-    const value = raw.length === 16 ? `${raw}:00Z` : raw;
-    return DATETIME.test(value) && parseProjectDate(value)?.precision === 'datetime'
-      ? { type: 'value', value }
-      : { type: 'invalid' };
-  }
+  if (descriptor.kind === 'datetime') return parseDateTimeEditorValue(raw, observed);
   return descriptor.kind === 'text' ? { type: 'value', value: raw } : { type: 'invalid' };
 }
 
@@ -122,7 +167,10 @@ export function projectPropertyEditorValue(
   if (descriptor.kind === 'list' || descriptor.kind === 'tags') {
     return Array.isArray(value) ? value.map(String).join(', ') : '';
   }
-  if (descriptor.kind === 'datetime' && typeof value === 'string') return value.slice(0, 16);
+  if (descriptor.kind === 'datetime' && typeof value === 'string') {
+    const parts = ATOM_DATETIME_PARTS.exec(value);
+    return parts ? atomEditorLocal(parts) : value.slice(0, 16);
+  }
   return typeof value === 'string' || typeof value === 'number' ? String(value) : '';
 }
 

@@ -200,6 +200,60 @@ describe('ProjectsTableView', () => {
     expect(root.textContent).toContain('changed elsewhere');
   });
 
+  it.each([
+    [
+      '2026-08-31T09:17:42+07:00',
+      '2026-08-31T09:17:42',
+      '2026-09-01T10:18:42',
+      '2026-09-01T10:18:42+07:00',
+    ],
+    ['2026-08-31T09:17:05Z', '2026-08-31T09:17:05', '2026-08-31T09:17:05', '2026-08-31T09:17:05Z'],
+    [
+      '2026-08-31T09:17:42.123456+07:00',
+      '2026-08-31T09:17:42.123',
+      '2026-09-01T10:18:42.123',
+      '2026-09-01T10:18:42.123456+07:00',
+    ],
+    [
+      '2026-08-31T09:17:42.000123Z',
+      '2026-08-31T09:17:42',
+      '2026-09-01T10:18:42',
+      '2026-09-01T10:18:42.000123Z',
+    ],
+  ] as const)(
+    'preserves a Project datetime carrier while editing its local civil fields (%s)',
+    async (observed, editorValue, edited, expected) => {
+      const root = freshContainer();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.projects.view.table = {
+        version: 1,
+        columns: [{ propertyId: 'reviewedAt', visible: true }],
+        collapsedGroups: [],
+      };
+      const project = snapshot(1);
+      project.project.frontmatter = { reviewedAt: observed };
+      const write = vi.fn().mockResolvedValue({ type: 'ok', value: expected });
+      renderProjectsTable(root, [project], { settings, onOpen: vi.fn(), onWriteProperty: write });
+      root
+        .querySelector<HTMLElement>('[role="cell"][data-table-column="reviewedAt"]')!
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      const editor = root.querySelector<HTMLInputElement>('[data-property-editor="reviewedAt"]')!;
+
+      expect(editor.type).toBe('datetime-local');
+      expect(editor.value.replace(/\.000$/u, '')).toBe(editorValue);
+      editor.value = edited;
+      editor.dispatchEvent(new Event('change', { bubbles: true }));
+      await flushMicrotasks();
+
+      expect(write).toHaveBeenCalledWith({
+        path: 'Projects/1.md',
+        propertyId: 'reviewedAt',
+        expected: observed,
+        next: expected,
+      });
+    },
+  );
+
   it('cancels an in-progress property draft with Escape without writing and restores its presentational cell', () => {
     const root = freshContainer();
     activeDocument.body.append(root);

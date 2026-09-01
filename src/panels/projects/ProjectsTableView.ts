@@ -280,6 +280,7 @@ function renderPropertyEditor(
       'aria-label': `Edit ${descriptor.displayName}`,
     },
   });
+  if (descriptor.kind === 'datetime') input.step = 'any';
   let settled = observed;
   const restore = (): void => {
     if (type === 'checkbox') input.checked = settled === true;
@@ -296,7 +297,7 @@ function renderPropertyEditor(
     attr: { role: 'status', 'aria-live': 'polite' },
   });
   const commit = async (): Promise<void> => {
-    const parsed = parseProjectPropertyEditorValue(descriptor, input.value, input.checked);
+    const parsed = parseProjectPropertyEditorValue(descriptor, input.value, input.checked, settled);
     if (parsed.type === 'invalid') {
       feedback.textContent = 'Enter a valid value.';
       restore();
