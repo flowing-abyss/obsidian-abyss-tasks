@@ -1,0 +1,223 @@
+{
+  "version": 1,
+  "matrix": {
+    "themes": ["dark", "light"],
+    "widths": [1440, 900, 760, 440],
+    "zooms": [1, 2],
+    "pointers": ["fine", "coarse", "hover-none"]
+  },
+  "surfaces": [
+    {
+      "id": "tasks",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-center",
+      "expectedLandmark": "Inbox",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "interactions": [
+        { "type": "context-menu", "selector": ".abyss-task-card", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+    },
+    {
+      "id": "projects-table",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-panel",
+      "expectedLandmark": "Projects",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "interactions": [
+        { "type": "click-text", "value": "Table" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Projects" }]
+    },
+    {
+      "id": "projects-board",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-board-host",
+      "expectedLandmark": "Board",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "interactions": [
+        { "type": "click-text", "value": "Board" },
+        {
+          "type": "pointer-drag",
+          "selector": "[data-board-item-focus]",
+          "targetSelector": ".abyss-board-column:nth-child(2) .abyss-board-items",
+          "workflow": true
+        }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Add project" }]
+    },
+    {
+      "id": "projects-timeline",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-timeline-host",
+      "expectedLandmark": "Timeline",
+      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "interactions": [
+        { "type": "click-text", "value": "Timeline" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Today" }]
+    },
+    {
+      "id": "project-task-list",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Tasks",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "click-text", "value": "List" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+    },
+    {
+      "id": "project-task-table",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Tasks",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "click-text", "value": "Table" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Tasks" }]
+    },
+    {
+      "id": "project-task-board",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard .abyss-board",
+      "expectedLandmark": "Board",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "click-text", "value": "Board" },
+        {
+          "type": "pointer-drag",
+          "selector": "[data-board-item-focus]",
+          "targetSelector": ".abyss-board-column:nth-child(2) .abyss-board-items",
+          "workflow": true
+        }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Add task" }]
+    },
+    {
+      "id": "project-task-timeline",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard .abyss-timeline",
+      "expectedLandmark": "Timeline",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "click-text", "value": "Timeline" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Today" }]
+    },
+    {
+      "id": "project-work-notes",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-projects-dashboard",
+      "expectedLandmark": "Work Notes",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "click-text", "value": "Work Notes" },
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Work Notes" }]
+    },
+    {
+      "id": "task-inspector",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-right",
+      "expectedLandmark": "Description",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('.abyss-task-card')?.click()"
+      ],
+      "interactions": [
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Description" }]
+    },
+    {
+      "id": "project-inspector",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-project-inspector",
+      "expectedLandmark": "Project",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-identity-control]')?.click()",
+        "document.querySelector('.abyss-project-inspector-open')?.click()"
+      ],
+      "interactions": [
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Status" }]
+    },
+    {
+      "id": "work-note-inspector",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-work-note-inspector",
+      "expectedLandmark": "Work Note",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('.abyss-work-note-identity')?.click()"
+      ],
+      "interactions": [
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Status" }]
+    },
+    {
+      "id": "milestones",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".abyss-work-note-inspector",
+      "expectedLandmark": "Milestone",
+      "setupEval": [
+        "app.commands.executeCommandById('task-calendar:open-panel')",
+        "document.querySelector('[data-project-milestone-identity-control]')?.click()"
+      ],
+      "interactions": [
+        { "type": "key", "key": "q", "code": "KeyQ", "workflow": true },
+        { "type": "key", "key": "Escape" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Milestone" }]
+    },
+    {
+      "id": "settings",
+      "expectedWindowTitle": "dev-vault",
+      "rootSelector": ".vertical-tab-content-container",
+      "expectedLandmark": "Abyss Tasks",
+      "setupEval": ["app.setting.open();app.setting.openTabById('task-calendar')"],
+      "interactions": [
+        { "type": "key", "key": "Escape", "workflow": true },
+        { "type": "eval", "code": "app.setting.open();app.setting.openTabById('task-calendar')" }
+      ],
+      "assertions": [{ "type": "dom-contains", "value": "Projects" }]
+    }
+  ]
+}

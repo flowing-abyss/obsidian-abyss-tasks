@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowing-abyss.github.io/obsidian-abyss-tasks/devvault-evidence.schema.json",
+  "title": "Abyss Tasks Dev Vault QA evidence",
+  "type": "array",
+  "items": { "$ref": "#/$defs/evidence" },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioId",
+        "status",
+        "reason",
+        "expectedWindowTitle",
+        "observedWindowTitle",
+        "rootSelector",
+        "observedRootSelector",
+        "expectedLandmark",
+        "observedLandmark",
+        "theme",
+        "observedTheme",
+        "viewportWidth",
+        "observedViewportWidth",
+        "requestedZoom",
+        "requestedPointerMedia",
+        "workflow",
+        "screenshot",
+        "domSha256",
+        "accessibility",
+        "dpr",
+        "observedZoom",
+        "observedPointerMedia",
+        "pluginArtifactSha256",
+        "fixtureManifestSha256"
+      ],
+      "properties": {
+        "scenarioId": { "type": "string", "minLength": 1 },
+        "status": {
+          "enum": ["accepted", "rejected", "unsupported-with-fallback"]
+        },
+        "reason": { "type": "string", "minLength": 1 },
+        "expectedWindowTitle": { "type": "string", "minLength": 1 },
+        "observedWindowTitle": { "type": ["string", "null"] },
+        "rootSelector": { "type": "string", "minLength": 1 },
+        "observedRootSelector": { "type": ["string", "null"] },
+        "expectedLandmark": { "type": "string", "minLength": 1 },
+        "observedLandmark": { "type": ["string", "null"] },
+        "theme": { "enum": ["dark", "light"] },
+        "observedTheme": { "enum": ["dark", "light"] },
+        "viewportWidth": { "enum": [1440, 900, 760, 440] },
+        "observedViewportWidth": { "enum": [1440, 900, 760, 440] },
+        "requestedZoom": { "enum": [1, 2] },
+        "requestedPointerMedia": {
+          "enum": ["fine", "coarse", "hover-none"]
+        },
+        "workflow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "changed", "beforeSha256", "afterSha256"],
+          "properties": {
+            "type": { "enum": ["keyboard", "context-menu", "pointer-drag"] },
+            "changed": { "type": "boolean" },
+            "beforeSha256": { "$ref": "#/$defs/sha256" },
+            "afterSha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "screenshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sha256", "width", "height", "nonblankHistogram"],
+          "properties": {
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "nonblankHistogram": {
+              "type": "array",
+              "minItems": 4,
+              "items": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "domSha256": { "$ref": "#/$defs/sha256" },
+        "accessibility": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["provider", "sha256"],
+          "properties": {
+            "provider": { "enum": ["macos-ax", "dom-projection"] },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "dpr": { "type": "number", "exclusiveMinimum": 0 },
+        "observedZoom": { "enum": [1, 2] },
+        "observedPointerMedia": {
+          "enum": ["fine", "coarse", "hover-none"]
+        },
+        "pluginArtifactSha256": { "$ref": "#/$defs/sha256" },
+        "fixtureManifestSha256": { "$ref": "#/$defs/sha256" },
+        "fallbackTestEvidence": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}
