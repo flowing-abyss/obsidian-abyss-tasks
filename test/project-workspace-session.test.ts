@@ -123,9 +123,15 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     expect(settings.projects.view.timeline).toBe(laterTimeline);
     expect(registry.portfolioPreferenceSnapshot()).toMatchObject({
       revision: 0,
-      preference: { layout: 'overview' },
+      preference: { layout: 'timeline' },
     });
-    expect(listener).not.toHaveBeenCalled();
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        revision: 0,
+        preference: expect.objectContaining({ layout: 'timeline' }),
+      }),
+    );
   });
 
   it('preserves unrelated main-list and Timeline writes when a main preference save rejects', async () => {
@@ -222,7 +228,13 @@ describe('ProjectWorkspaceSessionRegistry', () => {
     await expect(first).resolves.toMatchObject({ revision: 1 });
     await expect(stale).rejects.toThrow('revision conflict');
     expect(settings.projects.view.portfolioLayout).toBe('board');
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        revision: 1,
+        preference: expect.objectContaining({ layout: 'board' }),
+      }),
+    );
   });
 
   it('pins a main list identity while its write waits behind another scope save', async () => {

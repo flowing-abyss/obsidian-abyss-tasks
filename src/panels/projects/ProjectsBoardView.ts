@@ -95,6 +95,10 @@ export interface BoardViewOptions<T> {
   readonly columnPreferences?: {
     readonly value: BoardViewPreference;
     readonly onChange: (next: BoardViewPreference) => void | Promise<void>;
+    /** Application-scoped save state retained when a Board mount is replaced. */
+    readonly saving?: boolean;
+    /** Prevents a replacement from resubmitting the same automatic normalization. */
+    readonly autoPersistInitialPreference?: boolean;
     /** Canonical Settings order, independent of a persisted presentation override. */
     readonly configuredColumnIds?: readonly string[];
     readonly terminalLeftIds: readonly string[];
@@ -120,6 +124,8 @@ export interface BoardViewOptions<T> {
     readonly continuity?: (observed: T, published: T) => boolean;
     /** Explicit capability for publication text; omitted preserves legacy generic boards. */
     readonly undoAvailable?: boolean;
+    /** The application owner can restore the same Undo authority in a replacement mount. */
+    readonly undoTransferable?: boolean;
     /** Returns the configured board column for either an observed or optimistic entity. */
     readonly columnKey: (item: T) => string;
     /** The active Board mount owns the live-region callback for registry-backed stores. */
@@ -306,6 +312,7 @@ export function renderBoard<T>(
     id: boardId,
     announce: options.announce,
     undoAvailable: options.undo !== undefined && options.optimisticOverlay?.undoAvailable !== false,
+    undoTransferable: options.optimisticOverlay?.undoTransferable === true,
   };
   let destroyed = false;
   const releasePublishedUndo = (transactionId: number): void => {
@@ -387,7 +394,7 @@ export function renderBoard<T>(
     initialPreferenceNeedsSave = presentationEnabled;
   }
   if (options.session) options.session.preference = columnPreference;
-  let preferenceSaveInFlight = false;
+  let preferenceSaveInFlight = options.columnPreferences?.saving === true;
   const preferenceLocked = (): boolean => !presentationEnabled || preferenceSaveInFlight;
   const presentationColumns = (): readonly BoardColumn<T>[] => {
     if (!columnPreference) return options.columns;
@@ -1711,7 +1718,12 @@ export function renderBoard<T>(
   };
 
   render();
-  if (initialPreferenceNeedsSave && columnPreference && options.columnPreferences) {
+  if (
+    initialPreferenceNeedsSave &&
+    columnPreference &&
+    options.columnPreferences &&
+    options.columnPreferences.autoPersistInitialPreference !== false
+  ) {
     persistColumnPreference(columnPreference, options.columnPreferences.value);
   }
   return {
@@ -1963,6 +1975,11 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
   readonly overlayScope?: object;
   readonly publicationSequence?: number;
   readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
+  readonly undoTransferable?: boolean;
+  readonly columnPreference?: BoardViewPreference;
+  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
+  readonly columnPreferenceSaving?: boolean;
+  readonly autoPersistInitialColumnPreference?: boolean;
 }
 
 /** Adapts Project lifecycle records to the shared board shell. */
@@ -2089,6 +2106,7 @@ export function renderProjectsBoard(
         }),
         columnKey: (project: (typeof projects)[number]) => project.statusId ?? 'unmapped',
         presentationAnnouncement: true,
+        ...(options.undoTransferable === true && { undoTransferable: true }),
       }
     : undefined;
   const pendingUndo = options.pendingUndo;
@@ -2158,11 +2176,19 @@ export function renderProjectsBoard(
     announce: options.onAnnounce,
     ...(optimisticOverlay && { optimisticOverlay }),
     columnPreferences: {
-      value: options.settings.projects.view.board,
+      value: options.columnPreference ?? options.settings.projects.view.board,
       configuredColumnIds: statuses.map(({ id }) => id),
       terminalLeftIds,
       terminalRightIds,
+      ...(options.columnPreferenceSaving === true && { saving: true }),
+      ...(options.autoPersistInitialColumnPreference === false && {
+        autoPersistInitialPreference: false,
+      }),
       onChange: async (next) => {
+        if (options.onColumnPreferenceChange) {
+          await options.onColumnPreferenceChange(next);
+          return;
+        }
         const previous = options.settings.projects.view.board;
         options.settings.projects.view.board = next;
         try {

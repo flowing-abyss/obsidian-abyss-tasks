@@ -429,6 +429,10 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     CollectionScopeKey,
     Set<(next: CollectionPreferenceSnapshot<WorkspacePreference>) => void>
   >();
+  private readonly pending = new Map<
+    CollectionScopeKey,
+    CollectionPreferenceSnapshot<WorkspacePreference>
+  >();
   private saveQueue: Promise<void> = Promise.resolve();
   private mainTaskListKey = 'today';
 
@@ -541,6 +545,14 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
   }
 
   read(scope: CollectionScopeKey): CollectionPreferenceSnapshot<WorkspacePreference> {
+    const pending = this.pending.get(scope);
+    if (pending) {
+      return {
+        persistenceIdentity: pending.persistenceIdentity,
+        revision: pending.revision,
+        preference: structuredClone(pending.preference),
+      };
+    }
     const settings = this.settings;
     const parts = scopeParts(scope);
     const stored = this.stored(scope);
@@ -565,11 +577,16 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
     const operation = this.saveQueue.then(() =>
       this.commit(scope, expected, next, mainTaskListKey),
     );
-    this.saveQueue = operation.then(
+    const result = operation.catch((error: unknown) => {
+      const authoritative = this.read(scope);
+      for (const listener of this.listeners.get(scope) ?? []) listener(authoritative);
+      throw error;
+    });
+    this.saveQueue = result.then(
       () => undefined,
       () => undefined,
     );
-    return operation;
+    return result;
   }
 
   subscribe(
@@ -605,12 +622,20 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       return this.publish(scope, revisionKey, revision, next);
     }
 
+    const pending = {
+      persistenceIdentity: expected.persistenceIdentity,
+      revision: expected.revision,
+      preference: structuredClone(expected.preference),
+    };
+    this.pending.set(scope, pending);
     const restore = this.stage(settings, scope, next, mainTaskListKey ?? this.mainTaskListKey);
     try {
       await this.onSaveSettings();
     } catch (error) {
       restore();
       throw error;
+    } finally {
+      if (this.pending.get(scope) === pending) this.pending.delete(scope);
     }
     return this.publish(scope, revisionKey, revision, next);
   }
@@ -657,6 +682,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       const priorGroup = view.portfolioGroupBy;
       const priorSort = view.portfolioSortBy;
       const priorTable = view.table;
+      const priorBoard = view.board;
       const stagedLayout = preference.layout;
       const stagedVisibleStatusIds = preference.filters.filter(
         (id) => id !== PORTFOLIO_UNMAPPED_FILTER,
@@ -667,12 +693,16 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       const stagedTable = structuredClone(
         preference.layoutPreferences['overview']?.table ?? view.table,
       );
+      const stagedBoard = structuredClone(
+        preference.layoutPreferences['board']?.board ?? view.board,
+      );
       view.portfolioLayout = stagedLayout;
       view.visibleStatusIds = stagedVisibleStatusIds;
       view.includeUnmapped = stagedIncludeUnmapped;
       view.portfolioGroupBy = stagedGroup;
       view.portfolioSortBy = stagedSort;
       view.table = stagedTable;
+      view.board = stagedBoard;
       return () => {
         if (settings.projects.view !== view) return;
         if (view.portfolioLayout === stagedLayout) view.portfolioLayout = priorLayout;
@@ -683,6 +713,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
         if (view.portfolioGroupBy === stagedGroup) view.portfolioGroupBy = priorGroup;
         if (view.portfolioSortBy === stagedSort) view.portfolioSortBy = priorSort;
         if (view.table === stagedTable) view.table = priorTable;
+        if (view.board === stagedBoard) view.board = priorBoard;
       };
     }
 
@@ -747,6 +778,9 @@ export class ProjectWorkspaceSession {
   private readonly sessions = new Map<string, ProjectWorkspaceEntry>();
   private readonly idle = workspaceEntry(this.coordinator, '__idle__');
   private readonly recoveries: ProjectWorkspaceRecoveryEntry[] = [];
+  private readonly portfolioPreferenceFailureListeners = new Set<(error: unknown) => void>();
+  private readonly portfolioBoardPreferenceMutationListeners = new Set<() => void>();
+  private portfolioBoardPreferenceMutationState: 'idle' | 'pending' | 'failed' = 'idle';
   private projectPath: string | null = null;
   /** Portfolio continuity is independent of whichever Project workspace is open. */
   readonly portfolioTimeline = timelineViewport('portfolio');
@@ -841,10 +875,58 @@ export class ProjectWorkspaceSession {
     ) as Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>>;
   }
 
+  updatePortfolioBoardPreference(
+    next: BoardViewPreference,
+  ): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
+    this.portfolioBoardPreferenceMutationState = 'pending';
+    // Automatic normalization starts before renderBoard() returns its handle. Defer the
+    // remount notification so ProjectsPanel can first own and later destroy that handle.
+    queueMicrotask(() => {
+      for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
+    });
+    return this.updatePortfolioPreference((current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        board: { board: next },
+      },
+    })).then(
+      (settled) => {
+        this.portfolioBoardPreferenceMutationState = 'idle';
+        for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
+        return settled;
+      },
+      (error: unknown) => {
+        this.portfolioBoardPreferenceMutationState = 'failed';
+        for (const listener of this.portfolioBoardPreferenceMutationListeners) listener();
+        for (const listener of this.portfolioPreferenceFailureListeners) listener(error);
+        throw error;
+      },
+    );
+  }
+
   subscribePortfolioPreference(
     listener: (next: CollectionPreferenceSnapshot<PortfolioCollectionPreference>) => void,
   ): () => void {
     return this.coordinator.subscribePreference('projects:portfolio', listener as never);
+  }
+
+  subscribePortfolioPreferenceFailure(listener: (error: unknown) => void): () => void {
+    this.portfolioPreferenceFailureListeners.add(listener);
+    return () => this.portfolioPreferenceFailureListeners.delete(listener);
+  }
+
+  subscribePortfolioBoardPreferenceMutation(listener: () => void): () => void {
+    this.portfolioBoardPreferenceMutationListeners.add(listener);
+    return () => this.portfolioBoardPreferenceMutationListeners.delete(listener);
+  }
+
+  portfolioBoardPreferenceSaving(): boolean {
+    return this.portfolioBoardPreferenceMutationState === 'pending';
+  }
+
+  shouldAutoPersistPortfolioBoardPreference(): boolean {
+    return this.portfolioBoardPreferenceMutationState === 'idle';
   }
 
   collectionScopeKey(path: string, scope: ProjectWorkspaceScope): CollectionScopeKey {

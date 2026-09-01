@@ -2976,7 +2976,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     expect(session.workNotes.inspectorPath).toBeNull();
   });
 
-  it('retains Board Undo across the production Project-store refresh subscriber replacing ProjectsPanel', async () => {
+  it('transfers one truthful Board settlement and functional Undo across the production Project-store remount', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.projects.view.portfolioLayout = 'board';
     settings.projects.statuses.push({
@@ -3045,8 +3045,15 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     panel.setProjectSnapshots([projectWorkspaceSnapshot(project, [])]);
     const container = freshContainer();
     activeDocument.body.append(container);
+    const announcements: string[] = [];
+    let announcementObserver: MutationObserver | undefined;
     try {
       panel.mount(container);
+      const live = call<HTMLElement>(panel, 'selectionLiveRegion') as HTMLElement;
+      announcementObserver = new activeDocument.defaultView!.MutationObserver(() => {
+        if (live.textContent) announcements.push(live.textContent);
+      });
+      announcementObserver.observe(live, { childList: true, characterData: true, subtree: true });
       const card = container.querySelector<HTMLElement>('[data-board-item="Projects/A.md"]')!;
       const target = container.querySelector<HTMLElement>('[data-board-column="published"]')!;
       card.dispatchEvent(new Event('dragstart', { bubbles: true }));
@@ -3061,6 +3068,10 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       publishProjectSnapshot();
       await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).not.toBeNull();
+      expect(live.textContent).toBe('Item moved. Undo available.');
+      expect(
+        announcements.filter((message) => message === 'Item moved. Undo available.'),
+      ).toHaveLength(1);
 
       container.querySelector<HTMLButtonElement>('[data-board-undo]')!.click();
       await flushMicrotasks();
@@ -3101,6 +3112,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
       await flushMicrotasks();
       expect(container.querySelector('[data-board-undo]')).toBeNull();
     } finally {
+      announcementObserver?.disconnect();
       panel.destroy();
       container.remove();
     }

@@ -759,6 +759,333 @@ describe('renderProjectsList', () => {
     handle.destroy();
   });
 
+  it.each([
+    ['an I/O rejection', new Error('disk unavailable'), 'not saved'],
+    [
+      'a CAS rejection',
+      Object.assign(new Error('stale preference'), { name: 'CollectionPreferenceConflictError' }),
+      'changed elsewhere',
+    ],
+  ])(
+    'publishes the authoritative Portfolio preference to a replacement board after %s, then persists a retry across restart',
+    async (_outcome, rejection, messageFragment) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.projects.view.portfolioLayout = 'board';
+      settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+      settings.projects.view.board = {
+        ...settings.projects.view.board,
+        terminalDefaultsApplied: true,
+      };
+      const regular = settings.projects.statuses.find(
+        ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+      )!;
+      let rejectFirstSave!: (reason: unknown) => void;
+      const firstSave = new Promise<void>((_resolve, reject) => {
+        rejectFirstSave = reject;
+      });
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => firstSave)
+        .mockResolvedValue(undefined);
+      const announcements: string[] = [];
+      const session = new ProjectWorkspaceSession();
+      const store = {
+        list: () => [workspace().project],
+        get: () => workspace().project,
+        activeForLeftPanel: () => [workspace().project],
+        onUpdate: () => () => undefined,
+        refresh: vi.fn(),
+      };
+      const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+      const mount = (workspaceSession: ProjectWorkspaceSession) => {
+        const root = attachedContainer();
+        const panel = new ProjectsPanel(
+          new AppState(),
+          store as never,
+          manager as never,
+          settings,
+          {} as never,
+          {
+            snapshots: [workspace()],
+            workspaceSession,
+            onSaveSettings,
+            onAnnounce: (message) => announcements.push(message),
+          },
+        );
+        panel.mount(root);
+        return { panel, root };
+      };
+
+      const first = mount(session);
+      first.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!
+        .click();
+      await flushMicrotasks();
+      expect(settings.projects.view.board.collapsedColumnIds).toContain(regular.id);
+      first.panel.destroy({ preserveWorkspaceSession: true });
+
+      const replacement = mount(session);
+      expect(
+        replacement.root
+          .querySelector(`[data-board-column="${regular.id}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(false);
+
+      rejectFirstSave(rejection);
+      await flushMicrotasks();
+      expect(settings.projects.view.board.collapsedColumnIds).not.toContain(regular.id);
+      expect(
+        replacement.root
+          .querySelector(`[data-board-column="${regular.id}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(false);
+      expect(announcements.filter((message) => message.includes(messageFragment))).toHaveLength(1);
+
+      replacement.root
+        .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!
+        .click();
+      await flushMicrotasks();
+      expect(settings.projects.view.board.collapsedColumnIds).toContain(regular.id);
+      replacement.panel.destroy({ preserveWorkspaceSession: true });
+
+      const restarted = mount(new ProjectWorkspaceSession());
+      expect(
+        restarted.root
+          .querySelector(`[data-board-column="${regular.id}"]`)
+          ?.classList.contains('is-column-collapsed'),
+      ).toBe(true);
+      restarted.panel.destroy();
+    },
+  );
+
+  it('publishes a deferred successful Portfolio preference to the replacement board', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      terminalDefaultsApplied: true,
+    };
+    const regular = settings.projects.statuses.find(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    )!;
+    const save = deferred<void>();
+    const session = new ProjectWorkspaceSession();
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const mount = () => {
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        new AppState(),
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [workspace()],
+          workspaceSession: session,
+          onSaveSettings: () => save.promise,
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+
+    const first = mount();
+    first.root
+      .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!
+      .click();
+    await flushMicrotasks();
+    first.panel.destroy({ preserveWorkspaceSession: true });
+    const replacement = mount();
+    expect(
+      replacement.root
+        .querySelector(`[data-board-column="${regular.id}"]`)
+        ?.classList.contains('is-column-collapsed'),
+    ).toBe(false);
+
+    save.resolve();
+    await flushMicrotasks();
+    expect(
+      replacement.root
+        .querySelector(`[data-board-column="${regular.id}"]`)
+        ?.classList.contains('is-column-collapsed'),
+    ).toBe(true);
+    replacement.panel.destroy();
+  });
+
+  it('does not resubmit a rejected legacy Board normalization after remount and allows one manual retry', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const regular = settings.projects.statuses.find(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    )!;
+    let rejectFirstSave!: (reason: unknown) => void;
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectFirstSave = reject;
+    });
+    const failure = new Error('disk unavailable');
+    const onSaveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => firstSave)
+      .mockResolvedValue(undefined);
+    const announcements: string[] = [];
+    const session = new ProjectWorkspaceSession();
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const mount = () => {
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        new AppState(),
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [workspace()],
+          workspaceSession: session,
+          onSaveSettings,
+          onAnnounce: (message) => announcements.push(message),
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+
+    const first = mount();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    first.panel.destroy({ preserveWorkspaceSession: true });
+    const replacement = mount();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+
+    rejectFirstSave(failure);
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(announcements.filter((message) => message.includes('not saved'))).toHaveLength(1);
+
+    replacement.root
+      .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!
+      .click();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledTimes(2);
+    expect(settings.projects.view.board.terminalDefaultsApplied).toBe(true);
+    replacement.panel.destroy();
+  });
+
+  it('does not queue a stale duplicate when legacy Board normalization succeeds after remount', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const save = deferred<void>();
+    const onSaveSettings = vi.fn(() => save.promise);
+    const announcements: string[] = [];
+    const session = new ProjectWorkspaceSession();
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const mount = () => {
+      const root = attachedContainer();
+      const panel = new ProjectsPanel(
+        new AppState(),
+        store as never,
+        manager as never,
+        settings,
+        {} as never,
+        {
+          snapshots: [workspace()],
+          workspaceSession: session,
+          onSaveSettings,
+          onAnnounce: (message) => announcements.push(message),
+        },
+      );
+      panel.mount(root);
+      return { panel, root };
+    };
+
+    const first = mount();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    first.panel.destroy({ preserveWorkspaceSession: true });
+    const replacement = mount();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+
+    save.resolve();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(onSaveSettings).toHaveBeenCalledOnce();
+    expect(settings.projects.view.board.terminalDefaultsApplied).toBe(true);
+    expect(announcements.some((message) => message.includes('changed elsewhere'))).toBe(false);
+    replacement.panel.destroy();
+  });
+
+  it('destroys every Board listener when automatic normalization remounts the Portfolio', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'board';
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    const save = deferred<void>();
+    const session = new ProjectWorkspaceSession();
+    const store = {
+      list: () => [workspace().project],
+      get: () => workspace().project,
+      activeForLeftPanel: () => [workspace().project],
+      onUpdate: () => () => undefined,
+      refresh: vi.fn(),
+    };
+    const manager = { setStatus: vi.fn(), undoStatus: vi.fn(), create: vi.fn() };
+    const added = vi.spyOn(activeDocument, 'addEventListener');
+    const removed = vi.spyOn(activeDocument, 'removeEventListener');
+    const root = attachedContainer();
+    const panel = new ProjectsPanel(
+      new AppState(),
+      store as never,
+      manager as never,
+      settings,
+      {} as never,
+      {
+        snapshots: [workspace()],
+        workspaceSession: session,
+        onSaveSettings: () => save.promise,
+      },
+    );
+    try {
+      panel.mount(root);
+      await Promise.resolve();
+      save.resolve();
+      await flushMicrotasks();
+      panel.destroy();
+
+      const visibilityAdds = added.mock.calls.filter(([type]) => type === 'visibilitychange');
+      const visibilityRemoves = removed.mock.calls.filter(([type]) => type === 'visibilitychange');
+      expect(visibilityRemoves).toHaveLength(visibilityAdds.length);
+    } finally {
+      panel.destroy();
+      added.mockRestore();
+      removed.mockRestore();
+    }
+  });
+
   it('uses the shared pointer controller for an exact single Project lifecycle move', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const [active, planned] = settings.projects.statuses;

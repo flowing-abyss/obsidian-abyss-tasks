@@ -83,6 +83,8 @@ export interface ProjectsPanelOptions {
     started(pending: PendingProjectBoardUndo): void;
     resolved(pending: PendingProjectBoardUndo, successful: boolean): void;
   };
+  /** CenterPanel retains and remounts the exact pending Portfolio Undo authority. */
+  boardUndoTransferable?: boolean;
   workNoteCommands?: WorkNoteCommandService;
   projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
@@ -128,6 +130,7 @@ export class ProjectsPanel {
     | ((pending: PendingProjectBoardUndo, successful: boolean) => void)
     | undefined;
   private readonly boardUndoOwner: ProjectsPanelOptions['boardUndoOwner'];
+  private readonly boardUndoTransferable: boolean;
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
   private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
@@ -168,6 +171,10 @@ export class ProjectsPanel {
     this.onBoardUndoStarted = opts.onBoardUndoStarted;
     this.onBoardUndoResolved = opts.onBoardUndoResolved;
     this.boardUndoOwner = opts.boardUndoOwner;
+    this.boardUndoTransferable =
+      opts.boardUndoTransferable === true &&
+      opts.boardUndoOwner !== undefined &&
+      opts.onBoardUndoPending !== undefined;
     this.workNoteCommands = opts.workNoteCommands;
     this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
@@ -189,7 +196,20 @@ export class ProjectsPanel {
     // changes arrive via CenterPanel rebuilding this panel (projects mode), so we
     // deliberately do NOT also subscribe to projectStore.onUpdate — that would
     // double-render on every store update.
-    this.offs.push(this.state.on('projectsPanel', () => this.render()));
+    this.offs.push(
+      this.state.on('projectsPanel', () => this.render()),
+      this.workspaceSession.subscribePortfolioPreference(() => this.render()),
+      this.workspaceSession.subscribePortfolioBoardPreferenceMutation(() => this.render()),
+      this.workspaceSession.subscribePortfolioPreferenceFailure((error) => {
+        const conflict =
+          error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+        this.onAnnounce(
+          conflict
+            ? 'Board preferences changed elsewhere. Your change was not saved; review the settled board.'
+            : 'Board preference was not saved. Nothing changed; try again.',
+        );
+      }),
+    );
     this.render();
   }
 
@@ -787,6 +807,17 @@ export class ProjectsPanel {
         session: this.workspaceSession.portfolioBoard,
         onAnnounce: this.onAnnounce,
         overlayScope: this.app,
+        ...(this.boardUndoTransferable && { undoTransferable: true }),
+        ...(this.persistCollectionPreferences && {
+          columnPreference:
+            portfolioPreference.layoutPreferences['board']?.board ??
+            this.settings.projects.view.board,
+          onColumnPreferenceChange: (next: BoardViewPreference) =>
+            this.workspaceSession.updatePortfolioBoardPreference(next).then(() => undefined),
+          columnPreferenceSaving: this.workspaceSession.portfolioBoardPreferenceSaving(),
+          autoPersistInitialColumnPreference:
+            this.workspaceSession.shouldAutoPersistPortfolioBoardPreference(),
+        }),
         ...(this.publicationSequence !== undefined && {
           publicationSequence: this.publicationSequence,
         }),

@@ -1616,6 +1616,7 @@ export class CenterPanel {
                 this.refresh();
               },
             },
+            boardUndoTransferable: true,
             workNoteCommands: this.workNoteCommands,
             projectCommands: this.projectCommands,
             workspaceSession: this.projectWorkspaceSession,
