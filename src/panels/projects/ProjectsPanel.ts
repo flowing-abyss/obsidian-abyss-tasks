@@ -497,6 +497,10 @@ export class ProjectsPanel {
         notes,
         commands,
         commandsEnabled: commands.capabilities().update,
+        overlayScope: this.app,
+        ...(this.publicationSequence !== undefined && {
+          publicationSequence: this.publicationSequence,
+        }),
         session: this.workspaceSession.timelines.workNotes,
         isNarrow,
         scale: this.settings.projects.view.timeline.workNotes.dateRange,
@@ -764,6 +768,10 @@ export class ProjectsPanel {
           projects: timelineSnapshots.map(({ project }) => project),
           snapshots: timelineSnapshots,
           commands: projectCommands,
+          overlayScope: this.app,
+          ...(this.publicationSequence !== undefined && {
+            publicationSequence: this.publicationSequence,
+          }),
           ...(this.workNoteCommands?.capabilities().update === true
             ? { milestoneCommands: this.workNoteCommands }
             : {}),

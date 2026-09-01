@@ -1391,6 +1391,8 @@ export class CenterPanel {
     const timeline = renderContainerResponsiveTimeline(host, (isNarrow) =>
       renderTasksTimeline(host, {
         actions,
+        overlayScope: this.app,
+        publicationSequence: this.projectPublicationSequence,
         collectionSession: session,
         session: this.projectWorkspaceSession.timelines.tasks,
         isNarrow,

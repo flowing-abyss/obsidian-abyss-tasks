@@ -16,6 +16,10 @@ import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteC
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import { taskReconciliationKey, type TaskCommandResult, type TaskSnapshot } from '../../tasks';
 import { inspectorSelectionKey } from '../../ui/inspector/InspectorSelection';
+import {
+  optimisticOverlayStoreFor,
+  type OptimisticOverlayStore,
+} from '../../ui/interaction/OptimisticOverlayStore';
 import { BoundedWindow } from './BoundedWindow';
 import type { ProjectTaskCollectionSession } from './ProjectTaskCollectionSession';
 import {
@@ -124,6 +128,15 @@ export interface TimelineViewOptions<T> {
     readonly scale: TimelineScale<TimelineScope>;
     readonly identityWidth: number;
   }) => void | Promise<void>;
+  /** Application-owned date projection retained while the canonical source catches up. */
+  readonly optimisticOverlay?: {
+    readonly store: OptimisticOverlayStore<
+      TimelineEntry<T>,
+      Readonly<Partial<Record<TimelinePointRole, string>>>
+    >;
+    readonly revision: (entry: TimelineEntry<T>) => string;
+    readonly publicationSequence?: number;
+  };
 }
 
 export interface TimelineViewHandle {
@@ -185,6 +198,8 @@ export interface ProjectsTimelineOptions {
     readonly scale: PortfolioTimelineScale;
     readonly identityWidth: number;
   }) => void | Promise<void>;
+  readonly overlayScope?: object;
+  readonly publicationSequence?: number;
 }
 
 export interface WorkNotesTimelineOptions {
@@ -202,6 +217,8 @@ export interface WorkNotesTimelineOptions {
     readonly scale: WorkNoteTimelineScale;
     readonly identityWidth: number;
   }) => void | Promise<void>;
+  readonly overlayScope?: object;
+  readonly publicationSequence?: number;
 }
 
 export interface TasksTimelineOptions {
@@ -226,6 +243,8 @@ export interface TasksTimelineOptions {
     readonly scale: TaskTimelineScale;
     readonly identityWidth: number;
   }) => void | Promise<void>;
+  readonly overlayScope?: object;
+  readonly publicationSequence?: number;
 }
 
 type TimelineSessionState = LogicalViewportSession &
@@ -325,6 +344,37 @@ function orderedDatedEntries<T>(entries: readonly TimelineEntry<T>[]): readonly 
 
 function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
+}
+
+function timelineOptimisticOverlay<T>(
+  scope: object | undefined,
+  name: string,
+  entries: readonly TimelineEntry<T>[],
+  publicationSequence?: number,
+): TimelineViewOptions<T>['optimisticOverlay'] | undefined {
+  if (!scope) return undefined;
+  const store = optimisticOverlayStoreFor<
+    TimelineEntry<T>,
+    Readonly<Partial<Record<TimelinePointRole, string>>>
+  >(scope, `timeline:${name}`, {
+    keyOf: (entry) => entry.item.key,
+    apply: (entry, patch) => ({ ...entry, dateByRole: { ...entry.dateByRole, ...patch } }),
+    matches: (entry, patch) =>
+      Object.entries(patch).every(
+        ([role, value]) => entry.dateByRole[role as TimelinePointRole] === value,
+      ),
+    isSuccess: successful,
+    timeoutMs: 15_000,
+  });
+  store.observeCanonicalBatch(
+    entries.map((entry) => ({
+      key: entry.item.key,
+      snapshot: entry,
+      revision: JSON.stringify(entry.dateByRole),
+    })),
+    publicationSequence,
+  );
+  return { store, revision: (entry) => JSON.stringify(entry.dateByRole), publicationSequence };
 }
 
 function timelineIdentityAttributes(key: string): Record<string, string> {
@@ -527,6 +577,17 @@ export function renderTimeline<T>(
     scaleButtons.set(candidate, button);
   }
   const today = options.today ?? new Date().toISOString().slice(0, 10);
+  options.optimisticOverlay?.store.observeCanonicalBatch(
+    options.entries.map((entry) => ({
+      key: entry.item.key,
+      snapshot: entry,
+      revision: options.optimisticOverlay!.revision(entry),
+    })),
+    options.optimisticOverlay.publicationSequence,
+  );
+  const entries = options.entries.map(
+    (entry) => options.optimisticOverlay?.store.read(entry.item.key) ?? entry,
+  );
   const todayButton = toolbar.createEl('button', {
     cls: 'abyss-timeline-today abyss-timeline-touch-target',
     text: 'Today',
@@ -561,10 +622,10 @@ export function renderTimeline<T>(
     },
   });
   const dated = orderedDatedEntries(
-    options.entries.filter((entry) => entry.item.kind === 'range' || entry.item.kind === 'point'),
+    entries.filter((entry) => entry.item.kind === 'range' || entry.item.kind === 'point'),
   );
-  const undated = options.entries.filter((entry) => entry.item.kind === 'undated');
-  const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
+  const undated = entries.filter((entry) => entry.item.kind === 'undated');
+  const invalid = entries.filter((entry) => entry.item.kind === 'invalid');
   if (dated.length === 0) toolbar.remove();
   const contentWindow = (() => {
     const content = options.dateWindow ?? inferredDateWindow(dated);
@@ -1226,21 +1287,50 @@ export function renderTimeline<T>(
     ): Promise<boolean> => {
       const entry = entryByKey.get(intent.itemId);
       if (!entry) return false;
+      let patch: Readonly<Partial<Record<TimelinePointRole, string>>>;
+      if ('start' in intent.draft) {
+        if (intent.target === 'start-edge') patch = { start: intent.draft.start.raw };
+        else if (intent.target === 'end-edge') patch = { end: intent.draft.end.raw };
+        else patch = { start: intent.draft.start.raw, end: intent.draft.end.raw };
+      } else {
+        patch = { [intent.ownedRole as TimelinePointRole]: intent.draft.at.raw };
+      }
+      const transaction = options.optimisticOverlay?.store.begin(
+        entry,
+        options.optimisticOverlay.revision(entry),
+        patch,
+        { id: `timeline:${scope}` },
+      );
+      let changed: boolean;
       if ('start' in intent.draft) {
         if (intent.target === 'start-edge') {
-          return commit(entry, 'start', intent.draft.start.raw, initiatingElement);
+          changed = await commit(entry, 'start', intent.draft.start.raw, initiatingElement);
+        } else if (intent.target === 'end-edge') {
+          changed = await commit(entry, 'end', intent.draft.end.raw, initiatingElement);
+        } else {
+          changed = await commitRange(
+            entry,
+            intent.draft.start.raw,
+            intent.draft.end.raw,
+            initiatingElement,
+          );
         }
-        if (intent.target === 'end-edge') {
-          return commit(entry, 'end', intent.draft.end.raw, initiatingElement);
-        }
-        return commitRange(entry, intent.draft.start.raw, intent.draft.end.raw, initiatingElement);
+      } else {
+        changed = await commit(
+          entry,
+          intent.ownedRole as TimelinePointRole,
+          intent.draft.at.raw,
+          initiatingElement,
+        );
       }
-      return commit(
-        entry,
-        intent.ownedRole as TimelinePointRole,
-        intent.draft.at.raw,
-        initiatingElement,
-      );
+      if (transaction)
+        options.optimisticOverlay?.store.observeCommandResult(
+          entry.item.key,
+          { type: changed ? 'ok' : (feedback.dataset['resultType'] ?? 'failure') },
+          transaction.id,
+          transaction.token,
+        );
+      return changed;
     };
 
     const stopAutoscroll = (): void => {
@@ -1746,6 +1836,12 @@ export function renderProjectsTimeline(
 
   return renderTimeline<PortfolioTimelineValue>(container, {
     entries,
+    optimisticOverlay: timelineOptimisticOverlay(
+      options.overlayScope,
+      'portfolio',
+      entries,
+      options.publicationSequence,
+    ),
     scope: 'portfolio',
     undatedRole: 'start',
     today,
@@ -1937,6 +2033,12 @@ export function renderWorkNotesTimeline(
   };
   return renderTimeline<WorkNoteSnapshot>(container, {
     entries: prepared.map(({ entry }) => entry),
+    optimisticOverlay: timelineOptimisticOverlay(
+      options.overlayScope,
+      'work-notes',
+      prepared.map(({ entry }) => entry),
+      options.publicationSequence,
+    ),
     scope: 'workNotes',
     undatedRole: 'start',
     ...(options.scale && { scale: options.scale }),
@@ -2069,6 +2171,12 @@ export function renderTasksTimeline(
   };
   const handle = renderTimeline(container, {
     entries,
+    optimisticOverlay: timelineOptimisticOverlay(
+      options.overlayScope,
+      'tasks',
+      entries,
+      options.publicationSequence,
+    ),
     scope: 'tasks',
     undatedRole: 'scheduled',
     ...(options.scale && { scale: options.scale }),
