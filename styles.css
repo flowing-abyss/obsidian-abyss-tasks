@@ -3329,6 +3329,8 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 /* Board cards retain their draggable outer host while EntityPresentation owns content slots. */
 .abyss-entity-presentation--board-card {
   min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
 .abyss-task-board-presentation > .abyss-entity-primary,
@@ -3341,8 +3343,31 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   min-width: 0;
 }
 
-.abyss-task-board-content {
-  display: block;
+.abyss-entity-presentation--board-card > .abyss-entity-primary,
+.abyss-entity-presentation--board-card > .abyss-entity-secondary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.abyss-entity-presentation--board-card .abyss-entity-identity {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.abyss-entity-presentation--board-card .abyss-entity-secondary {
+  flex-wrap: wrap;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.abyss-entity-presentation--board-card .abyss-entity-actions {
+  position: absolute;
+  top: 4px;
+  right: 4px;
 }
 .abyss-task-card.abyss-multi-selected {
   background: var(--background-modifier-active-hover);

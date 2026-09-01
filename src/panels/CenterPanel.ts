@@ -1246,11 +1246,26 @@ export class CenterPanel {
           this.selectionLiveRegion().textContent = message;
         },
         overlayScope: this.app,
+        taskSuccessor: (observed, published) => {
+          const resolution = this.queries.resolve(observed.ref);
+          let current: TaskSnapshot | undefined;
+          if (resolution.type === 'exact') current = resolution.task;
+          else if (resolution.type === 'rebased' || resolution.type === 'visual') {
+            current = resolution.current;
+          }
+          return (
+            current !== undefined &&
+            current.ref.filePath === published.ref.filePath &&
+            current.ref.line === published.ref.line &&
+            current.ref.revision === published.ref.revision
+          );
+        },
         renderItem: (container, action) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
+            projectTaskBoard: true,
             ...(this.tasks && {
               nextActionState: (task) => projectedNextAction(this.tasks!, task),
             }),
@@ -2602,6 +2617,9 @@ export class CenterPanel {
     for (const task of tasks) this.renderTaskCard(container, task);
   }
 
+  // This method retains the legacy list/timeline interaction surface; Board-only
+  // presentation is deliberately isolated by projectTaskBoard below.
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   private renderTaskCard(
     container: HTMLElement,
     task: TaskSnapshot,
@@ -2611,6 +2629,8 @@ export class CenterPanel {
       readonly manageStatusMarker?: boolean;
       readonly dependencyDecision?: DependencyCompletionDecision;
       readonly projectTaskCollection?: boolean;
+      /** Only Board cards use the shared Board EntityPresentation slot layout. */
+      readonly projectTaskBoard?: boolean;
       readonly nextActionState?: (task: TaskSnapshot) => boolean | undefined;
       readonly onAddPropertyFilter?: (filter: PropertyFilter) => void;
     } = {},
@@ -2639,189 +2659,289 @@ export class CenterPanel {
     card.dataset['line'] = String(task.source.line);
     this.registerProjectTaskFocus(card, task, context.projectTaskCollection === true);
 
-    const cardContent =
-      context.projectTaskCollection === true
-        ? new EntityPresentation({
-            layout: 'board-card',
-            className: 'abyss-task-board-presentation',
-            primarySlots: ['identity'],
-            identity: {
-              value: task.title,
-              text: '',
-              element: 'div',
-              className: 'abyss-task-board-content',
-              content: () => undefined,
+    if (context.projectTaskBoard === true) {
+      const due = task.planning.due ?? task.planning.scheduled;
+      const tags = task.tags ?? [];
+      const subtaskCount = task.subtasks?.length ?? 0;
+      const doneCount = task.subtasks?.filter((subtask) => subtask.status === 'done').length ?? 0;
+      const addPropertyFilter =
+        context.onAddPropertyFilter ?? ((filter: PropertyFilter) => this.addPropertyFilter(filter));
+      new EntityPresentation({
+        layout: 'board-card',
+        className: 'abyss-task-board-presentation',
+        primaryClassName: 'abyss-entity-primary',
+        secondaryClassName: 'abyss-entity-secondary',
+        primarySlots: ['status', 'identity', 'priority', 'date'],
+        secondarySlots: ['health', 'progress', 'relations', 'secondary'],
+        status: {
+          value: task.statusSymbol,
+          text: '',
+          element: 'div',
+          className: 'abyss-task-board-status',
+          content: (slot) =>
+            renderStatusMarker(slot, {
+              task,
+              registry: this.statusRegistry,
+              interactive: context.manageStatusMarker !== false,
+              ...(dependencyDecision && { completionDecision: dependencyDecision }),
+              onLeftClick: () => void this.toggleTask(task),
+              onContextMenu: (event) => {
+                event.stopPropagation();
+                this.openStatusMenu(event, task);
+              },
+            }),
+        },
+        identity: {
+          value: task.title,
+          text: '',
+          element: 'div',
+          className: 'abyss-task-board-identity',
+          content: (slot) => {
+            const title = slot.createEl('span', {
+              cls: 'abyss-task-title',
+              attr: { title: task.title },
+            });
+            renderTaskText(title, task.markdownTitle, {
+              app: this.app,
+              sourcePath: task.source.filePath,
+              component: this.md,
+              onEditLink: (occurrence, token) => this.editTaskLink(task, occurrence, token),
+            });
+          },
+        },
+        priority: { value: task.priority, className: 'abyss-task-board-priority' },
+        ...(due && {
+          date: {
+            value: task.planning.time
+              ? `${this.formatDate(due)} ${task.planning.time}`
+              : this.formatDate(due),
+            className: `abyss-task-date ${this.getDateClass(due)}`.trim(),
+            onClick: (event) => {
+              event.stopPropagation();
+              addPropertyFilter({ type: 'date', value: due });
             },
-          })
-            .render(card)
-            .querySelector<HTMLElement>('[data-entity-slot="identity"]')!
-        : card;
-    const mainRow = cardContent.createDiv({ cls: 'abyss-task-card-main-row' });
+          },
+        }),
+        ...(dependencyDecision && {
+          health: {
+            value: dependencyDecision.type,
+            text: '',
+            className: 'abyss-task-board-health',
+            content: (slot) => renderDependencyBadge(slot, dependencyDecision),
+          },
+        }),
+        ...(subtaskCount > 0 && {
+          progress: {
+            value: `${String(doneCount)}/${String(subtaskCount)} complete`,
+            className: 'abyss-task-count-badge',
+          },
+        }),
+        ...(tags.length > 0 && {
+          relations: {
+            value: tags.join(' '),
+            text: '',
+            className: 'abyss-task-board-relations',
+            content: (slot) => {
+              for (const tag of tags.slice(0, 2)) {
+                const tagEl = slot.createEl('span', { cls: 'abyss-task-tag', text: tag });
+                const color = this.getTagColor(tag);
+                if (color) {
+                  tagEl.setCssProps({ '--abyss-tag-color': color });
+                  tagEl.addClass('abyss-task-tag--colored');
+                }
+                tagEl.addEventListener('click', (event) => {
+                  event.stopPropagation();
+                  addPropertyFilter({ type: 'tag', value: tag });
+                });
+              }
+            },
+          },
+        }),
+        ...(task.description && {
+          secondary: { value: task.description.split('\n')[0] ?? '', className: 'abyss-task-desc' },
+        }),
+        actions: [
+          {
+            label: 'Delete task',
+            icon: 'x',
+            onClick: (event) => {
+              event.stopPropagation();
+              void this.deleteTask(task);
+            },
+          },
+        ],
+      }).render(card);
+    } else {
+      const cardContent = card;
+      const mainRow = cardContent.createDiv({ cls: 'abyss-task-card-main-row' });
 
-    renderStatusMarker(mainRow, {
-      task,
-      registry: this.statusRegistry,
-      interactive: context.manageStatusMarker !== false,
-      ...(dependencyDecision && { completionDecision: dependencyDecision }),
-      onLeftClick: () => void this.toggleTask(task),
-      onContextMenu: (ev) => {
-        ev.stopPropagation();
-        this.openStatusMenu(ev, task);
-      },
-    });
+      renderStatusMarker(mainRow, {
+        task,
+        registry: this.statusRegistry,
+        interactive: context.manageStatusMarker !== false,
+        ...(dependencyDecision && { completionDecision: dependencyDecision }),
+        onLeftClick: () => void this.toggleTask(task),
+        onContextMenu: (ev) => {
+          ev.stopPropagation();
+          this.openStatusMenu(ev, task);
+        },
+      });
 
-    // Pre-compute metadata needed in both body and meta-right
-    const today = localDate(window.moment().format('YYYY-MM-DD'));
-    const sel = this.state.get('selectedList');
-    const d = task.planning.due ?? task.planning.scheduled; // only explicit dates show a badge
-    const tags = task.tags ?? [];
-    const subtaskCount = task.subtasks?.length ?? 0;
-    const commentCount = task.comments?.length ?? 0;
-    const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
-    const suppressToday = sel === 'today' && d === today;
-    const addPropertyFilter =
-      context.onAddPropertyFilter ?? ((filter: PropertyFilter) => this.addPropertyFilter(filter));
+      // Pre-compute metadata needed in both body and meta-right
+      const today = localDate(window.moment().format('YYYY-MM-DD'));
+      const sel = this.state.get('selectedList');
+      const d = task.planning.due ?? task.planning.scheduled; // only explicit dates show a badge
+      const tags = task.tags ?? [];
+      const subtaskCount = task.subtasks?.length ?? 0;
+      const commentCount = task.comments?.length ?? 0;
+      const doneCount = task.subtasks?.filter((s) => s.status === 'done').length ?? 0;
+      const suppressToday = sel === 'today' && d === today;
+      const addPropertyFilter =
+        context.onAddPropertyFilter ?? ((filter: PropertyFilter) => this.addPropertyFilter(filter));
 
-    const body = mainRow.createDiv({ cls: 'abyss-task-body' });
-    const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
+      const body = mainRow.createDiv({ cls: 'abyss-task-body' });
+      const titleRow = body.createDiv({ cls: 'abyss-task-title-row' });
 
-    if (dependencyDecision) {
-      renderDependencyBadge(titleRow, dependencyDecision);
-    }
+      if (dependencyDecision) {
+        renderDependencyBadge(titleRow, dependencyDecision);
+      }
 
-    if (task.recurrence) {
-      renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
-    }
+      if (task.recurrence) {
+        renderRecurrenceBadge(titleRow, recurrenceBadgeInput(task.recurrence));
+      }
 
-    // Count badges BEFORE title text so they're seen while reading left-to-right
-    if (subtaskCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
-      setIcon(badge, 'check-square');
-      badge.createEl('span', { text: `${doneCount}/${subtaskCount}` });
-    }
-    if (commentCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
-      setIcon(badge, 'message-square');
-      badge.createEl('span', { text: String(commentCount) });
-    }
-    // Attached materials: link count precomputed by TaskIndex (no per-render parsing).
-    const linkCount = task.presentation.linkCount ?? 0;
-    if (linkCount > 0) {
-      const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
-      setIcon(badge, 'paperclip');
-      badge.createEl('span', { text: String(linkCount) });
-    }
+      // Count badges BEFORE title text so they're seen while reading left-to-right
+      if (subtaskCount > 0) {
+        const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
+        setIcon(badge, 'check-square');
+        badge.createEl('span', { text: `${doneCount}/${subtaskCount}` });
+      }
+      if (commentCount > 0) {
+        const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
+        setIcon(badge, 'message-square');
+        badge.createEl('span', { text: String(commentCount) });
+      }
+      // Attached materials: link count precomputed by TaskIndex (no per-render parsing).
+      const linkCount = task.presentation.linkCount ?? 0;
+      if (linkCount > 0) {
+        const badge = titleRow.createEl('span', { cls: 'abyss-task-count-badge' });
+        setIcon(badge, 'paperclip');
+        badge.createEl('span', { text: String(linkCount) });
+      }
 
-    const titleEl = titleRow.createEl('span', {
-      cls: 'abyss-task-title',
-      attr: { title: task.title },
-    });
-    renderTaskText(titleEl, task.markdownTitle, {
-      app: this.app,
-      sourcePath: task.source.filePath,
-      component: this.md,
-      onEditLink: (occ, token) => this.editTaskLink(task, occ, token),
-    });
-    if (task.description) {
-      const descEl = cardContent.createDiv({ cls: 'abyss-task-desc' });
-      // Render the first description line as markdown so links are clickable here too.
-      // No onEditLink: the card is a compact preview; link editing happens in the panel.
-      renderTaskText(descEl, task.description.split('\n')[0] ?? '', {
+      const titleEl = titleRow.createEl('span', {
+        cls: 'abyss-task-title',
+        attr: { title: task.title },
+      });
+      renderTaskText(titleEl, task.markdownTitle, {
         app: this.app,
         sourcePath: task.source.filePath,
         component: this.md,
+        onEditLink: (occ, token) => this.editTaskLink(task, occ, token),
       });
-    }
+      if (task.description) {
+        const descEl = cardContent.createDiv({ cls: 'abyss-task-desc' });
+        // Render the first description line as markdown so links are clickable here too.
+        // No onEditLink: the card is a compact preview; link editing happens in the panel.
+        renderTaskText(descEl, task.description.split('\n')[0] ?? '', {
+          app: this.app,
+          sourcePath: task.source.filePath,
+          component: this.md,
+        });
+      }
 
-    const showSourceNote = shouldShowSourceNote(
-      task,
-      this.settings.sourceNoteDisplay,
-      this.settings.customFilePath,
-    );
-    const hasRightMeta =
-      showSourceNote || (d && !suppressToday) || task.planning.time || tags.length > 0;
-    if (hasRightMeta) {
-      const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
+      const showSourceNote = shouldShowSourceNote(
+        task,
+        this.settings.sourceNoteDisplay,
+        this.settings.customFilePath,
+      );
+      const hasRightMeta =
+        showSourceNote || (d && !suppressToday) || task.planning.time || tags.length > 0;
+      if (hasRightMeta) {
+        const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
 
-      // Date + optional time: date part and time part are separately clickable
-      if (d && !suppressToday) {
-        const dateEl = metaRight.createEl('span', {
-          cls: `abyss-task-date ${this.getDateClass(d)}`.trim(),
-        });
-        // Date part: calendar icon + date text — click to filter by date
-        const datePart = dateEl.createEl('span', {
-          cls: 'abyss-task-date-part abyss-cursor-pointer',
-        });
-        const calIcon = datePart.createEl('span', { cls: 'abyss-date-icon' });
-        setIcon(calIcon, 'calendar');
-        datePart.createEl('span', { text: this.formatDate(d) });
-        datePart.addEventListener('click', (e) => {
-          e.stopPropagation();
-          addPropertyFilter({ type: 'date', value: d });
-        });
-        // Time part: clock icon + time text — click to filter by time
-        if (task.planning.time) {
-          const timePart = dateEl.createEl('span', {
-            cls: 'abyss-task-time-part abyss-cursor-pointer',
+        // Date + optional time: date part and time part are separately clickable
+        if (d && !suppressToday) {
+          const dateEl = metaRight.createEl('span', {
+            cls: `abyss-task-date ${this.getDateClass(d)}`.trim(),
           });
-          const clockIcon = timePart.createEl('span', { cls: 'abyss-date-icon' });
+          // Date part: calendar icon + date text — click to filter by date
+          const datePart = dateEl.createEl('span', {
+            cls: 'abyss-task-date-part abyss-cursor-pointer',
+          });
+          const calIcon = datePart.createEl('span', { cls: 'abyss-date-icon' });
+          setIcon(calIcon, 'calendar');
+          datePart.createEl('span', { text: this.formatDate(d) });
+          datePart.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addPropertyFilter({ type: 'date', value: d });
+          });
+          // Time part: clock icon + time text — click to filter by time
+          if (task.planning.time) {
+            const timePart = dateEl.createEl('span', {
+              cls: 'abyss-task-time-part abyss-cursor-pointer',
+            });
+            const clockIcon = timePart.createEl('span', { cls: 'abyss-date-icon' });
+            setIcon(clockIcon, 'clock');
+            timePart.createEl('span', { text: task.planning.time });
+            timePart.addEventListener('click', (e) => {
+              e.stopPropagation();
+              addPropertyFilter({ type: 'time', value: task.planning.time! });
+            });
+          }
+        } else if (!d && task.planning.time) {
+          const timeEl = metaRight.createEl('span', {
+            cls: 'abyss-task-date abyss-cursor-pointer',
+          });
+          const clockIcon = timeEl.createEl('span', { cls: 'abyss-date-icon' });
           setIcon(clockIcon, 'clock');
-          timePart.createEl('span', { text: task.planning.time });
-          timePart.addEventListener('click', (e) => {
+          timeEl.createEl('span', { text: task.planning.time });
+          timeEl.addEventListener('click', (e) => {
             e.stopPropagation();
             addPropertyFilter({ type: 'time', value: task.planning.time! });
           });
         }
-      } else if (!d && task.planning.time) {
-        const timeEl = metaRight.createEl('span', { cls: 'abyss-task-date abyss-cursor-pointer' });
-        const clockIcon = timeEl.createEl('span', { cls: 'abyss-date-icon' });
-        setIcon(clockIcon, 'clock');
-        timeEl.createEl('span', { text: task.planning.time });
-        timeEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          addPropertyFilter({ type: 'time', value: task.planning.time! });
-        });
-      }
 
-      // Source note chip before tags
-      if (showSourceNote) {
-        renderSourceNoteChip(metaRight, task, (filePath) => {
-          addPropertyFilter({ type: 'file', filePath });
-        });
-      }
-
-      // Tags last (max 2, with group color)
-      for (const tag of tags.slice(0, 2)) {
-        const tagEl = metaRight.createEl('span', { cls: 'abyss-task-tag', text: tag });
-        const color = this.getTagColor(tag);
-        if (color) {
-          tagEl.setCssProps({ '--abyss-tag-color': color });
-          tagEl.addClass('abyss-task-tag--colored');
+        // Source note chip before tags
+        if (showSourceNote) {
+          renderSourceNoteChip(metaRight, task, (filePath) => {
+            addPropertyFilter({ type: 'file', filePath });
+          });
         }
-        tagEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          addPropertyFilter({ type: 'tag', value: tag });
-        });
-        tagEl.addClass('abyss-cursor-pointer');
-        // Drop target: dragging a tag onto a chip replaces it
-        tagEl.addEventListener('dragover', (e) => {
-          const dragging = this.state.get('draggingTag');
-          if (!dragging || dragging === tag) return;
-          e.preventDefault();
-          e.stopPropagation();
-          tagEl.classList.add('abyss-drop-target');
-        });
-        tagEl.addEventListener('dragleave', () => {
-          tagEl.classList.remove('abyss-drop-target');
-        });
-        tagEl.addEventListener('drop', (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          tagEl.classList.remove('abyss-drop-target');
-          const dragging = this.state.get('draggingTag');
-          if (!dragging || dragging === tag) return;
-          void this.patchTaskTags(task, [dragging], [tag]);
-        });
+
+        // Tags last (max 2, with group color)
+        for (const tag of tags.slice(0, 2)) {
+          const tagEl = metaRight.createEl('span', { cls: 'abyss-task-tag', text: tag });
+          const color = this.getTagColor(tag);
+          if (color) {
+            tagEl.setCssProps({ '--abyss-tag-color': color });
+            tagEl.addClass('abyss-task-tag--colored');
+          }
+          tagEl.addEventListener('click', (e) => {
+            e.stopPropagation();
+            addPropertyFilter({ type: 'tag', value: tag });
+          });
+          tagEl.addClass('abyss-cursor-pointer');
+          // Drop target: dragging a tag onto a chip replaces it
+          tagEl.addEventListener('dragover', (e) => {
+            const dragging = this.state.get('draggingTag');
+            if (!dragging || dragging === tag) return;
+            e.preventDefault();
+            e.stopPropagation();
+            tagEl.classList.add('abyss-drop-target');
+          });
+          tagEl.addEventListener('dragleave', () => {
+            tagEl.classList.remove('abyss-drop-target');
+          });
+          tagEl.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            tagEl.classList.remove('abyss-drop-target');
+            const dragging = this.state.get('draggingTag');
+            if (!dragging || dragging === tag) return;
+            void this.patchTaskTags(task, [dragging], [tag]);
+          });
+        }
       }
     }
 
@@ -2874,15 +2994,16 @@ export class CenterPanel {
       this.state.set('taskStack', [task]);
     });
 
-    renderEntityActionLayer(card, {
-      className: 'abyss-task-delete-btn',
-      label: 'Delete task',
-      icon: 'x',
-      onActivate: (e) => {
-        e.stopPropagation();
-        void this.deleteTask(task);
-      },
-    });
+    if (!context.projectTaskBoard)
+      renderEntityActionLayer(card, {
+        className: 'abyss-task-delete-btn',
+        label: 'Delete task',
+        icon: 'x',
+        onActivate: (e) => {
+          e.stopPropagation();
+          void this.deleteTask(task);
+        },
+      });
 
     // Drag source
     card.setAttribute('draggable', 'true');

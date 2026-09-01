@@ -728,4 +728,30 @@ describe('BoardInteractionController conditional Undo', () => {
     expect(h.controller.invalidateUndo()).toBe(false);
     expect(await h.controller.undo()).toBe(false);
   });
+
+  it('does not expose Undo for an accepted command until canonical publication releases it', async () => {
+    const h = harness();
+    h.commitMove.mockResolvedValueOnce({
+      type: 'success',
+      settled: false,
+      undo: { authority: { revision: 'r2' }, evidence: 'undo:r2' },
+    });
+    await h.controller.requestMove({
+      itemId: 'card-1',
+      source: { columnId: 'todo', position: 0, evidence: 'source:0' },
+      destinationColumnId: 'doing',
+      enabled: true,
+    });
+
+    expect(h.controller.projection().accessibility.undoAvailable).toBe(false);
+    expect(
+      h.controller.acceptPublishedUndo({ revision: 'r2' }, 'undo:r2', {
+        itemId: 'card-1',
+        observedSource: { columnId: 'todo', position: 0, evidence: 'source:0' },
+        destination: { columnId: 'doing', position: 2, evidence: 'selector:doing:2' },
+        interactionEpoch: 1,
+      }),
+    ).toBe(true);
+    expect(h.controller.projection().accessibility.undoAvailable).toBe(true);
+  });
 });

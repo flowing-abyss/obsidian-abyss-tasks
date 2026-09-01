@@ -583,6 +583,21 @@ export class BoardInteractionController<
     return true;
   }
 
+  /**
+   * The board calls this only after its application-owned overlay observes the
+   * matching canonical publication. Command acceptance alone must never expose Undo.
+   */
+  acceptPublishedUndo(
+    authority: UndoAuthority,
+    evidence: string,
+    move: BoardMoveIntent<ItemId, ColumnId>,
+  ): boolean {
+    if (this.active || this.undoPending || this.undoToken) return false;
+    this.undoToken = Object.freeze({ authority, evidence, move });
+    this.publish();
+    return true;
+  }
+
   private snapshot(): BoardGeometrySnapshot<ItemId, ColumnId> {
     return copySnapshot(this.ports.geometry.snapshot());
   }
@@ -732,7 +747,8 @@ export class BoardInteractionController<
 
     this.active = undefined;
     if (result.type === 'success') {
-      this.undoToken = result.undo ? { ...result.undo, move: intent } : undefined;
+      this.undoToken =
+        result.settled !== false && result.undo ? { ...result.undo, move: intent } : undefined;
       this.ports.restoreFocus?.(active.itemId, destination.columnId);
       if (result.settled !== false) {
         this.ports.announce({ type: 'success' });

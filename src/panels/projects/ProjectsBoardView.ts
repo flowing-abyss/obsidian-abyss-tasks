@@ -20,6 +20,7 @@ import {
   BoardInteractionController,
   type BoardAnnouncement,
   type BoardDestinationGeometry,
+  type BoardMoveIntent,
   type BoardObservedPosition,
   type BoardRect,
   type BoardRenderProjection,
@@ -111,6 +112,10 @@ export interface BoardViewOptions<T> {
     /** Stable write identity, intentionally distinct from a revision-sensitive DOM item key. */
     readonly keyOf: (item: T) => string;
     readonly revision: (item: T) => string;
+    /** Ordered source generation when the entity provider exposes one. */
+    readonly publicationSequence?: (item: T) => number | undefined;
+    /** Proven entity continuity when a canonical source key changes. */
+    readonly continuity?: (observed: T, published: T) => boolean;
     /** Returns the configured board column for either an observed or optimistic entity. */
     readonly columnKey: (item: T) => string;
     /** The active Board mount owns the live-region callback for registry-backed stores. */
@@ -161,6 +166,8 @@ export interface ProjectTasksBoardOptions {
   readonly onItemBlur?: () => void;
   readonly announce?: (message: string) => void;
   readonly overlayScope?: object;
+  /** TaskIndex-proven successor relation; callers must not use fuzzy identity. */
+  readonly taskSuccessor?: (observed: TaskSnapshot, published: TaskSnapshot) => boolean;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -233,6 +240,20 @@ export function renderBoard<T>(
 ): BoardViewHandle {
   container.addClass('abyss-board');
   const boardId = `abyss-board-${String(++nextBoardId)}`;
+  type UndoAuthority = {
+    readonly item: T;
+    readonly columnKey: string;
+    readonly result: BoardMutationResult;
+  };
+  let interactionController: BoardInteractionController<string, string, UndoAuthority> | undefined;
+  const pendingOverlayUndos = new Map<
+    number,
+    {
+      readonly authority: UndoAuthority;
+      readonly evidence: string;
+      readonly move: BoardMoveIntent<string, string>;
+    }
+  >();
   const presentationEnabled = options.presentationEnabled ?? options.mutationEnabled !== false;
   const overrides = new Map<string, string>();
   const sourceItems = [
@@ -244,19 +265,31 @@ export function renderBoard<T>(
   ];
   const overlayKey = (item: T): string =>
     options.optimisticOverlay?.keyOf(item) ?? options.itemKey(item);
+  const overlayOwner = { id: boardId, announce: options.announce };
   let destroyed = false;
   const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe((settlement) => {
-    if (settlement && options.optimisticOverlay?.presentationAnnouncement)
-      options.announce?.(settlement.message);
+    if (settlement) {
+      const pendingUndo = pendingOverlayUndos.get(settlement.transactionId);
+      pendingOverlayUndos.delete(settlement.transactionId);
+      if (settlement.published && pendingUndo) {
+        interactionController?.acceptPublishedUndo(
+          pendingUndo.authority,
+          pendingUndo.evidence,
+          pendingUndo.move,
+        );
+      }
+    }
     queueMicrotask(() => {
       if (!destroyed) render();
     });
-  });
+  }, overlayOwner);
   for (const item of sourceItems) {
     options.optimisticOverlay?.store.observePublication(
       overlayKey(item),
       item,
       options.optimisticOverlay.revision(item),
+      options.optimisticOverlay.publicationSequence?.(item),
+      options.optimisticOverlay.continuity,
     );
   }
   const configuredColumnIds =
@@ -336,14 +369,8 @@ export function renderBoard<T>(
   } | null = options.initialUndo ?? null;
   let undoInFlight = options.initialUndoInFlight === true;
   const cleanups: Array<() => void> = [];
-  type UndoAuthority = {
-    readonly item: T;
-    readonly columnKey: string;
-    readonly result: BoardMutationResult;
-  };
   let interactionProjection: BoardRenderProjection<string, string> | undefined;
   let pointerOwner: HTMLElement | null = null;
-  let interactionController: BoardInteractionController<string, string, UndoAuthority> | undefined;
   let activePointerId: number | undefined;
   let lastPointerPoint: { x: number; y: number } | undefined;
   let autoscrollDirection = 0;
@@ -761,6 +788,7 @@ export function renderBoard<T>(
             item,
             options.optimisticOverlay.revision(item),
             intent.destination.columnId,
+            overlayOwner,
           );
         if (transaction) queueMicrotask(() => !destroyed && render());
         let result: BoardMutationResult;
@@ -768,7 +796,12 @@ export function renderBoard<T>(
           result = await (options.executeMutation?.(command, initiator) ?? command());
         } catch (error) {
           if (transaction) {
-            options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
+            options.optimisticOverlay?.store.cancel(
+              overlayKey(item),
+              'io',
+              transaction.id,
+              transaction.token,
+            );
             queueMicrotask(() => !destroyed && render());
           }
           return {
@@ -778,7 +811,12 @@ export function renderBoard<T>(
           };
         }
         if (transaction && result === undefined) {
-          options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
+          options.optimisticOverlay?.store.cancel(
+            overlayKey(item),
+            'io',
+            transaction.id,
+            transaction.token,
+          );
           queueMicrotask(() => !destroyed && render());
           return { type: 'failure', reason: 'io-error', announced: true };
         }
@@ -787,6 +825,7 @@ export function renderBoard<T>(
             overlayKey(item),
             result,
             transaction.id,
+            transaction.token,
           );
         }
         if (!successful(result)) {
@@ -799,6 +838,13 @@ export function renderBoard<T>(
         }
         if (transaction) {
           const authority = { item, columnKey: intent.destination.columnId, result };
+          if (options.undo) {
+            pendingOverlayUndos.set(transaction.id, {
+              authority,
+              evidence: intent.destination.evidence,
+              move: intent,
+            });
+          }
           options.onMutation?.(item, intent.destination.columnId, result);
           queueMicrotask(() => !destroyed && render());
           return {
@@ -880,6 +926,7 @@ export function renderBoard<T>(
         item,
         options.optimisticOverlay.revision(item),
         columnKey,
+        overlayOwner,
       );
     if (transaction) queueMicrotask(() => !destroyed && render());
     const pending = options.executeMutation?.(command, initiator) ?? command();
@@ -887,7 +934,12 @@ export function renderBoard<T>(
       .then((result) => {
         if (destroyed) return;
         if (transaction && result === undefined) {
-          options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
+          options.optimisticOverlay?.store.cancel(
+            overlayKey(item),
+            'io',
+            transaction.id,
+            transaction.token,
+          );
           render();
           return;
         }
@@ -896,6 +948,7 @@ export function renderBoard<T>(
             overlayKey(item),
             result,
             transaction.id,
+            transaction.token,
           );
         }
         if (!successful(result)) return;
@@ -914,7 +967,12 @@ export function renderBoard<T>(
       })
       .catch(() => {
         if (!transaction || destroyed) return;
-        options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
+        options.optimisticOverlay?.store.cancel(
+          overlayKey(item),
+          'io',
+          transaction.id,
+          transaction.token,
+        );
         render();
       });
   };
@@ -1560,8 +1618,28 @@ export function renderWorkNotesBoard(
           },
         ),
         keyOf: ({ path }: WorkNoteSnapshot) => path,
+        // This is both a source guard and a rendered-card fingerprint. A non-status
+        // edit must compete with (rather than silently settle) a pending status move.
         revision: (note: WorkNoteSnapshot) =>
-          `${String(note.presetRevision)}:${note.presetFingerprint}:${note.statusId ?? ''}:${note.rawStatus ?? ''}`,
+          JSON.stringify({
+            presetRevision: note.presetRevision,
+            presetFingerprint: note.presetFingerprint,
+            path: note.path,
+            kind: note.kind,
+            projectPath: note.projectPath,
+            statusId: note.statusId,
+            rawStatus: note.rawStatus,
+            writableStatusShape: note.writableStatusShape,
+            priority: note.priority,
+            description: note.description,
+            updated: note.updated,
+            range: note.range,
+            id: note.id,
+            milestonePath: note.milestonePath,
+            blockedByPaths: note.blockedByPaths,
+            relatedPaths: note.relatedPaths,
+            diagnostics: note.diagnostics,
+          }),
         columnKey: (note: WorkNoteSnapshot) => note.statusId ?? 'unmapped',
         presentationAnnouncement: true,
       }
@@ -1608,9 +1686,29 @@ export function renderProjectTasksBoard(
 ): BoardViewHandle {
   const mutation = createProjectActionBoardMutation(options.statuses, options.onMoveStatus);
   const statusById = new Map(options.statuses.map((status) => [status.id, status]));
+  const taskIdCounts = new Map<string, number>();
+  for (const { task } of options.actions) {
+    const id = task.dependency?.id;
+    if (id) taskIdCounts.set(id, (taskIdCounts.get(id) ?? 0) + 1);
+  }
   const stableTaskStatusKey = ({ task }: ProjectAction): string => {
-    // A status write replaces ref.revision; its file and source line remain its write identity.
+    // Tasks-compatible IDs survive both a status rewrite and a source relocation. Only
+    // use them when unique; an ambiguous ID must retain precise source identity.
+    const id = task.dependency?.id;
+    if (id && taskIdCounts.get(id) === 1) return `id:${id}`;
     return `source:${task.ref.filePath}:${String(task.ref.line)}`;
+  };
+  const taskPublicationSequence = (revision: string): number | undefined => {
+    const prefix = 'task-ref:1:';
+    if (!revision.startsWith(prefix)) return undefined;
+    try {
+      const parsed = JSON.parse(revision.slice(prefix.length)) as unknown;
+      if (!Array.isArray(parsed) || typeof parsed[1] !== 'string') return undefined;
+      const generation = Number.parseInt(parsed[1], 36);
+      return Number.isSafeInteger(generation) ? generation : undefined;
+    } catch {
+      return undefined;
+    }
   };
   const optimisticOverlay = options.overlayScope
     ? {
@@ -1640,6 +1738,12 @@ export function renderProjectTasksBoard(
         ),
         keyOf: stableTaskStatusKey,
         revision: ({ task }: ProjectAction) => task.ref.revision,
+        publicationSequence: ({ task }: ProjectAction) =>
+          taskPublicationSequence(task.ref.revision),
+        ...(options.taskSuccessor && {
+          continuity: (observed: ProjectAction, published: ProjectAction) =>
+            options.taskSuccessor!(observed.task, published.task),
+        }),
         columnKey: ({ task }: ProjectAction) =>
           options.statuses.find(({ symbol }) => symbol === task.statusSymbol)?.id ?? 'unmapped',
         presentationAnnouncement: true,
@@ -1816,9 +1920,15 @@ export function renderProjectsBoard(
         keyOf: ({ path }: (typeof projects)[number]) => path,
         revision: (project: (typeof projects)[number]) =>
           JSON.stringify({
+            path: project.path,
             frontmatter: project.frontmatter,
             statusId: project.statusId,
             rawStatus: project.rawStatus,
+            priority: project.priority,
+            description: project.description,
+            comments: project.comments,
+            observed: project.observed,
+            diagnostics: project.metadataDiagnostics,
           }),
         columnKey: (project: (typeof projects)[number]) => project.statusId ?? 'unmapped',
         presentationAnnouncement: true,

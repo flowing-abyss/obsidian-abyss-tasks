@@ -10,11 +10,22 @@ export interface OptimisticTransaction<TSnapshot, TPatch> {
   readonly observedRevision: string;
   readonly patch: TPatch;
   readonly startedAt: number;
+  /** Immutable command correlation. A late result from another move is ignored. */
+  readonly token: object;
 }
 
 interface OptimisticOverlaySettlement {
   readonly transactionId: number;
   readonly message: string;
+  readonly reason: OptimisticRollbackReason | 'published';
+  /** A success is undoable only after its matching canonical publication. */
+  readonly published: boolean;
+}
+
+interface OptimisticOverlayOwner {
+  /** Stable for one mounted board, never a DOM/window identity. */
+  readonly id: string;
+  readonly announce?: (message: string) => void;
 }
 
 export interface OptimisticOverlayStore<
@@ -26,13 +37,29 @@ export interface OptimisticOverlayStore<
     observed: TSnapshot,
     observedRevision: string,
     patch: TPatch,
+    owner?: OptimisticOverlayOwner,
   ): OptimisticTransaction<TSnapshot, TPatch>;
-  observePublication(key: string, snapshot: TSnapshot, revision: string): void;
-  observeCommandResult(key: string, result: TResult, transactionId: number): void;
+  /** sequence must be monotonic for a canonical source; stale publications are ignored. */
+  observePublication(
+    key: string,
+    snapshot: TSnapshot,
+    revision: string,
+    sequence?: number,
+    continuity?: (observed: TSnapshot, published: TSnapshot) => boolean,
+  ): void;
+  observeCommandResult(key: string, result: TResult, transactionId: number, token?: object): void;
   read(key: string): TSnapshot | undefined;
-  cancel(key: string, reason: OptimisticRollbackReason, transactionId: number): void;
+  cancel(
+    key: string,
+    reason: OptimisticRollbackReason,
+    transactionId: number,
+    token?: object,
+  ): void;
   active(key: string): OptimisticTransaction<TSnapshot, TPatch> | undefined;
-  subscribe(listener: (settlement?: OptimisticOverlaySettlement) => void): () => void;
+  subscribe(
+    listener: (settlement?: OptimisticOverlaySettlement) => void,
+    owner?: OptimisticOverlayOwner,
+  ): () => void;
   configure(options: OptimisticOverlayStoreOptions<TSnapshot, TPatch, TResult>): void;
   dispose(): void;
 }
@@ -52,7 +79,10 @@ export interface OptimisticOverlayStoreOptions<
   readonly announce?: (message: string) => void;
   /** Source publication deadline; a timeout only removes this UI projection. */
   readonly timeoutMs?: number;
-  /** Owning document window; callers in popouts provide that window explicitly. */
+  /**
+   * Scheduler chosen when the application store is created. It is intentionally never
+   * replaced by a remounted pane or popout window.
+   */
   readonly timerWindow?: Pick<Window, 'setTimeout' | 'clearTimeout'>;
   readonly now?: () => number;
 }
@@ -63,10 +93,11 @@ interface Entry<TSnapshot, TPatch> {
   canonical?: TSnapshot;
   announced: boolean;
   timeout?: ReturnType<Window['setTimeout']>;
-  timerWindow?: Pick<Window, 'setTimeout' | 'clearTimeout'>;
+  lastPublicationSequence?: number;
   deadline?: number;
   matches?: (snapshot: TSnapshot, patch: TPatch) => boolean;
   isSuccess?: (result: CommandResult) => boolean;
+  ownerId?: string;
 }
 
 const applicationStores = new WeakMap<object, Map<string, { dispose(): void }>>();
@@ -110,18 +141,36 @@ export function createOptimisticOverlayStore<
 ): OptimisticOverlayStore<TSnapshot, TPatch, TResult> {
   const entries = new Map<string, Entry<TSnapshot, TPatch>>();
   let currentOptions = options;
+  // The scheduler is application-owned. configure() is allowed to refresh semantic
+  // functions for future transactions, but never moves an in-flight timeout.
+  const scheduler = options.timerWindow ?? window;
   let nextTransactionId = 0;
-  const listeners = new Set<(settlement?: OptimisticOverlaySettlement) => void>();
-  let settlementOwner: ((settlement?: OptimisticOverlaySettlement) => void) | undefined;
-  const notify = (settlement?: OptimisticOverlaySettlement): void => {
-    for (const listener of listeners)
-      listener(listener === settlementOwner ? settlement : undefined);
+  let nextPublicationSequence = 0;
+  const listeners = new Map<
+    (settlement?: OptimisticOverlaySettlement) => void,
+    OptimisticOverlayOwner | undefined
+  >();
+  const notify = (settlement?: OptimisticOverlaySettlement, ownerId?: string): void => {
+    for (const [listener, owner] of listeners) {
+      listener(settlement && owner?.id === ownerId ? settlement : undefined);
+    }
+  };
+
+  const ownerFor = (preferred?: string): OptimisticOverlayOwner | undefined => {
+    if (preferred) {
+      for (const owner of listeners.values()) if (owner?.id === preferred) return owner;
+    }
+    // Deterministic fallback: most recently registered live mount, never a closed pane.
+    const active = [...listeners.values()].filter(
+      (owner): owner is OptimisticOverlayOwner => !!owner,
+    );
+    return active[active.length - 1];
   };
 
   const settle = (key: string, reason: OptimisticRollbackReason | 'published'): void => {
     const entry = entries.get(key);
     if (!entry?.transaction) return;
-    if (entry.timeout !== undefined) entry.timerWindow?.clearTimeout(entry.timeout);
+    if (entry.timeout !== undefined) scheduler.clearTimeout(entry.timeout);
     entry.timeout = undefined;
     const transaction = entry.transaction;
     entry.transaction = undefined;
@@ -129,12 +178,18 @@ export function createOptimisticOverlayStore<
     if (entry.announced) return;
     entry.announced = true;
     const message = announcement(reason);
-    currentOptions.announce?.(message);
-    notify({ transactionId: transaction.id, message });
+    const owner = ownerFor(entry.ownerId);
+    // Direct stores retain their explicit callback; application stores use a current,
+    // mounted owner so a dead popout can never receive the terminal announcement.
+    (owner?.announce ?? (entry.ownerId ? undefined : currentOptions.announce))?.(message);
+    notify(
+      { transactionId: transaction.id, message, reason, published: reason === 'published' },
+      owner?.id,
+    );
   };
 
   const store: OptimisticOverlayStore<TSnapshot, TPatch, TResult> = {
-    begin(observed, observedRevision, patch) {
+    begin(observed, observedRevision, patch, owner) {
       const key = currentOptions.keyOf(observed);
       const existing = entries.get(key);
       if (existing?.transaction) return existing.transaction;
@@ -147,6 +202,7 @@ export function createOptimisticOverlayStore<
         observedRevision,
         patch: freezeSnapshot(patch),
         startedAt: now(),
+        token: Object.freeze({}),
       });
       entries.set(key, {
         transaction,
@@ -155,26 +211,50 @@ export function createOptimisticOverlayStore<
         announced: false,
         matches: currentOptions.matches,
         isSuccess: currentOptions.isSuccess as (result: CommandResult) => boolean,
-        timerWindow: currentOptions.timerWindow ?? window,
+        ownerId: owner?.id,
+        // Preserve the source watermark across consecutive transactions on one
+        // logical entity. Otherwise an old r1 arriving after tx2 could be accepted.
+        lastPublicationSequence: existing?.lastPublicationSequence,
       });
       const entry = entries.get(key)!;
       const timeoutMs = Math.max(0, currentOptions.timeoutMs ?? 0);
       if (timeoutMs > 0) {
         entry.deadline = transaction.startedAt + timeoutMs;
-        entry.timeout = entry.timerWindow!.setTimeout(
-          () => store.cancel(key, 'timeout', transaction.id),
+        entry.timeout = scheduler.setTimeout(
+          () => store.cancel(key, 'timeout', transaction.id, transaction.token),
           timeoutMs,
         );
       }
       return transaction;
     },
 
-    observePublication(key, snapshot, revision) {
-      const entry = entries.get(key);
+    observePublication(key, snapshot, revision, suppliedSequence, continuity) {
+      const sequence = suppliedSequence ?? ++nextPublicationSequence;
+      let entry = entries.get(key);
+      // A TaskRef may receive a proven successor after a status write, line shift or
+      // rename. Rebind only when the entity adapter supplies that authoritative proof;
+      // never guess by title, path, or a stale line number.
+      if (!entry && continuity) {
+        const previous = [...entries.entries()].find(
+          ([, candidate]) =>
+            candidate.transaction && continuity(candidate.transaction.observed, snapshot),
+        );
+        if (previous) {
+          entry = previous[1];
+          entries.set(key, entry);
+        }
+      }
       if (!entry) {
-        entries.set(key, { canonical: snapshot, announced: false });
+        entries.set(key, {
+          canonical: snapshot,
+          announced: false,
+          lastPublicationSequence: sequence,
+        });
         return;
       }
+      if (entry.lastPublicationSequence !== undefined && sequence <= entry.lastPublicationSequence)
+        return;
+      entry.lastPublicationSequence = sequence;
       const transaction = entry.transaction;
       if (!transaction) {
         entry.canonical = snapshot;
@@ -191,12 +271,17 @@ export function createOptimisticOverlayStore<
       );
     },
 
-    observeCommandResult(key, result, transactionId) {
+    observeCommandResult(key, result, transactionId, token) {
       const entry = entries.get(key);
-      if (!entry?.transaction || entry.transaction.id !== transactionId) return;
+      if (
+        !entry?.transaction ||
+        entry.transaction.id !== transactionId ||
+        (token !== undefined && entry.transaction.token !== token)
+      )
+        return;
       if (entry.isSuccess?.(result)) return;
       const reason = rollbackReason(result);
-      this.cancel(key, reason ?? 'io', entry.transaction.id);
+      this.cancel(key, reason ?? 'io', entry.transaction.id, entry.transaction.token);
       // A successful command is deliberately not settlement: wait for source publication.
     },
 
@@ -205,9 +290,14 @@ export function createOptimisticOverlayStore<
       return entry?.overlay ?? entry?.canonical;
     },
 
-    cancel(key, reason, transactionId) {
+    cancel(key, reason, transactionId, token) {
       const entry = entries.get(key);
-      if (!entry?.transaction || entry.transaction.id !== transactionId) return;
+      if (
+        !entry?.transaction ||
+        entry.transaction.id !== transactionId ||
+        (token !== undefined && entry.transaction.token !== token)
+      )
+        return;
       entry.canonical ??= entry.transaction.observed;
       settle(key, reason);
     },
@@ -216,36 +306,20 @@ export function createOptimisticOverlayStore<
       return entries.get(key)?.transaction;
     },
 
-    subscribe(listener) {
-      listeners.add(listener);
-      settlementOwner = listener;
+    subscribe(listener, owner) {
+      listeners.set(listener, owner);
       return () => {
         listeners.delete(listener);
-        if (settlementOwner === listener) {
-          const active = [...listeners];
-          settlementOwner = active[active.length - 1];
-        }
       };
     },
 
     configure(next) {
       currentOptions = next;
-      const now = currentOptions.now ?? Date.now;
-      for (const entry of entries.values()) {
-        const transaction = entry.transaction;
-        if (!transaction || entry.deadline === undefined) continue;
-        if (entry.timeout !== undefined) entry.timerWindow?.clearTimeout(entry.timeout);
-        entry.timerWindow = currentOptions.timerWindow ?? window;
-        entry.timeout = entry.timerWindow.setTimeout(
-          () => store.cancel(transaction.key, 'timeout', transaction.id),
-          Math.max(0, entry.deadline - now()),
-        );
-      }
     },
 
     dispose() {
       for (const entry of entries.values()) {
-        if (entry.timeout !== undefined) entry.timerWindow?.clearTimeout(entry.timeout);
+        if (entry.timeout !== undefined) scheduler.clearTimeout(entry.timeout);
       }
       entries.clear();
       listeners.clear();

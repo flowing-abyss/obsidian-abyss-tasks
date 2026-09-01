@@ -1026,6 +1026,43 @@ describe('Work Note board adapter', () => {
     handle.destroy();
   });
 
+  it('renders Board cards through the shared semantic slot hierarchy and action owner', () => {
+    const root = freshContainer();
+    const openNote = vi.fn();
+    const workNote = note(1, {
+      priority: 'high',
+      description: 'A rendered secondary field',
+      updated: '2026-09-01',
+      blockedByPaths: ['Projects/Blocker.md'],
+    });
+    const handle = renderWorkNotesView(root, {
+      notes: [workNote],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'board',
+      onSetStatus: vi.fn(),
+      openNote,
+    });
+    const card = root.querySelector<HTMLElement>('.abyss-work-note-board-presentation')!;
+
+    expect(
+      [
+        'status',
+        'identity',
+        'priority',
+        'date',
+        'progress',
+        'health',
+        'relations',
+        'secondary',
+      ].map((slot) => card.querySelector(`[data-entity-slot="${slot}"]`) !== null),
+    ).toEqual([true, true, true, false, false, false, true, true]);
+    const action = card.querySelector<HTMLButtonElement>('[data-entity-slot="actions"] button')!;
+    expect(action.getAttribute('aria-label')).toBe('Open work note');
+    action.click();
+    expect(openNote).toHaveBeenCalledWith(workNote.path);
+    handle.destroy();
+  });
+
   it('keeps list identity for details with one separate Open and status control', () => {
     const root = freshContainer();
     const handle = renderWorkNotesView(root, {

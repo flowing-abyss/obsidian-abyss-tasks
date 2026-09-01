@@ -174,6 +174,77 @@ describe('OptimisticOverlayStore', () => {
     vi.useRealTimers();
   });
 
+  it('rejects delayed and duplicate canonical publications by their source sequence', () => {
+    const overlays = store();
+    const first = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+    overlays.observePublication(observed.id, published, 'revision:2', 2);
+    const second = overlays.begin(published, 'revision:2', 'done');
+
+    // The old source batch arrived after r2. Its sequence, not its arrival time,
+    // proves that it cannot settle or cancel the second command.
+    overlays.observePublication(observed.id, observed, 'revision:1', 1);
+    overlays.observePublication(observed.id, published, 'revision:2', 2);
+
+    expect(overlays.active(observed.id)?.id).toBe(second.id);
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
+    overlays.observePublication(observed.id, { ...published, status: 'done' }, 'revision:3', 3);
+    expect(overlays.active(observed.id)).toBeUndefined();
+    expect(first.token).not.toBe(second.token);
+  });
+
+  it('requires the immutable transaction token when a result races a later transaction', () => {
+    const overlays = store();
+    const first = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+    overlays.observePublication(observed.id, published, 'revision:2', 2);
+    const second = overlays.begin(published, 'revision:2', 'done');
+
+    overlays.observeCommandResult(observed.id, { type: 'conflict' }, second.id, first.token);
+
+    expect(overlays.active(observed.id)?.id).toBe(second.id);
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
+  });
+
+  it('settles a proven successor under a changed canonical key without fuzzy matching', () => {
+    const overlays = store();
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
+    const renamed = { ...observed, id: 'Archive/Alpha.md', status: 'doing' };
+
+    overlays.observePublication(
+      renamed.id,
+      renamed,
+      'revision:2',
+      2,
+      (before, after) => before.id === observed.id && after.id === renamed.id,
+    );
+
+    expect(overlays.active(renamed.id)).toBeUndefined();
+    expect(overlays.read(renamed.id)).toBe(renamed);
+    expect(overlays.active(observed.id)).toBeUndefined();
+    expect(transaction.key).toBe(observed.id);
+  });
+
+  it('keeps an initiating owner, falls back only to a live mount, and never calls a closed pane', () => {
+    const overlays = store();
+    const first = vi.fn();
+    const fallback = vi.fn();
+    const releaseFirst = overlays.subscribe(vi.fn(), { id: 'first', announce: first });
+    overlays.subscribe(vi.fn(), { id: 'fallback', announce: fallback });
+    const transaction = overlays.begin(observed, 'revision:1', 'doing', { id: 'first' });
+    releaseFirst();
+
+    overlays.observeCommandResult(
+      observed.id,
+      { type: 'conflict' },
+      transaction.id,
+      transaction.token,
+    );
+
+    expect(first).not.toHaveBeenCalled();
+    expect(fallback).toHaveBeenCalledOnce();
+  });
+
   it('uses the current registry presentation callback after remounting', () => {
     const application = {};
     const firstAnnounce = vi.fn();

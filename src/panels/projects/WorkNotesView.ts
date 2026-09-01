@@ -222,12 +222,25 @@ function renderRow(
   ]
     .filter((part): part is string => part !== undefined)
     .join(', ');
-  let identity!: HTMLElement;
   if (options.layout === 'board') {
+    const range = [note.range.start?.raw, note.range.end?.raw].filter(Boolean).join(' – ');
+    const diagnostic = note.diagnostics[0];
+    const relations = [
+      ...note.blockedByPaths.map((path) => `Blocked by ${basename(path)}`),
+      ...note.relatedPaths.map((path) => `Related ${basename(path)}`),
+    ].join(', ');
+    let identity!: HTMLElement;
     new EntityPresentation({
       layout: 'board-card',
       className: 'abyss-work-note-board-presentation',
-      primarySlots: ['identity'],
+      primaryClassName: 'abyss-entity-primary',
+      secondaryClassName: 'abyss-entity-secondary',
+      primarySlots: ['status', 'identity', 'priority', 'date'],
+      secondarySlots: ['progress', 'health', 'relations', 'secondary'],
+      status: {
+        value: statusText(note, options.statuses),
+        className: 'abyss-work-note-board-status',
+      },
       identity: {
         value: basename(note.path),
         text: '',
@@ -240,10 +253,50 @@ function renderRow(
         },
         content: (slot) => {
           identity = slot;
+          // The identity slot owns only identity. Secondary card content is rendered
+          // in its semantic shared slots below, not nested in a legacy wrapper.
+          slot.createSpan({ cls: 'abyss-work-note-title', text: basename(note.path) });
         },
       },
+      ...(note.priority && {
+        priority: { value: note.priority, className: 'abyss-work-note-priority' },
+      }),
+      ...(range && { date: { value: range, className: 'abyss-work-note-date' } }),
+      ...(progressText && {
+        progress: { value: progressText, className: 'abyss-work-note-rollup' },
+      }),
+      ...(diagnostic && {
+        health: {
+          value: diagnostic.detail ?? diagnostic.type,
+          className: 'abyss-work-note-diagnostic',
+        },
+      }),
+      ...(relations && { relations: { value: relations, className: 'abyss-work-note-relations' } }),
+      secondary: {
+        value: note.kind === 'ordinary' ? 'Ordinary' : 'Milestone',
+        className: 'abyss-work-note-kind',
+      },
+      actions: [
+        {
+          label: 'Open work note',
+          icon: 'file-text',
+          onClick: (event) => {
+            event.stopPropagation();
+            options.openNote(note.path);
+          },
+        },
+      ],
     }).render(row);
-  } else {
+    identity.dataset['inspectorOriginKey'] = inspectorSelectionKey({
+      type: 'work-note',
+      path: note.path,
+      projectPath: note.projectPath,
+    });
+    identity.addEventListener('click', () => select(identity));
+    return row;
+  }
+  let identity!: HTMLElement;
+  {
     identity = row.createEl('button', {
       cls: 'abyss-work-note-identity',
       attr: {
@@ -268,16 +321,6 @@ function renderRow(
     meta.createSpan({ cls: 'abyss-work-note-project', text: basename(note.projectPath) });
   }
   if (note.priority) meta.createSpan({ cls: 'abyss-work-note-priority', text: note.priority });
-  if (options.layout === 'board') {
-    const range = [note.range.start?.raw, note.range.end?.raw].filter(Boolean).join(' – ');
-    if (range) meta.createSpan({ cls: 'abyss-work-note-date', text: range });
-    if (note.diagnostics.length > 0) {
-      meta.createSpan({
-        cls: 'abyss-work-note-diagnostic',
-        text: note.diagnostics[0]!.detail ?? note.diagnostics[0]!.type,
-      });
-    }
-  }
   if (milestoneRollup?.progress !== null && milestoneRollup !== undefined) {
     meta.createSpan({
       cls: 'abyss-work-note-rollup',
