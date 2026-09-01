@@ -19,20 +19,20 @@ import {
   parseProjectDate,
 } from '../src/projects/projectDates';
 
-// @ts-expect-error A Task viewport cannot carry the portfolio-only year scale.
 const invalidTaskYearViewport: TimelineViewport = {
   scope: 'tasks',
-  scale: 'year',
+  // @ts-expect-error A Task viewport cannot carry an unsupported century scale.
+  scale: 'century',
   focalDate: '2026-08-20',
   viewportWidth: 240,
   pixelsPerDay: 2,
 };
 void invalidTaskYearViewport;
 
-// @ts-expect-error A Portfolio viewport cannot carry the Task-only day scale.
 const invalidPortfolioDayViewport: TimelineViewport = {
   scope: 'portfolio',
-  scale: 'day',
+  // @ts-expect-error A Portfolio viewport cannot carry an unsupported century scale.
+  scale: 'century',
   focalDate: '2026-08-20',
   viewportWidth: 240,
   pixelsPerDay: 64,
@@ -56,6 +56,7 @@ function expectFocalDateAtCenter(viewport: TimelineViewport, viewportWidth: numb
 
 describe('timeline preference reconciliation', () => {
   it.each([
+    ['portfolio', 'day'],
     ['portfolio', 'week'],
     ['portfolio', 'month'],
     ['portfolio', 'quarter'],
@@ -77,8 +78,8 @@ describe('timeline preference reconciliation', () => {
   });
 
   it.each([
-    ['portfolio', 'day', 'quarter'],
-    ['tasks', 'quarter', 'week'],
+    ['portfolio', 'century', 'quarter'],
+    ['tasks', 'century', 'week'],
     ['workNotes', 'century', 'month'],
   ] as const)('recovers an invalid %s scale deterministically', (scope, scale, expected) => {
     expect(reconcileTimelinePreference(scope, { version: 99, scale, identityWidth: 240 })).toEqual({
@@ -159,7 +160,7 @@ describe('continuous timeline viewport', () => {
       focalDate: '2028-02-29',
       viewportWidth: 641,
     });
-    for (const [index, scale] of (['week', 'month', 'quarter', 'year'] as const).entries()) {
+    for (const [index, scale] of (['day', 'week', 'month', 'quarter', 'year'] as const).entries()) {
       const viewportWidth = 640 + index * 137;
       portfolio = reframeTimelineViewport(portfolio, { scale, viewportWidth });
       expectFocalDateAtCenter(portfolio, viewportWidth);
@@ -171,7 +172,7 @@ describe('continuous timeline viewport', () => {
       focalDate: '2028-02-29',
       viewportWidth: 641,
     });
-    for (const [index, scale] of (['day', 'week', 'month'] as const).entries()) {
+    for (const [index, scale] of (['day', 'week', 'month', 'quarter', 'year'] as const).entries()) {
       const viewportWidth = 640 + index * 137;
       tasks = reframeTimelineViewport(tasks, { scale, viewportWidth });
       expectFocalDateAtCenter(tasks, viewportWidth);

@@ -172,7 +172,7 @@ describe('migrateSettings', () => {
     });
   });
 
-  it('reconciles Project board IDs and clamps invalid timeline preferences', () => {
+  it('reconciles Project board IDs and keeps every supported timeline scale while clamping invalid preferences', () => {
     const raw: Record<string, unknown> = {
       projects: {
         statuses: [
@@ -208,8 +208,8 @@ describe('migrateSettings', () => {
     });
     expect(view['timeline']).toEqual({
       version: 1,
-      portfolio: { scale: 'quarter', identityWidth: 360 },
-      tasks: { scale: 'week', identityWidth: 160 },
+      portfolio: { scale: 'day', identityWidth: 360 },
+      tasks: { scale: 'quarter', identityWidth: 160 },
       workNotes: { dateRange: 'month', identityWidth: 360 },
     });
   });

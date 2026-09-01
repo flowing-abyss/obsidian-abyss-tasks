@@ -76,6 +76,7 @@ describe('Project view preferences', () => {
   });
 
   it.each([
+    ['portfolio day', { portfolio: { scale: 'day', identityWidth: 240 } }, 'portfolio', 'day'],
     ['portfolio week', { portfolio: { scale: 'week', identityWidth: 240 } }, 'portfolio', 'week'],
     [
       'portfolio month',
@@ -134,7 +135,7 @@ describe('Project view preferences', () => {
     expect(
       migrateProjectTimelinePreferences({
         version: 1,
-        tasks: { scale: 'quarter', identityWidth: 240 },
+        tasks: { scale: 'century', identityWidth: 240 },
         workNotes: { dateRange: 'century', identityWidth: 240 },
       }),
     ).toMatchObject({

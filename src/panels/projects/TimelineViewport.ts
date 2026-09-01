@@ -16,8 +16,8 @@ const TIMELINE_POINT_SIZE = 8;
 const TIMELINE_MILESTONE_SIZE = 10;
 
 const PIXELS_PER_DAY = {
-  portfolio: { week: 28, month: 12, quarter: 5, year: 2 },
-  tasks: { day: 64, week: 28, month: 12 },
+  portfolio: { day: 64, week: 28, month: 12, quarter: 5, year: 2 },
+  tasks: { day: 64, week: 28, month: 12, quarter: 5, year: 2 },
   workNotes: { day: 48, week: 24, month: 10, quarter: 4, year: 2 },
 } as const;
 

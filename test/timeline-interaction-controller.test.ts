@@ -485,7 +485,7 @@ describe('TimelineInteractionController keyboard date editing', () => {
     ['missing scope', undefined, undefined],
     ['missing scale', 'tasks', undefined],
     ['missing scope for scale', undefined, 'week'],
-    ['mismatched scale', 'tasks', 'year'],
+    ['mismatched scale', 'tasks', 'century' as never],
   ] as const)(
     'rejects Shift+Arrow with %s before creating keyboard interaction state',
     async (_case, scope, scale) => {

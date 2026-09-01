@@ -114,7 +114,64 @@ function pointerEvent(
   return event;
 }
 
+function chooseTimelineScale(container: HTMLElement, scale: string): void {
+  container
+    .querySelector<HTMLButtonElement>(`[data-timeline-scale][data-scale="${scale}"]`)!
+    .click();
+}
+
 describe('shared Timeline view', () => {
+  it('uses compact direct Day through Year controls, keeps selection state, orders dated rows stably, and centers Today', () => {
+    const container = freshContainer();
+    const session = {
+      firstKey: null,
+      firstIndex: 0,
+      focusedKey: null,
+      restoreFocus: false,
+      focalDate: '2026-08-01',
+      scrollLeft: 0,
+      scale: 'month' as const,
+      identityWidth: 240,
+      focusedInteraction: null,
+    };
+    renderTimeline(container, {
+      entries: [
+        point('Later', '2026-08-30'),
+        point('Same date A', '2026-08-20'),
+        point('Earliest', '2026-08-10'),
+        point('Same date B', '2026-08-20'),
+      ],
+      scope: 'portfolio',
+      session,
+      today: '2026-08-21',
+    });
+
+    const scales = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-timeline-scale]'),
+    );
+    expect(scales.map((control) => control.textContent)).toEqual([
+      'Day',
+      'Week',
+      'Month',
+      'Quarter',
+      'Year',
+    ]);
+    expect(container.textContent).not.toContain('Timescale');
+    expect(
+      scales.find((control) => control.getAttribute('aria-pressed') === 'true')?.dataset.scale,
+    ).toBe('month');
+    expect(
+      Array.from(container.querySelectorAll<HTMLElement>('.abyss-timeline-row')).map((row) =>
+        row.getAttribute('aria-label'),
+      ),
+    ).toEqual(['Earliest', 'Same date A', 'Same date B', 'Later']);
+    expect(container.querySelector('.abyss-timeline-today-line')).not.toBeNull();
+
+    scales.find((control) => control.dataset.scale === 'day')!.click();
+    expect(session.scale).toBe('day');
+    expect(container.querySelector('.abyss-timeline-today-line')).not.toBeNull();
+  });
+
   it('opens a portfolio Project dashboard from its one native title button', () => {
     const container = freshContainer();
     const state = new AppState();
@@ -628,9 +685,7 @@ describe('shared Timeline view', () => {
     const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
     Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1_200 });
 
-    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
-    scale.value = 'quarter';
-    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    chooseTimelineScale(container, 'quarter');
 
     const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
     const plotWidth = Number.parseFloat(
@@ -651,8 +706,7 @@ describe('shared Timeline view', () => {
       expect(positions[index]! - positions[index - 1]!).toBeGreaterThanOrEqual(48);
     }
 
-    scale.value = 'week';
-    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    chooseTimelineScale(container, 'week');
     const weekWidth = Number.parseFloat(
       canvas.style.getPropertyValue('--abyss-timeline-plot-width'),
     );
@@ -793,9 +847,7 @@ describe('shared Timeline view', () => {
       session,
     } as Parameters<typeof renderTimeline<Fixture>>[1]);
 
-    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
-    scale.value = 'week';
-    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    chooseTimelineScale(container, 'week');
 
     expect(session.scale).toBe('week');
     expect(session.focalDate).toBe('2026-08-20');
@@ -833,14 +885,11 @@ describe('shared Timeline view', () => {
       clientWidth: { configurable: true, value: 1_200 },
       scrollWidth: { configurable: true, value: 20_000 },
     });
-    const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
-    scale.value = 'year';
-    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    chooseTimelineScale(container, 'year');
 
     expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
     container.querySelector<HTMLButtonElement>('[data-timeline-today]')!.click();
-    scale.value = 'week';
-    scale.dispatchEvent(new Event('change', { bubbles: true }));
+    chooseTimelineScale(container, 'week');
 
     expect(session.focalDate).toBe('2026-06-15');
     expect(container.querySelector('[data-timeline-today-line]')).not.toBeNull();
@@ -1437,9 +1486,7 @@ describe('shared Timeline view', () => {
       } as Parameters<typeof renderTimeline<Fixture>>[1]);
       const scroll = container.querySelector<HTMLElement>('.abyss-timeline-scroll')!;
       Object.defineProperty(scroll, 'clientWidth', { configurable: true, value: 1_200 });
-      const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
-      scale.value = 'month';
-      scale.dispatchEvent(new Event('change', { bubbles: true }));
+      chooseTimelineScale(container, 'month');
       const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
       const row = container.querySelector<HTMLElement>('.abyss-timeline-row')!;
       const control = container.querySelector<HTMLButtonElement>('[data-timeline-point]')!;
@@ -1513,9 +1560,7 @@ describe('shared Timeline view', () => {
         configurable: true,
         get: () => scrollWidth,
       });
-      const scale = container.querySelector<HTMLSelectElement>('[data-timeline-scale]')!;
-      scale.value = 'month';
-      scale.dispatchEvent(new Event('change', { bubbles: true }));
+      chooseTimelineScale(container, 'month');
       const canvas = container.querySelector<HTMLElement>('.abyss-timeline-canvas')!;
       const row = container.querySelector<HTMLElement>('.abyss-timeline-row')!;
       const control = container.querySelector<HTMLButtonElement>('[data-timeline-point]')!;

@@ -7059,6 +7059,20 @@ body.abyss-modal-open .popover.hover-popover {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
 }
+.abyss-timeline-scale-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.abyss-timeline-toolbar .abyss-timeline-scale-action {
+  min-inline-size: 0;
+  padding-inline: 6px;
+}
+.abyss-timeline-toolbar .abyss-timeline-scale-action[aria-pressed='true'] {
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+}
 .abyss-timeline-canvas {
   position: relative;
   min-block-size: 100%;
@@ -7330,9 +7344,9 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-today-line {
   position: absolute;
-  z-index: 2;
+  z-index: 0;
   inset-block: 0;
-  border-inline-start: 1px solid var(--interactive-accent);
+  border-inline-start: 1px solid var(--text-error);
   pointer-events: none;
 }
 .abyss-timeline-date-controls {

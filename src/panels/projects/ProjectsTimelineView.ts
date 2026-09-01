@@ -309,6 +309,20 @@ function pointRoles(item: TimelineItem): readonly TimelinePointRole[] {
   return [];
 }
 
+/** Dated timeline rows use their visible civil start; stable ties preserve collection ordering. */
+function orderedDatedEntries<T>(entries: readonly TimelineEntry<T>[]): readonly TimelineEntry<T>[] {
+  const startMs = (entry: TimelineEntry<T>): number => {
+    if (entry.item.kind === 'range') return entry.item.startMs;
+    return entry.item.kind === 'point' ? entry.item.atMs : Number.POSITIVE_INFINITY;
+  };
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      return startMs(left.entry) - startMs(right.entry) || left.index - right.index;
+    })
+    .map(({ entry }) => entry);
+}
+
 function successful(result: TimelineMutationResult): boolean {
   return result.type === 'ok' || result.type === 'unchanged';
 }
@@ -493,22 +507,24 @@ export function renderTimeline<T>(
   });
   root.style.setProperty('--abyss-timeline-identity-width', `${String(identityWidth)}px`);
   const toolbar = root.createDiv({ cls: 'abyss-timeline-toolbar' });
-  const scaleLabel = toolbar.createEl('label', { cls: 'abyss-timeline-scale-control' });
-  scaleLabel.createSpan({ cls: 'abyss-visually-hidden', text: 'Timeline scale' });
-  const scaleSelect = scaleLabel.createEl('select', {
-    attr: { 'data-timeline-scale': '', 'aria-label': 'Timeline scale' },
+  const scaleControl = toolbar.createDiv({
+    cls: 'abyss-timeline-scale-control',
+    attr: { role: 'group', 'aria-label': 'Timeline scale' },
   });
-  const scaleOptions: Readonly<Record<TimelineScope, readonly TimelineScale<TimelineScope>[]>> = {
-    portfolio: ['week', 'month', 'quarter', 'year'],
-    tasks: ['day', 'week', 'month'],
-    workNotes: ['day', 'week', 'month', 'quarter', 'year'],
-  };
-  for (const candidate of scaleOptions[scope]) {
-    const option = scaleSelect.createEl('option', {
+  const scaleOptions = ['day', 'week', 'month', 'quarter', 'year'] as const;
+  const scaleButtons = new Map<TimelineScale<TimelineScope>, HTMLButtonElement>();
+  for (const candidate of scaleOptions) {
+    const button = scaleControl.createEl('button', {
+      cls: 'abyss-timeline-scale-action',
       text: candidate.charAt(0).toUpperCase() + candidate.slice(1),
-      attr: { value: candidate },
+      attr: {
+        type: 'button',
+        'data-timeline-scale': '',
+        'data-scale': candidate,
+        'aria-pressed': String(candidate === scale),
+      },
     });
-    option.selected = candidate === scale;
+    scaleButtons.set(candidate, button);
   }
   const today = options.today ?? new Date().toISOString().slice(0, 10);
   const todayButton = toolbar.createEl('button', {
@@ -544,8 +560,8 @@ export function renderTimeline<T>(
       'data-timeline-feedback': '',
     },
   });
-  const dated = options.entries.filter(
-    (entry) => entry.item.kind === 'range' || entry.item.kind === 'point',
+  const dated = orderedDatedEntries(
+    options.entries.filter((entry) => entry.item.kind === 'range' || entry.item.kind === 'point'),
   );
   const undated = options.entries.filter((entry) => entry.item.kind === 'undated');
   const invalid = options.entries.filter((entry) => entry.item.kind === 'invalid');
@@ -1490,12 +1506,21 @@ export function renderTimeline<T>(
     rememberViewport();
     renderedScrollTop = scroll.scrollTop;
 
-    const onScaleChange = (): void => {
-      if (!isTimelineScale(scope, scaleSelect.value)) return;
-      scale = scaleSelect.value;
+    const onScaleChange = (event: MouseEvent): void => {
+      const control =
+        event.target instanceof HTMLElement
+          ? event.target.closest<HTMLButtonElement>('[data-timeline-scale]')
+          : null;
+      const next = control?.dataset['scale'];
+      if (!isTimelineScale(scope, next)) return;
+      const changed = next !== scale;
+      scale = next;
       if (session) session.scale = scale;
+      for (const [candidate, button] of scaleButtons) {
+        button.setAttribute('aria-pressed', String(candidate === scale));
+      }
       refreshGeometry(true);
-      notifyPresentationChange();
+      if (changed) notifyPresentationChange();
     };
     const onToday = (): void => {
       requiredPresentationDate = today;
@@ -1505,10 +1530,10 @@ export function renderTimeline<T>(
       }
       centerOn(today);
     };
-    scaleSelect.addEventListener('change', onScaleChange);
+    scaleControl.addEventListener('click', onScaleChange);
     todayButton.addEventListener('click', onToday);
     cleanups.push(() => {
-      scaleSelect.removeEventListener('change', onScaleChange);
+      scaleControl.removeEventListener('click', onScaleChange);
       todayButton.removeEventListener('click', onToday);
     });
   }
@@ -1732,7 +1757,7 @@ export function renderProjectsTimeline(
         readonly identityWidth: number;
       }) =>
         options.onPresentationChange?.({
-          scale: presentation.scale as PortfolioTimelineScale,
+          scale: presentation.scale,
           identityWidth: presentation.identityWidth,
         }),
     }),
@@ -2054,7 +2079,7 @@ export function renderTasksTimeline(
         readonly identityWidth: number;
       }) =>
         options.onPresentationChange?.({
-          scale: presentation.scale as TaskTimelineScale,
+          scale: presentation.scale,
           identityWidth: presentation.identityWidth,
         }),
     }),

@@ -4,8 +4,8 @@ export const TIMELINE_IDENTITY_WIDTH_MAX = 360;
 const TIMELINE_PREFERENCE_VERSION = 1;
 
 export type TimelineScope = 'portfolio' | 'tasks' | 'workNotes';
-export type PortfolioTimelineScale = 'week' | 'month' | 'quarter' | 'year';
-export type TaskTimelineScale = 'day' | 'week' | 'month';
+export type PortfolioTimelineScale = 'day' | 'week' | 'month' | 'quarter' | 'year';
+export type TaskTimelineScale = 'day' | 'week' | 'month' | 'quarter' | 'year';
 export type WorkNoteTimelineScale = 'day' | 'week' | 'month' | 'quarter' | 'year';
 interface TimelineScaleByScope {
   readonly portfolio: PortfolioTimelineScale;
@@ -21,8 +21,8 @@ export interface TimelineViewPreference<S extends TimelineScope> {
 }
 
 const SCALES = {
-  portfolio: ['week', 'month', 'quarter', 'year'],
-  tasks: ['day', 'week', 'month'],
+  portfolio: ['day', 'week', 'month', 'quarter', 'year'],
+  tasks: ['day', 'week', 'month', 'quarter', 'year'],
   workNotes: ['day', 'week', 'month', 'quarter', 'year'],
 } as const satisfies Readonly<Record<TimelineScope, readonly string[]>>;
 
