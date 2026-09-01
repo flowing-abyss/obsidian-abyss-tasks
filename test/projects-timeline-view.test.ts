@@ -156,6 +156,9 @@ describe('shared Timeline view', () => {
       'Quarter',
       'Year',
     ]);
+    expect(
+      scales.every((control) => control.classList.contains('abyss-timeline-touch-target')),
+    ).toBe(true);
     expect(container.textContent).not.toContain('Timescale');
     expect(
       scales.find((control) => control.getAttribute('aria-pressed') === 'true')?.dataset.scale,

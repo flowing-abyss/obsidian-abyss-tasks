@@ -21,7 +21,6 @@ import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
   ListViewState,
-  ProjectTasksCollectionPreference,
   ProjectTasksViewState,
   PropertyFilter,
   ResolvedConfig,
@@ -1219,10 +1218,7 @@ export class CenterPanel {
       );
       const boardHost = host.createDiv();
       const taskBoardSession = this.projectWorkspaceSession.taskBoard;
-      const taskPreference = this.projectWorkspaceSession.collectionPreference(
-        path,
-        'tasks',
-      ) as ProjectTasksCollectionPreference;
+      const taskPreference = this.projectWorkspaceSession.collectionPreference(path, 'tasks');
       const preference = taskPreference.layoutPreferences['board']?.board ?? {
         ...buildBoardPreference(statuses.map(({ id }) => id)),
         terminalDefaultsApplied: true,
@@ -1401,6 +1397,11 @@ export class CenterPanel {
                 .map((action) => [taskPresentationKey(action.task.ref), action] as const),
             ).values(),
           ];
+    const timelinePreference = this.projectWorkspaceSession.collectionPreference(path, 'tasks')
+      .layoutPreferences['timeline']?.timeline ?? {
+      version: 1 as const,
+      ...this.settings.projects.view.timeline.tasks,
+    };
     const timeline = renderContainerResponsiveTimeline(host, (isNarrow) =>
       renderTasksTimeline(host, {
         actions,
@@ -1414,18 +1415,27 @@ export class CenterPanel {
         collectionSession: session,
         session: this.projectWorkspaceSession.timelines.tasks,
         isNarrow,
-        scale: this.settings.projects.view.timeline.tasks.scale,
-        identityWidth: this.settings.projects.view.timeline.tasks.identityWidth,
-        onPresentationChange: (presentation) => {
-          this.settings.projects.view.timeline = {
-            ...this.settings.projects.view.timeline,
-            tasks: {
-              scale: presentation.scale,
-              identityWidth: presentation.identityWidth,
-            },
-          };
-          void this.onSaveSettings();
-        },
+        scale: timelinePreference.scale,
+        identityWidth: timelinePreference.identityWidth,
+        onPresentationChange: (presentation) =>
+          this.projectWorkspaceSession
+            .updateCollectionPreference(path, 'tasks', (current) => ({
+              ...current,
+              layoutPreferences: {
+                ...current.layoutPreferences,
+                timeline: {
+                  timeline: {
+                    version: 1,
+                    scale: presentation.scale,
+                    identityWidth: presentation.identityWidth,
+                  },
+                },
+              },
+            }))
+            .then(
+              () => undefined,
+              () => undefined,
+            ),
         renderTask: (identity, action) => {
           this.renderTaskCard(identity, action.task, {
             projectPath: path,

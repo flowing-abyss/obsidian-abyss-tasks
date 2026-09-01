@@ -20,6 +20,133 @@ const flushAsyncQueue = async (): Promise<void> =>
   new Promise((resolve) => globalThis.setTimeout(resolve, 0));
 
 describe('ProjectWorkspaceSessionRegistry', () => {
+  it('seeds Project Timeline preferences from legacy settings once and persists Projects A and B independently across restart', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.timeline = {
+      ...settings.projects.view.timeline,
+      tasks: { scale: 'quarter', identityWidth: 280 },
+      workNotes: { dateRange: 'year', identityWidth: 320 },
+    };
+    const legacyTimeline = structuredClone(settings.projects.view.timeline);
+    const registry = new ProjectWorkspaceSessionRegistry();
+    registry.bindCollectionPreferences(settings, vi.fn().mockResolvedValue(undefined));
+
+    expect(
+      registry.collectionPreference('Projects/A.md', 'tasks').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'quarter', identityWidth: 280 });
+    expect(
+      registry.collectionPreference('Projects/B.md', 'work-notes').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'year', identityWidth: 320 });
+
+    await registry.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        timeline: { timeline: { version: 1, scale: 'day', identityWidth: 180 } },
+      },
+    }));
+    await registry.updateCollectionPreference('Projects/B.md', 'tasks', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        timeline: { timeline: { version: 1, scale: 'year', identityWidth: 340 } },
+      },
+    }));
+    await registry.updateCollectionPreference('Projects/A.md', 'work-notes', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        timeline: { timeline: { version: 1, scale: 'week', identityWidth: 200 } },
+      },
+    }));
+    await registry.updateCollectionPreference('Projects/B.md', 'work-notes', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        timeline: { timeline: { version: 1, scale: 'month', identityWidth: 260 } },
+      },
+    }));
+
+    expect(settings.projects.view.timeline).toEqual(legacyTimeline);
+    const restarted = new ProjectWorkspaceSessionRegistry();
+    restarted.bindCollectionPreferences(settings);
+    expect(
+      restarted.collectionPreference('Projects/A.md', 'tasks').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'day', identityWidth: 180 });
+    expect(
+      restarted.collectionPreference('Projects/B.md', 'tasks').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'year', identityWidth: 340 });
+    expect(
+      restarted.collectionPreference('Projects/A.md', 'work-notes').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'week', identityWidth: 200 });
+    expect(
+      restarted.collectionPreference('Projects/B.md', 'work-notes').layoutPreferences['timeline']
+        ?.timeline,
+    ).toEqual({ version: 1, scale: 'month', identityWidth: 260 });
+  });
+
+  it.each(['tasks', 'work-notes'] as const)(
+    'publishes %s Timeline preferences across panes and rolls back one failed Project A save without touching Project B',
+    async (scope) => {
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      const owner = {};
+      const failedSave = deferred<void>();
+      const onSaveSettings = vi
+        .fn<() => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(undefined)
+        .mockReturnValueOnce(failedSave.promise);
+      const paneA = new ProjectWorkspaceSessionRegistry(owner);
+      const paneB = new ProjectWorkspaceSessionRegistry(owner);
+      paneA.bindCollectionPreferences(settings, onSaveSettings);
+      paneB.bindCollectionPreferences(settings, onSaveSettings);
+      const published = vi.fn();
+      paneB.subscribeCollectionPreference('Projects/A.md', scope, published);
+
+      await paneA.updateCollectionPreference('Projects/A.md', scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          timeline: { timeline: { version: 1, scale: 'day', identityWidth: 180 } },
+        },
+      }));
+      await paneA.updateCollectionPreference('Projects/B.md', scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          timeline: { timeline: { version: 1, scale: 'year', identityWidth: 340 } },
+        },
+      }));
+      expect(
+        paneB.collectionPreference('Projects/A.md', scope).layoutPreferences['timeline']?.timeline,
+      ).toEqual({ version: 1, scale: 'day', identityWidth: 180 });
+
+      const pending = paneA.updateCollectionPreference('Projects/A.md', scope, (current) => ({
+        ...current,
+        layoutPreferences: {
+          ...current.layoutPreferences,
+          timeline: { timeline: { version: 1, scale: 'month', identityWidth: 240 } },
+        },
+      }));
+      await flushAsyncQueue();
+      failedSave.reject(new Error('disk unavailable'));
+      await expect(pending).rejects.toThrow('disk unavailable');
+
+      expect(
+        paneB.collectionPreference('Projects/A.md', scope).layoutPreferences['timeline']?.timeline,
+      ).toEqual({ version: 1, scale: 'day', identityWidth: 180 });
+      expect(
+        paneB.collectionPreference('Projects/B.md', scope).layoutPreferences['timeline']?.timeline,
+      ).toEqual({ version: 1, scale: 'year', identityWidth: 340 });
+      expect(published).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it('routes main Task and portfolio preferences through isolated production scopes and reloads them', async () => {
     const settings = structuredClone(DEFAULT_SETTINGS);
     const untouchedDesktop = settings.desktop;

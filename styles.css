@@ -7042,11 +7042,15 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-toolbar {
   display: flex;
+  box-sizing: border-box;
+  max-inline-size: 100%;
   min-height: 36px;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 6px;
   padding: 4px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 .abyss-timeline-toolbar select,
@@ -7061,8 +7065,16 @@ body.abyss-modal-open .popover.hover-popover {
 }
 .abyss-timeline-scale-control {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
+}
+.abyss-timeline-toolbar > :is(button, details) {
+  flex: 0 0 auto;
+}
+.abyss-timeline-toolbar :is(button, summary):focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 .abyss-timeline-toolbar .abyss-timeline-scale-action {
   min-inline-size: 0;
@@ -7825,6 +7837,10 @@ body.abyss-modal-open .popover.hover-popover {
     min-block-size: 44px;
   }
   .abyss-timeline-touch-target {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+  .abyss-timeline-toolbar .abyss-timeline-touch-target {
     min-inline-size: 44px;
     min-block-size: 44px;
   }

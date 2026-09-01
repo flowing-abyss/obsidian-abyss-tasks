@@ -30,6 +30,7 @@ import type { TimelineOwnedRole } from './TimelineInteractionController';
 import {
   DEFAULT_TIMELINE_IDENTITY_WIDTH,
   defaultTimelineScale,
+  reconcileTimelinePreference,
   type TimelineScale,
   type TimelineScope,
 } from './timelinePreferences';
@@ -499,6 +500,9 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
         .map(({ propertyId }) => propertyId),
       layoutPreferences: {
         primary: { table: structuredClone(view.table), statusGroups: view.statusGroups },
+        timeline: {
+          timeline: reconcileTimelinePreference('tasks', settings.projects.view.timeline.tasks),
+        },
       },
     };
   }
@@ -512,7 +516,14 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       group: view.groupBy,
       sort: { ...view.sortBy },
       visibleFields: [],
-      layoutPreferences: {},
+      layoutPreferences: {
+        timeline: {
+          timeline: reconcileTimelinePreference('workNotes', {
+            scale: settings.projects.view.timeline.workNotes.dateRange,
+            identityWidth: settings.projects.view.timeline.workNotes.identityWidth,
+          }),
+        },
+      },
     };
   }
 
@@ -734,6 +745,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       const priorSort = view.portfolioSortBy;
       const priorTable = view.table;
       const priorBoard = view.board;
+      const priorTimeline = view.timeline;
       const stagedLayout = preference.layout;
       const stagedVisibleStatusIds = preference.filters.filter(
         (id) => id !== PORTFOLIO_UNMAPPED_FILTER,
@@ -747,6 +759,12 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       const stagedBoard = structuredClone(
         preference.layoutPreferences['board']?.board ?? view.board,
       );
+      const stagedTimeline = {
+        ...view.timeline,
+        portfolio: structuredClone(
+          preference.layoutPreferences['timeline']?.timeline ?? view.timeline.portfolio,
+        ),
+      };
       view.portfolioLayout = stagedLayout;
       view.visibleStatusIds = stagedVisibleStatusIds;
       view.includeUnmapped = stagedIncludeUnmapped;
@@ -754,6 +772,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
       view.portfolioSortBy = stagedSort;
       view.table = stagedTable;
       view.board = stagedBoard;
+      view.timeline = stagedTimeline;
       return () => {
         if (settings.projects.view !== view) return;
         if (view.portfolioLayout === stagedLayout) view.portfolioLayout = priorLayout;
@@ -765,6 +784,7 @@ class ProjectWorkspacePreferencePort implements CollectionPreferencePort<Workspa
         if (view.portfolioSortBy === stagedSort) view.portfolioSortBy = priorSort;
         if (view.table === stagedTable) view.table = priorTable;
         if (view.board === stagedBoard) view.board = priorBoard;
+        if (view.timeline === stagedTimeline) view.timeline = priorTimeline;
       };
     }
 
@@ -1094,6 +1114,31 @@ export class ProjectWorkspaceSession {
   updatePortfolioBoardPreference(
     next: BoardViewPreference,
   ): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
+    return this.updatePortfolioPresentationPreference((current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        board: { board: next },
+      },
+    }));
+  }
+
+  updatePortfolioTimelinePreference(next: {
+    readonly scale: TimelineScale<'portfolio'>;
+    readonly identityWidth: number;
+  }): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
+    return this.updatePortfolioPresentationPreference((current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        timeline: { timeline: next },
+      },
+    }));
+  }
+
+  private updatePortfolioPresentationPreference(
+    mutate: (current: PortfolioCollectionPreference) => PortfolioCollectionPreference,
+  ): Promise<CollectionPreferenceSnapshot<PortfolioCollectionPreference>> {
     if (this.preferenceAuthority.portfolioBoardPreferenceMutationState === 'pending') {
       const conflict = new CollectionPreferenceConflictError();
       queueMicrotask(() => {
@@ -1109,13 +1154,7 @@ export class ProjectWorkspaceSession {
       for (const listener of this.preferenceAuthority.portfolioBoardPreferenceMutationListeners)
         listener();
     });
-    return this.updatePortfolioPreference((current) => ({
-      ...current,
-      layoutPreferences: {
-        ...current.layoutPreferences,
-        board: { board: next },
-      },
-    })).then(
+    return this.updatePortfolioPreference(mutate).then(
       (settled) => {
         this.preferenceAuthority.portfolioBoardPreferenceMutationState = 'idle';
         for (const listener of this.preferenceAuthority.portfolioBoardPreferenceMutationListeners)
@@ -1174,17 +1213,24 @@ export class ProjectWorkspaceSession {
     return this.sessionPort.subscribe(this.collectionScopeKey(path, scope), listener);
   }
 
-  collectionPreference(path: string, scope: ProjectWorkspaceScope): WorkspacePreference {
-    return this.coordinator.preference(this.collectionScopeKey(path, scope));
+  collectionPreference<S extends ProjectWorkspaceScope>(
+    path: string,
+    scope: S,
+  ): WorkspacePreferenceFor<S> {
+    return this.coordinator.preference(
+      this.collectionScopeKey(path, scope),
+    ) as WorkspacePreferenceFor<S>;
   }
 
-  subscribeCollectionPreference(
+  subscribeCollectionPreference<S extends ProjectWorkspaceScope>(
     path: string,
-    scope: ProjectWorkspaceScope,
-    listener: (next: WorkspacePreference) => void,
+    scope: S,
+    listener: (next: WorkspacePreferenceFor<S>) => void,
   ): () => void {
     const key = this.preferencePort.resolveScope(this.collectionScopeKey(path, scope));
-    return this.coordinator.subscribePreference(key, (next) => listener(next.preference));
+    return this.coordinator.subscribePreference(key, (next) =>
+      listener(next.preference as WorkspacePreferenceFor<S>),
+    );
   }
 
   updateCollectionPreference<S extends ProjectWorkspaceScope>(

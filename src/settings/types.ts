@@ -2,6 +2,7 @@ import type {
   ProjectBoardPreference,
   ProjectTimelinePreferences,
 } from '../panels/projects/projectViewPreferences';
+import type { TimelineViewPreference } from '../panels/projects/timelinePreferences';
 import type { ProjectLifecycleBehavior } from '../projects/lifecycle';
 import type { WorkNoteCompatibilityPreset } from '../projects/work-notes/types';
 import type { TaskPriority, TaskStatusType } from '../tasks/domain/types';
@@ -138,6 +139,7 @@ interface ProjectTasksCollectionLayoutPreference {
   readonly table?: ProjectTasksTablePreference;
   readonly statusGroups?: readonly TaskStatusType[];
   readonly board?: BoardLayoutPreference;
+  readonly timeline?: TimelineViewPreference<'tasks'>;
 }
 
 export type ProjectTasksCollectionPreference = PersistedCollectionPreference<
@@ -153,7 +155,10 @@ export type WorkNotesCollectionPreference = PersistedCollectionPreference<
   WorkNotesViewState['groupBy'],
   WorkNotesViewState['sortBy'],
   'list' | 'board' | 'timeline',
-  { readonly board?: BoardLayoutPreference }
+  {
+    readonly board?: BoardLayoutPreference;
+    readonly timeline?: TimelineViewPreference<'workNotes'>;
+  }
 >;
 
 interface MainTasksCollectionLayoutPreference {

@@ -675,7 +675,7 @@ function renderTimelineMount<T>(
   const scaleButtons = new Map<TimelineScale<TimelineScope>, HTMLButtonElement>();
   for (const candidate of scaleOptions) {
     const button = scaleControl.createEl('button', {
-      cls: 'abyss-timeline-scale-action',
+      cls: 'abyss-timeline-scale-action abyss-timeline-touch-target',
       text: candidate.charAt(0).toUpperCase() + candidate.slice(1),
       attr: {
         type: 'button',

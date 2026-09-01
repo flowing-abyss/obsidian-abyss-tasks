@@ -2,6 +2,7 @@ import {
   migrateProjectBoardPreference,
   migrateProjectTimelinePreferences,
 } from '../panels/projects/projectViewPreferences';
+import { reconcileTimelinePreference } from '../panels/projects/timelinePreferences';
 import { inferLifecycleBehavior } from '../projects/lifecycle';
 import {
   buildDisabledWorkNotePreset,
@@ -179,7 +180,10 @@ function validTaskFilters(value: unknown): boolean {
   });
 }
 
-function taskCollectionBaseline(tasks: Record<string, unknown>): Record<string, unknown> {
+function taskCollectionBaseline(
+  tasks: Record<string, unknown>,
+  timeline: Record<string, unknown>,
+): Record<string, unknown> {
   const table = migrateTablePreference(
     structuredClone(tasks['table']),
     buildDefaultProjectTasksTablePreference(),
@@ -197,11 +201,18 @@ function taskCollectionBaseline(tasks: Record<string, unknown>): Record<string, 
     visibleFields: columns.filter((column) => column.visible).map((column) => column.propertyId),
     layoutPreferences: {
       primary: { table, statusGroups: [...statusGroups] },
+      timeline: {
+        timeline: reconcileTimelinePreference('tasks', timeline['tasks']),
+      },
     },
   };
 }
 
-function workNotesCollectionBaseline(workNotes: Record<string, unknown>): Record<string, unknown> {
+function workNotesCollectionBaseline(
+  workNotes: Record<string, unknown>,
+  timeline: Record<string, unknown>,
+): Record<string, unknown> {
+  const legacy = record(timeline['workNotes']);
   return {
     version: 1,
     layout: 'list',
@@ -211,7 +222,14 @@ function workNotesCollectionBaseline(workNotes: Record<string, unknown>): Record
       ? structuredClone(workNotes['sortBy'])
       : { field: 'updated', dir: 'desc' },
     visibleFields: [],
-    layoutPreferences: {},
+    layoutPreferences: {
+      timeline: {
+        timeline: reconcileTimelinePreference('workNotes', {
+          scale: legacy?.['dateRange'],
+          identityWidth: legacy?.['identityWidth'],
+        }),
+      },
+    },
   };
 }
 
@@ -237,9 +255,11 @@ function normalizeTaskCollectionPreference(
   const layouts = record(current['layoutPreferences']) ?? {};
   const primary = record(layouts['primary']) ?? {};
   const boardLayout = record(layouts['board']) ?? {};
+  const timelineLayout = record(layouts['timeline']) ?? {};
   const board = normalizeBoardLayoutPreference(boardLayout['board']);
   const baselinePrimary = baseline['layoutPreferences'] as Record<string, Record<string, unknown>>;
   const fallbackPrimary = baselinePrimary['primary']!;
+  const fallbackTimeline = baselinePrimary['timeline']!;
   const statusGroups = stringArray(primary['statusGroups'])
     ? primary['statusGroups']
     : (fallbackPrimary['statusGroups'] as string[]);
@@ -273,6 +293,13 @@ function normalizeTaskCollectionPreference(
         statusGroups: [...statusGroups],
       },
       ...(board && { board: { ...boardLayout, board } }),
+      timeline: {
+        ...timelineLayout,
+        timeline: reconcileTimelinePreference(
+          'tasks',
+          timelineLayout['timeline'] ?? fallbackTimeline['timeline'],
+        ),
+      },
     },
   };
 }
@@ -284,7 +311,9 @@ function normalizeWorkNotesCollectionPreference(
   const current = record(value) ?? {};
   const layouts = record(current['layoutPreferences']) ?? {};
   const boardLayout = record(layouts['board']) ?? {};
+  const timelineLayout = record(layouts['timeline']) ?? {};
   const board = normalizeBoardLayoutPreference(boardLayout['board']);
+  const baselineLayouts = baseline['layoutPreferences'] as Record<string, Record<string, unknown>>;
   return {
     ...current,
     version: 1,
@@ -304,6 +333,13 @@ function normalizeWorkNotesCollectionPreference(
     layoutPreferences: {
       ...layouts,
       ...(board && { board: { ...boardLayout, board } }),
+      timeline: {
+        ...timelineLayout,
+        timeline: reconcileTimelinePreference(
+          'workNotes',
+          timelineLayout['timeline'] ?? baselineLayouts['timeline']?.['timeline'],
+        ),
+      },
     },
   };
 }
@@ -312,9 +348,10 @@ function normalizeWorkNotesCollectionPreference(
 export function normalizeProjectCollectionPreferences(view: Record<string, unknown>): void {
   const tasks = record(view['tasks']);
   const workNotes = record(view['workNotes']);
+  const timeline = record(view['timeline']);
   if (!tasks || !workNotes) return;
-  const taskBaseline = taskCollectionBaseline(tasks);
-  const workNotesBaseline = workNotesCollectionBaseline(workNotes);
+  const taskBaseline = taskCollectionBaseline(tasks, timeline ?? {});
+  const workNotesBaseline = workNotesCollectionBaseline(workNotes, timeline ?? {});
   const collectionPreferences = record(view['collectionPreferences']) ?? {};
   for (const [path, rawEntry] of Object.entries(collectionPreferences)) {
     const entry = record(rawEntry) ?? {};

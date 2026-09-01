@@ -61,6 +61,20 @@ describe('migrateSettings', () => {
     ).toMatchObject({
       table: { version: 1, columns: expect.any(Array), collapsedGroups: [] },
     });
+    expect(
+      (
+        (preferences['Projects/A.md']?.['tasks'] as Record<string, unknown>)[
+          'layoutPreferences'
+        ] as Record<string, { timeline?: unknown }>
+      )['timeline']?.timeline,
+    ).toEqual({ version: 1, scale: 'week', identityWidth: 240 });
+    expect(
+      (
+        (preferences['Projects/A.md']?.['workNotes'] as Record<string, unknown>)[
+          'layoutPreferences'
+        ] as Record<string, { timeline?: unknown }>
+      )['timeline']?.timeline,
+    ).toEqual({ version: 1, scale: 'month', identityWidth: 240 });
 
     const once = structuredClone(raw);
     migrateSettings(raw);

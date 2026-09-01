@@ -3512,6 +3512,164 @@ describe('ProjectsPanel dispatch', () => {
   } as never;
   const stubMgr = { setStatus: vi.fn().mockResolvedValue(undefined) } as never;
 
+  it('persists Portfolio Timeline presentation through the portfolio collection coordinator', async () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const legacyTasks = structuredClone(settings.projects.view.timeline.tasks);
+    const project = proj({
+      frontmatter: { start: '2026-08-27', end: '2026-08-29' },
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+    });
+    const session = new ProjectWorkspaceSession();
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(project)],
+      workspaceSession: session,
+      onSaveSettings,
+      projectCommands: {
+        observeRange: (current: Project) => ({
+          path: current.path,
+          start: current.frontmatter['start'],
+          end: current.frontmatter['end'],
+        }),
+      } as never,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      el.querySelector<HTMLButtonElement>('[data-timeline-scale][data-scale="day"]')!.click();
+      await flushMicrotasks();
+
+      expect(session.portfolioPreference().layoutPreferences['timeline']?.timeline).toEqual({
+        scale: 'day',
+        identityWidth: 240,
+      });
+      expect(settings.projects.view.timeline.portfolio).toEqual({
+        scale: 'day',
+        identityWidth: 240,
+      });
+      expect(settings.projects.view.timeline.tasks).toEqual(legacyTasks);
+      expect(onSaveSettings).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      session.destroy();
+    }
+  });
+
+  it('rolls back a failed Portfolio Timeline preference and announces the collection failure once', async () => {
+    const state = new AppState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.projects.view.portfolioLayout = 'timeline';
+    const project = proj({
+      frontmatter: { start: '2026-08-27', end: '2026-08-29' },
+      range: parseProjectRange('2026-08-27', '2026-08-29'),
+    });
+    let rejectSave!: (error: unknown) => void;
+    const failedSave = new Promise<void>((_resolve, reject) => {
+      rejectSave = reject;
+    });
+    const announcements: string[] = [];
+    const session = new ProjectWorkspaceSession();
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [workspace(project)],
+      workspaceSession: session,
+      onSaveSettings: () => failedSave,
+      onAnnounce: (message) => announcements.push(message),
+      projectCommands: {
+        observeRange: (current: Project) => ({
+          path: current.path,
+          start: current.frontmatter['start'],
+          end: current.frontmatter['end'],
+        }),
+      } as never,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      el.querySelector<HTMLButtonElement>('[data-timeline-scale][data-scale="day"]')!.click();
+      await flushMicrotasks();
+      rejectSave(new Error('disk unavailable'));
+      await flushMicrotasks();
+      await flushMicrotasks();
+
+      expect(
+        el.querySelector<HTMLButtonElement>('[data-timeline-scale][aria-pressed="true"]')?.dataset
+          .scale,
+      ).toBe('quarter');
+      expect(session.portfolioPreference().layoutPreferences['timeline']?.timeline).toEqual({
+        scale: 'quarter',
+        identityWidth: 240,
+      });
+      expect(announcements).toEqual([
+        'Project collection preference was not saved. Nothing changed; try again.',
+      ]);
+    } finally {
+      panel.destroy();
+      session.destroy();
+    }
+  });
+
+  it('persists Work Note Timeline presentation only in the active Project scope', async () => {
+    const state = new AppState();
+    state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const legacy = structuredClone(settings.projects.view.timeline.workNotes);
+    const session = new ProjectWorkspaceSession();
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    session.bindCollectionPreferences(settings, onSaveSettings);
+    session.openProject('Projects/A.md');
+    session.scope = 'work-notes';
+    await session.updateCollectionPreference('Projects/A.md', 'work-notes', (current) => ({
+      ...current,
+      layout: 'timeline',
+    }));
+    onSaveSettings.mockClear();
+    const note = workNote('Work Notes/Scoped.md', ACTIVE_ID, '2026-08-29');
+    const panel = new ProjectsPanel(state, stubStore, stubMgr, settings, null as never, {
+      snapshots: [
+        workspace(proj({}), {
+          workNotes: [note],
+          workNoteRollup: { active: 1, completed: 0, dropped: 0 },
+        }),
+      ],
+      workspaceSession: session,
+      onSaveSettings,
+      workNoteCommands: {
+        capabilities: () => ({ update: true, create: false }),
+        statuses: () => settings.projects.statuses,
+        observeRange: (current: WorkNoteSnapshot) => ({
+          observed: {
+            path: current.path,
+            presetRevision: current.presetRevision,
+            presetFingerprint: current.presetFingerprint,
+            projectPath: current.projectPath,
+            kind: current.kind,
+            fields: {},
+          },
+          updated: current.range.start,
+        }),
+      } as never,
+    });
+    const el = freshContainer();
+    panel.mount(el);
+    try {
+      el.querySelector<HTMLButtonElement>('[data-timeline-scale][data-scale="quarter"]')!.click();
+      await flushMicrotasks();
+
+      expect(
+        session.collectionPreference('Projects/A.md', 'work-notes').layoutPreferences['timeline']
+          ?.timeline,
+      ).toEqual({ version: 1, scale: 'quarter', identityWidth: 240 });
+      expect(settings.projects.view.timeline.workNotes).toEqual(legacy);
+      expect(settings.projects.view.collectionPreferences['Projects/B.md']).toBeUndefined();
+      expect(onSaveSettings).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      session.destroy();
+    }
+  });
+
   it('keeps a Task scoped preference out of the global settings baseline', async () => {
     const state = new AppState();
     state.set('projectsPanel', { view: 'dashboard', path: 'Projects/A.md' });

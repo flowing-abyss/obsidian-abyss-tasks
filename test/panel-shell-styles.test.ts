@@ -743,6 +743,56 @@ describe('Projects hardening styles', () => {
     expect(coarseTarget).toContain('min-block-size: 44px');
   });
 
+  it('keeps every Timeline toolbar action reachable at 440px and 200% zoom with visible coarse targets', () => {
+    const toolbarRules = declarationsFor('.abyss-timeline-toolbar');
+    expect(toolbarRules).toContain('overflow-x: auto');
+    expect(toolbarRules).toContain('max-inline-size: 100%');
+    expect(declarationsFor('.abyss-timeline-scale-control')).toContain('flex: 0 0 auto');
+    expect(declarationsFor('.abyss-timeline-toolbar :is(button, summary):focus-visible')).toContain(
+      'outline: 2px solid var(--interactive-accent)',
+    );
+
+    const style = activeDocument.createElement('style');
+    style.textContent = [css, boundedBlock(css, '@media (hover: none), (pointer: coarse)')].join(
+      '\n',
+    );
+    const toolbar = activeDocument.createElement('div');
+    toolbar.className = 'abyss-timeline-toolbar';
+    toolbar.style.inlineSize = '440px';
+    toolbar.style.fontSize = '200%';
+    const scaleControl = toolbar.createDiv({ cls: 'abyss-timeline-scale-control' });
+    for (const label of ['Day', 'Week', 'Month', 'Quarter', 'Year']) {
+      scaleControl.createEl('button', {
+        cls: 'abyss-timeline-scale-action abyss-timeline-touch-target',
+        text: label,
+        attr: { 'aria-pressed': String(label === 'Month') },
+      });
+    }
+    toolbar.createEl('button', {
+      cls: 'abyss-timeline-today abyss-timeline-touch-target',
+      text: 'Today',
+    });
+    const columns = toolbar.createEl('details');
+    columns.createEl('summary', { cls: 'abyss-timeline-touch-target', text: 'Columns' });
+    activeDocument.head.appendChild(style);
+    activeDocument.body.appendChild(toolbar);
+    try {
+      expect(getComputedStyle(toolbar).overflowX).toBe('auto');
+      expect(getComputedStyle(toolbar).maxInlineSize).toBe('100%');
+      const controls = toolbar.querySelectorAll<HTMLElement>('button, summary');
+      expect(controls).toHaveLength(7);
+      for (const control of controls) {
+        expect(getComputedStyle(control).minInlineSize, control.textContent ?? '').toBe('44px');
+        expect(getComputedStyle(control).minBlockSize, control.textContent ?? '').toBe('44px');
+      }
+      const selected = toolbar.querySelector<HTMLElement>('[aria-pressed="true"]')!;
+      expect(getComputedStyle(selected).backgroundColor).not.toBe('transparent');
+    } finally {
+      toolbar.remove();
+      style.remove();
+    }
+  });
+
   it('bounds expanded Timeline trays and renders narrow mode as a complete agenda', () => {
     expect(declarationsFor('.abyss-timeline-tray[open] .abyss-timeline-diagnostic-scroll')).toMatch(
       /max-block-size:\s*min\(/u,

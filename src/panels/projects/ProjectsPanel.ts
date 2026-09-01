@@ -20,7 +20,6 @@ import type {
   CalendarSettings,
   ProjectTasksViewState,
   PropertyFilter,
-  WorkNotesCollectionPreference,
   WorkNotesViewState,
 } from '../../settings/types';
 import {
@@ -232,8 +231,8 @@ export class ProjectsPanel {
           error instanceof Error && error.name === 'CollectionPreferenceConflictError';
         this.onAnnounce(
           conflict
-            ? 'Board preferences changed elsewhere. Your change was not saved; review the settled board.'
-            : 'Board preference was not saved. Nothing changed; try again.',
+            ? 'Project collection preferences changed elsewhere. Your change was not saved; review the settled view.'
+            : 'Project collection preference was not saved. Nothing changed; try again.',
         );
       }),
     );
@@ -356,12 +355,9 @@ export class ProjectsPanel {
     const narrow = (): boolean =>
       Platform.isMobile || (host.clientWidth > 0 && host.clientWidth <= 672);
     const boardPreference = (): BoardViewPreference | undefined =>
-      (
-        this.workspaceSession.collectionPreference(
-          projectPath,
-          'work-notes',
-        ) as WorkNotesCollectionPreference
-      ).layoutPreferences['board']?.board;
+      this.workspaceSession.collectionPreference(projectPath, 'work-notes').layoutPreferences[
+        'board'
+      ]?.board;
     const persistBoardPreference = (next: BoardViewPreference): Promise<void> =>
       this.workspaceSession
         .updateCollectionPreference(projectPath, 'work-notes', (current) => ({
@@ -490,9 +486,19 @@ export class ProjectsPanel {
     host: HTMLElement,
     notes: ProjectWorkspaceSnapshot['workNotes'],
     canonicalNotes: readonly WorkNoteSnapshot[] = notes,
+    projectPath?: string,
   ): ProjectChildRenderHandle {
     const commands = this.workNoteCommands;
     if (!commands) return { destroy: () => undefined };
+    const activePanel = this.state.get('projectsPanel');
+    projectPath ??=
+      notes[0]?.projectPath ?? (activePanel.view === 'dashboard' ? activePanel.path : '');
+    const timelinePreference = this.workspaceSession.collectionPreference(projectPath, 'work-notes')
+      .layoutPreferences['timeline']?.timeline ?? {
+      version: 1 as const,
+      scale: this.settings.projects.view.timeline.workNotes.dateRange,
+      identityWidth: this.settings.projects.view.timeline.workNotes.identityWidth,
+    };
     return renderContainerResponsiveTimeline(host, (isNarrow) =>
       renderWorkNotesTimeline(host, {
         notes,
@@ -506,18 +512,27 @@ export class ProjectsPanel {
         ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
         session: this.workspaceSession.timelines.workNotes,
         isNarrow,
-        scale: this.settings.projects.view.timeline.workNotes.dateRange,
-        identityWidth: this.settings.projects.view.timeline.workNotes.identityWidth,
-        onPresentationChange: (presentation) => {
-          this.settings.projects.view.timeline = {
-            ...this.settings.projects.view.timeline,
-            workNotes: {
-              dateRange: presentation.scale,
-              identityWidth: presentation.identityWidth,
-            },
-          };
-          void this.onSaveSettings();
-        },
+        scale: timelinePreference.scale,
+        identityWidth: timelinePreference.identityWidth,
+        onPresentationChange: (presentation) =>
+          this.workspaceSession
+            .updateCollectionPreference(projectPath, 'work-notes', (current) => ({
+              ...current,
+              layoutPreferences: {
+                ...current.layoutPreferences,
+                timeline: {
+                  timeline: {
+                    version: 1,
+                    scale: presentation.scale,
+                    identityWidth: presentation.identityWidth,
+                  },
+                },
+              },
+            }))
+            .then(
+              () => undefined,
+              () => undefined,
+            ),
         openNote: (path) => this.openNote(path),
         onSelect: (note, origin) => {
           this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;
@@ -690,8 +705,8 @@ export class ProjectsPanel {
                   snapshot.milestoneRollups,
                   canonicalWorkNotes,
                 ),
-              renderWorkNoteTimeline: (host, _path, notes) =>
-                this.renderWorkNoteTimeline(host, notes, canonicalWorkNotes),
+              renderWorkNoteTimeline: (host, projectPath, notes) =>
+                this.renderWorkNoteTimeline(host, notes, canonicalWorkNotes, projectPath),
             }
           : {}),
       });
@@ -762,6 +777,9 @@ export class ProjectsPanel {
       newProjectButton.addEventListener('click', openCapture);
       if (this.workspaceSession.portfolioCapture.open) openCapture();
       const timelineHost = container.createDiv({ cls: 'abyss-projects-timeline-host' });
+      const timelinePreference = portfolioPreference.layoutPreferences['timeline']?.timeline ?? {
+        ...this.settings.projects.view.timeline.portfolio,
+      };
       if (createdPath) {
         this.workspaceSession.portfolioTimeline.focusedKey = `project:${createdPath}`;
         this.workspaceSession.portfolioTimeline.restoreFocus = true;
@@ -782,18 +800,18 @@ export class ProjectsPanel {
             : {}),
           session: this.workspaceSession.portfolioTimeline,
           isNarrow,
-          scale: this.settings.projects.view.timeline.portfolio.scale,
-          identityWidth: this.settings.projects.view.timeline.portfolio.identityWidth,
-          onPresentationChange: (presentation) => {
-            this.settings.projects.view.timeline = {
-              ...this.settings.projects.view.timeline,
-              portfolio: {
+          scale: timelinePreference.scale,
+          identityWidth: timelinePreference.identityWidth,
+          onPresentationChange: (presentation) =>
+            this.workspaceSession
+              .updatePortfolioTimelinePreference({
                 scale: presentation.scale,
                 identityWidth: presentation.identityWidth,
-              },
-            };
-            void this.onSaveSettings();
-          },
+              })
+              .then(
+                () => undefined,
+                () => undefined,
+              ),
           openProject: (path) => this.state.set('projectsPanel', { view: 'dashboard', path }),
           onSelectMilestone: (note, origin) => {
             this.workspaceSession.scopeSession('work-notes').selection.inspectorKey = note.path;

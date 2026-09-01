@@ -274,6 +274,55 @@ async function makePanel(
 describe('CenterPanel task-card primary row', () => {
   fixedToday('2026-06-25');
 
+  it('persists Project Task Timeline presentation through its scoped collection preference', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const legacy = structuredClone(settings.projects.view.timeline.tasks);
+    const current = task({
+      title: 'Scoped Timeline task',
+      planning: { due: localDate('2026-08-28') },
+      source: { filePath: 'Projects/A.md', line: 1 },
+    });
+    const action: ProjectAction = {
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
+    const onSaveSettings = vi.fn().mockResolvedValue(undefined);
+    const panel = makeStaticPanel(
+      new AppState(),
+      [current],
+      settings,
+      {} as App,
+      undefined,
+      undefined,
+      undefined,
+      onSaveSettings,
+    );
+    const container = freshContainer();
+    activeDocument.body.append(container);
+    try {
+      panel.mount(container);
+      const host = container.createDiv();
+      call(panel, 'renderProjectTaskTimeline', host, 'Projects/A.md', [action], undefined, [
+        action,
+      ]);
+      host.querySelector<HTMLButtonElement>('[data-timeline-scale][data-scale="year"]')!.click();
+      await vi.runAllTimersAsync();
+
+      expect(
+        settings.projects.view.collectionPreferences['Projects/A.md']?.tasks.layoutPreferences[
+          'timeline'
+        ]?.timeline,
+      ).toEqual({ version: 1, scale: 'year', identityWidth: 240 });
+      expect(settings.projects.view.timeline.tasks).toEqual(legacy);
+      expect(onSaveSettings).toHaveBeenCalledOnce();
+    } finally {
+      panel.destroy();
+      container.remove();
+    }
+  });
+
   it('exposes the main Tasks controls as one named toolbar landmark', () => {
     const panel = makeStaticPanel(new AppState(), []);
     try {
