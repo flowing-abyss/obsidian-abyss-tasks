@@ -72,8 +72,15 @@ type BoardCommitResult<UndoAuthority> =
   | {
       readonly type: 'success';
       readonly undo?: { readonly authority: UndoAuthority; readonly evidence: string };
+      /** A command may be accepted while its canonical source publication is still pending. */
+      readonly settled?: boolean;
     }
-  | { readonly type: 'conflict' | 'failure'; readonly reason?: string };
+  | {
+      readonly type: 'conflict' | 'failure';
+      readonly reason?: string;
+      /** The presentation layer already delivered the one terminal result. */
+      readonly announced?: boolean;
+    };
 
 type BoardUndoResult =
   | { readonly type: 'success' }
@@ -726,11 +733,13 @@ export class BoardInteractionController<
     this.active = undefined;
     if (result.type === 'success') {
       this.undoToken = result.undo ? { ...result.undo, move: intent } : undefined;
-      this.ports.announce({ type: 'success' });
       this.ports.restoreFocus?.(active.itemId, destination.columnId);
-      if (this.undoToken) this.ports.announce({ type: 'undo-available' });
+      if (result.settled !== false) {
+        this.ports.announce({ type: 'success' });
+        if (this.undoToken) this.ports.announce({ type: 'undo-available' });
+      }
     } else {
-      this.ports.announce({ type: result.type, reason: result.reason });
+      if (!result.announced) this.ports.announce({ type: result.type, reason: result.reason });
       this.ports.restoreFocus?.(active.itemId, active.source.columnId);
     }
     this.publish();

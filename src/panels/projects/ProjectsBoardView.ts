@@ -9,6 +9,11 @@ import type {
 } from '../../projects/work-notes/types';
 import type { TaskStatusDef } from '../../settings/types';
 import type { TaskSnapshot } from '../../tasks';
+import {
+  optimisticOverlayStoreFor,
+  type OptimisticOverlayStore,
+  type OptimisticTransaction,
+} from '../../ui/interaction/OptimisticOverlayStore';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import { taskPresentationKey } from '../../ui/taskPresentationIdentity';
 import {
@@ -100,6 +105,13 @@ export interface BoardViewOptions<T> {
   /** Canonical cross-column order used for landing and temporary post-move projection. */
   readonly canonicalItems?: readonly T[];
   readonly announce?: (message: string) => void;
+  /** Application-owned status projection retained while a guarded write waits for source publication. */
+  readonly optimisticOverlay?: {
+    readonly store: OptimisticOverlayStore<T, string>;
+    readonly revision: (item: T) => string;
+    /** Returns the configured board column for either an observed or optimistic entity. */
+    readonly columnKey: (item: T) => string;
+  };
   readonly renderColumnFooter?: (host: HTMLElement, column: BoardColumn<T>) => void;
   readonly onCollapsedColumnFooterRequest?: (column: BoardColumn<T>) => void;
 }
@@ -125,6 +137,7 @@ export interface WorkNotesBoardOptions {
   readonly announce?: (message: string) => void;
   readonly columnPreference?: BoardViewPreference;
   readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void;
+  readonly overlayScope?: object;
 }
 
 export interface ProjectTasksBoardOptions {
@@ -143,6 +156,7 @@ export interface ProjectTasksBoardOptions {
   readonly onItemFocus?: (action: ProjectAction) => void;
   readonly onItemBlur?: () => void;
   readonly announce?: (message: string) => void;
+  readonly overlayScope?: object;
 }
 
 function successful(result: BoardMutationResult): boolean {
@@ -217,6 +231,20 @@ export function renderBoard<T>(
   const boardId = `abyss-board-${String(++nextBoardId)}`;
   const presentationEnabled = options.presentationEnabled ?? options.mutationEnabled !== false;
   const overrides = new Map<string, string>();
+  const sourceItems = [
+    ...new Map(
+      options.columns
+        .flatMap(({ items }) => items)
+        .map((item) => [options.itemKey(item), item] as const),
+    ).values(),
+  ];
+  for (const item of sourceItems) {
+    options.optimisticOverlay?.store.observePublication(
+      options.itemKey(item),
+      item,
+      options.optimisticOverlay.revision(item),
+    );
+  }
   const configuredColumnIds =
     options.columnPreferences?.configuredColumnIds ??
     options.columns.filter(({ role }) => role !== 'unmapped').map(({ key }) => key);
@@ -309,6 +337,11 @@ export function renderBoard<T>(
   let autoscrollSpeed = 0;
   let autoscrollFrame: number | undefined;
   const ownerWindow = container.ownerDocument.defaultView;
+  const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe(() => {
+    queueMicrotask(() => {
+      if (!destroyed) render();
+    });
+  });
 
   const stopAutoscroll = (): void => {
     autoscrollDirection = 0;
@@ -394,6 +427,11 @@ export function renderBoard<T>(
       : new Map(options.canonicalItems.map((item, index) => [options.itemKey(item), index]));
 
   const projectedItems = (column: BoardColumn<T>): readonly T[] => {
+    if (options.optimisticOverlay) {
+      return sourceItems
+        .map((item) => options.optimisticOverlay!.store.read(options.itemKey(item)) ?? item)
+        .filter((item) => options.optimisticOverlay!.columnKey(item) === column.key);
+    }
     const retained = column.items.filter((item) => {
       const target = overrides.get(options.itemKey(item));
       return target === undefined || target === column.key;
@@ -707,11 +745,51 @@ export function renderBoard<T>(
           ) ?? container;
         const command = (): Promise<BoardMutationResult> =>
           options.mutation.move(item, intent.destination.columnId);
-        const result = await (options.executeMutation?.(command, initiator) ?? command());
+        const transaction: OptimisticTransaction<T, string> | undefined =
+          options.optimisticOverlay?.store.begin(
+            item,
+            options.optimisticOverlay.revision(item),
+            intent.destination.columnId,
+          );
+        if (transaction) queueMicrotask(() => !destroyed && render());
+        let result: BoardMutationResult;
+        try {
+          result = await (options.executeMutation?.(command, initiator) ?? command());
+        } catch (error) {
+          if (transaction) {
+            options.optimisticOverlay?.store.cancel(intent.itemId, 'io');
+            queueMicrotask(() => !destroyed && render());
+          }
+          return {
+            type: 'failure',
+            reason: error instanceof Error ? error.message : String(error),
+            announced: transaction !== undefined,
+          };
+        }
+        if (transaction && result === undefined) {
+          options.optimisticOverlay?.store.cancel(intent.itemId, 'io');
+          queueMicrotask(() => !destroyed && render());
+          return { type: 'failure', reason: 'io-error', announced: true };
+        }
+        if (transaction && result !== undefined) {
+          options.optimisticOverlay?.store.observeCommandResult(intent.itemId, result);
+        }
         if (!successful(result)) {
+          if (transaction) queueMicrotask(() => !destroyed && render());
           return {
             type: result?.type === 'conflict' ? 'conflict' : 'failure',
             reason: result && 'type' in result ? result.type : undefined,
+            announced: transaction !== undefined,
+          };
+        }
+        if (transaction) {
+          const authority = { item, columnKey: intent.destination.columnId, result };
+          options.onMutation?.(item, intent.destination.columnId, result);
+          queueMicrotask(() => !destroyed && render());
+          return {
+            type: 'success',
+            settled: false,
+            undo: { authority, evidence: intent.destination.evidence },
           };
         }
         overrides.set(intent.itemId, intent.destination.columnId);
@@ -781,18 +859,44 @@ export function renderBoard<T>(
       options.session.restoreFocus = true;
     }
     const command = (): Promise<BoardMutationResult> => options.mutation.move(item, columnKey);
+    const transaction: OptimisticTransaction<T, string> | undefined =
+      options.optimisticOverlay?.store.begin(
+        item,
+        options.optimisticOverlay.revision(item),
+        columnKey,
+      );
+    if (transaction) queueMicrotask(() => !destroyed && render());
     const pending = options.executeMutation?.(command, initiator) ?? command();
     void pending
       .then((result) => {
         if (destroyed) return;
+        if (transaction && result === undefined) {
+          options.optimisticOverlay?.store.cancel(options.itemKey(item), 'io');
+          render();
+          return;
+        }
+        if (transaction && result !== undefined) {
+          options.optimisticOverlay?.store.observeCommandResult(options.itemKey(item), result);
+        }
         if (!successful(result)) return;
+        if (transaction) {
+          dragging = null;
+          if (options.undo) undoPending = { item, columnKey, result };
+          options.onMutation?.(item, columnKey, result);
+          render();
+          return;
+        }
         overrides.set(options.itemKey(item), columnKey);
         dragging = null;
         if (options.undo) undoPending = { item, columnKey, result };
         options.onMutation?.(item, columnKey, result);
         render();
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!transaction || destroyed) return;
+        options.optimisticOverlay?.store.cancel(options.itemKey(item), 'io');
+        render();
+      });
   };
 
   const renderUndo = (host: HTMLElement): void => {
@@ -1406,6 +1510,7 @@ export function renderBoard<T>(
         void interactionController.keyDown({ key: 'Escape' });
       }
       stopAutoscroll();
+      unsubscribeOptimisticOverlay?.();
       container.ownerDocument.removeEventListener('visibilitychange', stopAutoscrollWhenHidden);
       for (const cleanup of cleanups.splice(0)) cleanup();
       container.empty();
@@ -1420,6 +1525,26 @@ export function renderWorkNotesBoard(
   options: WorkNotesBoardOptions,
 ): BoardViewHandle {
   const mutation = createWorkNoteBoardMutation(options.statuses, options.onMoveStatus);
+  const optimisticOverlay = options.overlayScope
+    ? {
+        store: optimisticOverlayStoreFor<WorkNoteSnapshot, string>(
+          options.overlayScope,
+          'board:work-note-status',
+          {
+            keyOf: ({ path }) => path,
+            apply: (note, statusId) => ({ ...note, statusId }),
+            matches: (note, statusId) => note.statusId === statusId,
+            isSuccess: (result) => result.type === 'ok',
+            announce: options.announce,
+            timeoutMs: 15_000,
+            timerWindow: container.ownerDocument.defaultView ?? window,
+          },
+        ),
+        revision: (note: WorkNoteSnapshot) =>
+          `${String(note.presetRevision)}:${note.presetFingerprint}:${note.statusId ?? ''}:${note.rawStatus ?? ''}`,
+        columnKey: (note: WorkNoteSnapshot) => note.statusId ?? 'unmapped',
+      }
+    : undefined;
   return renderBoard(container, {
     columns: workNoteBoardColumns(options.statuses, options.notes),
     mutation,
@@ -1434,6 +1559,7 @@ export function renderWorkNotesBoard(
     canonicalItems: options.notes,
     itemLabel: ({ path }) => path.split('/').pop()?.replace(/\.md$/u, '') ?? path,
     announce: options.announce,
+    ...(optimisticOverlay && { optimisticOverlay }),
     ...(options.columnPreference && {
       columnPreferences: {
         value: options.columnPreference,
@@ -1461,6 +1587,38 @@ export function renderProjectTasksBoard(
 ): BoardViewHandle {
   const mutation = createProjectActionBoardMutation(options.statuses, options.onMoveStatus);
   const statusById = new Map(options.statuses.map((status) => [status.id, status]));
+  const optimisticOverlay = options.overlayScope
+    ? {
+        store: optimisticOverlayStoreFor<ProjectAction, string>(
+          options.overlayScope,
+          'board:task-status',
+          {
+            keyOf: ({ task }) => taskPresentationKey(task.ref),
+            apply: (action, statusId) => {
+              const status = statusById.get(statusId);
+              if (!status) return action;
+              let taskStatus: TaskSnapshot['status'];
+              if (status.type === 'todo') taskStatus = 'open';
+              else if (status.type === 'done') taskStatus = 'done';
+              else taskStatus = status.type;
+              return {
+                ...action,
+                task: { ...action.task, status: taskStatus, statusSymbol: status.symbol },
+              };
+            },
+            matches: (action, statusId) =>
+              statusById.get(statusId)?.symbol === action.task.statusSymbol,
+            isSuccess: (result) => result.type === 'ok',
+            announce: options.announce,
+            timeoutMs: 15_000,
+            timerWindow: container.ownerDocument.defaultView ?? window,
+          },
+        ),
+        revision: ({ task }: ProjectAction) => task.ref.revision,
+        columnKey: ({ task }: ProjectAction) =>
+          options.statuses.find(({ symbol }) => symbol === task.statusSymbol)?.id ?? 'unmapped',
+      }
+    : undefined;
   return renderBoard(container, {
     columns: projectActionBoardColumns(options.statuses, options.actions),
     visibleColumnKeys: options.visibleColumnKeys,
@@ -1476,6 +1634,7 @@ export function renderProjectTasksBoard(
     onItemBlur: options.onItemBlur,
     interactionController: true,
     announce: options.announce,
+    ...(optimisticOverlay && { optimisticOverlay }),
     ...(options.columnPreference && {
       columnPreferences: {
         value: options.columnPreference,
@@ -1522,6 +1681,7 @@ export interface ProjectsBoardOptions extends ProjectsListContext {
   ) => void;
   readonly session?: WorkNoteBoardSession;
   readonly onAnnounce?: (message: string) => void;
+  readonly overlayScope?: object;
 }
 
 /** Adapts Project lifecycle records to the shared board shell. */
@@ -1613,6 +1773,30 @@ export function renderProjectsBoard(
   const mutation = createProjectBoardMutation(statuses, (project, statusId) =>
     options.onMoveStatus(project.path, statusId),
   );
+  const optimisticOverlay = options.overlayScope
+    ? {
+        store: optimisticOverlayStoreFor<(typeof projects)[number], string>(
+          options.overlayScope,
+          'board:project-status',
+          {
+            keyOf: ({ path }) => path,
+            apply: (project, statusId) => ({ ...project, statusId }),
+            matches: (project, statusId) => project.statusId === statusId,
+            isSuccess: (result) => result.type === 'ok',
+            announce: options.onAnnounce,
+            timeoutMs: 15_000,
+            timerWindow: container.ownerDocument.defaultView ?? window,
+          },
+        ),
+        revision: (project: (typeof projects)[number]) =>
+          JSON.stringify({
+            frontmatter: project.frontmatter,
+            statusId: project.statusId,
+            rawStatus: project.rawStatus,
+          }),
+        columnKey: (project: (typeof projects)[number]) => project.statusId ?? 'unmapped',
+      }
+    : undefined;
   const pendingUndo = options.pendingUndo;
   const initialUndo =
     pendingUndo === undefined
@@ -1676,6 +1860,7 @@ export function renderProjectsBoard(
     interactionController: true,
     itemLabel: ({ name }) => name,
     announce: options.onAnnounce,
+    ...(optimisticOverlay && { optimisticOverlay }),
     columnPreferences: {
       value: options.settings.projects.view.board,
       configuredColumnIds: statuses.map(({ id }) => id),

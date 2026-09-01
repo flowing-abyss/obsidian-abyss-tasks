@@ -1225,6 +1225,7 @@ export class CenterPanel {
         announce: (message) => {
           this.selectionLiveRegion().textContent = message;
         },
+        overlayScope: this.app,
         renderItem: (container, action) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,

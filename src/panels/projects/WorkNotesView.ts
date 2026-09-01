@@ -46,6 +46,8 @@ export interface WorkNotesViewOptions {
   readonly isNarrow?: boolean;
   readonly coarsePointer?: boolean;
   readonly milestoneRollups?: ReadonlyMap<string, MilestoneRollup>;
+  /** The plugin application is the lifetime boundary for pending board status projections. */
+  readonly overlayScope?: object;
   /** Selection is rendered by the one right inspector host, never locally. */
   readonly onSelect?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
 }
@@ -480,6 +482,7 @@ function renderWorkNoteBoard(
     onColumnPreferenceChange: (next) => {
       if (options.session) options.session.board.preference = next;
     },
+    overlayScope: options.overlayScope,
   });
 }
 

@@ -13,6 +13,7 @@ import {
 import type { WorkNoteBoardSession } from '../src/panels/projects/ProjectWorkspaceSession';
 import type { ProjectAction } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
+import { createOptimisticOverlayStore } from '../src/ui/interaction/OptimisticOverlayStore';
 import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 afterEach(() => {
@@ -36,6 +37,148 @@ function column(
 }
 
 describe('shared board view', () => {
+  it('keeps an accepted board move optimistic until a matching source publication settles it', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+      announce: (message) => announcements.push(message),
+    });
+    const render = (items: readonly (typeof todo)[], revision: string): void => {
+      el.empty();
+      renderBoard(el, {
+        columns: [
+          {
+            key: 'todo',
+            label: 'todo',
+            role: 'regular',
+            items: items.filter(({ status }) => status === 'todo'),
+          },
+          {
+            key: 'doing',
+            label: 'doing',
+            role: 'regular',
+            items: items.filter(({ status }) => status === 'doing'),
+          },
+        ],
+        mutation: { move: vi.fn().mockResolvedValue({ type: 'ok' }), menuItems: () => [] },
+        itemKey: ({ id }) => id,
+        itemLabel: ({ name }) => name,
+        renderItem: (host, current) => host.createEl('button', { text: current.name }),
+        interactionController: true,
+        announce: (message) => announcements.push(message),
+        optimisticOverlay: {
+          store: overlays,
+          revision: () => revision,
+          columnKey: ({ status }) => status,
+        },
+      });
+    };
+
+    render([todo], 'one');
+    const item = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(
+      el.querySelector('[data-board-column="doing"] [data-board-item-surface]'),
+    ).not.toBeNull();
+    expect(announcements).not.toContain('Item moved');
+
+    render([{ ...todo, status: 'doing' }], 'two');
+
+    expect(announcements.filter((message) => message === 'Item moved')).toHaveLength(1);
+  });
+
+  it('rolls back an undefined board command once instead of leaving an overlay pending', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+      announce: (message) => announcements.push(message),
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockResolvedValue(undefined), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      interactionController: true,
+      announce: (message) => announcements.push(message),
+      optimisticOverlay: {
+        store: overlays,
+        revision: () => 'one',
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    const item = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(el.querySelector('[data-board-column="todo"] [data-board-item-surface]')).not.toBeNull();
+    expect(announcements.filter((message) => message === 'Item could not be moved')).toHaveLength(
+      1,
+    );
+  });
+
+  it('rerenders a mounted board when an unacknowledged overlay times out', async () => {
+    vi.useFakeTimers();
+    const el = freshContainer();
+    const todo = { id: 'a', name: 'A', status: 'todo' };
+    const overlays = createOptimisticOverlayStore<typeof todo, string>({
+      keyOf: ({ id }) => id,
+      apply: (item, status) => ({ ...item, status }),
+      matches: (item, status) => item.status === status,
+      isSuccess: (result) => result.type === 'ok',
+      timeoutMs: 100,
+    });
+    renderBoard(el, {
+      columns: [
+        { key: 'todo', label: 'todo', role: 'regular', items: [todo] },
+        { key: 'doing', label: 'doing', role: 'regular', items: [] },
+      ],
+      mutation: { move: vi.fn().mockResolvedValue({ type: 'ok' }), menuItems: () => [] },
+      itemKey: ({ id }) => id,
+      itemLabel: ({ name }) => name,
+      renderItem: (host, current) => host.createEl('button', { text: current.name }),
+      interactionController: true,
+      optimisticOverlay: {
+        store: overlays,
+        revision: () => 'one',
+        columnKey: ({ status }) => status,
+      },
+    });
+
+    const item = el.querySelector<HTMLElement>('[data-board-item-focus="a"]')!;
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    item.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(el.querySelector('[data-board-column="todo"] [data-board-item-surface]')).not.toBeNull();
+    vi.useRealTimers();
+  });
+
   it('adapts Project Tasks to the shared controller with canonical landing and column footers', async () => {
     const todo = task({
       title: 'Earlier task',

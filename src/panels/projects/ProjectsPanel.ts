@@ -312,6 +312,7 @@ export class ProjectsPanel {
       openNote: (path) => this.openNote(path),
       session: this.workspaceSession.workNotes,
       announce: this.onAnnounce,
+      overlayScope: this.app,
       isNarrow,
       coarsePointer,
       milestoneRollups,
@@ -351,6 +352,7 @@ export class ProjectsPanel {
             openNote: (path) => this.openNote(path),
             session: this.workspaceSession.workNotes,
             announce: this.onAnnounce,
+            overlayScope: this.app,
             isNarrow,
             coarsePointer,
             milestoneRollups,
@@ -732,6 +734,7 @@ export class ProjectsPanel {
         },
         session: this.workspaceSession.portfolioBoard,
         onAnnounce: this.onAnnounce,
+        overlayScope: this.app,
       });
       this.viewCleanup = () => board.destroy();
     } else {
