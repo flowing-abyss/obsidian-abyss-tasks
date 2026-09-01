@@ -4,6 +4,7 @@ import type { AppState } from '../app/AppState';
 import type { LinkToken } from '../parser/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
+import type { ProjectAction } from '../projects/types';
 import type { CalendarSettings } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import { colorForTag } from '../tags/tagColor';
@@ -244,7 +245,7 @@ export class RightPanel {
     private settings?: CalendarSettings,
     onSuccessfulMutation?: (ref?: TaskRef) => void,
     private tasks?: TaskApplicationApi,
-    private onRenderHeaderActions?: (actions: HTMLElement) => void,
+    private onRenderHeaderActions?: (actions: HTMLElement, action?: ProjectAction) => void,
     private onMutationLifecycle?: (event: RightPanelMutationLifecycle) => void,
     private commentTimeContext?: CommentTimeContextProvider,
     private readonly interactionOwnership: InteractionOwnershipPort = noInteractionOwnership,
@@ -255,6 +256,7 @@ export class RightPanel {
       selection: InspectorSelection,
     ) => (() => void) | undefined,
     private readonly taskInspectorShell?: TaskInspectorShellPort,
+    private readonly projectActionFor?: (task: TaskSnapshot) => ProjectAction | undefined,
   ) {
     this.onSuccessfulMutation = onSuccessfulMutation;
   }
@@ -1029,7 +1031,9 @@ export class RightPanel {
       e.stopPropagation();
       this.renderContextMenu(currentTask, menuBtn);
     });
-    this.onRenderHeaderActions?.(headerActions);
+    const root = stack[0];
+    const projectAction = root && 'source' in root ? this.projectActionFor?.(root) : undefined;
+    this.onRenderHeaderActions?.(headerActions, projectAction);
 
     // Metadata chips — available for both TaskSnapshot and SubtaskSnapshot
     {

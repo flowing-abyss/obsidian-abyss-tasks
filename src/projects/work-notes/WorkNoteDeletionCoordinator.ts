@@ -1,5 +1,11 @@
 import { TFile, type App } from 'obsidian';
-import type { TaskApplicationApi, TaskCommandResult, TaskRef, TaskSnapshot } from '../../tasks';
+import type {
+  MoveRecovery,
+  TaskApplicationApi,
+  TaskCommandResult,
+  TaskRef,
+  TaskSnapshot,
+} from '../../tasks';
 import type { WorkNoteSnapshot } from './types';
 
 interface WorkNoteDeletionSource {
@@ -18,6 +24,34 @@ export interface WorkNoteDeletionRecovery {
   readonly remainingTaskRefs: readonly TaskRef[];
   readonly settledTaskCount: number;
   readonly remainingTaskCount: number;
+  /** A destination copy already exists; restart must only remove the guarded source. */
+  readonly copiedSourceRemains: readonly MoveRecovery[];
+  /** Exact source observation at the partial boundary; restart is a CAS operation. */
+  readonly sourceIdentity: WorkNoteDeletionIdentity;
+}
+
+export interface WorkNoteDeletionIdentity {
+  readonly path: string;
+  readonly content: string;
+  readonly mtime: number;
+  readonly size: number;
+}
+
+interface WorkNoteQuarantineIdentity extends WorkNoteDeletionIdentity {
+  readonly originalPath: string;
+}
+
+type QuarantineResult =
+  | { readonly type: 'ok'; readonly identity: WorkNoteQuarantineIdentity }
+  | { readonly type: 'conflict' | 'io-error' };
+
+export interface WorkNoteDeletionPort {
+  observe(path: string): Promise<WorkNoteDeletionIdentity | null>;
+  quarantine(expected: WorkNoteDeletionIdentity): Promise<QuarantineResult>;
+  remove(
+    expected: WorkNoteQuarantineIdentity,
+  ): Promise<{ readonly type: 'ok' | 'conflict' | 'io-error' }>;
+  restore(expected: WorkNoteQuarantineIdentity): Promise<void>;
 }
 
 export type WorkNoteDeletionPreview =
@@ -64,39 +98,168 @@ function partialReason(result: TaskCommandResult): DeletionPartialReason {
   return 'io-error';
 }
 
+function sameIdentity(
+  left: WorkNoteDeletionIdentity | null,
+  right: WorkNoteDeletionIdentity,
+): boolean {
+  return (
+    left !== null &&
+    left.path === right.path &&
+    left.content === right.content &&
+    left.mtime === right.mtime &&
+    left.size === right.size
+  );
+}
+
+function rawFrontmatter(content: string): string {
+  const separator = content.startsWith('---\r\n') ? '\r\n' : '\n';
+  if (!content.startsWith(`---${separator}`)) return '';
+  const end = content.indexOf(`${separator}---`, 4);
+  return end < 0 ? content : content.slice(0, end + separator.length + 3);
+}
+
+/** Mirrors the canonical complete-root deletion shape without becoming a Task parser. */
+function expectedContentAfterTaskRemoval(
+  content: string,
+  task: TaskSnapshot,
+  expectedLine: number,
+): string | null {
+  const block = task.source.originalBlock;
+  if (block.length === 0) return null;
+  const starts = [0];
+  for (let index = 0; index < content.length; index += 1) {
+    if (content[index] === '\n' && index + 1 < content.length) starts.push(index + 1);
+  }
+  const at = starts[expectedLine];
+  if (at === undefined) return null;
+  if (!content.startsWith(block, at)) return null;
+  const after = at + block.length;
+  if (after !== content.length && content[after] !== '\n' && content[after] !== '\r') return null;
+  if (content.startsWith('\r\n', after)) return content.slice(0, at) + content.slice(after + 2);
+  if (content[after] === '\n') return content.slice(0, at) + content.slice(after + 1);
+  if (at > 0 && content[at - 1] === '\n') {
+    const from = at > 1 && content[at - 2] === '\r' ? at - 2 : at - 1;
+    return content.slice(0, from) + content.slice(after);
+  }
+  return content.slice(0, at) + content.slice(after);
+}
+
+function expectedTaskTransition(
+  before: WorkNoteDeletionIdentity,
+  after: WorkNoteDeletionIdentity | null,
+  task: TaskSnapshot,
+  expectedLine: number,
+): after is WorkNoteDeletionIdentity {
+  if (!after) return false;
+  return after.content === expectedContentAfterTaskRemoval(before.content, task, expectedLine);
+}
+
+function blockLineCount(task: TaskSnapshot): number {
+  return task.source.originalBlock.split(/\r?\n/u).length;
+}
+
+class ObsidianWorkNoteDeletionPort implements WorkNoteDeletionPort {
+  constructor(private readonly app: App) {}
+
+  async observe(path: string): Promise<WorkNoteDeletionIdentity | null> {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (!(file instanceof TFile)) return null;
+    const content = await this.app.vault.read(file);
+    return { path, content, mtime: file.stat.mtime, size: file.stat.size };
+  }
+
+  async quarantine(expected: WorkNoteDeletionIdentity): Promise<QuarantineResult> {
+    try {
+      if (!sameIdentity(await this.observe(expected.path), expected)) return { type: 'conflict' };
+      const file = this.app.vault.getAbstractFileByPath(expected.path);
+      if (!(file instanceof TFile)) return { type: 'conflict' };
+      const quarantinePath = `${expected.path}.task-calendar-quarantine-${String(Date.now())}`;
+      await this.app.vault.rename(file, quarantinePath);
+      const observed = await this.observe(quarantinePath);
+      if (!observed) return { type: 'io-error' };
+      const quarantined = { ...observed, originalPath: expected.path };
+      if (observed.content !== expected.content || observed.size !== expected.size) {
+        await this.restore(quarantined);
+        return { type: 'conflict' };
+      }
+      return { type: 'ok', identity: quarantined };
+    } catch {
+      return { type: 'io-error' };
+    }
+  }
+
+  async remove(
+    expected: WorkNoteQuarantineIdentity,
+  ): Promise<{ readonly type: 'ok' | 'conflict' | 'io-error' }> {
+    try {
+      if (!sameIdentity(await this.observe(expected.path), expected)) return { type: 'conflict' };
+      const file = this.app.vault.getAbstractFileByPath(expected.path);
+      if (!(file instanceof TFile)) return { type: 'conflict' };
+      await this.app.fileManager.trashFile(file);
+      return { type: 'ok' };
+    } catch {
+      return { type: 'io-error' };
+    }
+  }
+
+  async restore(expected: WorkNoteQuarantineIdentity): Promise<void> {
+    const quarantined = this.app.vault.getAbstractFileByPath(expected.path);
+    if (!(quarantined instanceof TFile)) return;
+    if (this.app.vault.getAbstractFileByPath(expected.originalPath)) return;
+    await this.app.vault.rename(quarantined, expected.originalPath);
+  }
+}
+
 /**
  * Coordinates destructive Work Note deletion without becoming a Task or note data authority.
  * The recovery record is caller-owned and can be passed back after an external edit is resolved.
  */
 export class WorkNoteDeletionCoordinator {
-  private previewed?: { readonly note: WorkNoteSnapshot; readonly tasks: readonly TaskSnapshot[] };
+  private previewed?: {
+    readonly note: WorkNoteSnapshot;
+    readonly tasks: readonly TaskSnapshot[];
+    readonly identity: WorkNoteDeletionIdentity;
+    readonly frontmatterRaw: string;
+  };
+  private readonly deletion: WorkNoteDeletionPort;
 
   constructor(
     private readonly app: App,
     private readonly tasks: Pick<TaskApplicationApi, 'queries' | 'execute'>,
     private readonly workNotes: WorkNoteDeletionSource,
-  ) {}
+    deletion?: WorkNoteDeletionPort,
+  ) {
+    this.deletion = deletion ?? new ObsidianWorkNoteDeletionPort(app);
+  }
 
-  preview(note: WorkNoteSnapshot): Promise<WorkNoteDeletionPreview> {
+  async preview(note: WorkNoteSnapshot): Promise<WorkNoteDeletionPreview> {
     const current = this.workNotes.get(note.path);
     if (!current || current.path !== note.path) {
-      return Promise.resolve({ type: 'invalid', reason: 'missing-source' });
+      return { type: 'invalid', reason: 'missing-source' };
     }
     if (
       current.projectPath !== note.projectPath ||
+      current.kind !== note.kind ||
+      current.presetRevision !== note.presetRevision ||
+      current.presetFingerprint !== note.presetFingerprint ||
       current.diagnostics.some(({ type }) =>
         ['multiple-projects', 'ambiguous-project', 'invalid-project-entry'].includes(type),
       )
     ) {
-      return Promise.resolve({ type: 'invalid', reason: 'ambiguous-ownership' });
+      return { type: 'invalid', reason: 'ambiguous-ownership' };
     }
+    const identity = await this.deletion.observe(note.path);
+    if (!identity) return { type: 'invalid', reason: 'missing-source' };
     const tasks = this.tasks.queries.list({ filePath: note.path });
-    this.previewed = { note: current, tasks };
-    return Promise.resolve(
-      tasks.length === 0
-        ? { type: 'ready', taskCount: 0 }
-        : { type: 'decision-required', taskCount: tasks.length },
-    );
+    this.previewed = {
+      note: current,
+      tasks,
+      identity,
+      frontmatterRaw: rawFrontmatter(identity.content),
+    };
+    return tasks.length === 0
+      ? { type: 'ready', taskCount: 0 }
+      : { type: 'decision-required', taskCount: tasks.length };
   }
 
   previewedTaskRevisions(): readonly TaskRef[] {
@@ -127,8 +290,10 @@ export class WorkNoteDeletionCoordinator {
   private recovery(
     notePath: string,
     destinationPath: string,
+    sourceIdentity: WorkNoteDeletionIdentity,
     settled: readonly TaskRef[],
     remaining: readonly TaskRef[],
+    copiedSourceRemains: readonly MoveRecovery[] = [],
   ): WorkNoteDeletionRecovery {
     return {
       notePath,
@@ -137,13 +302,38 @@ export class WorkNoteDeletionCoordinator {
       remainingTaskRefs: remaining.map((ref) => ({ ...ref })),
       settledTaskCount: settled.length,
       remainingTaskCount: remaining.length,
+      sourceIdentity: { ...sourceIdentity },
+      copiedSourceRemains: copiedSourceRemains.map((entry) => ({
+        ...entry,
+        source: { ...entry.source },
+        copiedTask: { ...entry.copiedTask, ref: { ...entry.copiedTask.ref } },
+      })),
     };
   }
 
+  private sourceChangedBeforeSettlement(
+    note: WorkNoteSnapshot,
+    command: WorkNoteDeleteCommand,
+    identity: WorkNoteDeletionIdentity | null,
+  ): boolean {
+    const previewed = this.previewed;
+    return (
+      !identity ||
+      !previewed ||
+      !sameIdentity(identity, command.recovery?.sourceIdentity ?? previewed.identity) ||
+      rawFrontmatter(identity.content) !== previewed.frontmatterRaw ||
+      this.workNotes.get(note.path)?.projectPath !== previewed.note.projectPath
+    );
+  }
+
+  // The explicit phases keep every destructive boundary and recovery identity auditable together.
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   async delete(command: WorkNoteDeleteCommand): Promise<WorkNoteDeletionResult> {
     if (command.action === 'cancel') return { type: 'cancelled' };
     const note = command.note ?? this.previewed?.note;
-    if (!note) return { type: 'invalid-decision', reason: 'Preview the Work Note first.' };
+    if (!note || !this.previewed || this.previewed.note.path !== note.path) {
+      return { type: 'invalid-decision', reason: 'Preview the Work Note first.' };
+    }
     const decision = this.decision(note, command);
     if ('type' in decision) return decision;
     if (
@@ -154,11 +344,142 @@ export class WorkNoteDeletionCoordinator {
       return { type: 'invalid-decision', reason: 'The recovery destination changed.' };
     }
 
+    const initialIdentity = await this.deletion.observe(note.path);
+    if (this.sourceChangedBeforeSettlement(note, command, initialIdentity)) {
+      return {
+        type: 'partial',
+        path: note.path,
+        reason: 'external-edit',
+        recovery: this.recovery(
+          note.path,
+          decision.destinationPath,
+          initialIdentity ?? this.previewed.identity,
+          command.recovery?.settledTaskRefs ?? [],
+          command.expectedTaskRevisions,
+          command.recovery?.copiedSourceRemains ?? [],
+        ),
+      };
+    }
+
+    let settlementIdentity = initialIdentity!;
+    const settled = [...(command.recovery?.settledTaskRefs ?? [])];
+    const previewTasks = new Map(this.previewed.tasks.map((task) => [taskKey(task.ref), task]));
+    const expectedSourceLine = (task: TaskSnapshot): number => {
+      const original = previewTasks.get(taskKey(task.ref)) ?? task;
+      return settled.reduce((line, ref) => {
+        const removed = previewTasks.get(taskKey(ref));
+        return removed && removed.source.line < original.source.line
+          ? line - blockLineCount(removed)
+          : line;
+      }, original.source.line);
+    };
+    const copiedSourceRemains = [...(command.recovery?.copiedSourceRemains ?? [])];
+    for (let index = 0; index < copiedSourceRemains.length; index += 1) {
+      const recovery = copiedSourceRemains[index]!;
+      if (!sameIdentity(await this.deletion.observe(note.path), settlementIdentity)) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'external-edit',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            command.expectedTaskRevisions.filter(
+              (ref) => !settled.some((done) => taskKey(done) === taskKey(ref)),
+            ),
+            copiedSourceRemains.slice(index),
+          ),
+        };
+      }
+      const destinationCopy = this.tasks.queries
+        .list({ filePath: recovery.targetPath })
+        .find(({ ref }) => taskKey(ref) === taskKey(recovery.copiedTask.ref));
+      if (!destinationCopy) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'external-edit',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            command.expectedTaskRevisions.filter(
+              (ref) => !settled.some((done) => taskKey(done) === taskKey(ref)),
+            ),
+            copiedSourceRemains.slice(index),
+          ),
+        };
+      }
+      const sourceTask = this.tasks.queries
+        .list({ filePath: note.path })
+        .find(({ ref }) => taskKey(ref) === taskKey(recovery.source));
+      if (!sourceTask) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'external-edit',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            command.expectedTaskRevisions,
+            copiedSourceRemains.slice(index),
+          ),
+        };
+      }
+      const cleanup = await this.tasks.execute({ type: 'delete', ref: recovery.source });
+      const afterCleanup = await this.deletion.observe(note.path);
+      if (cleanup.type !== 'ok') {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: partialReason(cleanup),
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            afterCleanup ?? settlementIdentity,
+            settled,
+            command.expectedTaskRevisions.filter(
+              (ref) => !settled.some((done) => taskKey(done) === taskKey(ref)),
+            ),
+            copiedSourceRemains.slice(index),
+          ),
+        };
+      }
+      if (
+        !expectedTaskTransition(
+          settlementIdentity,
+          afterCleanup,
+          sourceTask,
+          expectedSourceLine(sourceTask),
+        )
+      ) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: afterCleanup ? 'external-edit' : 'not-found',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            command.expectedTaskRevisions,
+            copiedSourceRemains.slice(index + 1),
+          ),
+        };
+      }
+      settlementIdentity = afterCleanup;
+      settled.push(recovery.source);
+    }
+
     const currentTasks = this.tasks.queries.list({ filePath: note.path });
     const expectedBySource = new Map(
       command.expectedTaskRevisions.map((ref) => [sourceLineKey(ref), ref] as const),
     );
-    const settled = [...(command.recovery?.settledTaskRefs ?? [])];
     const settledKeys = new Set(settled.map(taskKey));
     const pending = currentTasks.filter(({ ref }) => !settledKeys.has(taskKey(ref)));
     const expectedPending = command.expectedTaskRevisions.filter(
@@ -177,18 +498,41 @@ export class WorkNoteDeletionCoordinator {
         type: 'partial',
         path: note.path,
         reason: 'external-edit',
-        recovery: this.recovery(note.path, decision.destinationPath, settled, expectedPending),
+        recovery: this.recovery(
+          note.path,
+          decision.destinationPath,
+          settlementIdentity,
+          settled,
+          expectedPending,
+        ),
       };
     }
 
     for (let index = 0; index < pending.length; index += 1) {
       const task = pending[index]!;
+      if (!sameIdentity(await this.deletion.observe(note.path), settlementIdentity)) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'external-edit',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
+            settled,
+            pending.slice(index).map(({ ref }) => ref),
+          ),
+        };
+      }
       const result = await this.tasks.execute({
         type: 'move',
         ref: task.ref,
         destination: { filePath: decision.destinationPath, insertion: { type: 'append' } },
       });
+      const afterMove = await this.deletion.observe(note.path);
       if (result.type !== 'ok') {
+        const moveRecovery =
+          result.type === 'partial' && result.operation === 'move' ? [result.recovery] : [];
         return {
           type: 'partial',
           path: note.path,
@@ -196,11 +540,28 @@ export class WorkNoteDeletionCoordinator {
           recovery: this.recovery(
             note.path,
             decision.destinationPath,
+            afterMove ?? settlementIdentity,
+            settled,
+            pending.slice(index).map(({ ref }) => ref),
+            moveRecovery,
+          ),
+        };
+      }
+      if (!expectedTaskTransition(settlementIdentity, afterMove, task, expectedSourceLine(task))) {
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: afterMove ? 'external-edit' : 'not-found',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            settlementIdentity,
             settled,
             pending.slice(index).map(({ ref }) => ref),
           ),
         };
       }
+      settlementIdentity = afterMove;
       settled.push(task.ref);
       settledKeys.add(taskKey(task.ref));
     }
@@ -210,7 +571,13 @@ export class WorkNoteDeletionCoordinator {
         type: 'partial',
         path: note.path,
         reason: 'io-error',
-        recovery: this.recovery(note.path, decision.destinationPath, settled, []),
+        recovery: this.recovery(
+          note.path,
+          decision.destinationPath,
+          settlementIdentity,
+          settled,
+          [],
+        ),
       };
     }
     try {
@@ -220,7 +587,13 @@ export class WorkNoteDeletionCoordinator {
         type: 'partial',
         path: note.path,
         reason: 'io-error',
-        recovery: this.recovery(note.path, decision.destinationPath, settled, []),
+        recovery: this.recovery(
+          note.path,
+          decision.destinationPath,
+          settlementIdentity,
+          settled,
+          [],
+        ),
       };
     }
 
@@ -235,25 +608,79 @@ export class WorkNoteDeletionCoordinator {
         recovery: this.recovery(
           note.path,
           decision.destinationPath,
+          settlementIdentity,
           settled,
           finalUnexpectedTasks.map(({ ref }) => ref),
         ),
       };
     }
 
-    const file = this.app.vault.getAbstractFileByPath(note.path);
-    if (!(file instanceof TFile)) {
-      return { type: 'invalid-decision', reason: 'The Work Note no longer exists.' };
+    const finalIdentity = await this.deletion.observe(note.path);
+    if (
+      !sameIdentity(finalIdentity, settlementIdentity) ||
+      rawFrontmatter(finalIdentity!.content) !== this.previewed.frontmatterRaw
+    ) {
+      return {
+        type: 'partial',
+        path: note.path,
+        reason: 'external-edit',
+        recovery: this.recovery(
+          note.path,
+          decision.destinationPath,
+          finalIdentity ?? settlementIdentity,
+          settled,
+          [],
+        ),
+      };
+    }
+    const deletionIdentity = finalIdentity ?? settlementIdentity;
+    const quarantined = await this.deletion.quarantine(deletionIdentity);
+    if (quarantined.type !== 'ok') {
+      return {
+        type: 'partial',
+        path: note.path,
+        reason: quarantined.type === 'conflict' ? 'external-edit' : 'io-error',
+        recovery: this.recovery(note.path, decision.destinationPath, deletionIdentity, settled, []),
+      };
     }
     try {
-      await this.app.fileManager.trashFile(file);
-      return { type: 'ok', path: note.path, movedTaskCount: settled.length };
+      await this.tasks.queries.rescan();
+      const afterQuarantine = this.tasks.queries
+        .list({ filePath: note.path })
+        .filter(({ ref }) => !settledKeys.has(taskKey(ref)));
+      if (afterQuarantine.length > 0) {
+        await this.deletion.restore(quarantined.identity);
+        return {
+          type: 'partial',
+          path: note.path,
+          reason: 'external-edit',
+          recovery: this.recovery(
+            note.path,
+            decision.destinationPath,
+            deletionIdentity,
+            settled,
+            afterQuarantine.map(({ ref }) => ref),
+          ),
+        };
+      }
+      const removed = await this.deletion.remove(quarantined.identity);
+      if (removed.type === 'ok') {
+        return { type: 'ok', path: note.path, movedTaskCount: settled.length };
+      }
+      await this.deletion.restore(quarantined.identity);
+      return {
+        type: 'partial',
+        path: note.path,
+        reason: removed.type === 'conflict' ? 'external-edit' : 'io-error',
+        recovery: this.recovery(note.path, decision.destinationPath, deletionIdentity, settled, []),
+      };
     } catch {
+      await this.deletion.restore(quarantined.identity).catch(() => undefined);
       return {
         type: 'partial',
         path: note.path,
         reason: 'io-error',
-        recovery: this.recovery(note.path, decision.destinationPath, settled, []),
+        recovery: this.recovery(note.path, decision.destinationPath, deletionIdentity, settled, []),
       };
     }
   }

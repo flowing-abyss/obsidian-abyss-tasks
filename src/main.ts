@@ -8,7 +8,10 @@ import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
-import { MilestoneCommandAdapter } from './projects/work-notes/MilestoneCommandAdapter';
+import {
+  MilestoneCommandAdapter,
+  type MilestoneTaskMembership,
+} from './projects/work-notes/MilestoneCommandAdapter';
 import type {
   WorkNoteCompatibilityAcceptanceResult,
   WorkNoteCompatibilityDisableResult,
@@ -141,26 +144,6 @@ export default class TaskCalendarPlugin extends Plugin {
       this.workNoteIndex,
       () => this.settings.projects.statuses,
     );
-    this.workNoteRelations = new WorkNoteRelationCommandService(
-      this.app,
-      () => this.settings.projects.workNoteCompatibility,
-      this.workNoteIndex,
-    );
-    this.milestoneCommands = new MilestoneCommandAdapter({
-      tasks: this.tasks,
-      workNotes: this.workNoteCommands,
-      relations: this.workNoteRelations,
-      open: (path) => {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
-      },
-      rename: (note, title) => this.workNoteCommands.setTitle(note, title),
-    });
-    this.workNoteDeletion = new WorkNoteDeletionCoordinator(
-      this.app,
-      this.tasks,
-      this.workNoteIndex,
-    );
     this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
     this.projectWorkspace = new ProjectWorkspaceCoordinator(
       this.projectStore,
@@ -171,6 +154,42 @@ export default class TaskCalendarPlugin extends Plugin {
         today: () => window.moment().format('YYYY-MM-DD'),
         dependencies: this.dependencyPolicy,
       },
+    );
+    const milestoneAuthority = {
+      refresh: async () => {
+        const event = await this.queries.rescan?.();
+        if (!event) throw new Error('Task publication refresh is unavailable');
+        await this.projectWorkspace.refreshForVerification(event);
+      },
+      taskMemberships: (candidate: Parameters<MilestoneCommandAdapter['assignTask']>[0]['task']) =>
+        this.milestoneTaskMemberships(candidate),
+      workNoteMemberships: (path: string) =>
+        this.projectWorkspace
+          .list()
+          .flatMap((snapshot) => [...snapshot.workNotes, ...snapshot.milestones])
+          .filter((note) => note.path === path),
+    };
+    this.workNoteRelations = new WorkNoteRelationCommandService(
+      this.app,
+      () => this.settings.projects.workNoteCompatibility,
+      this.workNoteIndex,
+      { refresh: milestoneAuthority.refresh },
+    );
+    this.milestoneCommands = new MilestoneCommandAdapter({
+      tasks: this.tasks,
+      workNotes: this.workNoteCommands,
+      relations: this.workNoteRelations,
+      authority: milestoneAuthority,
+      open: (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+      },
+      rename: (note, title) => this.workNoteCommands.setTitle(note, title),
+    });
+    this.workNoteDeletion = new WorkNoteDeletionCoordinator(
+      this.app,
+      this.tasks,
+      this.workNoteIndex,
     );
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
 
@@ -288,6 +307,36 @@ export default class TaskCalendarPlugin extends Plugin {
     token: WorkNoteCompatibilityToken,
   ): Promise<WorkNoteValidatedApplyResult> {
     return this.workNoteIndex.acceptValidatedCompatibility(token);
+  }
+
+  private milestoneTaskMemberships(
+    candidate: Parameters<MilestoneCommandAdapter['assignTask']>[0]['task'],
+  ): readonly MilestoneTaskMembership[] {
+    const memberships: MilestoneTaskMembership[] = [];
+    for (const snapshot of this.projectWorkspace.list()) {
+      for (const action of snapshot.tasks) {
+        if (
+          action.task.ref.filePath !== candidate.ref.filePath ||
+          action.task.ref.line !== candidate.ref.line ||
+          action.task.ref.revision !== candidate.ref.revision
+        ) {
+          continue;
+        }
+        const ownerNote =
+          action.owner.type === 'work-note'
+            ? [...snapshot.workNotes, ...snapshot.milestones].find(
+                ({ path }) => path === action.owner.path,
+              )
+            : undefined;
+        memberships.push({
+          projectPath: snapshot.project.path,
+          owner: action.owner,
+          task: action.task,
+          ...(ownerNote && { ownerNote }),
+        });
+      }
+    }
+    return memberships;
   }
 
   acceptWorkNoteCompatibility(

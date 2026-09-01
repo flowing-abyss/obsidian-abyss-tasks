@@ -81,6 +81,7 @@ import {
   describeTaskCreationResult,
   presentBulkTaskCommandResults,
   presentTaskCommandResult,
+  presentTaskMoveResult,
   requestTaskCompletion,
   type CreationResultDescription,
 } from '../ui/taskCommandResult';
@@ -142,6 +143,7 @@ import {
   renderContainerResponsiveTimeline,
   renderTasksTimeline,
 } from './projects/ProjectsTimelineView';
+import { createWorkNoteResultPresenter } from './projects/WorkNoteResultPresenter';
 import { buildBoardPreference } from './projects/boardPreferences';
 import {
   createProjectActionBoardMutation,
@@ -3504,6 +3506,7 @@ export class CenterPanel {
     menu: Menu,
     project: ProjectWorkspaceSnapshot,
     action: ProjectAction,
+    anchor: HTMLElement,
   ): void {
     if (!this.milestoneCommands || project.milestones.length === 0) return;
     const ownerNote =
@@ -3525,18 +3528,39 @@ export class CenterPanel {
           target
             .setTitle((milestone.path.split('/').pop() ?? milestone.path).replace(/\.md$/u, ''))
             .setChecked(action.milestonePath === milestone.path)
-            .onClick(() => {
-              void this.milestoneCommands!.assignTask({
+            .onClick(async () => {
+              const result = await this.milestoneCommands!.assignTask({
                 task: action.task,
                 owner: action.owner,
                 milestone,
                 ...(ownerNote && { ownerNote }),
                 ...(expectedMilestoneRaw !== undefined && { expectedMilestoneRaw }),
               });
+              await this.presentMilestoneAssignmentResult(result, anchor);
             }),
         );
       }
     });
+  }
+
+  private async presentMilestoneAssignmentResult(
+    result: Awaited<ReturnType<MilestoneCommandAdapter['assignTask']>>,
+    anchor: HTMLElement,
+  ): Promise<void> {
+    if (
+      (result.type === 'ok' && 'changed' in result) ||
+      (result.type === 'conflict' && 'current' in result) ||
+      (result.type === 'invalid' && 'issues' in result) ||
+      result.type === 'not-found' ||
+      result.type === 'ambiguous' ||
+      result.type === 'blocked' ||
+      (result.type === 'partial' && 'operation' in result) ||
+      (result.type === 'io-error' && 'cause' in result)
+    ) {
+      presentTaskMoveResult(this.app, this.tasks!, result);
+      return;
+    }
+    await createWorkNoteResultPresenter(this.el).run(() => Promise.resolve(result), anchor);
   }
 
   private showProjectNextActionMenu(
@@ -3554,7 +3578,7 @@ export class CenterPanel {
       }),
     });
     const project = this.projectSnapshots.find(({ project }) => project.path === projectPath);
-    if (project) this.populateMilestoneAssignmentMenu(menu, project, action);
+    if (project) this.populateMilestoneAssignmentMenu(menu, project, action, anchor ?? this.el);
     showMenuAtMouseEventWithFocus(menu, event, {
       ...(anchor && { restoreFocusTo: anchor }),
     });

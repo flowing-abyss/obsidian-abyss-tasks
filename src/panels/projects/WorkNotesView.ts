@@ -1,6 +1,9 @@
 import { Menu, setIcon } from 'obsidian';
 import type { TaskRollup } from '../../projects/types';
-import { buildMilestoneProjection } from '../../projects/work-notes/MilestoneProjection';
+import {
+  buildMilestoneProjection,
+  selectMilestoneProjections,
+} from '../../projects/work-notes/MilestoneProjection';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type {
   WorkNoteCommandResult,
@@ -169,23 +172,57 @@ export function selectWorkNotes(
   const allowed = options.viewState?.statusIds;
   const knownStatusIds = new Set(options.statuses.map(({ id }) => id));
   const effectiveAllowed = allowed?.filter((id) => knownStatusIds.has(id));
+  const milestoneSort = (() => {
+    const field = options.viewState?.sortBy.field;
+    if (field === 'status') return 'status' as const;
+    if (field === 'progress') return 'progress' as const;
+    if (field === 'start' || field === 'end') return 'date' as const;
+    return 'title' as const;
+  })();
+  const milestoneGroup = (() => {
+    const group = options.viewState?.groupBy;
+    if (group === 'status' || group === 'date-state') return group;
+    return 'none' as const;
+  })();
+  const selectedMilestones = selectMilestoneProjections(
+    options.notes
+      .filter(({ kind }) => kind === 'milestone')
+      .map((note) => buildMilestoneProjection(note, options.milestoneRollups?.get(note.path))),
+    {
+      ...(options.textQuery && { query: options.textQuery }),
+      ...(effectiveAllowed?.length && { statusIds: effectiveAllowed }),
+      groupBy: milestoneGroup,
+      sortBy: milestoneSort,
+      direction: options.viewState.sortBy.dir,
+    },
+  );
+  const selectedMilestonePaths = new Set(selectedMilestones.map(({ path }) => path));
+  const milestoneRank = new Map(
+    selectedMilestones.map(({ path }, index) => [path, index] as const),
+  );
   const filtered =
     effectiveAllowed && effectiveAllowed.length > 0
-      ? options.notes.filter(
-          ({ statusId }) => statusId === null || effectiveAllowed.includes(statusId),
+      ? options.notes.filter((note) =>
+          note.kind === 'milestone'
+            ? selectedMilestonePaths.has(note.path)
+            : note.statusId === null || effectiveAllowed.includes(note.statusId),
         )
-      : [...options.notes];
+      : options.notes.filter(
+          (note) => note.kind !== 'milestone' || selectedMilestonePaths.has(note.path),
+        );
   const query = options.textQuery?.trim().toLocaleLowerCase();
   const textFiltered = query
-    ? filtered.filter((note) =>
-        [
-          basename(note.path),
-          note.path,
-          statusText(note, options.statuses),
-          note.rawStatus,
-          note.priority,
-          note.description,
-        ].some((value) => value?.toLocaleLowerCase().includes(query)),
+    ? filtered.filter(
+        (note) =>
+          note.kind === 'milestone' ||
+          [
+            basename(note.path),
+            note.path,
+            statusText(note, options.statuses),
+            note.rawStatus,
+            note.priority,
+            note.description,
+          ].some((value) => value?.toLocaleLowerCase().includes(query)),
       )
     : filtered;
   const field = options.viewState?.sortBy.field ?? 'updated';
@@ -209,7 +246,13 @@ export function selectWorkNotes(
     const grouped = groupKey(left, groupBy, options.statuses).localeCompare(
       groupKey(right, groupBy, options.statuses),
     );
-    return grouped || direction * value(left).localeCompare(value(right));
+    if (grouped) return grouped;
+    const kind = Number(left.kind !== 'milestone') - Number(right.kind !== 'milestone');
+    if (kind) return kind;
+    if (left.kind === 'milestone' && right.kind === 'milestone') {
+      return (milestoneRank.get(left.path) ?? 0) - (milestoneRank.get(right.path) ?? 0);
+    }
+    return direction * value(left).localeCompare(value(right));
   });
 }
 
@@ -673,13 +716,14 @@ export function renderWorkNotesView(
         }
         if (event.key !== 'Enter' || !input.value.trim()) return;
         const title = input.value.trim();
-        input.disabled = true;
-        void Promise.resolve(
-          options.onCreateMilestone!({ title, projectPath: options.projectPath! }),
-        ).then((result) => {
-          if (result.type === 'ok' || result.type === 'unchanged') input.remove();
-          else input.disabled = false;
-        });
+        void presenter
+          .run(
+            () => options.onCreateMilestone!({ title, projectPath: options.projectPath! }),
+            input,
+          )
+          .then((result) => {
+            if (result.type === 'ok' || result.type === 'unchanged') input.remove();
+          });
       });
       input.focus();
     });

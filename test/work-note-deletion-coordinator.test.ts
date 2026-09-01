@@ -1,8 +1,11 @@
 import { TFile, type App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
-import { WorkNoteDeletionCoordinator } from '../src/projects/work-notes/WorkNoteDeletionCoordinator';
+import {
+  WorkNoteDeletionCoordinator,
+  type WorkNoteDeletionPort,
+} from '../src/projects/work-notes/WorkNoteDeletionCoordinator';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
-import type { TaskSnapshot } from '../src/tasks';
+import type { TaskCommandResult, TaskRef, TaskSnapshot } from '../src/tasks';
 import { createAppWithFiles, task } from './helpers';
 
 function note(path = 'Work/A.md', kind: WorkNoteSnapshot['kind'] = 'ordinary'): WorkNoteSnapshot {
@@ -35,22 +38,50 @@ async function fixture(
 ) {
   const app = await createAppWithFiles({
     'Projects/P.md': '# Project\n',
-    'Work/A.md': '# A\n- [ ] one\n- [ ] two\n- [ ] three\n',
+    'Work/A.md': `# A\n${snapshots.map(({ source }) => source.originalBlock).join('\n')}${snapshots.length > 0 ? '\n' : ''}`,
     'Work/B.md': '# B\n',
   });
+  const settleTask = async (command: {
+    readonly type: string;
+    readonly ref?: TaskRef;
+  }): Promise<TaskCommandResult> => {
+    const ref = command.ref;
+    if ((command.type === 'move' || command.type === 'delete') && ref) {
+      const snapshot = snapshots.find(
+        ({ ref: candidate }) =>
+          candidate.filePath === ref.filePath &&
+          candidate.line === ref.line &&
+          candidate.revision === ref.revision,
+      );
+      if (snapshot) {
+        const file = await fileAt(app, snapshot.ref.filePath);
+        const content = await app.vault.read(file);
+        const block = snapshot.source.originalBlock;
+        const next = content.includes(`${block}\n`)
+          ? content.replace(`${block}\n`, '')
+          : content.replace(`\n${block}`, '');
+        await app.vault.modify(file, next);
+      }
+    }
+    return {
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'deleted', ref: ref ?? ownedTask(0).ref },
+    };
+  };
   const tasks = {
     queries: {
       list: vi.fn().mockReturnValue(snapshots),
       rescan: vi.fn().mockResolvedValue({ type: 'settled', files: [] }),
     },
-    execute: vi.fn().mockResolvedValue({ type: 'ok', changed: true }),
+    execute: vi.fn(settleTask),
   };
   const workNotes = {
     list: () => [note(), note('Work/B.md')],
     get: (path: string) => [note(), note('Work/B.md')].find((entry) => entry.path === path),
   };
   const coordinator = new WorkNoteDeletionCoordinator(app, tasks as never, workNotes);
-  return { app, tasks, workNotes, coordinator };
+  return { app, tasks, workNotes, coordinator, settleTask };
 }
 
 function expectedRevisions(tasks: readonly TaskSnapshot[]) {
@@ -59,6 +90,12 @@ function expectedRevisions(tasks: readonly TaskSnapshot[]) {
 
 async function exists(app: App, path: string): Promise<boolean> {
   return app.vault.getAbstractFileByPath(path) instanceof TFile;
+}
+
+async function fileAt(app: App, path: string): Promise<TFile> {
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) throw new Error(`Expected ${path}`);
+  return file;
 }
 
 describe('WorkNoteDeletionCoordinator', () => {
@@ -117,6 +154,75 @@ describe('WorkNoteDeletionCoordinator', () => {
     expect(await exists(h.app, note().path)).toBe(false);
   });
 
+  it('refuses an ok command that did not remove the exact guarded root block', async () => {
+    const snapshots = [ownedTask(1)];
+    const h = await fixture(snapshots);
+    h.tasks.execute.mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'deleted', ref: snapshots[0]!.ref },
+    });
+    await h.coordinator.preview(note());
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions(snapshots),
+      }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(await exists(h.app, note().path)).toBe(true);
+  });
+
+  it('uses the guarded source line to settle duplicate identical complete root blocks', async () => {
+    const snapshots = [
+      task({
+        title: 'same',
+        ref: { filePath: note().path, line: 1, revision: 'same-1' },
+        source: { filePath: note().path, line: 1 },
+      }),
+      task({
+        title: 'same',
+        ref: { filePath: note().path, line: 2, revision: 'same-2' },
+        source: { filePath: note().path, line: 2 },
+      }),
+    ];
+    const h = await fixture(snapshots);
+    await h.coordinator.preview(note());
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions(snapshots),
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 2 });
+    expect(h.tasks.execute).toHaveBeenCalledTimes(2);
+  });
+
+  it('tracks cumulative line shifts across separated identical roots', async () => {
+    const snapshots = [1, 3, 5].map((line, index) =>
+      task({
+        title: 'same',
+        ref: { filePath: note().path, line, revision: `same-${String(index + 1)}` },
+        source: { filePath: note().path, line },
+      }),
+    );
+    const h = await fixture(snapshots);
+    const file = await fileAt(h.app, note().path);
+    await h.app.vault.modify(
+      file,
+      '# A\n- [ ] same\nprose one\n- [ ] same\nprose two\n- [ ] same\n',
+    );
+    await h.coordinator.preview(note());
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions(snapshots),
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 3 });
+    expect(h.tasks.execute).toHaveBeenCalledTimes(3);
+  });
+
   it('moves to a selected same-Project Work Note and rejects invalid destinations', async () => {
     const snapshots = [ownedTask(1)];
     const h = await fixture(snapshots);
@@ -147,8 +253,8 @@ describe('WorkNoteDeletionCoordinator', () => {
     const snapshots = [ownedTask(1), ownedTask(2), ownedTask(3)];
     const h = await fixture(snapshots);
     h.tasks.execute
-      .mockResolvedValueOnce({ type: 'ok', changed: true })
-      .mockResolvedValueOnce({ type: 'conflict', current: snapshots[1] });
+      .mockImplementationOnce(h.settleTask)
+      .mockResolvedValueOnce({ type: 'conflict', current: snapshots[1]! });
     await h.coordinator.preview(note());
 
     const result = await h.coordinator.delete({
@@ -166,7 +272,7 @@ describe('WorkNoteDeletionCoordinator', () => {
   it('restarts from recovery without replaying settled moves and reports I/O state precisely', async () => {
     const snapshots = [ownedTask(1), ownedTask(2)];
     const h = await fixture(snapshots);
-    h.tasks.execute.mockResolvedValueOnce({ type: 'ok', changed: true }).mockResolvedValueOnce({
+    h.tasks.execute.mockImplementationOnce(h.settleTask).mockResolvedValueOnce({
       type: 'io-error',
       cause: 'repository-error',
       contentState: 'unchanged',
@@ -179,7 +285,7 @@ describe('WorkNoteDeletionCoordinator', () => {
     expect(first).toMatchObject({ type: 'partial', reason: 'io-error' });
     if (first.type !== 'partial') throw new Error('Expected recovery');
 
-    h.tasks.execute.mockResolvedValue({ type: 'ok', changed: true });
+    h.tasks.execute.mockImplementation(h.settleTask);
     await expect(
       h.coordinator.delete({
         action: 'move-to-project',
@@ -187,10 +293,10 @@ describe('WorkNoteDeletionCoordinator', () => {
         recovery: first.recovery,
       }),
     ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 2 });
-    expect(h.tasks.execute.mock.calls.filter(([command]) => command.ref.line === 1)).toHaveLength(
+    expect(h.tasks.execute.mock.calls.filter(([command]) => command.ref?.line === 1)).toHaveLength(
       1,
     );
-    expect(h.tasks.execute.mock.calls.filter(([command]) => command.ref.line === 2)).toHaveLength(
+    expect(h.tasks.execute.mock.calls.filter(([command]) => command.ref?.line === 2)).toHaveLength(
       2,
     );
   });
@@ -198,7 +304,9 @@ describe('WorkNoteDeletionCoordinator', () => {
   it('refuses an externally edited Task revision before moving and applies the same policy to Milestones', async () => {
     const current = ownedTask(1);
     const h = await fixture([current]);
-    await h.coordinator.preview(note('Work/A.md', 'milestone'));
+    const milestone = note('Work/A.md', 'milestone');
+    h.workNotes.get = () => milestone;
+    await h.coordinator.preview(milestone);
 
     await expect(
       h.coordinator.delete({
@@ -212,6 +320,193 @@ describe('WorkNoteDeletionCoordinator', () => {
     });
     expect(h.tasks.execute).not.toHaveBeenCalled();
     expect(await exists(h.app, 'Work/A.md')).toBe(true);
+  });
+
+  it('records target-copied-source-remains and restarts by deleting the source without recopying', async () => {
+    const source = ownedTask(1);
+    const copiedTask = ownedTask(8, 'Projects/P.md');
+    const h = await fixture([source]);
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) =>
+      query?.filePath === 'Projects/P.md' ? [copiedTask] : [source],
+    );
+    h.tasks.execute.mockResolvedValueOnce({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: source.ref,
+        targetPath: 'Projects/P.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    await h.coordinator.preview(note());
+
+    const first = await h.coordinator.delete({
+      action: 'move-to-project',
+      expectedTaskRevisions: expectedRevisions([source]),
+    });
+    expect(first).toMatchObject({
+      type: 'partial',
+      recovery: {
+        copiedSourceRemains: [
+          { state: 'target-copied-source-remains', targetPath: 'Projects/P.md' },
+        ],
+      },
+    });
+    if (first.type !== 'partial') throw new Error('Expected recovery');
+
+    h.tasks.execute.mockImplementation(h.settleTask);
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery: first.recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
+    expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+  });
+
+  it('rejects a recovery restart when prose changed after the partial settlement', async () => {
+    const source = ownedTask(1);
+    const copiedTask = ownedTask(8, 'Projects/P.md');
+    const h = await fixture([source]);
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) =>
+      query?.filePath === 'Projects/P.md' ? [copiedTask] : [source],
+    );
+    h.tasks.execute.mockResolvedValueOnce({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: source.ref,
+        targetPath: 'Projects/P.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    await h.coordinator.preview(note());
+    const first = await h.coordinator.delete({
+      action: 'move-to-project',
+      expectedTaskRevisions: expectedRevisions([source]),
+    });
+    if (first.type !== 'partial') throw new Error('Expected recovery');
+    const file = await fileAt(h.app, note().path);
+    await h.app.vault.modify(file, `${await h.app.vault.read(file)}\nuser prose`);
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery: first.recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(h.tasks.execute).toHaveBeenCalledTimes(1);
+    expect(await h.app.vault.read(await fileAt(h.app, note().path))).toContain('user prose');
+  });
+
+  it('leaves an externally edited source in place when it changes after final rescan before quarantine', async () => {
+    const h = await fixture([]);
+    const observe = async (path: string) => {
+      const file = h.app.vault.getAbstractFileByPath(path);
+      if (!(file instanceof TFile)) return null;
+      return {
+        path,
+        content: await h.app.vault.read(file),
+        mtime: file.stat.mtime,
+        size: file.stat.size,
+      };
+    };
+    const deletion: WorkNoteDeletionPort = {
+      observe,
+      quarantine: async (expected) => {
+        const file = h.app.vault.getAbstractFileByPath(expected.path);
+        if (file instanceof TFile) await h.app.vault.modify(file, `${expected.content}\nexternal`);
+        return { type: 'conflict' };
+      },
+      remove: vi.fn(),
+      restore: vi.fn(),
+    };
+    const coordinator = new WorkNoteDeletionCoordinator(
+      h.app,
+      h.tasks as never,
+      h.workNotes,
+      deletion,
+    );
+    await coordinator.preview(note());
+
+    await expect(
+      coordinator.delete({ action: 'move-to-project', expectedTaskRevisions: [] }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(await exists(h.app, note().path)).toBe(true);
+    expect(await h.app.vault.read(await fileAt(h.app, note().path))).toContain('external');
+  });
+
+  it('keeps prose added by the settlement rescan instead of accepting it as the deletion baseline', async () => {
+    const h = await fixture([]);
+    await h.coordinator.preview(note());
+    h.tasks.queries.rescan.mockImplementation(async () => {
+      const file = await fileAt(h.app, note().path);
+      await h.app.vault.modify(file, `${await h.app.vault.read(file)}\nrescan prose`);
+      return { type: 'settled', files: [] };
+    });
+
+    await expect(
+      h.coordinator.delete({ action: 'move-to-project', expectedTaskRevisions: [] }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(await h.app.vault.read(await fileAt(h.app, note().path))).toContain('rescan prose');
+  });
+
+  it('rejects prose edited while a successful production-style Task move is awaited', async () => {
+    const source = task({
+      title: 'one',
+      ref: { filePath: note().path, line: 1, revision: 'one-revision' },
+      source: {
+        filePath: note().path,
+        line: 1,
+        originalMarkdown: '- [ ] one',
+        originalBlock: '- [ ] one',
+      },
+    });
+    const h = await fixture([source]);
+    h.tasks.execute.mockImplementation(async () => {
+      const file = await fileAt(h.app, note().path);
+      const current = await h.app.vault.read(file);
+      await h.app.vault.modify(file, `${current.replace('- [ ] one\n', '')}\nuser prose`);
+      return {
+        type: 'ok',
+        changed: true,
+        outcome: { type: 'deleted', ref: source.ref },
+      };
+    });
+    await h.coordinator.preview(note());
+
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+      }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(await h.app.vault.read(await fileAt(h.app, note().path))).toContain('user prose');
+  });
+
+  it('restores a source edited in the production observe-to-quarantine rename window', async () => {
+    const h = await fixture([]);
+    await h.coordinator.preview(note());
+    const rename = h.app.vault.rename.bind(h.app.vault);
+    vi.spyOn(h.app.vault, 'rename').mockImplementation(async (file, path) => {
+      if (file instanceof TFile && file.path === note().path) {
+        await h.app.vault.modify(file, `${await h.app.vault.read(file)}\nrename-window prose`);
+      }
+      await rename(file, path);
+    });
+
+    await expect(
+      h.coordinator.delete({ action: 'move-to-project', expectedTaskRevisions: [] }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
+    expect(await h.app.vault.read(await fileAt(h.app, note().path))).toContain(
+      'rename-window prose',
+    );
   });
 
   it('keeps the note when an expected Task disappears before deletion', async () => {
@@ -230,6 +525,19 @@ describe('WorkNoteDeletionCoordinator', () => {
       reason: 'external-edit',
       recovery: { settledTaskCount: 0, remainingTaskCount: 2 },
     });
+    expect(h.tasks.execute).not.toHaveBeenCalled();
+    expect(await exists(h.app, note().path)).toBe(true);
+  });
+
+  it('rejects any raw note edit after preview before beginning Task settlement', async () => {
+    const h = await fixture([]);
+    await h.coordinator.preview(note());
+    const file = await fileAt(h.app, note().path);
+    await h.app.vault.modify(file, `${await h.app.vault.read(file)}\nexternal body edit`);
+
+    await expect(
+      h.coordinator.delete({ action: 'move-to-project', expectedTaskRevisions: [] }),
+    ).resolves.toMatchObject({ type: 'partial', reason: 'external-edit' });
     expect(h.tasks.execute).not.toHaveBeenCalled();
     expect(await exists(h.app, note().path)).toBe(true);
   });

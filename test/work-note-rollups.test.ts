@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { computeMilestoneRollups, computeWorkNoteRollup } from '../src/projects/work-notes/rollups';
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import type { ProjectStatus } from '../src/settings/types';
+import { task } from './helpers';
 
 const statuses: readonly ProjectStatus[] = [
   {
@@ -99,6 +100,42 @@ describe('Work Note rollups', () => {
       completed: 0,
       dropped: 0,
       progress: null,
+    });
+  });
+
+  it('combines physical and inherited Tasks with linked Work Note lifecycle and dedupes exact refs', () => {
+    const milestone = note('Work/M.md', 'active', { kind: 'milestone' });
+    const member = note('Work/A.md', 'active', { milestonePath: milestone.path });
+    const physicalDone = task({
+      ref: { filePath: milestone.path, line: 4, revision: 'same' },
+      source: { filePath: milestone.path, line: 4 },
+      status: 'done',
+      statusSymbol: 'x',
+    });
+    const inheritedOpen = task({
+      ref: { filePath: member.path, line: 3, revision: 'open' },
+      source: { filePath: member.path, line: 3 },
+      status: 'open',
+    });
+    const inheritedCancelled = task({
+      ref: { filePath: member.path, line: 5, revision: 'cancelled' },
+      source: { filePath: member.path, line: 5 },
+      status: 'cancelled',
+      statusSymbol: '-',
+    });
+
+    const result = computeMilestoneRollups([milestone, member], statuses, [
+      physicalDone,
+      physicalDone,
+      inheritedOpen,
+      inheritedCancelled,
+    ]);
+
+    expect(result.get(milestone.path)).toEqual({
+      active: 2,
+      completed: 1,
+      dropped: 1,
+      progress: 1 / 3,
     });
   });
 

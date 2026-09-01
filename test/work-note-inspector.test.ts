@@ -4,7 +4,7 @@ import { renderWorkNoteInspector } from '../src/panels/projects/WorkNoteInspecto
 import type { WorkNoteSnapshot } from '../src/projects/work-notes/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import { InspectorDraftRegistry } from '../src/ui/projectDraftContinuity';
-import { deferred, freshContainer } from './helpers';
+import { deferred, freshContainer, task } from './helpers';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -57,6 +57,94 @@ describe('renderWorkNoteInspector', () => {
     const button = root.querySelector<HTMLButtonElement>('[aria-label="Delete work note"]')!;
     button.click();
     expect(onDelete).toHaveBeenCalledWith(snapshot, expect.any(MouseEvent));
+  });
+
+  it('exposes guarded physical Task ownership and editable first-class Milestone fields', async () => {
+    const root = freshContainer();
+    const milestone = { ...snapshot, kind: 'milestone' as const };
+    const candidateTask = task({
+      ref: { filePath: snapshot.projectPath, line: 3, revision: 'candidate' },
+      source: { filePath: snapshot.projectPath, line: 3 },
+      title: 'Move me',
+    });
+    const action = {
+      task: candidateTask,
+      projectPath: snapshot.projectPath,
+      owner: { type: 'project' as const, path: snapshot.projectPath },
+      dependency: { type: 'allowed' as const },
+    };
+    const onCreateTask = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: candidateTask },
+    });
+    const onMoveTask = vi.fn().mockResolvedValue({
+      type: 'ok',
+      changed: true,
+      outcome: { type: 'task', task: candidateTask },
+    });
+    const onSetTitle = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    const onSetDate = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    const onSetPriority = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    const onSetDescription = vi.fn().mockResolvedValue({ type: 'ok', path: milestone.path });
+    let moveSelection: (() => unknown) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      const item = {
+        setTitle() {
+          return this;
+        },
+        onClick(callback: () => unknown) {
+          moveSelection = callback;
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    renderWorkNoteInspector(root, milestone, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      onCreateTask,
+      taskMoveCandidates: [action],
+      onMoveTask,
+      onSetTitle,
+      onSetDate,
+      onSetPriority,
+      onSetDescription,
+      milestoneRollup: { active: 2, completed: 3, dropped: 1, progress: 0.6 },
+    });
+
+    const newTask = root.querySelector<HTMLInputElement>('[aria-label="New task title"]')!;
+    newTask.value = 'Release checklist';
+    root.querySelector<HTMLButtonElement>('[aria-label="Create task in work note"]')!.click();
+    root
+      .querySelector<HTMLButtonElement>('[aria-label="Move existing task to work note"]')!
+      .click();
+    await moveSelection?.();
+    const title = root.querySelector<HTMLInputElement>('[aria-label="Edit milestone title"]')!;
+    title.value = 'Release 2';
+    root.querySelector<HTMLButtonElement>('[aria-label="Save milestone title"]')!.click();
+    const start = root.querySelector<HTMLInputElement>('[aria-label="Edit start"]')!;
+    start.value = '2026-09-12';
+    root.querySelector<HTMLButtonElement>('[aria-label="Save start"]')!.click();
+    root.querySelector<HTMLButtonElement>('[aria-label="Save priority"]')!.click();
+    root.querySelector<HTMLButtonElement>('[aria-label="Save description"]')!.click();
+
+    await vi.waitFor(() => {
+      expect(onCreateTask).toHaveBeenCalledWith(milestone, 'Release checklist');
+      expect(onMoveTask).toHaveBeenCalledWith(milestone, action);
+      expect(onSetTitle).toHaveBeenCalledWith(milestone, 'Release 2');
+      expect(onSetDate).toHaveBeenCalledWith(milestone, 'start', '2026-09-12');
+      expect(onSetPriority).toHaveBeenCalledWith(milestone, 'High');
+      expect(onSetDescription).toHaveBeenCalledWith(
+        milestone,
+        'Customer handoff and release readiness',
+      );
+      expect(root.querySelector('[data-inspector-field="progress"]')?.textContent).toContain(
+        '3 of 5 complete',
+      );
+    });
   });
   it('uses the shared inspector field-row contract for its status, metadata, and relations', () => {
     const root = freshContainer();
@@ -115,8 +203,8 @@ describe('renderWorkNoteInspector', () => {
 
   it('exposes guarded relation editor intents through native controls', () => {
     const root = freshContainer();
-    const onSetMilestone = vi.fn();
-    const onToggleRelated = vi.fn();
+    const onSetMilestone = vi.fn().mockResolvedValue({ type: 'ok', path: snapshot.path });
+    const onToggleRelated = vi.fn().mockResolvedValue({ type: 'ok', path: snapshot.path });
     const menuItems: Array<{ title: string; callback?: () => unknown }> = [];
     vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
       const captured = { title: '' } as { title: string; callback?: () => unknown };
@@ -161,6 +249,46 @@ describe('renderWorkNoteInspector', () => {
       expect.objectContaining({ path: 'Work Notes/Related.md' }),
       true,
     );
+  });
+
+  it('presents relation failure in the mounted inspector before any successful-refresh callback', async () => {
+    const root = freshContainer();
+    const onDraftSettled = vi.fn();
+    let chooseRelated: (() => unknown) | undefined;
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      let title = '';
+      const item = {
+        setTitle(value: string) {
+          title = value;
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        onClick(callback: () => unknown) {
+          if (title === 'Related') chooseRelated = callback;
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      return this;
+    });
+    renderWorkNoteInspector(root, snapshot, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      relationCandidates: [{ ...snapshot, path: 'Work Notes/Related.md' }],
+      onToggleRelated: vi.fn().mockResolvedValue({ type: 'conflict', field: 'related' }),
+      onDraftSettled,
+    });
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Edit Related relations"]')!.click();
+    await chooseRelated?.();
+
+    const feedback = root.querySelector<HTMLElement>('[data-work-note-feedback]');
+    expect(feedback && root.contains(feedback)).toBe(true);
+    expect(feedback?.dataset['resultType']).toBe('conflict');
+    expect(onDraftSettled).not.toHaveBeenCalled();
   });
 
   it('renders absent optional metadata as Not set while reserving Unavailable for unsupported fields', () => {

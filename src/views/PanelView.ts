@@ -16,10 +16,14 @@ import { ProjectManager } from '../projects/ProjectManager';
 import { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
 import { inspectProjectLifecycleFrontmatter } from '../projects/lifecycle';
-import type { ProjectWorkspaceSnapshot } from '../projects/types';
+import { parseProjectDate } from '../projects/projectDates';
+import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
 import type { MilestoneCommandAdapter } from '../projects/work-notes/MilestoneCommandAdapter';
 import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
-import type { WorkNoteDeletionCoordinator } from '../projects/work-notes/WorkNoteDeletionCoordinator';
+import type {
+  WorkNoteDeletionCoordinator,
+  WorkNoteDeletionRecovery,
+} from '../projects/work-notes/WorkNoteDeletionCoordinator';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
 import type { WorkNoteRelationCommandService } from '../projects/work-notes/WorkNoteRelationCommandService';
 import type { RelationWriteCommand, WorkNoteSnapshot } from '../projects/work-notes/types';
@@ -57,6 +61,7 @@ import {
   type CaptureContext,
 } from '../ui/taskCapture/CaptureTargetResolver';
 import { QuickCaptureCoordinator } from '../ui/taskCapture/QuickCaptureCoordinator';
+import { presentTaskCreationResult, presentTaskMoveResult } from '../ui/taskCommandResult';
 import {
   rebuildTaskSelection,
   renamedRootSelection,
@@ -161,6 +166,16 @@ function hasPresentedPanelGeometry(element: HTMLElement, ownerWindow: Window | n
   return bounds !== null && intersectsOwnerViewport(bounds, ownerWindow);
 }
 
+function isTaskOwnershipResult(
+  result: TaskCommandResult | import('../projects/work-notes/types').WorkNoteCommandResult,
+): result is TaskCommandResult {
+  if (result.type === 'ok') return 'changed' in result;
+  if (result.type === 'partial') return 'operation' in result;
+  if (result.type === 'io-error') return 'cause' in result;
+  if (result.type === 'conflict' || result.type === 'invalid') return !('field' in result);
+  return false;
+}
+
 export class PanelView extends ItemView {
   private state!: AppState;
   private rail!: RailPanel;
@@ -192,6 +207,14 @@ export class PanelView extends ItemView {
   private modeInspectorClearVersion = 0;
   private readonly inspectorDrafts = new InspectorDraftRegistry();
   private collectionState?: ProjectWorkspaceSession;
+  private readonly workNoteDeletionRecovery = new Map<
+    string,
+    {
+      readonly destinationPath: string;
+      readonly expectedTaskRevisions: readonly TaskRef[];
+      readonly recovery: WorkNoteDeletionRecovery;
+    }
+  >();
 
   private inspectorReturnTarget(origin: InspectorFocusOrigin | null): HTMLElement | null {
     if (origin?.element?.isConnected) return origin.element;
@@ -208,6 +231,7 @@ export class PanelView extends ItemView {
     note: WorkNoteSnapshot,
     destinationPath: string,
     expectedTaskRevisions: readonly TaskRef[],
+    recovery?: WorkNoteDeletionRecovery,
   ): Promise<void> {
     if (!this.workNoteDeletion) return;
     const result = await this.workNoteDeletion.delete({
@@ -217,8 +241,10 @@ export class PanelView extends ItemView {
         destinationWorkNotePath: destinationPath,
       }),
       expectedTaskRevisions,
+      ...(recovery && { recovery }),
     });
     if (result.type === 'ok') {
+      this.workNoteDeletionRecovery.delete(note.path);
       new Notice(`${note.kind === 'milestone' ? 'Milestone' : 'Work note'} deleted.`);
       this.state.batch(() => {
         this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
@@ -228,11 +254,17 @@ export class PanelView extends ItemView {
       return;
     }
     if (result.type === 'partial') {
+      this.workNoteDeletionRecovery.set(note.path, {
+        destinationPath,
+        expectedTaskRevisions,
+        recovery: result.recovery,
+      });
       new Notice(
         `Deletion paused: ${String(result.recovery.remainingTaskCount)} tasks remain. The note was kept.`,
       );
       return;
     }
+    this.workNoteDeletionRecovery.delete(note.path);
     if (result.type !== 'cancelled')
       new Notice('Work note was not deleted. Review changes and retry.');
   }
@@ -243,6 +275,16 @@ export class PanelView extends ItemView {
     event: MouseEvent,
   ): Promise<void> {
     if (!this.workNoteDeletion) return;
+    const recovery = this.workNoteDeletionRecovery.get(note.path);
+    if (recovery) {
+      await this.executeWorkNoteDeletion(
+        note,
+        recovery.destinationPath,
+        recovery.expectedTaskRevisions,
+        recovery.recovery,
+      );
+      return;
+    }
     const preview = await this.workNoteDeletion.preview(note);
     if (preview.type === 'invalid') {
       new Notice('Work note was not deleted because ownership changed.');
@@ -487,16 +529,7 @@ export class PanelView extends ItemView {
       this.settings,
       undefined,
       this.tasks,
-      (actions) => {
-        const root = this.state.get('taskStack')[0];
-        if (!root || !('source' in root)) return;
-        const snapshots = this.projectWorkspace?.list() ?? [];
-        const action = snapshots
-          .flatMap(({ tasks }) => tasks)
-          .find(
-            ({ task }) =>
-              task.ref.filePath === root.ref.filePath && task.ref.line === root.ref.line,
-          );
+      (actions, action) => {
         const ownerPath = action?.owner.type === 'work-note' ? action.owner.path : undefined;
         if (ownerPath && ownerPath !== action?.milestonePath) {
           const backlink = actions.createEl('button', {
@@ -703,37 +736,33 @@ export class PanelView extends ItemView {
           expectedPresetFingerprint: note.presetFingerprint,
           value,
         });
-        const setMilestoneRelation = (
+        const setMilestoneRelation = async (
           _current: typeof note,
           milestone: typeof note | null,
-        ): void => {
-          void this.workNoteRelations
-            ?.setMilestone(relationCommand('milestone', milestone?.path ?? null))
-            .then(onDraftSettled);
+        ) => {
+          return this.workNoteRelations!.setMilestone(
+            relationCommand('milestone', milestone?.path ?? null),
+          );
         };
-        const toggleRelatedRelation = (
+        const toggleRelatedRelation = async (
           _current: typeof note,
           target: typeof note,
           present: boolean,
-        ): void => {
+        ) => {
           const command = relationCommand('related', target.path);
-          void (
-            present
-              ? this.workNoteRelations?.removeRelated(command)
-              : this.workNoteRelations?.addRelated(command)
-          )?.then(onDraftSettled);
+          return present
+            ? this.workNoteRelations!.removeRelated(command)
+            : this.workNoteRelations!.addRelated(command);
         };
-        const toggleBlockedByRelation = (
+        const toggleBlockedByRelation = async (
           _current: typeof note,
           target: typeof note,
           present: boolean,
-        ): void => {
+        ) => {
           const command = relationCommand('blockedBy', target.path);
-          void (
-            present
-              ? this.workNoteRelations?.removeBlockedBy(command)
-              : this.workNoteRelations?.addBlockedBy(command)
-          )?.then(onDraftSettled);
+          return present
+            ? this.workNoteRelations!.removeBlockedBy(command)
+            : this.workNoteRelations!.addBlockedBy(command);
         };
         const showOwnedTasks = (): void => {
           const tasks = this.collectionState?.scopeSession('tasks');
@@ -760,7 +789,13 @@ export class PanelView extends ItemView {
               path: note.path,
               projectPath: note.projectPath,
             }),
-          render: (content) =>
+          render: (content) => {
+            const milestoneRangeObservation =
+              note.kind === 'milestone' ? this.milestoneCommands?.observeDates(note) : null;
+            const fieldObservation = this.workNoteCommands!.observe(note);
+            const projectSnapshot = snapshots.find(
+              ({ project }) => project.path === note.projectPath,
+            );
             renderWorkNoteInspector(content, note, {
               statuses: this.workNoteCommands!.statuses(),
               commandsEnabled: this.workNoteCommands!.capabilities().update,
@@ -777,15 +812,64 @@ export class PanelView extends ItemView {
               taskRollup: snapshots
                 .find(({ project }) => project.path === note.projectPath)
                 ?.workNoteTaskRollups?.get(note.path),
+              milestoneRollup: projectSnapshot?.milestoneRollups.get(note.path),
               onShowTasks: showOwnedTasks,
-              ...(this.workNoteDeletion && {
-                onDelete: (current, event) => {
-                  void this.requestWorkNoteDeletion(current, relationCandidates, event);
+              ...(this.milestoneCommands && {
+                onCreateTask: async (current: typeof note, markdownBody: string) => {
+                  const result = await this.milestoneCommands!.createTask(current, markdownBody);
+                  if (isTaskOwnershipResult(result)) presentTaskCreationResult(result);
+                  if (result.type === 'ok') onDraftSettled();
+                  return result;
                 },
+              }),
+              taskMoveCandidates: (projectSnapshot?.tasks ?? []).filter(
+                ({ owner }) => owner.type !== 'work-note' || owner.path !== note.path,
+              ),
+              ...(this.milestoneCommands && {
+                onMoveTask: async (current: typeof note, action: ProjectAction) => {
+                  const result = await this.milestoneCommands!.moveTask(action.task, current);
+                  if (isTaskOwnershipResult(result)) {
+                    presentTaskMoveResult(this.app, this.tasks, result);
+                  }
+                  if (result.type === 'ok') onDraftSettled();
+                  return result;
+                },
+              }),
+              ...(note.kind === 'milestone' && this.milestoneCommands
+                ? {
+                    onSetTitle: (current, title) =>
+                      this.milestoneCommands!.setTitle(current, title),
+                    ...(milestoneRangeObservation && {
+                      onSetDate: (
+                        _current: typeof note,
+                        field: 'start' | 'end',
+                        raw: string | null,
+                      ) => {
+                        const value = raw === null ? null : parseProjectDate(raw);
+                        if (raw !== null && !value) {
+                          return Promise.resolve({ type: 'invalid' as const, field });
+                        }
+                        return this.milestoneCommands!.setDates(milestoneRangeObservation, {
+                          [field]: value,
+                        });
+                      },
+                    }),
+                    ...(fieldObservation && {
+                      onSetPriority: (_current: typeof note, value: string | null) =>
+                        this.milestoneCommands!.setPriority(fieldObservation, value),
+                      onSetDescription: (_current: typeof note, value: string | null) =>
+                        this.milestoneCommands!.setDescription(fieldObservation, value),
+                    }),
+                  }
+                : {}),
+              ...(this.workNoteDeletion && {
+                onDelete: async (current, event) =>
+                  this.requestWorkNoteDeletion(current, relationCandidates, event),
               }),
               draftRegistry: this.inspectorDrafts,
               onDraftSettled,
-            }),
+            });
+          },
         });
         return preserveAndCloseShell(shell);
       },
@@ -797,6 +881,15 @@ export class PanelView extends ItemView {
           this.closeCompactPane(false);
         },
       },
+      (task) =>
+        (this.projectWorkspace?.list() ?? [])
+          .flatMap(({ tasks }) => tasks)
+          .find(
+            (action) =>
+              action.task.ref.filePath === task.ref.filePath &&
+              action.task.ref.line === task.ref.line &&
+              action.task.ref.revision === task.ref.revision,
+          ),
     );
 
     // Keep panels fresh when the project set / stats change. Only the left

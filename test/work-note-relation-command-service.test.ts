@@ -78,7 +78,8 @@ async function fixture(additions: Record<string, string> = {}, initialPreset = a
   const provider = { current: initialPreset };
   const index = new WorkNoteIndex(app, () => provider.current);
   index.initialize();
-  const service = new WorkNoteRelationCommandService(app, () => provider.current, index);
+  const authority = { refresh: vi.fn().mockResolvedValue(undefined) };
+  const service = new WorkNoteRelationCommandService(app, () => provider.current, index, authority);
   const command = <T>(
     notePath: string,
     expectedRaw: unknown,
@@ -90,7 +91,7 @@ async function fixture(additions: Record<string, string> = {}, initialPreset = a
     expectedPresetFingerprint: computeWorkNotePresetFingerprint(initialPreset),
     value,
   });
-  return { app, provider, index, service, command };
+  return { app, provider, index, service, command, authority };
 }
 
 describe('WorkNoteRelationCommandService', () => {
@@ -142,6 +143,23 @@ describe('WorkNoteRelationCommandService', () => {
     expect(await list.app.vault.cachedRead(await fileAt(list.app, 'Work Notes/A.md'))).toContain(
       'Milestone link: []',
     );
+  });
+
+  it('rejects a supported milestone list with more than one entry without discarding either value', async () => {
+    const h = await fixture({
+      'Work Notes/A.md': note(
+        'Projects/P',
+        'task',
+        'Milestone link:\n  - "[[Work Notes/M]]"\n  - "[[Work Notes/B]]"\n',
+      ),
+    });
+    const raw = ['[[Work Notes/M]]', '[[Work Notes/B]]'];
+    const before = await h.app.vault.cachedRead(await fileAt(h.app, 'Work Notes/A.md'));
+
+    await expect(
+      h.service.setMilestone(h.command('Work Notes/A.md', raw, 'Work Notes/M.md')),
+    ).resolves.toEqual({ type: 'invalid', field: 'milestone', reason: 'invalid-cardinality' });
+    expect(await h.app.vault.cachedRead(await fileAt(h.app, 'Work Notes/A.md'))).toBe(before);
   });
 
   it('rejects stale raw values and changed preset identity without writing', async () => {
@@ -218,5 +236,39 @@ describe('WorkNoteRelationCommandService', () => {
     ).toMatchObject({ type: 'ok' });
     expect(h.index.get('Work Notes/A.md')?.relatedPaths).toEqual(['Work Notes/B.md']);
     await flushMicrotasks();
+  });
+
+  it('serializes relation transactions per vault so opposite concurrent edges cannot both commit', async () => {
+    const h = await fixture();
+    const second = new WorkNoteRelationCommandService(
+      h.app,
+      () => h.provider.current,
+      h.index,
+      h.authority,
+    );
+
+    const results = await Promise.all([
+      h.service.addBlockedBy(h.command('Work Notes/A.md', undefined, 'Work Notes/B.md')),
+      second.addBlockedBy(h.command('Work Notes/B.md', undefined, 'Work Notes/A.md')),
+    ]);
+
+    expect(results.map(({ type }) => type).sort()).toEqual(['invalid', 'ok']);
+    expect(results).toContainEqual({ type: 'invalid', field: 'blockedBy', reason: 'cycle' });
+    expect(h.authority.refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-audits ownership after entering the serial transaction and rejects an owner change', async () => {
+    const h = await fixture();
+    h.authority.refresh.mockImplementationOnce(async () => {
+      const file = await fileAt(h.app, 'Work Notes/A.md');
+      await h.app.fileManager.processFrontMatter(file, (frontmatter) => {
+        (frontmatter as Record<string, unknown>)['Owner'] = '[[Projects/Q]]';
+      });
+    });
+
+    await expect(
+      h.service.addRelated(h.command('Work Notes/A.md', undefined, 'Work Notes/B.md')),
+    ).resolves.toEqual({ type: 'invalid', field: 'related', reason: 'cross-project' });
+    expect(h.index.get('Work Notes/A.md')?.projectPath).toBe('Projects/Q.md');
   });
 });

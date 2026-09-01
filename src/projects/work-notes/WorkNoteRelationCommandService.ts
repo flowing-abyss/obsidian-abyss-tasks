@@ -14,6 +14,13 @@ type PresetProvider = WorkNoteCompatibilityPreset | (() => WorkNoteCompatibility
 type RelationField = 'milestone' | 'blockedBy' | 'related';
 type RelationOperation = 'set' | 'add' | 'remove';
 
+export interface WorkNoteRelationAuthority {
+  /** Settles the application workspace before a queued relation transaction audits it. */
+  refresh(): Promise<void>;
+}
+
+const vaultTransactionTails = new WeakMap<App, Promise<void>>();
+
 class AbortRelationWrite extends Error {
   constructor(readonly result: WorkNoteCommandResult) {
     super('Work Note relation command aborted');
@@ -68,6 +75,7 @@ export class WorkNoteRelationCommandService implements WorkNoteRelationCommands 
     private readonly app: App,
     private readonly presetProvider: PresetProvider,
     private readonly index: WorkNoteIndex,
+    private readonly authority?: WorkNoteRelationAuthority,
   ) {}
 
   setMilestone(command: RelationWriteCommand<string | null>): Promise<WorkNoteCommandResult> {
@@ -208,8 +216,36 @@ export class WorkNoteRelationCommandService implements WorkNoteRelationCommands 
     operation: RelationOperation,
     command: RelationWriteCommand<string | null>,
   ): Promise<WorkNoteCommandResult> {
+    return this.enqueue(() => this.writeInTransaction(field, operation, command));
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = vaultTransactionTails.get(this.app) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(operation);
+    vaultTransactionTails.set(
+      this.app,
+      current.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return current;
+  }
+
+  private async writeInTransaction(
+    field: RelationField,
+    operation: RelationOperation,
+    command: RelationWriteCommand<string | null>,
+  ): Promise<WorkNoteCommandResult> {
     const blocked = this.compatibility(command);
     if (blocked) return blocked;
+    try {
+      await this.authority?.refresh();
+      this.index.refresh();
+      await this.index.flushPending();
+    } catch {
+      return { type: 'io-error' };
+    }
     const preset = this.preset();
     const audit = await this.index.audit();
     const source = this.sourceFromAudit(audit, command);
@@ -219,23 +255,53 @@ export class WorkNoteRelationCommandService implements WorkNoteRelationCommands 
     if (!supportedCarrier(command.expectedRaw)) {
       return { type: 'invalid', field, reason: 'unsupported-shape' };
     }
+    if (
+      field === 'milestone' &&
+      isStringList(command.expectedRaw) &&
+      command.expectedRaw.length > 1
+    ) {
+      return { type: 'invalid', field, reason: 'invalid-cardinality' };
+    }
     const file = this.app.vault.getAbstractFileByPath(command.notePath);
     if (!(file instanceof TFile))
       return { type: 'invalid', field: 'path', reason: 'missing-source' };
 
     const property = preset.fields[field];
+    const guardedProperties = new Set([
+      preset.fields.project,
+      preset.fields.milestone,
+      preset.fields.blockedBy,
+      preset.fields.related,
+      'tags',
+    ]);
+    const cachedFrontmatter: Record<string, unknown> | undefined =
+      this.app.metadataCache.getFileCache(file)?.frontmatter;
+    const observedCarriers = new Map(
+      [...guardedProperties].map((name) => [name, cachedFrontmatter?.[name]] as const),
+    );
     try {
       let changed = false;
       await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
         const values = frontmatter as Record<string, unknown>;
         const transactionBlocked = this.compatibility(command);
         if (transactionBlocked) throw new AbortRelationWrite(transactionBlocked);
+        for (const [name, observed] of observedCarriers) {
+          if (!sameRawValue(values[name], observed)) {
+            throw new AbortRelationWrite({
+              type: 'conflict',
+              field: name === preset.fields.project ? 'project' : field,
+            });
+          }
+        }
         const current = values[property];
         if (!sameRawValue(current, command.expectedRaw)) {
           throw new AbortRelationWrite({ type: 'conflict', field });
         }
         if (!supportedCarrier(current)) {
           throw new AbortRelationWrite({ type: 'invalid', field, reason: 'unsupported-shape' });
+        }
+        if (field === 'milestone' && isStringList(current) && current.length > 1) {
+          throw new AbortRelationWrite({ type: 'invalid', field, reason: 'invalid-cardinality' });
         }
         const next = this.nextRaw(field, operation, current, command.value, command.notePath);
         if (!next.changed) return;

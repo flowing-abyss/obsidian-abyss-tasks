@@ -164,7 +164,10 @@ describe('Milestone Timeline', () => {
     await Promise.resolve();
 
     expect(setDates).toHaveBeenCalledWith(
-      point,
+      expect.objectContaining({
+        observed: expect.objectContaining({ path: point.path }),
+        end: point.range.end,
+      }),
       expect.objectContaining({ end: expect.objectContaining({ raw: '2026-09-11' }) }),
     );
     expect(setDates.mock.calls[0]?.[1]).not.toHaveProperty('start');

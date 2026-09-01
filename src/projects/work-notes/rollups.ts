@@ -1,4 +1,5 @@
 import type { ProjectStatus } from '../../settings/types';
+import type { TaskSnapshot } from '../../tasks';
 import { resolveSemanticProjectStatus, type ProjectLifecycleBehavior } from '../lifecycle';
 import type { WorkNoteSnapshot } from './types';
 
@@ -59,11 +60,12 @@ export function computeWorkNoteRollup(
 export function computeMilestoneRollups(
   notes: readonly WorkNoteSnapshot[],
   statuses: readonly ProjectStatus[],
+  tasks: readonly TaskSnapshot[] = [],
 ): ReadonlyMap<string, MilestoneRollup> {
   const milestones = notes.filter(({ kind }) => kind === 'milestone');
   const result = new Map<string, MilestoneRollup>();
   for (const milestone of milestones) {
-    result.set(milestone.path, computeMilestoneRollup(milestone, notes, statuses));
+    result.set(milestone.path, computeMilestoneRollup(milestone, notes, statuses, tasks));
   }
   return result;
 }
@@ -72,6 +74,7 @@ export function computeMilestoneRollup(
   milestone: WorkNoteSnapshot,
   projectNotes: readonly WorkNoteSnapshot[],
   statuses: readonly ProjectStatus[],
+  tasks: readonly TaskSnapshot[] = [],
 ): MilestoneRollup {
   const members = projectNotes.filter(
     (note) =>
@@ -81,9 +84,25 @@ export function computeMilestoneRollup(
       !note.diagnostics.some(({ type }) => type === 'multiple-milestones'),
   );
   const rollup = countLifecycle(members, statuses);
-  const denominator = rollup.active + rollup.completed;
+  const memberPaths = new Set([milestone.path, ...members.map(({ path }) => path)]);
+  const seenTasks = new Set<string>();
+  let active = rollup.active;
+  let completed = rollup.completed;
+  let dropped = rollup.dropped;
+  for (const task of tasks) {
+    if (!memberPaths.has(task.ref.filePath)) continue;
+    const key = `${task.ref.filePath}\u0000${task.ref.line}\u0000${task.ref.revision}`;
+    if (seenTasks.has(key)) continue;
+    seenTasks.add(key);
+    if (task.status === 'done') completed += 1;
+    else if (task.status === 'cancelled') dropped += 1;
+    else active += 1;
+  }
+  const denominator = active + completed;
   return {
-    ...rollup,
-    progress: denominator === 0 ? null : rollup.completed / denominator,
+    active,
+    completed,
+    dropped,
+    progress: denominator === 0 ? null : completed / denominator,
   };
 }

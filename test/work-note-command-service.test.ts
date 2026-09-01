@@ -121,6 +121,42 @@ describe('WorkNoteCommandService', () => {
     });
   });
 
+  it('guardedly edits first-class Milestone priority and description without normalizing raw carriers', async () => {
+    const h = await fixture();
+    const snapshot = (await h.index.audit()).snapshots[0]!;
+    const file = await fileAt(h.app, snapshot.path);
+    await h.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['Priority'] = 'High';
+      frontmatter['Description'] = 'Initial';
+    });
+    const current = (await h.index.audit()).snapshots[0]!;
+    const observation = h.service.observe(current)!;
+
+    expect(observation.fields).toMatchObject({ Priority: 'High', Description: 'Initial' });
+    await expect(h.service.setPriority(observation, 'Critical')).resolves.toMatchObject({
+      type: 'ok',
+    });
+    const afterPriority = h.service.observe((await h.index.audit()).snapshots[0]!)!;
+    await expect(h.service.setDescription(afterPriority, null)).resolves.toMatchObject({
+      type: 'ok',
+    });
+    const markdown = await h.app.vault.cachedRead(file);
+    expect(markdown).toContain('Priority: Critical');
+    expect(markdown).not.toContain('Description:');
+
+    await h.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      frontmatter['Priority'] = { nested: 'keep' };
+    });
+    const structured = h.service.observe((await h.index.audit()).snapshots[0]!)!;
+    const before = await h.app.vault.cachedRead(file);
+    await expect(h.service.setPriority(structured, 'Low')).resolves.toEqual({
+      type: 'invalid',
+      field: 'priority',
+      reason: 'unsupported-shape',
+    });
+    expect(await h.app.vault.cachedRead(file)).toBe(before);
+  });
+
   it('exposes the accepted Work Note status IDs instead of unrelated Project status IDs', async () => {
     const h = await fixture();
 

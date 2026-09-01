@@ -133,6 +133,32 @@ describe('renderWorkNotesView', () => {
       projectPath: 'Projects/P.md',
     });
   });
+
+  it.each([
+    ['guarded failure', vi.fn().mockResolvedValue({ type: 'conflict', field: 'owner' })],
+    ['rejection', vi.fn().mockRejectedValue(new Error('disk unavailable'))],
+  ])('presents Milestone create %s once and keeps the draft mounted', async (_label, create) => {
+    const root = freshContainer();
+    renderWorkNotesView(root, {
+      notes: [],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      projectPath: 'Projects/P.md',
+      onCreateMilestone: create,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    root.querySelector<HTMLButtonElement>('[aria-label="New milestone"]')!.click();
+    const input = root.querySelector<HTMLInputElement>('[aria-label="Milestone title"]')!;
+    input.value = 'Release';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await flushMicrotasks();
+
+    expect(root.querySelector('[data-work-note-feedback]')?.textContent).not.toBe('');
+    expect(root.querySelector('[aria-label="Milestone title"]')).toBe(input);
+    expect(create).toHaveBeenCalledOnce();
+  });
   it.each([
     ['title', 'Release brief'],
     ['path', 'Research'],
@@ -180,6 +206,104 @@ describe('renderWorkNotesView', () => {
       'Work Notes/Z high.md',
       'Work Notes/A low.md',
     ]);
+  });
+
+  it('routes Milestone query, lifecycle filter, and progress ordering through first-class projections', () => {
+    const release = note(1, {
+      path: 'Work Notes/Release.md',
+      kind: 'milestone',
+      statusId: 'active',
+    });
+    const archived = note(2, {
+      path: 'Work Notes/Archived.md',
+      kind: 'milestone',
+      statusId: 'done',
+    });
+    const selected = selectWorkNotes({
+      notes: [archived, release],
+      statuses: [
+        { id: 'active', label: 'Active' },
+        { id: 'done', label: 'Done' },
+      ],
+      textQuery: 'release',
+      milestoneRollups: new Map([
+        [release.path, { active: 1, completed: 3, dropped: 0, progress: 0.75 }],
+        [archived.path, { active: 0, completed: 1, dropped: 0, progress: 1 }],
+      ]),
+      viewState: {
+        groupBy: 'status',
+        sortBy: { field: 'progress', dir: 'desc' },
+        statusIds: ['active'],
+      },
+    });
+
+    expect(selected).toEqual([release]);
+  });
+
+  it('preserves first-class Milestone date ordering instead of re-sorting by the generic end carrier', () => {
+    const firstByStart = note(1, {
+      path: 'Work Notes/First by start.md',
+      kind: 'milestone',
+      range: {
+        start: { raw: '2026-09-01', precision: 'date', instantMs: 1 },
+        end: { raw: '2026-09-30', precision: 'date', instantMs: 30 },
+      },
+    });
+    const secondByStart = note(2, {
+      path: 'Work Notes/Second by start.md',
+      kind: 'milestone',
+      range: {
+        start: { raw: '2026-09-02', precision: 'date', instantMs: 2 },
+        end: { raw: '2026-09-03', precision: 'date', instantMs: 3 },
+      },
+    });
+
+    const selected = selectWorkNotes({
+      notes: [secondByStart, firstByStart],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      viewState: {
+        groupBy: 'none',
+        sortBy: { field: 'end', dir: 'asc' },
+        statusIds: [],
+      },
+    });
+
+    expect(selected).toEqual([firstByStart, secondByStart]);
+  });
+
+  it('uses one transitive mixed collection order while preserving canonical Milestone rank', () => {
+    const firstMilestone = note(1, {
+      path: 'Work Notes/M1.md',
+      kind: 'milestone',
+      range: {
+        start: { raw: '2026-09-01', precision: 'date', instantMs: 1 },
+        end: { raw: '2026-09-30', precision: 'date', instantMs: 30 },
+      },
+    });
+    const secondMilestone = note(2, {
+      path: 'Work Notes/M2.md',
+      kind: 'milestone',
+      range: {
+        start: { raw: '2026-09-02', precision: 'date', instantMs: 2 },
+        end: { raw: '2026-09-03', precision: 'date', instantMs: 3 },
+      },
+    });
+    const ordinary = note(3, {
+      path: 'Work Notes/O.md',
+      range: { end: { raw: '2026-09-10', precision: 'date', instantMs: 10 } },
+    });
+
+    const selected = selectWorkNotes({
+      notes: [secondMilestone, ordinary, firstMilestone],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      viewState: {
+        groupBy: 'none',
+        sortBy: { field: 'end', dir: 'asc' },
+        statusIds: [],
+      },
+    });
+
+    expect(selected).toEqual([firstMilestone, secondMilestone, ordinary]);
   });
 
   it('renders explicit ordered group sections from the selected Work Note projection', () => {

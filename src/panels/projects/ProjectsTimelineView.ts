@@ -2134,7 +2134,7 @@ export function renderProjectsTimeline(
       const value = movedProjectDate(current, date);
       if (!value) return { type: 'invalid', field };
       const result = options.milestoneAdapter
-        ? await options.milestoneAdapter.setDates(entry.value.note, { [field]: value })
+        ? await options.milestoneAdapter.setDates(observation, { [field]: value })
         : await options.milestoneCommands!.setRange(observation.observed, { [field]: value });
       options.onMilestoneMutation?.(entry.value.note, result);
       return result;
@@ -2162,7 +2162,7 @@ export function renderProjectsTimeline(
       if (!nextEnd) return { type: 'invalid', field: 'end' };
       const patch = { start: nextStart, end: nextEnd };
       const result = options.milestoneAdapter
-        ? await options.milestoneAdapter.setDates(entry.value.note, patch)
+        ? await options.milestoneAdapter.setDates(observation, patch)
         : await options.milestoneCommands!.setRange(observation.observed, patch);
       options.onMilestoneMutation?.(entry.value.note, result);
       return result;
@@ -2216,7 +2216,7 @@ export function renderWorkNotesTimeline(
     if (!value) return { type: 'invalid', field };
     const result =
       entry.value.kind === 'milestone' && options.milestoneAdapter
-        ? await options.milestoneAdapter.setDates(entry.value, { [field]: value })
+        ? await options.milestoneAdapter.setDates(observation, { [field]: value })
         : await options.commands.setRange(observation.observed, { [field]: value });
     options.onMutation?.(entry.value, result);
     return result;
@@ -2235,7 +2235,7 @@ export function renderWorkNotesTimeline(
     const patch = { start: nextStart, end: nextEnd };
     const result =
       entry.value.kind === 'milestone' && options.milestoneAdapter
-        ? await options.milestoneAdapter.setDates(entry.value, patch)
+        ? await options.milestoneAdapter.setDates(observation, patch)
         : await options.commands.setRange(observation.observed, patch);
     options.onMutation?.(entry.value, result);
     return result;

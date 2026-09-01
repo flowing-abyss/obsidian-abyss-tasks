@@ -157,7 +157,8 @@ export class ProjectWorkspaceReadModel {
     this.milestoneRollups.clear();
     for (const project of context.projectsByPath.values()) {
       const notes = this.projectNotes(project.path, context);
-      for (const [path, rollup] of computeMilestoneRollups(notes, context.statuses)) {
+      const tasks = notes.flatMap(({ path }) => context.tasksByPath.get(path) ?? []);
+      for (const [path, rollup] of computeMilestoneRollups(notes, context.statuses, tasks)) {
         this.milestoneRollups.set(path, rollup);
       }
     }
@@ -212,10 +213,17 @@ export class ProjectWorkspaceReadModel {
     for (const change of delta.taskSources ?? []) {
       for (const path of change.beforeProjectPaths) projects.add(path);
       for (const path of change.afterProjectPaths) projects.add(path);
+      this.addTaskMilestoneCandidate(change.path, milestoneCandidates);
     }
     const dependencyPaths = new Set(delta.dependencyProjectPaths ?? []);
     for (const path of dependencyPaths) projects.add(path);
     return { projects, milestones: milestoneCandidates, dependencies: dependencyPaths };
+  }
+
+  private addTaskMilestoneCandidate(path: string, candidates: Set<string>): void {
+    const owner = this.workNotesByPath.get(path);
+    if (owner?.kind === 'milestone') candidates.add(owner.path);
+    else if (owner?.milestonePath) candidates.add(owner.milestonePath);
   }
 
   private refreshMilestoneBuckets(paths: ReadonlySet<string>, context: ReadContext): void {
@@ -229,6 +237,9 @@ export class ProjectWorkspaceReadModel {
         milestone,
         this.projectNotes(milestone.projectPath, context),
         context.statuses,
+        this.projectNotes(milestone.projectPath, context).flatMap(
+          ({ path: notePath }) => context.tasksByPath.get(notePath) ?? [],
+        ),
       );
       if (!sameMilestoneRollup(this.milestoneRollups.get(path), next)) {
         this.milestoneRollups.set(path, next);

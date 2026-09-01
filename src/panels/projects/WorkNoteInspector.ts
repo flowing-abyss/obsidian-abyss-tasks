@@ -1,10 +1,12 @@
 import { Menu, setIcon } from 'obsidian';
-import type { TaskRollup } from '../../projects/types';
+import type { ProjectAction, TaskRollup } from '../../projects/types';
+import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type {
   WorkNoteCommandResult,
   WorkNoteSnapshot,
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
+import type { TaskCommandResult } from '../../tasks';
 import { markInspectorEntity, renderInspectorField } from '../../ui/inspector/InspectorFields';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
 import type { InspectorDraftRegistry, InspectorDraftResult } from '../../ui/projectDraftContinuity';
@@ -28,20 +30,65 @@ export interface WorkNoteInspectorOptions {
   readonly draftRegistry?: InspectorDraftRegistry;
   readonly onDraftSettled?: () => void;
   readonly taskRollup?: TaskRollup;
+  readonly milestoneRollup?: MilestoneRollup;
   readonly onShowTasks?: (note: WorkNoteSnapshot) => void;
-  readonly onDelete?: (note: WorkNoteSnapshot, event: MouseEvent) => void;
+  readonly onDelete?: (note: WorkNoteSnapshot, event: MouseEvent) => Promise<void> | void;
+  readonly onCreateTask?: (
+    note: WorkNoteSnapshot,
+    markdownBody: string,
+  ) => Promise<TaskCommandResult | WorkNoteCommandResult>;
+  readonly taskMoveCandidates?: readonly ProjectAction[];
+  readonly onMoveTask?: (
+    note: WorkNoteSnapshot,
+    action: ProjectAction,
+  ) => Promise<TaskCommandResult | WorkNoteCommandResult>;
+  readonly onSetTitle?: (note: WorkNoteSnapshot, title: string) => Promise<WorkNoteCommandResult>;
+  readonly onSetDate?: (
+    note: WorkNoteSnapshot,
+    field: 'start' | 'end',
+    raw: string | null,
+  ) => Promise<WorkNoteCommandResult>;
+  readonly onSetPriority?: (
+    note: WorkNoteSnapshot,
+    value: string | null,
+  ) => Promise<WorkNoteCommandResult>;
+  readonly onSetDescription?: (
+    note: WorkNoteSnapshot,
+    value: string | null,
+  ) => Promise<WorkNoteCommandResult>;
   readonly relationCandidates?: readonly WorkNoteSnapshot[];
-  readonly onSetMilestone?: (note: WorkNoteSnapshot, milestone: WorkNoteSnapshot | null) => void;
+  readonly onSetMilestone?: (
+    note: WorkNoteSnapshot,
+    milestone: WorkNoteSnapshot | null,
+  ) => Promise<WorkNoteCommandResult>;
   readonly onToggleRelated?: (
     note: WorkNoteSnapshot,
     target: WorkNoteSnapshot,
     present: boolean,
-  ) => void;
+  ) => Promise<WorkNoteCommandResult>;
   readonly onToggleBlockedBy?: (
     note: WorkNoteSnapshot,
     target: WorkNoteSnapshot,
     present: boolean,
-  ) => void;
+  ) => Promise<WorkNoteCommandResult>;
+}
+
+function isWorkNoteResult(
+  result: TaskCommandResult | WorkNoteCommandResult,
+): result is WorkNoteCommandResult {
+  if (result.type === 'ok') return !('changed' in result);
+  if (result.type === 'partial') return !('operation' in result);
+  if (result.type === 'io-error') return !('cause' in result);
+  if (result.type === 'conflict' || result.type === 'invalid') return 'field' in result;
+  return result.type === 'unchanged' || result.type === 'compatibility-conflict';
+}
+
+async function presentWorkNoteTaskResult(
+  result: TaskCommandResult | WorkNoteCommandResult,
+  presenter: WorkNoteResultPresenter,
+  control: HTMLElement,
+): Promise<void> {
+  if (isWorkNoteResult(result)) await presenter.run(() => result, control);
 }
 
 function basename(path: string): string {
@@ -88,7 +135,13 @@ function relationEditButton(
   label: 'Milestone' | 'Related' | 'Blocked by',
   note: WorkNoteSnapshot,
   options: WorkNoteInspectorOptions,
+  presenter: WorkNoteResultPresenter,
 ): void {
+  const presentResult = async (command: () => Promise<WorkNoteCommandResult>) => {
+    const result = await presenter.run(command, edit);
+    if (result.type === 'ok' || result.type === 'unchanged') options.onDraftSettled?.();
+    return result;
+  };
   let enabled = options.onToggleBlockedBy !== undefined;
   if (label === 'Milestone') enabled = options.onSetMilestone !== undefined;
   else if (label === 'Related') enabled = options.onToggleRelated !== undefined;
@@ -107,36 +160,64 @@ function relationEditButton(
       (candidate) => candidate.path !== note.path && candidate.projectPath === note.projectPath,
     );
     if (label === 'Milestone') {
+      const clearMilestone = options.onSetMilestone!.bind(undefined, note, null);
       menu.addItem((item) =>
         item
           .setTitle('Clear milestone')
           .setChecked(note.milestonePath === undefined)
-          .onClick(() => options.onSetMilestone?.(note, null)),
+          .onClick(() => presentResult(clearMilestone)),
       );
       for (const candidate of candidates.filter(({ kind }) => kind === 'milestone')) {
+        const setMilestone = options.onSetMilestone!.bind(undefined, note, candidate);
         menu.addItem((item) =>
           item
             .setTitle(basename(candidate.path))
             .setChecked(note.milestonePath === candidate.path)
-            .onClick(() => options.onSetMilestone?.(note, candidate)),
+            .onClick(() => presentResult(setMilestone)),
         );
       }
     } else {
       const presentPaths = label === 'Related' ? note.relatedPaths : note.blockedByPaths;
       for (const candidate of candidates) {
         const present = presentPaths.includes(candidate.path);
+        const command =
+          label === 'Related'
+            ? options.onToggleRelated!.bind(undefined, note, candidate, present)
+            : options.onToggleBlockedBy!.bind(undefined, note, candidate, present);
         menu.addItem((item) =>
           item
             .setTitle(basename(candidate.path))
             .setChecked(present)
-            .onClick(() => {
-              if (label === 'Related') options.onToggleRelated?.(note, candidate, present);
-              else options.onToggleBlockedBy?.(note, candidate, present);
-            }),
+            .onClick(() => presentResult(command)),
         );
       }
     }
     showMenuAtMouseEventWithFocus(menu, event);
+  });
+}
+
+function renderEditableValue(
+  host: HTMLElement,
+  field: string,
+  label: string,
+  current: string,
+  save: (value: string | null) => Promise<WorkNoteCommandResult>,
+  presenter: WorkNoteResultPresenter,
+): void {
+  const control = renderInspectorField(host, field as never, label).content;
+  const input = control.createEl('input', {
+    cls: 'abyss-work-note-edit-input',
+    value: current,
+    attr: { type: 'text', 'aria-label': `Edit ${label.toLocaleLowerCase()}` },
+  });
+  const commit = control.createEl('button', {
+    cls: 'abyss-work-note-edit-save',
+    text: 'Save',
+    attr: { type: 'button', 'aria-label': `Save ${label.toLocaleLowerCase()}` },
+  });
+  commit.addEventListener('click', () => {
+    const value = input.value.trim();
+    void presenter.run(() => save(value.length > 0 ? value : null), commit);
   });
 }
 
@@ -198,6 +279,9 @@ function renderStatusMenu(
   showMenuAtMouseEventWithFocus(menu, event);
 }
 
+// The inspector is deliberately one render transaction so shared field order and focus continuity
+// remain explicit across plain and editable states.
+// eslint-disable-next-line sonarjs/cognitive-complexity
 export function renderWorkNoteInspector(
   container: HTMLElement,
   note: WorkNoteSnapshot,
@@ -209,6 +293,20 @@ export function renderWorkNoteInspector(
   const presenter = options.resultPresenter ?? createWorkNoteResultPresenter(container);
   const header = container.createDiv({ cls: 'abyss-work-note-inspector-header' });
   header.createEl('h3', { text: basename(note.path) });
+  if (note.kind === 'milestone' && options.onSetTitle) {
+    const title = header.createEl('input', {
+      cls: 'abyss-milestone-title-input',
+      value: basename(note.path),
+      attr: { type: 'text', 'aria-label': 'Edit milestone title' },
+    });
+    const saveTitle = header.createEl('button', {
+      text: 'Save title',
+      attr: { type: 'button', 'aria-label': 'Save milestone title' },
+    });
+    saveTitle.addEventListener('click', () => {
+      void presenter.run(() => options.onSetTitle!(note, title.value), saveTitle);
+    });
+  }
   const open = header.createEl('button', {
     cls: 'abyss-work-note-open',
     attr: {
@@ -241,7 +339,55 @@ export function renderWorkNoteInspector(
       },
     });
     setIcon(remove, 'trash-2');
-    remove.addEventListener('click', (event) => options.onDelete?.(note, event));
+    remove.addEventListener('click', (event) => {
+      void options.onDelete?.(note, event);
+    });
+  }
+  if (options.onCreateTask || (options.onMoveTask && options.taskMoveCandidates?.length)) {
+    const ownership = renderInspectorField(container, 'tasks' as never, 'Tasks').content;
+    if (options.onCreateTask) {
+      const input = ownership.createEl('input', {
+        cls: 'abyss-work-note-task-input',
+        attr: { type: 'text', placeholder: 'Task title', 'aria-label': 'New task title' },
+      });
+      const create = ownership.createEl('button', {
+        text: 'Add task',
+        attr: { type: 'button', 'aria-label': 'Create task in work note' },
+      });
+      create.addEventListener('click', () => {
+        const markdownBody = input.value.trim();
+        if (!markdownBody) return;
+        create.disabled = true;
+        void options.onCreateTask!(note, markdownBody)
+          .then(async (result) =>
+            isWorkNoteResult(result) ? presenter.run(() => result, create) : result,
+          )
+          .then((result) => {
+            if (result.type === 'ok') input.value = '';
+          })
+          .finally(() => {
+            create.disabled = false;
+          });
+      });
+    }
+    if (options.onMoveTask && options.taskMoveCandidates?.length) {
+      const move = ownership.createEl('button', {
+        text: 'Move existing task',
+        attr: { type: 'button', 'aria-label': 'Move existing task to work note' },
+      });
+      move.addEventListener('click', (event) => {
+        const menu = new Menu();
+        for (const action of options.taskMoveCandidates ?? []) {
+          menu.addItem((item) =>
+            item.setTitle(action.task.title).onClick(async () => {
+              const result = await options.onMoveTask!(note, action);
+              await presentWorkNoteTaskResult(result, presenter, move);
+            }),
+          );
+        }
+        showMenuAtMouseEventWithFocus(menu, event);
+      });
+    }
   }
   const statusDefinition = note.statusId
     ? options.statuses.find(({ id }) => id === note.statusId)
@@ -303,18 +449,55 @@ export function renderWorkNoteInspector(
   const metadata = container.createDiv({ cls: 'abyss-work-note-inspector-metadata' });
   metadataRow(metadata, 'Kind', note.kind === 'ordinary' ? 'Ordinary' : 'Milestone');
   metadataRow(metadata, 'Project', basename(note.projectPath));
-  renderInspectorField(metadata, 'range-start', 'Start').content.setText(
-    note.range.start?.raw ?? 'Not set',
-  );
-  renderInspectorField(metadata, 'range-end', 'End').content.setText(
-    note.range.end?.raw ?? 'Not set',
-  );
-  if (note.priority) {
+  if (note.kind === 'milestone' && options.onSetDate) {
+    renderEditableValue(
+      metadata,
+      'range-start',
+      'Start',
+      note.range.start?.raw ?? '',
+      (value) => options.onSetDate!(note, 'start', value),
+      presenter,
+    );
+    renderEditableValue(
+      metadata,
+      'range-end',
+      'End',
+      note.range.end?.raw ?? '',
+      (value) => options.onSetDate!(note, 'end', value),
+      presenter,
+    );
+  } else {
+    renderInspectorField(metadata, 'range-start', 'Start').content.setText(
+      note.range.start?.raw ?? 'Not set',
+    );
+    renderInspectorField(metadata, 'range-end', 'End').content.setText(
+      note.range.end?.raw ?? 'Not set',
+    );
+  }
+  if (note.kind === 'milestone' && options.onSetPriority) {
+    renderEditableValue(
+      metadata,
+      'priority',
+      'Priority',
+      note.priority ?? '',
+      (value) => options.onSetPriority!(note, value),
+      presenter,
+    );
+  } else if (note.priority) {
     renderInspectorField(metadata, 'priority', 'Priority').content.setText(note.priority);
   } else {
     renderInspectorField(metadata, 'priority', 'Priority').content.setText('Not set');
   }
-  if (note.description) {
+  if (note.kind === 'milestone' && options.onSetDescription) {
+    renderEditableValue(
+      metadata,
+      'description',
+      'Description',
+      note.description ?? '',
+      (value) => options.onSetDescription!(note, value),
+      presenter,
+    );
+  } else if (note.description) {
     const description = renderInspectorField(metadata, 'description', 'Description').content;
     description.setText(note.description);
     description.dataset['workNoteDescription'] = '';
@@ -336,9 +519,9 @@ export function renderWorkNoteInspector(
     renderInspectorField(metadata, 'relations', 'Relations').content.setText('None');
   }
   const relationEditors = metadata.createDiv({ cls: 'abyss-work-note-relation-editors' });
-  relationEditButton(relationEditors, 'Milestone', note, options);
-  relationEditButton(relationEditors, 'Related', note, options);
-  relationEditButton(relationEditors, 'Blocked by', note, options);
+  relationEditButton(relationEditors, 'Milestone', note, options, presenter);
+  relationEditButton(relationEditors, 'Related', note, options, presenter);
+  relationEditButton(relationEditors, 'Blocked by', note, options, presenter);
   if (note.diagnostics.length > 0) {
     const diagnostics = renderInspectorField(container, 'diagnostics', 'Diagnostics').content;
     diagnostics.addClass('abyss-work-note-inspector-diagnostics');
@@ -350,7 +533,14 @@ export function renderWorkNoteInspector(
   }
   renderInspectorField(container, 'comments', 'Comments').content.setText('Unavailable');
   const progress = renderInspectorField(container, 'progress', 'Progress').content;
-  if (options.taskRollup?.progress === null || options.taskRollup === undefined) {
+  if (note.kind === 'milestone' && options.milestoneRollup) {
+    const denominator = options.milestoneRollup.active + options.milestoneRollup.completed;
+    progress.setText(
+      denominator === 0
+        ? 'No active members'
+        : `${String(options.milestoneRollup.completed)} of ${String(denominator)} complete`,
+    );
+  } else if (options.taskRollup?.progress === null || options.taskRollup === undefined) {
     progress.setText(options.taskRollup ? 'No active tasks' : 'Unavailable');
   } else {
     progress.setText(

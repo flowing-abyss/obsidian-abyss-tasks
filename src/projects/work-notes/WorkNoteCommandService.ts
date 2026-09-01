@@ -194,6 +194,8 @@ export class WorkNoteCommandService {
     const properties = new Set<string>([
       preset.fields.project,
       preset.fields.status,
+      preset.fields.priority,
+      preset.fields.description,
       preset.fields.start,
       preset.fields.end,
       preset.fields.updated,
@@ -385,6 +387,109 @@ export class WorkNoteCommandService {
         return replaceFrontmatter(markdown, frontmatter);
       });
       this.index.refresh();
+      return { type: 'ok', path: observed.path };
+    } catch (error) {
+      if (error instanceof AbortWorkNoteCommand) return error.result;
+      return { type: 'io-error' };
+    }
+  }
+
+  setPriority(
+    observed: WorkNoteObservedFields,
+    value: string | null,
+  ): Promise<WorkNoteCommandResult> {
+    return this.setScalar(observed, 'priority', value);
+  }
+
+  setDescription(
+    observed: WorkNoteObservedFields,
+    value: string | null,
+  ): Promise<WorkNoteCommandResult> {
+    return this.setScalar(observed, 'description', value);
+  }
+
+  private async setScalar(
+    observed: WorkNoteObservedFields,
+    semantic: 'priority' | 'description',
+    value: string | null,
+  ): Promise<WorkNoteCommandResult> {
+    const expectation = {
+      presetRevision: observed.presetRevision,
+      presetFingerprint: observed.presetFingerprint,
+    };
+    const blocked = this.compatibility('update', expectation);
+    if (blocked) return blocked;
+    if (value !== null && (typeof value !== 'string' || value.trim().length === 0)) {
+      return { type: 'invalid', field: semantic };
+    }
+    const preset = this.preset();
+    const property = preset.fields[semantic];
+    const expectedRaw = observed.fields[property];
+    if (expectedRaw !== undefined && expectedRaw !== null && typeof expectedRaw !== 'string') {
+      return { type: 'invalid', field: semantic, reason: 'unsupported-shape' };
+    }
+    const file = this.app.vault.getAbstractFileByPath(observed.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    const audit = await this.index.audit();
+    const latest = await this.latestSnapshotFromFile(file, observed, preset);
+    if (!audit.capabilities.update || !latest) {
+      return { type: 'compatibility-conflict', reason: 'latest-audit-rejected' };
+    }
+    if (latest.kind !== observed.kind || latest.projectPath !== observed.projectPath) {
+      return { type: 'compatibility-conflict', reason: 'eligibility-changed' };
+    }
+    try {
+      let changed = false;
+      await this.app.vault.process(file, (markdown) => {
+        const transactionBlocked = this.compatibility('update', expectation);
+        if (transactionBlocked) throw new AbortWorkNoteCommand(transactionBlocked);
+        const transactionPreset = this.preset();
+        const transactionProperty = transactionPreset.fields[semantic];
+        const frontmatter = frontmatterFromMarkdown(markdown);
+        const shapeConflict = this.observedShapeChanged(observed, transactionPreset, frontmatter);
+        if (shapeConflict) {
+          throw new AbortWorkNoteCommand({ type: 'conflict', field: shapeConflict });
+        }
+        const current = frontmatter[transactionProperty];
+        if (!sameRawValue(current, expectedRaw)) {
+          throw new AbortWorkNoteCommand({ type: 'conflict', field: semantic });
+        }
+        if (current !== undefined && current !== null && typeof current !== 'string') {
+          throw new AbortWorkNoteCommand({
+            type: 'invalid',
+            field: semantic,
+            reason: 'unsupported-shape',
+          });
+        }
+        const snapshot = this.latestSnapshot(
+          observed,
+          transactionPreset,
+          frontmatter,
+          inlineMarkdownTags(markdown),
+        );
+        if (
+          !snapshot ||
+          snapshot.kind !== observed.kind ||
+          snapshot.projectPath !== observed.projectPath
+        ) {
+          throw new AbortWorkNoteCommand({
+            type: 'compatibility-conflict',
+            reason: 'eligibility-changed',
+          });
+        }
+        if (value === null) {
+          if (current === undefined) return markdown;
+          delete frontmatter[transactionProperty];
+        } else {
+          if (current === value) return markdown;
+          frontmatter[transactionProperty] = value;
+        }
+        changed = true;
+        return replaceFrontmatter(markdown, frontmatter);
+      });
+      if (!changed) return { type: 'unchanged', path: observed.path };
+      this.index.refresh();
+      await this.index.flushPending();
       return { type: 'ok', path: observed.path };
     } catch (error) {
       if (error instanceof AbortWorkNoteCommand) return error.result;

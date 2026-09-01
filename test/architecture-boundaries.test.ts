@@ -44,6 +44,11 @@ const ALLOWED_WRITER_CALLS: Record<string, AllowedWriter> = {
     reason:
       'Atomically revalidates current Markdown eligibility and exact observed endpoints before updating one accepted Work Note range.',
   },
+  'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.setScalar#process#1': {
+    mutation: 'work-note metadata',
+    reason:
+      'Atomically revalidates accepted Work Note eligibility and the exact observed scalar carrier before editing priority or description.',
+  },
   'src/projects/work-notes/WorkNoteCommandService.ts#WorkNoteCommandService.setStatus#process#1': {
     mutation: 'work-note metadata',
     reason:

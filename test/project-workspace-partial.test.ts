@@ -268,6 +268,24 @@ describe('ProjectWorkspaceReadModel partial buckets', () => {
     expect(equalRollup.evaluatedMilestonePaths).toEqual([milestoneB.path]);
     expect(model.get(projectB.path)!.milestoneRollups.get(milestoneB.path)).toBe(retainedMilestone);
 
+    const inheritedTask = root(moved.path, 7);
+    tasks = [inheritedTask];
+    const taskRollup = model.rebuildBuckets({
+      taskSources: [
+        {
+          path: moved.path,
+          beforeProjectPaths: [projectB.path],
+          afterProjectPaths: [projectB.path],
+        },
+      ],
+    });
+    expect(taskRollup.evaluatedMilestonePaths).toEqual([milestoneB.path]);
+    expect(model.get(projectB.path)!.milestoneRollups.get(milestoneB.path)).toMatchObject({
+      active: 2,
+      progress: 0,
+    });
+    const taskInclusiveMilestone = model.get(projectB.path)!.milestoneRollups.get(milestoneB.path);
+
     tasks = [root(projectB.path, 4)];
     const rebuilt = model.rebuildBuckets({
       taskSources: [
@@ -280,7 +298,9 @@ describe('ProjectWorkspaceReadModel partial buckets', () => {
       projectPaths: [projectB.path],
     });
     expect(rebuilt.evaluatedMilestonePaths).toEqual([]);
-    expect(model.get(projectB.path)!.milestoneRollups.get(milestoneB.path)).toBe(retainedMilestone);
+    expect(model.get(projectB.path)!.milestoneRollups.get(milestoneB.path)).toBe(
+      taskInclusiveMilestone,
+    );
   });
 
   it('invalidates reverse cross-Project Work Note relation sources when a target disappears', () => {

@@ -202,7 +202,7 @@ describe('ProjectWorkspaceReadModel', () => {
     expect(snapshot.workNoteRollup).toEqual({ active: 1, completed: 1, dropped: 1 });
   });
 
-  it('rolls up same-Project milestone members independently of internal Tasks', () => {
+  it('rolls up same-Project milestone Work Notes and exact-deduped inherited Tasks together', () => {
     const milestonePath = 'Work/M.md';
     const multiTask = action('Work/Active.md', 2, 'open');
     const readModel = modelFixture(
@@ -216,10 +216,10 @@ describe('ProjectWorkspaceReadModel', () => {
     );
     const snapshot = readModel.get(projectPath)!;
     expect(snapshot.milestoneRollups.get(milestonePath)).toEqual({
-      active: 1,
+      active: 2,
       completed: 1,
       dropped: 1,
-      progress: 0.5,
+      progress: 1 / 3,
     });
     expect(
       snapshot.tasks.filter(({ task: candidate }) => candidate.ref === multiTask.ref),

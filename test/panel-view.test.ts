@@ -153,6 +153,89 @@ function emitQueryEvent(queries: TaskQueryApi, event: TaskIndexEvent): void {
 type TaskApplication = ReturnType<typeof configuredTaskApplication>;
 
 describe('PanelView', () => {
+  it('persists structured Work Note deletion recovery and forwards it on the next retry', async () => {
+    const app = await createAppWithFiles({});
+    const taskApplication = configuredTaskApplication(app, DEFAULT_SETTINGS);
+    const leaf = new (WorkspaceLeaf as unknown as { new (app: App): WorkspaceLeaf })(app);
+    const sourceIdentity = { path: 'Work/A.md', content: '# A', mtime: 1, size: 3 };
+    const recovery = {
+      notePath: 'Work/A.md',
+      destinationPath: 'Projects/P.md',
+      settledTaskRefs: [],
+      remainingTaskRefs: [],
+      settledTaskCount: 0,
+      remainingTaskCount: 0,
+      copiedSourceRemains: [],
+      sourceIdentity,
+    };
+    const deletion = {
+      delete: vi.fn().mockResolvedValue({
+        type: 'partial',
+        path: 'Work/A.md',
+        reason: 'io-error',
+        recovery,
+      }),
+      preview: vi.fn(),
+      previewedTaskRevisions: vi.fn(),
+    };
+    const view = new PanelView(
+      leaf,
+      structuredClone(DEFAULT_SETTINGS),
+      makeTagManager(app),
+      taskApplication.index,
+      taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+      taskApplication.statusRegistry,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      deletion as never,
+    );
+    const workNote = {
+      path: 'Work/A.md',
+      presetRevision: 1,
+      presetFingerprint: 'preset',
+      kind: 'ordinary' as const,
+      projectPath: 'Projects/P.md',
+      statusId: null,
+      rawStatus: null,
+      writableStatusShape: true,
+      range: {},
+      blockedByPaths: [],
+      relatedPaths: [],
+      diagnostics: [],
+    };
+    const internal = view as unknown as {
+      executeWorkNoteDeletion(
+        note: typeof workNote,
+        destination: string,
+        expected: readonly TaskRef[],
+      ): Promise<void>;
+      requestWorkNoteDeletion(
+        note: typeof workNote,
+        candidates: readonly (typeof workNote)[],
+        event: MouseEvent,
+      ): Promise<void>;
+    };
+
+    await internal.executeWorkNoteDeletion(workNote, workNote.projectPath, []);
+    await internal.requestWorkNoteDeletion(workNote, [], new MouseEvent('click'));
+
+    expect(deletion.delete).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ recovery, expectedTaskRevisions: [] }),
+    );
+    expect(deletion.preview).not.toHaveBeenCalled();
+  });
+
   it('forwards application dependency IDs into a calendar TaskModal', async () => {
     const app = await createAppWithFiles({});
     const today = window.moment().format('YYYY-MM-DD');
