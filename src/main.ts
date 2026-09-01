@@ -46,6 +46,7 @@ import { ObsidianTaskRepository } from './tasks/infrastructure/obsidian/Obsidian
 import { TaskIndex } from './tasks/infrastructure/TaskIndex';
 import { TaskRefAuthority } from './tasks/infrastructure/TaskRefAuthority';
 import { CalendarRenderer } from './ui/CalendarRenderer';
+import { disposeOptimisticOverlayStores } from './ui/interaction/OptimisticOverlayStore';
 import { PANEL_VIEW_TYPE, PanelView } from './views/PanelView';
 
 export default class TaskCalendarPlugin extends Plugin {
@@ -215,6 +216,7 @@ export default class TaskCalendarPlugin extends Plugin {
   }
 
   onunload(): void {
+    disposeOptimisticOverlayStores(this.app);
     this.projectWorkspace.destroy();
     this.projectStore.destroy();
     this.taskIndex.destroy();

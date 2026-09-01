@@ -215,6 +215,20 @@ function workNotesCollectionBaseline(workNotes: Record<string, unknown>): Record
   };
 }
 
+function normalizeBoardLayoutPreference(value: unknown): Record<string, unknown> | undefined {
+  const current = record(value);
+  if (!current) return undefined;
+  return {
+    ...current,
+    version: 1,
+    columnOrder: stringArray(current['columnOrder']) ? [...current['columnOrder']] : [],
+    collapsedColumnIds: stringArray(current['collapsedColumnIds'])
+      ? [...current['collapsedColumnIds']]
+      : [],
+    hiddenColumnIds: stringArray(current['hiddenColumnIds']) ? [...current['hiddenColumnIds']] : [],
+  };
+}
+
 function normalizeTaskCollectionPreference(
   value: unknown,
   baseline: Record<string, unknown>,
@@ -222,6 +236,8 @@ function normalizeTaskCollectionPreference(
   const current = record(value) ?? {};
   const layouts = record(current['layoutPreferences']) ?? {};
   const primary = record(layouts['primary']) ?? {};
+  const boardLayout = record(layouts['board']) ?? {};
+  const board = normalizeBoardLayoutPreference(boardLayout['board']);
   const baselinePrimary = baseline['layoutPreferences'] as Record<string, Record<string, unknown>>;
   const fallbackPrimary = baselinePrimary['primary']!;
   const statusGroups = stringArray(primary['statusGroups'])
@@ -256,6 +272,7 @@ function normalizeTaskCollectionPreference(
         ),
         statusGroups: [...statusGroups],
       },
+      ...(board && { board: { ...boardLayout, board } }),
     },
   };
 }
@@ -265,6 +282,9 @@ function normalizeWorkNotesCollectionPreference(
   baseline: Record<string, unknown>,
 ): Record<string, unknown> {
   const current = record(value) ?? {};
+  const layouts = record(current['layoutPreferences']) ?? {};
+  const boardLayout = record(layouts['board']) ?? {};
+  const board = normalizeBoardLayoutPreference(boardLayout['board']);
   return {
     ...current,
     version: 1,
@@ -281,7 +301,10 @@ function normalizeWorkNotesCollectionPreference(
     visibleFields: stringArray(current['visibleFields'])
       ? [...current['visibleFields']]
       : structuredClone(baseline['visibleFields']),
-    layoutPreferences: record(current['layoutPreferences']) ?? {},
+    layoutPreferences: {
+      ...layouts,
+      ...(board && { board: { ...boardLayout, board } }),
+    },
   };
 }
 

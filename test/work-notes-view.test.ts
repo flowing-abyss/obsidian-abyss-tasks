@@ -933,6 +933,13 @@ describe('Work Note board adapter', () => {
       onSetStatus,
       openNote: vi.fn(),
     });
+    const card = root.querySelector<HTMLElement>('[data-board-item-surface]')!;
+    expect(
+      card.querySelector('.abyss-work-note-board-presentation [data-entity-slot="identity"]'),
+    ).not.toBeNull();
+    expect(
+      card.querySelector('[data-work-note-identity-control]')?.getAttribute('aria-label'),
+    ).toContain('Work note details');
     const focus = root.querySelector<HTMLElement>(`[data-board-item-focus="${moving.path}"]`)!;
 
     focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));

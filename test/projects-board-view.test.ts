@@ -73,6 +73,7 @@ describe('shared board view', () => {
         announce: (message) => announcements.push(message),
         optimisticOverlay: {
           store: overlays,
+          keyOf: ({ id }) => id,
           revision: () => revision,
           columnKey: ({ status }) => status,
         },
@@ -93,7 +94,9 @@ describe('shared board view', () => {
 
     render([{ ...todo, status: 'doing' }], 'two');
 
-    expect(announcements.filter((message) => message === 'Item moved')).toHaveLength(1);
+    expect(
+      announcements.filter((message) => message === 'Item moved. Undo available.'),
+    ).toHaveLength(1);
   });
 
   it('rolls back an undefined board command once instead of leaving an overlay pending', async () => {
@@ -120,6 +123,7 @@ describe('shared board view', () => {
       announce: (message) => announcements.push(message),
       optimisticOverlay: {
         store: overlays,
+        keyOf: ({ id }) => id,
         revision: () => 'one',
         columnKey: ({ status }) => status,
       },
@@ -160,6 +164,7 @@ describe('shared board view', () => {
       interactionController: true,
       optimisticOverlay: {
         store: overlays,
+        keyOf: ({ id }) => id,
         revision: () => 'one',
         columnKey: ({ status }) => status,
       },
@@ -239,6 +244,56 @@ describe('shared board view', () => {
         ({ textContent }) => textContent,
       ),
     ).toEqual(['Moving task', 'Later task']);
+  });
+
+  it('settles a task status overlay when canonical publication only replaces its TaskRef revision', async () => {
+    const scope = {};
+    const el = freshContainer();
+    const announcements: string[] = [];
+    const original = task({
+      title: 'Revision-stable task',
+      source: { filePath: 'Projects/A.md', line: 12 },
+    });
+    const action = (current: typeof original): ProjectAction => ({
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    });
+    const statuses = [
+      { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo' as const, icon: '', core: true },
+      { id: 'done', symbol: 'x', name: 'Done', type: 'done' as const, icon: 'check', core: true },
+    ];
+    const render = (actions: readonly ProjectAction[]) =>
+      renderProjectTasksBoard(el, {
+        actions,
+        statuses,
+        onMoveStatus: vi.fn().mockResolvedValue({ type: 'ok', changed: true }),
+        renderItem: (host, current) => host.createEl('button', { text: current.task.title }),
+        overlayScope: scope,
+        announce: (message) => announcements.push(message),
+      });
+
+    let board = render([action(original)]);
+    const focus = el.querySelector<HTMLElement>('[data-board-item-focus]')!;
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+    await flushMicrotasks();
+    board.destroy();
+    el.empty();
+
+    const published = {
+      ...original,
+      ref: { ...original.ref, revision: 'revision:2' },
+      status: 'done' as const,
+      statusSymbol: 'x',
+    };
+    board = render([action(published)]);
+
+    expect(announcements.filter((message) => message.startsWith('Item moved'))).toHaveLength(1);
+    expect(el.querySelector('[data-board-column="done"] [data-board-item-surface]')).not.toBeNull();
+    board.destroy();
   });
 
   it('exposes one roving selected tab/tabpanel and reaches both terminal bookends by keyboard', () => {

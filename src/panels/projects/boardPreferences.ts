@@ -1,10 +1,6 @@
-export interface BoardViewPreference {
-  readonly version: 1;
-  readonly columnOrder: readonly string[];
-  readonly collapsedColumnIds: readonly string[];
-  readonly hiddenColumnIds: readonly string[];
-  readonly [key: string]: unknown;
-}
+import type { BoardLayoutPreference } from '../../settings/types';
+
+export type BoardViewPreference = BoardLayoutPreference;
 
 export interface BoardColumnRoles<ColumnId extends string = string> {
   readonly terminalLeftIds?: readonly ColumnId[];

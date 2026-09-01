@@ -125,9 +125,19 @@ export interface WorkNotesViewState {
   readonly statusIds: readonly string[];
 }
 
+/** Persisted Board-only presentation state shared by every collection scope. */
+export interface BoardLayoutPreference {
+  readonly version: 1;
+  readonly columnOrder: readonly string[];
+  readonly collapsedColumnIds: readonly string[];
+  readonly hiddenColumnIds: readonly string[];
+  readonly [key: string]: unknown;
+}
+
 interface ProjectTasksCollectionLayoutPreference {
-  readonly table: ProjectTasksTablePreference;
+  readonly table?: ProjectTasksTablePreference;
   readonly statusGroups?: readonly TaskStatusType[];
+  readonly board?: BoardLayoutPreference;
 }
 
 export type ProjectTasksCollectionPreference = PersistedCollectionPreference<
@@ -143,7 +153,7 @@ export type WorkNotesCollectionPreference = PersistedCollectionPreference<
   WorkNotesViewState['groupBy'],
   WorkNotesViewState['sortBy'],
   'list' | 'board' | 'timeline',
-  Record<string, never>
+  { readonly board?: BoardLayoutPreference }
 >;
 
 interface MainTasksCollectionLayoutPreference {

@@ -30,7 +30,11 @@ interface EntityPresentationAction {
 
 type EntityPresentationSlotValue = string | EntityPresentationSlot;
 
-type EntityPresentationLayout = 'inline' | 'project-row-two-line' | 'project-row-single-line';
+type EntityPresentationLayout =
+  | 'inline'
+  | 'board-card'
+  | 'project-row-two-line'
+  | 'project-row-single-line';
 
 export interface EntityPresentationOptions {
   readonly identity?: EntityPresentationSlotValue;
@@ -85,6 +89,7 @@ export class EntityPresentation {
         this.options.layout === 'project-row-single-line'
           ? 'abyss-entity-presentation--project-row-single-line'
           : '',
+        this.options.layout === 'board-card' ? 'abyss-entity-presentation--board-card' : '',
         this.options.className,
       ]
         .filter(Boolean)

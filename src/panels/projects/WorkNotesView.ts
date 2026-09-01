@@ -7,9 +7,10 @@ import type {
   WorkNoteStatusDefinition,
 } from '../../projects/work-notes/types';
 import type { WorkNotesViewState } from '../../settings/types';
+import { EntityPresentation } from '../../ui/entity/EntityPresentation';
 import { inspectorSelectionKey } from '../../ui/inspector/InspectorSelection';
 import { showMenuAtMouseEventWithFocus } from '../../ui/nativeMenuFocus';
-import { buildBoardPreference } from './boardPreferences';
+import { buildBoardPreference, type BoardViewPreference } from './boardPreferences';
 import { workNoteStatusMenuModel } from './boardProjection';
 import { BoundedWindow } from './BoundedWindow';
 import { renderWorkNotesBoard, type BoardViewHandle } from './ProjectsBoardView';
@@ -48,6 +49,9 @@ export interface WorkNotesViewOptions {
   readonly milestoneRollups?: ReadonlyMap<string, MilestoneRollup>;
   /** The plugin application is the lifetime boundary for pending board status projections. */
   readonly overlayScope?: object;
+  /** Board layout persists in the scoped collection preference, never this mounted session. */
+  readonly boardPreference?: BoardViewPreference;
+  readonly onBoardPreferenceChange?: (next: BoardViewPreference) => void;
   /** Selection is rendered by the one right inspector host, never locally. */
   readonly onSelect?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
 }
@@ -209,22 +213,46 @@ function renderRow(
       : `${String(milestoneRollup.completed)} of ${String(
           milestoneRollup.active + milestoneRollup.completed,
         )} complete`;
-  const identity = row.createEl('button', {
-    cls: 'abyss-work-note-identity',
-    attr: {
-      type: 'button',
-      'data-work-note-identity-control': '',
-      'aria-label': [
-        'Work note details',
-        basename(note.path),
-        note.kind === 'milestone' ? 'Milestone' : 'Ordinary',
-        statusText(note, options.statuses),
-        progressText,
-      ]
-        .filter((part): part is string => part !== undefined)
-        .join(', '),
-    },
-  });
+  const identityLabel = [
+    'Work note details',
+    basename(note.path),
+    note.kind === 'milestone' ? 'Milestone' : 'Ordinary',
+    statusText(note, options.statuses),
+    progressText,
+  ]
+    .filter((part): part is string => part !== undefined)
+    .join(', ');
+  let identity!: HTMLElement;
+  if (options.layout === 'board') {
+    new EntityPresentation({
+      layout: 'board-card',
+      className: 'abyss-work-note-board-presentation',
+      primarySlots: ['identity'],
+      identity: {
+        value: basename(note.path),
+        text: '',
+        element: 'button',
+        className: 'abyss-work-note-identity',
+        attributes: {
+          type: 'button',
+          'data-work-note-identity-control': '',
+          'aria-label': identityLabel,
+        },
+        content: (slot) => {
+          identity = slot;
+        },
+      },
+    }).render(row);
+  } else {
+    identity = row.createEl('button', {
+      cls: 'abyss-work-note-identity',
+      attr: {
+        type: 'button',
+        'data-work-note-identity-control': '',
+        'aria-label': identityLabel,
+      },
+    });
+  }
   identity.dataset['inspectorOriginKey'] = inspectorSelectionKey({
     type: 'work-note',
     path: note.path,
@@ -461,7 +489,7 @@ function renderWorkNoteBoard(
   presenter: WorkNoteResultPresenter,
 ): BoardViewHandle {
   const configuredIds = options.statuses.map(({ id }) => id);
-  const preference = options.session?.board.preference ?? {
+  const preference = options.boardPreference ?? {
     ...buildBoardPreference(configuredIds),
     terminalDefaultsApplied: true,
   };
@@ -474,15 +502,22 @@ function renderWorkNoteBoard(
         if (options.session) options.session.selection.inspectorKey = note.path;
         options.onSelect?.(note, origin);
       }),
-    executeMutation: (command, initiator) => presenter.run(command, initiator),
     session: options.session?.board,
     commandsEnabled: options.commandsEnabled,
     announce: options.announce,
     columnPreference: preference,
     onColumnPreferenceChange: (next) => {
-      if (options.session) options.session.board.preference = next;
+      options.onBoardPreferenceChange?.(next);
     },
     overlayScope: options.overlayScope,
+    ...(options.overlayScope
+      ? {}
+      : {
+          executeMutation: (
+            command: () => Promise<WorkNoteCommandResult>,
+            initiator: HTMLElement,
+          ) => presenter.run(command, initiator),
+        }),
   });
 }
 

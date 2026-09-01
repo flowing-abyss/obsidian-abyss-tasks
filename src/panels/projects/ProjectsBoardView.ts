@@ -108,9 +108,13 @@ export interface BoardViewOptions<T> {
   /** Application-owned status projection retained while a guarded write waits for source publication. */
   readonly optimisticOverlay?: {
     readonly store: OptimisticOverlayStore<T, string>;
+    /** Stable write identity, intentionally distinct from a revision-sensitive DOM item key. */
+    readonly keyOf: (item: T) => string;
     readonly revision: (item: T) => string;
     /** Returns the configured board column for either an observed or optimistic entity. */
     readonly columnKey: (item: T) => string;
+    /** The active Board mount owns the live-region callback for registry-backed stores. */
+    readonly presentationAnnouncement?: boolean;
   };
   readonly renderColumnFooter?: (host: HTMLElement, column: BoardColumn<T>) => void;
   readonly onCollapsedColumnFooterRequest?: (column: BoardColumn<T>) => void;
@@ -238,9 +242,19 @@ export function renderBoard<T>(
         .map((item) => [options.itemKey(item), item] as const),
     ).values(),
   ];
+  const overlayKey = (item: T): string =>
+    options.optimisticOverlay?.keyOf(item) ?? options.itemKey(item);
+  let destroyed = false;
+  const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe((settlement) => {
+    if (settlement && options.optimisticOverlay?.presentationAnnouncement)
+      options.announce?.(settlement.message);
+    queueMicrotask(() => {
+      if (!destroyed) render();
+    });
+  });
   for (const item of sourceItems) {
     options.optimisticOverlay?.store.observePublication(
-      options.itemKey(item),
+      overlayKey(item),
       item,
       options.optimisticOverlay.revision(item),
     );
@@ -315,7 +329,6 @@ export function renderBoard<T>(
     selectableColumns()[0]?.key ??
     '';
   if (options.session) options.session.selectedColumnKey = selectedColumnKey;
-  let destroyed = false;
   let undoPending: {
     readonly item: T;
     readonly columnKey: string;
@@ -337,11 +350,6 @@ export function renderBoard<T>(
   let autoscrollSpeed = 0;
   let autoscrollFrame: number | undefined;
   const ownerWindow = container.ownerDocument.defaultView;
-  const unsubscribeOptimisticOverlay = options.optimisticOverlay?.store.subscribe(() => {
-    queueMicrotask(() => {
-      if (!destroyed) render();
-    });
-  });
 
   const stopAutoscroll = (): void => {
     autoscrollDirection = 0;
@@ -429,7 +437,7 @@ export function renderBoard<T>(
   const projectedItems = (column: BoardColumn<T>): readonly T[] => {
     if (options.optimisticOverlay) {
       return sourceItems
-        .map((item) => options.optimisticOverlay!.store.read(options.itemKey(item)) ?? item)
+        .map((item) => options.optimisticOverlay!.store.read(overlayKey(item)) ?? item)
         .filter((item) => options.optimisticOverlay!.columnKey(item) === column.key);
     }
     const retained = column.items.filter((item) => {
@@ -745,6 +753,9 @@ export function renderBoard<T>(
           ) ?? container;
         const command = (): Promise<BoardMutationResult> =>
           options.mutation.move(item, intent.destination.columnId);
+        if (options.optimisticOverlay?.store.active(overlayKey(item))) {
+          return { type: 'failure', reason: 'Move is already pending', announced: true };
+        }
         const transaction: OptimisticTransaction<T, string> | undefined =
           options.optimisticOverlay?.store.begin(
             item,
@@ -757,7 +768,7 @@ export function renderBoard<T>(
           result = await (options.executeMutation?.(command, initiator) ?? command());
         } catch (error) {
           if (transaction) {
-            options.optimisticOverlay?.store.cancel(intent.itemId, 'io');
+            options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
             queueMicrotask(() => !destroyed && render());
           }
           return {
@@ -767,12 +778,16 @@ export function renderBoard<T>(
           };
         }
         if (transaction && result === undefined) {
-          options.optimisticOverlay?.store.cancel(intent.itemId, 'io');
+          options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
           queueMicrotask(() => !destroyed && render());
           return { type: 'failure', reason: 'io-error', announced: true };
         }
         if (transaction && result !== undefined) {
-          options.optimisticOverlay?.store.observeCommandResult(intent.itemId, result);
+          options.optimisticOverlay?.store.observeCommandResult(
+            overlayKey(item),
+            result,
+            transaction.id,
+          );
         }
         if (!successful(result)) {
           if (transaction) queueMicrotask(() => !destroyed && render());
@@ -859,6 +874,7 @@ export function renderBoard<T>(
       options.session.restoreFocus = true;
     }
     const command = (): Promise<BoardMutationResult> => options.mutation.move(item, columnKey);
+    if (options.optimisticOverlay?.store.active(overlayKey(item))) return;
     const transaction: OptimisticTransaction<T, string> | undefined =
       options.optimisticOverlay?.store.begin(
         item,
@@ -871,12 +887,16 @@ export function renderBoard<T>(
       .then((result) => {
         if (destroyed) return;
         if (transaction && result === undefined) {
-          options.optimisticOverlay?.store.cancel(options.itemKey(item), 'io');
+          options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
           render();
           return;
         }
         if (transaction && result !== undefined) {
-          options.optimisticOverlay?.store.observeCommandResult(options.itemKey(item), result);
+          options.optimisticOverlay?.store.observeCommandResult(
+            overlayKey(item),
+            result,
+            transaction.id,
+          );
         }
         if (!successful(result)) return;
         if (transaction) {
@@ -894,7 +914,7 @@ export function renderBoard<T>(
       })
       .catch(() => {
         if (!transaction || destroyed) return;
-        options.optimisticOverlay?.store.cancel(options.itemKey(item), 'io');
+        options.optimisticOverlay?.store.cancel(overlayKey(item), 'io', transaction.id);
         render();
       });
   };
@@ -1535,14 +1555,15 @@ export function renderWorkNotesBoard(
             apply: (note, statusId) => ({ ...note, statusId }),
             matches: (note, statusId) => note.statusId === statusId,
             isSuccess: (result) => result.type === 'ok',
-            announce: options.announce,
             timeoutMs: 15_000,
             timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
+        keyOf: ({ path }: WorkNoteSnapshot) => path,
         revision: (note: WorkNoteSnapshot) =>
           `${String(note.presetRevision)}:${note.presetFingerprint}:${note.statusId ?? ''}:${note.rawStatus ?? ''}`,
         columnKey: (note: WorkNoteSnapshot) => note.statusId ?? 'unmapped',
+        presentationAnnouncement: true,
       }
     : undefined;
   return renderBoard(container, {
@@ -1587,13 +1608,17 @@ export function renderProjectTasksBoard(
 ): BoardViewHandle {
   const mutation = createProjectActionBoardMutation(options.statuses, options.onMoveStatus);
   const statusById = new Map(options.statuses.map((status) => [status.id, status]));
+  const stableTaskStatusKey = ({ task }: ProjectAction): string => {
+    // A status write replaces ref.revision; its file and source line remain its write identity.
+    return `source:${task.ref.filePath}:${String(task.ref.line)}`;
+  };
   const optimisticOverlay = options.overlayScope
     ? {
         store: optimisticOverlayStoreFor<ProjectAction, string>(
           options.overlayScope,
           'board:task-status',
           {
-            keyOf: ({ task }) => taskPresentationKey(task.ref),
+            keyOf: stableTaskStatusKey,
             apply: (action, statusId) => {
               const status = statusById.get(statusId);
               if (!status) return action;
@@ -1609,14 +1634,15 @@ export function renderProjectTasksBoard(
             matches: (action, statusId) =>
               statusById.get(statusId)?.symbol === action.task.statusSymbol,
             isSuccess: (result) => result.type === 'ok',
-            announce: options.announce,
             timeoutMs: 15_000,
             timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
+        keyOf: stableTaskStatusKey,
         revision: ({ task }: ProjectAction) => task.ref.revision,
         columnKey: ({ task }: ProjectAction) =>
           options.statuses.find(({ symbol }) => symbol === task.statusSymbol)?.id ?? 'unmapped',
+        presentationAnnouncement: true,
       }
     : undefined;
   return renderBoard(container, {
@@ -1783,11 +1809,11 @@ export function renderProjectsBoard(
             apply: (project, statusId) => ({ ...project, statusId }),
             matches: (project, statusId) => project.statusId === statusId,
             isSuccess: (result) => result.type === 'ok',
-            announce: options.onAnnounce,
             timeoutMs: 15_000,
             timerWindow: container.ownerDocument.defaultView ?? window,
           },
         ),
+        keyOf: ({ path }: (typeof projects)[number]) => path,
         revision: (project: (typeof projects)[number]) =>
           JSON.stringify({
             frontmatter: project.frontmatter,
@@ -1795,6 +1821,7 @@ export function renderProjectsBoard(
             rawStatus: project.rawStatus,
           }),
         columnKey: (project: (typeof projects)[number]) => project.statusId ?? 'unmapped',
+        presentationAnnouncement: true,
       }
     : undefined;
   const pendingUndo = options.pendingUndo;

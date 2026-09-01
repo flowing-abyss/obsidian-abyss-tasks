@@ -67,6 +67,66 @@ describe('migrateSettings', () => {
     expect(raw).toEqual(once);
   });
 
+  it('migrates scoped Task and Work Note Board preferences without dropping dormant columns', () => {
+    const raw: Record<string, unknown> = {
+      projects: {
+        statuses: [],
+        view: {
+          collectionPreferences: {
+            'Projects/A.md': {
+              tasks: {
+                layoutPreferences: {
+                  board: {
+                    board: {
+                      version: 4,
+                      columnOrder: ['done', 'dormant'],
+                      hiddenColumnIds: ['dormant'],
+                      collapsedColumnIds: 'invalid',
+                      future: 'keep',
+                    },
+                  },
+                },
+              },
+              workNotes: {
+                layoutPreferences: {
+                  board: {
+                    board: {
+                      columnOrder: ['published', 'legacy'],
+                      hiddenColumnIds: ['legacy'],
+                      collapsedColumnIds: ['published'],
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    };
+
+    migrateSettings(raw);
+
+    const preferences = (
+      raw['projects'] as { view: { collectionPreferences: Record<string, unknown> } }
+    ).view.collectionPreferences['Projects/A.md'] as {
+      tasks: { layoutPreferences: Record<string, { board: Record<string, unknown> }> };
+      workNotes: { layoutPreferences: Record<string, { board: Record<string, unknown> }> };
+    };
+    expect(preferences.tasks.layoutPreferences['board']?.board).toMatchObject({
+      version: 1,
+      columnOrder: ['done', 'dormant'],
+      hiddenColumnIds: ['dormant'],
+      collapsedColumnIds: [],
+      future: 'keep',
+    });
+    expect(preferences.workNotes.layoutPreferences['board']?.board).toMatchObject({
+      version: 1,
+      columnOrder: ['published', 'legacy'],
+      hiddenColumnIds: ['legacy'],
+      collapsedColumnIds: ['published'],
+    });
+  });
+
   it('accepts partial raw settings only at migration while loaded settings require both Table preferences', () => {
     const raw: Record<string, unknown> = { projects: { statuses: [] } };
 

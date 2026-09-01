@@ -21,6 +21,7 @@ import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
   ListViewState,
+  ProjectTasksCollectionPreference,
   ProjectTasksViewState,
   PropertyFilter,
   ResolvedConfig,
@@ -52,8 +53,10 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { renderCollectionControls } from '../ui/collection/CollectionControls';
+import { CollectionPreferenceConflictError } from '../ui/collection/CollectionStateCoordinator';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { renderEntityActionLayer } from '../ui/entity/EntityActionLayer';
+import { EntityPresentation } from '../ui/entity/EntityPresentation';
 import { inspectorSelectionKey, type InspectorSelection } from '../ui/inspector/InspectorSelection';
 import { noInteractionOwnership, type InteractionOwnershipPort } from '../ui/interactionOwnership';
 import { moveTaskToProjectWithRecovery } from '../ui/moveTaskToProject';
@@ -1193,7 +1196,11 @@ export class CenterPanel {
       );
       const boardHost = host.createDiv();
       const taskBoardSession = this.projectWorkspaceSession.taskBoard;
-      const preference = taskBoardSession.preference ?? {
+      const taskPreference = this.projectWorkspaceSession.collectionPreference(
+        path,
+        'tasks',
+      ) as ProjectTasksCollectionPreference;
+      const preference = taskPreference.layoutPreferences['board']?.board ?? {
         ...buildBoardPreference(statuses.map(({ id }) => id)),
         terminalDefaultsApplied: true,
       };
@@ -1205,11 +1212,24 @@ export class CenterPanel {
         actions,
         statuses,
         visibleColumnKeys: visibleStatusIds,
-        onMoveStatus: (task, symbol) => this.setTaskStatus(task, symbol),
+        onMoveStatus: (task, symbol) => this.setTaskStatus(task, symbol, false),
         session: taskBoardSession,
         columnPreference: preference,
         onColumnPreferenceChange: (next) => {
-          taskBoardSession.preference = next;
+          const persist = (): Promise<unknown> =>
+            this.projectWorkspaceSession.updateCollectionPreference(path, 'tasks', (current) => ({
+              ...current,
+              layoutPreferences: {
+                ...current.layoutPreferences,
+                board: { board: next },
+              },
+            }));
+          const persistUntilSettled = (): void => {
+            void persist().catch((error: unknown) => {
+              if (error instanceof CollectionPreferenceConflictError) persistUntilSettled();
+            });
+          };
+          persistUntilSettled();
         },
         focusedItemKey: () => {
           const focused = session.focusedRef();
@@ -2619,7 +2639,24 @@ export class CenterPanel {
     card.dataset['line'] = String(task.source.line);
     this.registerProjectTaskFocus(card, task, context.projectTaskCollection === true);
 
-    const mainRow = card.createDiv({ cls: 'abyss-task-card-main-row' });
+    const cardContent =
+      context.projectTaskCollection === true
+        ? new EntityPresentation({
+            layout: 'board-card',
+            className: 'abyss-task-board-presentation',
+            primarySlots: ['identity'],
+            identity: {
+              value: task.title,
+              text: '',
+              element: 'div',
+              className: 'abyss-task-board-content',
+              content: () => undefined,
+            },
+          })
+            .render(card)
+            .querySelector<HTMLElement>('[data-entity-slot="identity"]')!
+        : card;
+    const mainRow = cardContent.createDiv({ cls: 'abyss-task-card-main-row' });
 
     renderStatusMarker(mainRow, {
       task,
@@ -2686,7 +2723,7 @@ export class CenterPanel {
       onEditLink: (occ, token) => this.editTaskLink(task, occ, token),
     });
     if (task.description) {
-      const descEl = card.createDiv({ cls: 'abyss-task-desc' });
+      const descEl = cardContent.createDiv({ cls: 'abyss-task-desc' });
       // Render the first description line as markdown so links are clickable here too.
       // No onEditLink: the card is a compact preview; link editing happens in the panel.
       renderTaskText(descEl, task.description.split('\n')[0] ?? '', {

@@ -20,8 +20,10 @@ import type {
   CalendarSettings,
   ProjectTasksViewState,
   PropertyFilter,
+  WorkNotesCollectionPreference,
   WorkNotesViewState,
 } from '../../settings/types';
+import { CollectionPreferenceConflictError } from '../../ui/collection/CollectionStateCoordinator';
 import {
   deriveInspectorSelection,
   inspectorSelectionKey,
@@ -43,6 +45,7 @@ import {
 } from './ProjectsTimelineView';
 import { renderProjectsToolbar } from './ProjectsToolbar';
 import { renderWorkNotesView, selectWorkNotes } from './WorkNotesView';
+import type { BoardViewPreference } from './boardPreferences';
 import type { ProjectChildRenderHandle } from './viewContext';
 
 export interface ProjectsPanelOptions {
@@ -298,6 +301,29 @@ export class ProjectsPanel {
       host.ownerDocument.defaultView?.matchMedia?.('(pointer: coarse)').matches === true;
     const narrow = (): boolean =>
       Platform.isMobile || (host.clientWidth > 0 && host.clientWidth <= 672);
+    const boardPreference = (): BoardViewPreference | undefined =>
+      (
+        this.workspaceSession.collectionPreference(
+          projectPath,
+          'work-notes',
+        ) as WorkNotesCollectionPreference
+      ).layoutPreferences['board']?.board;
+    const persistBoardPreference = (next: BoardViewPreference): void => {
+      const persist = (): Promise<unknown> =>
+        this.workspaceSession.updateCollectionPreference(projectPath, 'work-notes', (current) => ({
+          ...current,
+          layoutPreferences: {
+            ...current.layoutPreferences,
+            board: { board: next },
+          },
+        }));
+      const persistUntilSettled = (): void => {
+        void persist().catch((error: unknown) => {
+          if (error instanceof CollectionPreferenceConflictError) persistUntilSettled();
+        });
+      };
+      persistUntilSettled();
+    };
     let isNarrow = narrow();
     let child = renderWorkNotesView(host, {
       notes,
@@ -313,6 +339,8 @@ export class ProjectsPanel {
       session: this.workspaceSession.workNotes,
       announce: this.onAnnounce,
       overlayScope: this.app,
+      boardPreference: boardPreference(),
+      onBoardPreferenceChange: persistBoardPreference,
       isNarrow,
       coarsePointer,
       milestoneRollups,
@@ -353,6 +381,8 @@ export class ProjectsPanel {
             session: this.workspaceSession.workNotes,
             announce: this.onAnnounce,
             overlayScope: this.app,
+            boardPreference: boardPreference(),
+            onBoardPreferenceChange: persistBoardPreference,
             isNarrow,
             coarsePointer,
             milestoneRollups,

@@ -11,7 +11,10 @@ import type {
 } from '../src/panels/projects/viewContext';
 import type { ProjectWorkspaceSnapshot } from '../src/projects/types';
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
-import type { ProjectTasksCollectionPreference } from '../src/settings/types';
+import type {
+  ProjectTasksCollectionPreference,
+  WorkNotesCollectionPreference,
+} from '../src/settings/types';
 import { deferred, flushMicrotasks, freshContainer, task } from './helpers';
 
 function snapshot(
@@ -105,6 +108,55 @@ function render(fixture: Parameters<typeof snapshot>[0]): HTMLElement {
 }
 
 describe('Project Tasks workspace', () => {
+  it('persists Task and Work Note board preferences through their collection scopes', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const session = new ProjectWorkspaceSession();
+    session.bindCollectionPreferences(settings, vi.fn().mockResolvedValue(undefined));
+    const taskBoard = {
+      version: 1 as const,
+      columnOrder: ['done', 'todo'],
+      hiddenColumnIds: ['todo'],
+      collapsedColumnIds: ['done'],
+    };
+    const workNoteBoard = {
+      version: 1 as const,
+      columnOrder: ['published', 'active', 'dropped'],
+      hiddenColumnIds: ['active'],
+      collapsedColumnIds: ['published'],
+    };
+
+    await session.updateCollectionPreference('Projects/A.md', 'tasks', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        board: { board: taskBoard },
+      },
+    }));
+    await session.updateCollectionPreference('Projects/A.md', 'work-notes', (current) => ({
+      ...current,
+      layoutPreferences: {
+        ...current.layoutPreferences,
+        board: { board: workNoteBoard },
+      },
+    }));
+
+    const restarted = new ProjectWorkspaceSession();
+    restarted.bindCollectionPreferences(settings);
+
+    expect(
+      (restarted.collectionPreference('Projects/A.md', 'tasks') as ProjectTasksCollectionPreference)
+        .layoutPreferences['board']?.board,
+    ).toEqual(taskBoard);
+    expect(
+      (
+        restarted.collectionPreference(
+          'Projects/A.md',
+          'work-notes',
+        ) as WorkNotesCollectionPreference
+      ).layoutPreferences['board']?.board,
+    ).toEqual(workNoteBoard);
+  });
+
   it('hides the Tasks Table layout and Fields control in the Work Notes scope', async () => {
     const container = freshContainer();
     const workspaceSession = new ProjectWorkspaceSession();
@@ -861,7 +913,7 @@ describe('Project Tasks workspace', () => {
     expect(
       (
         session.collectionPreference('Projects/A.md', 'tasks') as ProjectTasksCollectionPreference
-      ).layoutPreferences['primary']?.table.columns.find(({ propertyId }) => propertyId === 'task')
+      ).layoutPreferences['primary']?.table?.columns.find(({ propertyId }) => propertyId === 'task')
         ?.width,
     ).toBe(248);
   });
@@ -917,7 +969,7 @@ describe('Project Tasks workspace', () => {
       ) as ProjectTasksCollectionPreference;
       expect(preference.visibleFields).toEqual(['task', 'status', 'due', 'priority', 'nextAction']);
       expect(
-        preference.layoutPreferences['primary']?.table.columns.map(({ propertyId }) => propertyId),
+        preference.layoutPreferences['primary']?.table?.columns.map(({ propertyId }) => propertyId),
       ).toEqual(['task', 'status', 'due', 'priority', 'nextAction']);
 
       callbacks.get('Status')!();
@@ -928,7 +980,7 @@ describe('Project Tasks workspace', () => {
       ) as ProjectTasksCollectionPreference;
       expect(preference.visibleFields).toEqual(['task', 'due', 'priority', 'nextAction']);
       expect(
-        preference.layoutPreferences['primary']?.table.columns.find(
+        preference.layoutPreferences['primary']?.table?.columns.find(
           ({ propertyId }) => propertyId === 'status',
         )?.visible,
       ).toBe(false);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createOptimisticOverlayStore,
+  disposeOptimisticOverlayStores,
   optimisticOverlayStoreFor,
   type CommandResult,
 } from '../src/ui/interaction/OptimisticOverlayStore';
@@ -49,9 +50,9 @@ describe('OptimisticOverlayStore', () => {
   it('keeps a successful command overlay until the matching canonical publication arrives', () => {
     const announce = vi.fn();
     const overlays = store(announce);
-    overlays.begin(observed, 'revision:1', 'doing');
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
 
-    overlays.observeCommandResult(observed.id, { type: 'ok' });
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id);
     expect(overlays.read(observed.id)).toMatchObject({ status: 'doing' });
     expect(announce).not.toHaveBeenCalled();
 
@@ -71,10 +72,10 @@ describe('OptimisticOverlayStore', () => {
     (_reason, result) => {
       const announce = vi.fn();
       const overlays = store(announce);
-      overlays.begin(observed, 'revision:1', 'doing');
+      const transaction = overlays.begin(observed, 'revision:1', 'doing');
 
-      overlays.observeCommandResult(observed.id, result);
-      overlays.observeCommandResult(observed.id, result);
+      overlays.observeCommandResult(observed.id, result, transaction.id);
+      overlays.observeCommandResult(observed.id, result, transaction.id);
 
       expect(overlays.read(observed.id)).toMatchObject({ status: 'todo', note: observed.note });
       expect(announce).toHaveBeenCalledTimes(1);
@@ -83,7 +84,7 @@ describe('OptimisticOverlayStore', () => {
 
   it('rolls back for a competing authoritative publication without altering note data', () => {
     const overlays = store();
-    overlays.begin(observed, 'revision:1', 'doing');
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
     const competing: Card = { ...observed, status: 'dropped' };
 
     overlays.observePublication(observed.id, competing, 'revision:2');
@@ -99,14 +100,14 @@ describe('OptimisticOverlayStore', () => {
   it('keeps the pending transaction across remounts and ignores duplicate events', () => {
     const announce = vi.fn();
     const overlays = store(announce);
-    overlays.begin(observed, 'revision:1', 'doing');
+    const transaction = overlays.begin(observed, 'revision:1', 'doing');
 
     // A renderer can unmount and remount while this application-scoped store remains pending.
     expect(overlays.read(observed.id)).toMatchObject({ status: 'doing' });
     const canonical = { ...observed, status: 'doing' };
     overlays.observePublication(observed.id, canonical, 'revision:2');
     overlays.observePublication(observed.id, canonical, 'revision:2');
-    overlays.cancel(observed.id, 'timeout');
+    overlays.cancel(observed.id, 'timeout', transaction.id);
 
     expect(overlays.read(observed.id)).toBe(canonical);
     expect(announce).toHaveBeenCalledTimes(1);
@@ -141,6 +142,103 @@ describe('OptimisticOverlayStore', () => {
 
     expect(overlays.read(observed.id)).toMatchObject({ status: 'todo' });
     expect(announce).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('ignores a late command result from an earlier transaction for the same stable key', () => {
+    const overlays = store();
+    const first = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+    overlays.observePublication(observed.id, published, 'revision:2');
+    const second = overlays.begin(published, 'revision:2', 'done');
+
+    overlays.observeCommandResult(observed.id, { type: 'conflict' }, first.id);
+
+    expect(second.id).not.toBe(first.id);
+    expect(overlays.active(observed.id)?.id).toBe(second.id);
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
+  });
+
+  it('ignores an obsolete timeout after a later transaction takes ownership of the key', () => {
+    vi.useFakeTimers();
+    const overlays = store(vi.fn(), { timeoutMs: 100 });
+    const first = overlays.begin(observed, 'revision:1', 'doing');
+    const published = { ...observed, status: 'doing' };
+    overlays.observePublication(observed.id, published, 'revision:2');
+    const second = overlays.begin(published, 'revision:2', 'done');
+
+    overlays.cancel(observed.id, 'timeout', first.id);
+
+    expect(overlays.active(observed.id)?.id).toBe(second.id);
+    expect(overlays.read(observed.id)).toMatchObject({ status: 'done' });
+    vi.useRealTimers();
+  });
+
+  it('uses the current registry presentation callback after remounting', () => {
+    const application = {};
+    const firstAnnounce = vi.fn();
+    const currentAnnounce = vi.fn();
+    const options = (announce: (message: string) => void) => ({
+      keyOf: ({ id }: Card) => id,
+      apply: (card: Card, status: string) => ({ ...card, status }),
+      matches: (card: Card, status: string) => card.status === status,
+      isSuccess: (result: CommandResult) => result.type === 'ok',
+      announce,
+    });
+    const first = optimisticOverlayStoreFor(application, 'task-status', options(firstAnnounce));
+    const transaction = first.begin(observed, 'revision:1', 'doing');
+    const remounted = optimisticOverlayStoreFor(
+      application,
+      'task-status',
+      options(currentAnnounce),
+    );
+
+    remounted.observeCommandResult(observed.id, { type: 'conflict' }, transaction.id);
+
+    expect(firstAnnounce).not.toHaveBeenCalled();
+    expect(currentAnnounce).toHaveBeenCalledTimes(1);
+  });
+
+  it('delivers a registry settlement only to the active mount subscription', () => {
+    const application = {};
+    const options = {
+      keyOf: ({ id }: Card) => id,
+      apply: (card: Card, status: string) => ({ ...card, status }),
+      matches: (card: Card, status: string) => card.status === status,
+      isSuccess: (result: CommandResult) => result.type === 'ok',
+    };
+    const overlays = optimisticOverlayStoreFor(application, 'task-status', options);
+    const closedMount = vi.fn();
+    const activeMount = vi.fn();
+    const releaseClosedMount = overlays.subscribe(closedMount);
+    releaseClosedMount();
+    overlays.subscribe(activeMount);
+    overlays.begin(observed, 'revision:1', 'doing');
+
+    overlays.observePublication(observed.id, { ...observed, status: 'doing' }, 'revision:2');
+
+    expect(closedMount).not.toHaveBeenCalled();
+    expect(activeMount).toHaveBeenCalledOnce();
+  });
+
+  it('disposes an application registry without leaving its timeout alive', () => {
+    vi.useFakeTimers();
+    const application = {};
+    const announce = vi.fn();
+    const overlays = optimisticOverlayStoreFor(application, 'task-status', {
+      keyOf: ({ id }: Card) => id,
+      apply: (card: Card, status: string) => ({ ...card, status }),
+      matches: (card: Card, status: string) => card.status === status,
+      isSuccess: (result: CommandResult) => result.type === 'ok',
+      announce,
+      timeoutMs: 100,
+    });
+    overlays.begin(observed, 'revision:1', 'doing');
+
+    disposeOptimisticOverlayStores(application);
+    vi.advanceTimersByTime(100);
+
+    expect(announce).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 });
