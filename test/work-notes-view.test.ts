@@ -1047,6 +1047,41 @@ describe('Work Note board adapter', () => {
     handle.destroy();
   });
 
+  it('propagates a rejected Work Note Board preference save to the shared rollback contract', async () => {
+    const root = freshContainer();
+    const statuses = DEFAULT_SETTINGS.projects.statuses.slice(0, 2);
+    const announcements: string[] = [];
+    const handle = renderWorkNotesView(root, {
+      notes: [note(1)],
+      statuses,
+      layout: 'board',
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      announce: (message) => announcements.push(message),
+      boardPreference: {
+        version: 1,
+        terminalDefaultsApplied: true,
+        columnOrder: statuses.map(({ id }) => id),
+        collapsedColumnIds: [],
+        hiddenColumnIds: [],
+      },
+      onBoardPreferenceChange: () => Promise.reject(new Error('disk unavailable')),
+    });
+
+    root
+      .querySelector<HTMLButtonElement>(`[data-board-collapse-column="${statuses[0]!.id}"]`)!
+      .click();
+    await flushMicrotasks();
+
+    expect(
+      root
+        .querySelector(`[data-board-column="${statuses[0]!.id}"]`)
+        ?.classList.contains('is-column-collapsed'),
+    ).toBe(false);
+    expect(announcements.filter((message) => message.includes('not saved'))).toHaveLength(1);
+    handle.destroy();
+  });
+
   it('selects a Work Note exactly once from the enabled board identity button', () => {
     const root = freshContainer();
     const onSelect = vi.fn();

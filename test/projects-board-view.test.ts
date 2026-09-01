@@ -632,6 +632,45 @@ describe('shared board view', () => {
     ).toEqual(['Moving task', 'Later task']);
   });
 
+  it('propagates a rejected Task Board preference save to the shared rollback contract', async () => {
+    const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
+    const action: ProjectAction = {
+      task: current,
+      projectPath: 'Projects/A.md',
+      dependency: { type: 'allowed' },
+      owner: { type: 'project', path: 'Projects/A.md' },
+    };
+    const announcements: string[] = [];
+    const el = freshContainer();
+    renderProjectTasksBoard(el, {
+      actions: [action],
+      statuses: [
+        { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo', icon: '', core: true },
+        { id: 'done', symbol: 'x', name: 'Done', type: 'done', icon: 'check', core: true },
+      ],
+      onMoveStatus: vi.fn(),
+      renderItem: (host, currentAction) =>
+        host.createEl('button', { text: currentAction.task.title }),
+      columnPreference: {
+        version: 1,
+        terminalDefaultsApplied: true,
+        columnOrder: ['todo', 'done'],
+        collapsedColumnIds: [],
+        hiddenColumnIds: [],
+      },
+      onColumnPreferenceChange: () => Promise.reject(new Error('disk unavailable')),
+      announce: (message) => announcements.push(message),
+    });
+
+    el.querySelector<HTMLButtonElement>('[data-board-collapse-column="todo"]')!.click();
+    await flushMicrotasks();
+
+    expect(
+      el.querySelector('[data-board-column="todo"]')?.classList.contains('is-column-collapsed'),
+    ).toBe(false);
+    expect(announcements.filter((message) => message.includes('not saved'))).toHaveLength(1);
+  });
+
   it('settles a task status overlay when canonical publication only replaces its TaskRef revision', async () => {
     const scope = {};
     const el = freshContainer();
@@ -681,6 +720,82 @@ describe('shared board view', () => {
     expect(el.querySelector('[data-board-column="done"] [data-board-item-surface]')).not.toBeNull();
     board.destroy();
   });
+
+  it.each([
+    {
+      label: 'dependency',
+      published: {
+        dependency: { type: 'blocked' as const, prerequisites: [] },
+        owner: { type: 'project' as const, path: 'Projects/A.md' },
+      },
+    },
+    {
+      label: 'owner',
+      published: {
+        dependency: { type: 'allowed' as const },
+        owner: { type: 'work-note' as const, path: 'Work Notes/Research.md' },
+      },
+    },
+  ])(
+    'treats a same-TaskRef $label change as a competing rendered publication',
+    async ({ published }) => {
+      const scope = {};
+      const el = freshContainer();
+      const announcements: string[] = [];
+      const original = task({ source: { filePath: 'Projects/A.md', line: 12 } });
+      const initial: ProjectAction = {
+        task: original,
+        projectPath: 'Projects/A.md',
+        dependency: { type: 'allowed' },
+        owner: { type: 'project', path: 'Projects/A.md' },
+      };
+      const statuses = [
+        { id: 'todo', symbol: ' ', name: 'To-do', type: 'todo' as const, icon: '', core: true },
+        { id: 'done', symbol: 'x', name: 'Done', type: 'done' as const, icon: 'check', core: true },
+      ];
+      const renderItem = (host: HTMLElement, action: ProjectAction): HTMLElement =>
+        host.createEl('button', {
+          text: `${action.dependency.type}:${action.owner.type}`,
+        });
+      let board = renderProjectTasksBoard(el, {
+        actions: [initial],
+        canonicalActions: [initial],
+        publicationSequence: 1,
+        statuses,
+        onMoveStatus: vi.fn().mockResolvedValue({ type: 'ok', changed: true }),
+        renderItem,
+        overlayScope: scope,
+        announce: (message) => announcements.push(message),
+      });
+      const focus = el.querySelector<HTMLElement>('[data-board-item-focus]')!;
+      focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      focus.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      focus.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }));
+      await flushMicrotasks();
+      board.destroy();
+      el.empty();
+
+      const changed: ProjectAction = { ...initial, ...published };
+      board = renderProjectTasksBoard(el, {
+        actions: [changed],
+        canonicalActions: [changed],
+        publicationSequence: 2,
+        statuses,
+        onMoveStatus: vi.fn(),
+        renderItem,
+        overlayScope: scope,
+        announce: (message) => announcements.push(message),
+      });
+
+      expect(
+        announcements.filter((message) => message === 'Item changed outside the board'),
+      ).toHaveLength(1);
+      expect(el.querySelector('[data-board-column="todo"]')?.textContent).toContain(
+        `${published.dependency.type}:${published.owner.type}`,
+      );
+      board.destroy();
+    },
+  );
 
   it('reconciles a TaskRef successor after a line shift and file rename', async () => {
     const scope = {};
@@ -896,6 +1011,93 @@ describe('shared board view', () => {
       ],
     ).toBe('published');
     expect(el.querySelectorAll('[role="tabpanel"][data-selected-column="true"]')).toHaveLength(1);
+  });
+
+  it('rolls back a rejected Board preference, reports one CAS error, and persists a retry across restart', async () => {
+    const el = freshContainer();
+    const announcements: string[] = [];
+    let rejectFirstSave!: (reason: unknown) => void;
+    const firstSave = new Promise<void>((_resolve, reject) => {
+      rejectFirstSave = reject;
+    });
+    const initial = {
+      version: 1 as const,
+      terminalDefaultsApplied: true,
+      columnOrder: ['active', 'done'],
+      collapsedColumnIds: [] as string[],
+      hiddenColumnIds: [] as string[],
+    };
+    let persisted = structuredClone(initial);
+    let attempts = 0;
+    const session: WorkNoteBoardSession = {
+      selectedColumnKey: 'active',
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    };
+    const mount = (value: typeof initial, currentSession: WorkNoteBoardSession) =>
+      renderBoard(el, {
+        columns: [column('active', 'regular', [{ id: 'a', name: 'A' }]), column('done', 'regular')],
+        mutation: { move: vi.fn(), menuItems: () => [] },
+        itemKey: ({ id }) => id,
+        renderItem: (host, current) => host.createDiv({ text: current.name }),
+        session: currentSession,
+        announce: (message) => announcements.push(message),
+        columnPreferences: {
+          value,
+          terminalLeftIds: [],
+          terminalRightIds: [],
+          onChange: async (next) => {
+            attempts += 1;
+            if (attempts === 1) return firstSave;
+            persisted = structuredClone(next as typeof initial);
+          },
+        },
+      });
+
+    let handle = mount(initial, session);
+    el.querySelector<HTMLButtonElement>('[data-board-collapse-column="active"]')!.click();
+    expect(el.querySelector('[data-board-column="active"]')?.classList).toContain(
+      'is-column-collapsed',
+    );
+    expect(session.preference?.collapsedColumnIds).toContain('active');
+    expect(
+      Array.from(el.querySelectorAll<HTMLButtonElement>('[data-board-collapse-column]')).every(
+        ({ disabled }) => disabled,
+      ),
+    ).toBe(true);
+
+    const conflict = new Error('stale preference');
+    conflict.name = 'CollectionPreferenceConflictError';
+    rejectFirstSave(conflict);
+    await flushMicrotasks();
+
+    expect(el.querySelector('[data-board-column="active"]')?.classList).not.toContain(
+      'is-column-collapsed',
+    );
+    expect(session.preference).toEqual(initial);
+    expect(announcements.filter((message) => message.includes('changed elsewhere'))).toHaveLength(
+      1,
+    );
+
+    el.querySelector<HTMLButtonElement>('[data-board-collapse-column="active"]')!.click();
+    await flushMicrotasks();
+    expect(persisted.collapsedColumnIds).toContain('active');
+    handle.destroy();
+    el.empty();
+
+    const restartedSession: WorkNoteBoardSession = {
+      selectedColumnKey: 'active',
+      focusedKey: null,
+      restoreFocus: false,
+      columns: {},
+    };
+    handle = mount(persisted, restartedSession);
+    expect(el.querySelector('[data-board-column="active"]')?.classList).toContain(
+      'is-column-collapsed',
+    );
+    expect(restartedSession.preference).toEqual(persisted);
+    handle.destroy();
   });
 
   it('offers the same status menu through an explicit compact touch affordance', async () => {

@@ -612,6 +612,61 @@ describe('OptimisticOverlayStore', () => {
     expect(fallback).toHaveBeenCalledOnce();
   });
 
+  it('downgrades fallback success when the closed initiator owned the non-transferable Undo', () => {
+    const overlays = store();
+    const initiatingAnnouncement = vi.fn();
+    const fallbackAnnouncement = vi.fn();
+    const releaseInitiator = overlays.subscribe(vi.fn(), {
+      id: 'initiator',
+      announce: initiatingAnnouncement,
+      undoAvailable: true,
+    });
+    overlays.subscribe(vi.fn(), {
+      id: 'fallback',
+      announce: fallbackAnnouncement,
+      // Its own Undo port cannot control authority retained by the closed initiator.
+      undoAvailable: true,
+    });
+    const transaction = overlays.begin(observed, 'revision:1', 'doing', {
+      id: 'initiator',
+      undoAvailable: true,
+    });
+    releaseInitiator();
+
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
+    overlays.observePublication(observed.id, { ...observed, status: 'doing' }, 'revision:2', 2);
+
+    expect(initiatingAnnouncement).not.toHaveBeenCalled();
+    expect(fallbackAnnouncement).toHaveBeenCalledOnce();
+    expect(fallbackAnnouncement).toHaveBeenCalledWith('Item moved.');
+  });
+
+  it('retains fallback Undo wording only for explicitly transferable application authority', () => {
+    const overlays = store();
+    const fallbackAnnouncement = vi.fn();
+    const releaseInitiator = overlays.subscribe(vi.fn(), {
+      id: 'initiator',
+      undoAvailable: true,
+      undoTransferable: true,
+    });
+    overlays.subscribe(vi.fn(), {
+      id: 'fallback',
+      announce: fallbackAnnouncement,
+      undoAvailable: true,
+    });
+    const transaction = overlays.begin(observed, 'revision:1', 'doing', {
+      id: 'initiator',
+      undoAvailable: true,
+      undoTransferable: true,
+    });
+    releaseInitiator();
+
+    overlays.observeCommandResult(observed.id, { type: 'ok' }, transaction.id, transaction.token);
+    overlays.observePublication(observed.id, { ...observed, status: 'doing' }, 'revision:2', 2);
+
+    expect(fallbackAnnouncement).toHaveBeenCalledWith('Item moved. Undo available.');
+  });
+
   it('uses the current registry presentation callback after remounting', () => {
     const application = {};
     const firstAnnounce = vi.fn();

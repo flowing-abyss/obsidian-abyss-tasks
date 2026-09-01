@@ -9,6 +9,9 @@ interface Opts {
   task: { statusSymbol: string; priority?: TaskPriority; status?: string };
   registry: StatusRegistry;
   interactive?: boolean;
+  disabled?: boolean;
+  /** Returns false when a handler-time guard proves the pending state already settled. */
+  onDisabledInteraction?: () => boolean;
   completionDecision?: DependencyCompletionDecision;
   onLeftClick: () => void;
   onContextMenu: (ev: MouseEvent) => void;
@@ -45,6 +48,10 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
     el.addClass('abyss-status-marker--completion-blocked');
     el.setAttribute('aria-disabled', 'true');
   }
+  if (interactive && opts.disabled) {
+    el.addClass('abyss-status-marker--inert');
+    el.setAttribute('aria-disabled', 'true');
+  }
   el.setAttribute('data-status', def?.id ?? 'other');
   el.setAttribute('data-status-type', def?.type ?? 'todo');
   if (task.priority && task.priority !== 'D') {
@@ -62,6 +69,8 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
   } // else: def with icon === '' → empty chip (plain to-do)
 
   if (interactive) {
+    const disabledInteractionBlocked = (): boolean =>
+      opts.disabled === true && (opts.onDisabledInteraction?.() ?? true);
     el.setAttribute('role', 'checkbox');
     el.setAttribute('aria-checked', def?.type === 'done' ? 'true' : 'false');
     el.setAttribute('aria-label', `Task status: ${def?.name ?? task.statusSymbol}`);
@@ -69,16 +78,20 @@ export function renderStatusMarker(parent: HTMLElement, opts: Opts): HTMLElement
     el.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
+      if (disabledInteractionBlocked()) return;
       onLeftClick();
     });
     el.addEventListener('contextmenu', (e) => {
       e.preventDefault();
+      e.stopPropagation();
+      if (disabledInteractionBlocked()) return;
       onContextMenu(e);
     });
     el.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       event.preventDefault();
       event.stopPropagation();
+      if (disabledInteractionBlocked()) return;
       onLeftClick();
     });
   } else {

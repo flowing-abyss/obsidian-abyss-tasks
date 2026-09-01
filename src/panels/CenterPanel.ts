@@ -53,7 +53,6 @@ import { renderStatusMarker } from '../ui/StatusMarker';
 import { TagPickerModal } from '../ui/TagPickerModal';
 import { TaskModal } from '../ui/TaskModal';
 import { renderCollectionControls } from '../ui/collection/CollectionControls';
-import { CollectionPreferenceConflictError } from '../ui/collection/CollectionStateCoordinator';
 import { renderDependencyBadge } from '../ui/dependencyPresentation';
 import { renderEntityActionLayer } from '../ui/entity/EntityActionLayer';
 import { EntityPresentation } from '../ui/entity/EntityPresentation';
@@ -1253,22 +1252,16 @@ export class CenterPanel {
         onMoveStatus: (task, symbol) => this.setTaskStatus(task, symbol, false),
         session: taskBoardSession,
         columnPreference: preference,
-        onColumnPreferenceChange: (next) => {
-          const persist = (): Promise<unknown> =>
-            this.projectWorkspaceSession.updateCollectionPreference(path, 'tasks', (current) => ({
+        onColumnPreferenceChange: (next) =>
+          this.projectWorkspaceSession
+            .updateCollectionPreference(path, 'tasks', (current) => ({
               ...current,
               layoutPreferences: {
                 ...current.layoutPreferences,
                 board: { board: next },
               },
-            }));
-          const persistUntilSettled = (): void => {
-            void persist().catch((error: unknown) => {
-              if (error instanceof CollectionPreferenceConflictError) persistUntilSettled();
-            });
-          };
-          persistUntilSettled();
-        },
+            }))
+            .then(() => undefined),
         focusedItemKey: () => {
           const focused = session.focusedRef();
           return focused ? taskPresentationKey(focused) : null;
@@ -1298,12 +1291,14 @@ export class CenterPanel {
             current.ref.revision === published.ref.revision
           );
         },
-        renderItem: (container, action) =>
+        renderItem: (container, action, statusGuard) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
             projectTaskBoard: true,
+            statusMutationPending: statusGuard.pending,
+            blockStatusMutationIfPending: statusGuard.blockIfPending,
             ...(this.tasks && {
               nextActionState: (task) => projectedNextAction(this.tasks!, task),
             }),
@@ -2678,6 +2673,8 @@ export class CenterPanel {
       readonly projectTaskCollection?: boolean;
       /** Only Board cards use the shared Board EntityPresentation slot layout. */
       readonly projectTaskBoard?: boolean;
+      readonly statusMutationPending?: boolean;
+      readonly blockStatusMutationIfPending?: () => boolean;
       readonly nextActionState?: (task: TaskSnapshot) => boolean | undefined;
       readonly onAddPropertyFilter?: (filter: PropertyFilter) => void;
     } = {},
@@ -2730,11 +2727,17 @@ export class CenterPanel {
               task,
               registry: this.statusRegistry,
               interactive: context.manageStatusMarker !== false,
+              disabled: context.statusMutationPending === true,
+              onDisabledInteraction: () => context.blockStatusMutationIfPending?.() ?? false,
               ...(dependencyDecision && { completionDecision: dependencyDecision }),
-              onLeftClick: () => void this.toggleTask(task),
+              onLeftClick: () => {
+                if (context.blockStatusMutationIfPending?.()) return;
+                void this.toggleTask(task);
+              },
               onContextMenu: (event) => {
                 event.stopPropagation();
-                this.openStatusMenu(event, task);
+                if (context.blockStatusMutationIfPending?.()) return;
+                this.openStatusMenu(event, task, context.blockStatusMutationIfPending);
               },
             }),
         },
@@ -4963,7 +4966,11 @@ export class CenterPanel {
     presentTaskCommandResult(await this.tasks.execute(command));
   }
 
-  private openStatusMenu(event: MouseEvent, task: TaskSnapshot): void {
+  private openStatusMenu(
+    event: MouseEvent,
+    task: TaskSnapshot,
+    blockStatusMutationIfPending?: () => boolean,
+  ): void {
     this.clearTaskDatePicker();
     this.dismissRecurrenceEditor();
     this.viewStatePopoverCleanup?.();
@@ -4971,7 +4978,10 @@ export class CenterPanel {
       task,
       registry: this.statusRegistry,
       owner: this.md,
-      onPickStatus: (symbol) => void this.setTaskStatus(task, symbol),
+      onPickStatus: (symbol) => {
+        if (blockStatusMutationIfPending?.()) return;
+        void this.setTaskStatus(task, symbol);
+      },
       onPickPriority: (priority) => void this.setPriority(task, priority),
       interactionOwnership: this.interactionOwnership,
     });

@@ -55,7 +55,7 @@ export interface WorkNotesViewOptions {
   readonly overlayScope?: object;
   /** Board layout persists in the scoped collection preference, never this mounted session. */
   readonly boardPreference?: BoardViewPreference;
-  readonly onBoardPreferenceChange?: (next: BoardViewPreference) => void;
+  readonly onBoardPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
   /** Selection is rendered by the one right inspector host, never locally. */
   readonly onSelect?: (note: WorkNoteSnapshot, origin: HTMLElement) => void;
 }
@@ -558,9 +558,7 @@ function renderWorkNoteBoard(
     commandsEnabled: options.commandsEnabled,
     announce: options.announce,
     columnPreference: preference,
-    onColumnPreferenceChange: (next) => {
-      options.onBoardPreferenceChange?.(next);
-    },
+    onColumnPreferenceChange: (next) => options.onBoardPreferenceChange?.(next),
     overlayScope: options.overlayScope,
     ...(options.overlayScope
       ? {}

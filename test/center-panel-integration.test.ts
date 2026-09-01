@@ -2467,6 +2467,71 @@ describe('CenterPanel projects mode teardown (regression)', () => {
     }
   });
 
+  it.each(['click', 'keyboard', 'contextmenu'] as const)(
+    'blocks a Project Board status-marker %s while its drag command is pending',
+    async (activation) => {
+      const current = task({ source: { filePath: 'Projects/A.md', line: 1 } });
+      const completion = deferred<TaskCommandResult>();
+      const execute = vi.fn<TaskApplicationApi['execute']>().mockReturnValue(completion.promise);
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      Object.assign(settings.projects.view.tasks, {
+        statusGroups: ['todo', 'in-progress', 'done'] as const,
+      });
+      const panel = makeStaticPanel(new AppState(), [current], settings, {} as App, undefined, {
+        queries: queryApiForSnapshots(() => [current]),
+        execute,
+      });
+      const container = freshContainer();
+      activeDocument.body.append(container);
+      try {
+        panel.mount(container);
+        const host = container.createDiv();
+        call(panel, 'renderProjectTaskBoard', host, 'Projects/A.md', [
+          {
+            task: current,
+            projectPath: 'Projects/A.md',
+            dependency: { type: 'allowed' },
+            owner: { type: 'project', path: 'Projects/A.md' },
+          },
+        ]);
+        const done = DEFAULT_SETTINGS.taskStatuses.find(({ type }) => type === 'done')!;
+        host
+          .querySelector<HTMLElement>('[data-board-item]')!
+          .dispatchEvent(new Event('dragstart', { bubbles: true }));
+        host
+          .querySelector<HTMLElement>(`[data-board-column="${done.id}"]`)!
+          .dispatchEvent(new Event('drop', { bubbles: true, cancelable: true }));
+        await flushMicrotasks();
+
+        const marker = host.querySelector<HTMLElement>('.abyss-status-marker')!;
+        expect(marker.getAttribute('aria-disabled')).toBe('true');
+        if (activation === 'click') marker.click();
+        else if (activation === 'keyboard') {
+          marker.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        } else {
+          marker.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        }
+        await flushMicrotasks();
+
+        expect(execute).toHaveBeenCalledOnce();
+        expect(container.querySelector('.abyss-selection-live')?.textContent).toBe(
+          'Move is already pending',
+        );
+        expect(activeDocument.querySelector('.abyss-status-popover')).toBeNull();
+        completion.resolve({
+          type: 'blocked',
+          operation: 'completion',
+          dependency: { type: 'blocked', prerequisites: [] },
+        });
+        await flushMicrotasks();
+      } finally {
+        panel.destroy();
+        container.remove();
+        activeDocument.querySelector('.abyss-status-popover')?.remove();
+      }
+    },
+  );
+
   it('routes both visible blocked Project Timeline completion paths through canonical commands', async () => {
     const current = task({
       title: 'Blocked timeline task',

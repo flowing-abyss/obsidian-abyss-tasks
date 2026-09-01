@@ -23,7 +23,6 @@ import type {
   WorkNotesCollectionPreference,
   WorkNotesViewState,
 } from '../../settings/types';
-import { CollectionPreferenceConflictError } from '../../ui/collection/CollectionStateCoordinator';
 import {
   deriveInspectorSelection,
   inspectorSelectionKey,
@@ -316,22 +315,16 @@ export class ProjectsPanel {
           'work-notes',
         ) as WorkNotesCollectionPreference
       ).layoutPreferences['board']?.board;
-    const persistBoardPreference = (next: BoardViewPreference): void => {
-      const persist = (): Promise<unknown> =>
-        this.workspaceSession.updateCollectionPreference(projectPath, 'work-notes', (current) => ({
+    const persistBoardPreference = (next: BoardViewPreference): Promise<void> =>
+      this.workspaceSession
+        .updateCollectionPreference(projectPath, 'work-notes', (current) => ({
           ...current,
           layoutPreferences: {
             ...current.layoutPreferences,
             board: { board: next },
           },
-        }));
-      const persistUntilSettled = (): void => {
-        void persist().catch((error: unknown) => {
-          if (error instanceof CollectionPreferenceConflictError) persistUntilSettled();
-        });
-      };
-      persistUntilSettled();
-    };
+        }))
+        .then(() => undefined);
     let isNarrow = narrow();
     let child = renderWorkNotesView(host, {
       notes,

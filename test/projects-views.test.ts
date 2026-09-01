@@ -411,9 +411,8 @@ describe('renderProjectsList', () => {
       onAnnounce: (message) => announcements.push(message),
     });
 
-    expect(
-      announcements.filter((message) => message === 'Item moved. Undo available.'),
-    ).toHaveLength(1);
+    expect(announcements.filter((message) => message === 'Item moved.')).toHaveLength(1);
+    expect(announcements).not.toContain('Item moved. Undo available.');
     expect(el.querySelector('[data-board-item="Archive/Renamed A.md"]')).not.toBeNull();
     handle.destroy();
   });
@@ -658,26 +657,28 @@ describe('renderProjectsList', () => {
         onUndoStatus: vi.fn(),
       });
     let handle = render();
+    await flushMicrotasks();
     el.querySelector<HTMLButtonElement>(
       `[data-board-collapse-column="${regular[0]!.id}"]`,
     )!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.board.collapsedColumnIds).toContain(regular[0]!.id);
 
     el.querySelector<HTMLButtonElement>(`[data-board-hide-column="${regular[1]!.id}"]`)!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.board.hiddenColumnIds).toContain(regular[1]!.id);
     handle.destroy();
     handle = render();
+    await flushMicrotasks();
     el.querySelector<HTMLButtonElement>('[data-board-hidden-disclosure]')!.click();
     el.querySelector<HTMLButtonElement>(`[data-board-restore-column="${regular[1]!.id}"]`)!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.board.hiddenColumnIds).not.toContain(regular[1]!.id);
 
     el.querySelector<HTMLButtonElement>(
       `[data-board-reorder-handle="${regular[0]!.id}"]`,
     )!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.board.columnOrder.indexOf(regular[0]!.id)).toBeGreaterThan(
       settings.projects.view.board.columnOrder.indexOf(regular[1]!.id),
     );
@@ -688,8 +689,9 @@ describe('renderProjectsList', () => {
     ).toEqual(settings.projects.view.board.columnOrder);
     handle.destroy();
     handle = render();
+    await flushMicrotasks();
     el.querySelector<HTMLButtonElement>('[data-board-reset-order]')!.click();
-    await Promise.resolve();
+    await flushMicrotasks();
     expect(settings.projects.view.board.columnOrder).toEqual(
       settings.projects.statuses.map(({ id }) => id),
     );
@@ -699,6 +701,61 @@ describe('renderProjectsList', () => {
         .filter((id) => id !== 'unmapped'),
     ).toEqual(settings.projects.view.board.columnOrder);
     expect(onSaveSettings).toHaveBeenCalled();
+    handle.destroy();
+  });
+
+  it('rolls back a failed Portfolio Board save and persists a later retry across remount', async () => {
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    const regular = settings.projects.statuses.find(
+      ({ behavior }) => behavior !== 'dropped' && behavior !== 'published',
+    )!;
+    settings.projects.view.visibleStatusIds = settings.projects.statuses.map(({ id }) => id);
+    settings.projects.view.board = {
+      ...settings.projects.view.board,
+      terminalDefaultsApplied: true,
+    };
+    const before = structuredClone(settings.projects.view.board);
+    const announcements: string[] = [];
+    const onSaveSettings = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('disk unavailable'))
+      .mockResolvedValue(undefined);
+    const el = freshContainer();
+    const mount = () =>
+      renderProjectsBoard(el, {
+        ...ctx,
+        settings,
+        onSaveSettings,
+        snapshots: [workspace()],
+        onMoveStatus: vi.fn(),
+        onUndoStatus: vi.fn(),
+        onAnnounce: (message) => announcements.push(message),
+      });
+
+    let handle = mount();
+    el.querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!.click();
+    await flushMicrotasks();
+
+    expect(settings.projects.view.board).toEqual(before);
+    expect(
+      el
+        .querySelector(`[data-board-column="${regular.id}"]`)
+        ?.classList.contains('is-column-collapsed'),
+    ).toBe(false);
+    expect(announcements.filter((message) => message.includes('not saved'))).toHaveLength(1);
+
+    el.querySelector<HTMLButtonElement>(`[data-board-collapse-column="${regular.id}"]`)!.click();
+    await flushMicrotasks();
+    expect(settings.projects.view.board.collapsedColumnIds).toContain(regular.id);
+    handle.destroy();
+    el.empty();
+
+    handle = mount();
+    expect(
+      el
+        .querySelector(`[data-board-column="${regular.id}"]`)
+        ?.classList.contains('is-column-collapsed'),
+    ).toBe(true);
     handle.destroy();
   });
 

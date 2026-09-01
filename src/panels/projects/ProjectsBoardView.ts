@@ -152,7 +152,7 @@ export interface WorkNotesBoardOptions {
   readonly commandsEnabled?: boolean;
   readonly announce?: (message: string) => void;
   readonly columnPreference?: BoardViewPreference;
-  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void;
+  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
   readonly overlayScope?: object;
 }
 
@@ -162,13 +162,21 @@ export interface ProjectTasksBoardOptions {
   readonly publicationSequence?: number;
   readonly statuses: readonly TaskStatusDef[];
   readonly onMoveStatus: (task: TaskSnapshot, symbol: string) => Promise<BoardMutationResult>;
-  readonly renderItem: (host: HTMLElement, action: ProjectAction) => HTMLElement;
+  readonly renderItem: (
+    host: HTMLElement,
+    action: ProjectAction,
+    statusGuard: {
+      readonly pending: boolean;
+      /** Rechecks the application store at handler time to close stale-DOM races. */
+      readonly blockIfPending: () => boolean;
+    },
+  ) => HTMLElement;
   readonly renderColumnAdd?: (host: HTMLElement, status: TaskStatusDef) => void;
   readonly onCollapsedColumnAddRequest?: (status: TaskStatusDef) => void;
   readonly visibleColumnKeys?: ReadonlySet<string>;
   readonly session?: WorkNoteBoardSession;
   readonly columnPreference?: BoardViewPreference;
-  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void;
+  readonly onColumnPreferenceChange?: (next: BoardViewPreference) => void | Promise<void>;
   readonly focusedItemKey?: () => string | null;
   readonly shouldRestoreItemFocus?: () => boolean;
   readonly onItemFocus?: (action: ProjectAction) => void;
@@ -181,6 +189,21 @@ export interface ProjectTasksBoardOptions {
 
 function successful(result: BoardMutationResult): boolean {
   return result !== undefined && result.type === 'ok' && (!('changed' in result) || result.changed);
+}
+
+function stableFingerprint(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableFingerprint).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    const fields = Object.entries(value as Record<string, unknown>)
+      .filter(([, field]) => field !== undefined)
+      .sort(([left], [right]) => {
+        if (left === right) return 0;
+        return left < right ? -1 : 1;
+      })
+      .map(([key, field]) => `${JSON.stringify(key)}:${stableFingerprint(field)}`);
+    return `{${fields.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
 }
 
 function isProjectStatusMove(
@@ -334,6 +357,7 @@ export function renderBoard<T>(
         terminalRightIds: options.columnPreferences.terminalRightIds,
       }
     : undefined;
+  let initialPreferenceNeedsSave = false;
   let columnPreference = options.columnPreferences
     ? reconcileBoardPreference(
         options.columnPreferences.value,
@@ -355,13 +379,16 @@ export function renderBoard<T>(
         ]),
       ],
     };
-    if (presentationEnabled) void options.columnPreferences?.onChange(columnPreference);
+    initialPreferenceNeedsSave = presentationEnabled;
   } else if (
     columnPreference &&
     JSON.stringify(columnPreference) !== JSON.stringify(options.columnPreferences?.value)
   ) {
-    if (presentationEnabled) void options.columnPreferences?.onChange(columnPreference);
+    initialPreferenceNeedsSave = presentationEnabled;
   }
+  if (options.session) options.session.preference = columnPreference;
+  let preferenceSaveInFlight = false;
+  const preferenceLocked = (): boolean => !presentationEnabled || preferenceSaveInFlight;
   const presentationColumns = (): readonly BoardColumn<T>[] => {
     if (!columnPreference) return options.columns;
     const columnsByKey = new Map(options.columns.map((column) => [column.key, column]));
@@ -449,11 +476,48 @@ export function renderBoard<T>(
     });
   };
 
-  const updateColumnPreference = (next: BoardViewPreference): void => {
-    if (!presentationEnabled) return;
-    columnPreference = { ...next, terminalDefaultsApplied: true };
-    void options.columnPreferences?.onChange(columnPreference);
+  const persistColumnPreference = (
+    next: BoardViewPreference,
+    previous: BoardViewPreference,
+  ): void => {
+    const onChange = options.columnPreferences?.onChange;
+    if (!onChange) return;
+    preferenceSaveInFlight = true;
     render();
+    const rollback = (error: unknown): void => {
+      columnPreference = previous;
+      if (options.session) options.session.preference = previous;
+      if (destroyed) return;
+      const conflict = error instanceof Error && error.name === 'CollectionPreferenceConflictError';
+      options.announce?.(
+        conflict
+          ? 'Board preferences changed elsewhere. Your change was not saved; review the settled board.'
+          : 'Board preference was not saved. Nothing changed; try again.',
+      );
+    };
+    let operation: void | Promise<void>;
+    try {
+      operation = onChange(next);
+    } catch (error) {
+      rollback(error);
+      preferenceSaveInFlight = false;
+      if (!destroyed) render();
+      return;
+    }
+    void Promise.resolve(operation)
+      .catch(rollback)
+      .finally(() => {
+        preferenceSaveInFlight = false;
+        if (!destroyed) render();
+      });
+  };
+
+  const updateColumnPreference = (next: BoardViewPreference): void => {
+    if (preferenceLocked() || !columnPreference) return;
+    const previous = columnPreference;
+    columnPreference = { ...next, terminalDefaultsApplied: true };
+    if (options.session) options.session.preference = columnPreference;
+    persistColumnPreference(columnPreference, previous);
   };
 
   const showStatusMenu = (event: MouseEvent, item: T, initiator: HTMLElement): void => {
@@ -1117,7 +1181,7 @@ export function renderBoard<T>(
         },
       });
       setIcon(reset, 'rotate-ccw');
-      reset.disabled = !presentationEnabled;
+      reset.disabled = preferenceLocked();
       reset.setAttribute('aria-disabled', String(reset.disabled));
       reset.addEventListener('click', () => {
         if (reset.disabled) return;
@@ -1254,7 +1318,7 @@ export function renderBoard<T>(
           },
         });
         setIcon(collapse, presentationCollapsed ? 'panel-left-open' : 'panel-left-close');
-        collapse.disabled = !presentationEnabled;
+        collapse.disabled = preferenceLocked();
         collapse.setAttribute('aria-disabled', String(collapse.disabled));
         collapse.addEventListener('click', () => {
           if (collapse.disabled) return;
@@ -1275,7 +1339,7 @@ export function renderBoard<T>(
             },
           });
           setIcon(hide, 'eye-off');
-          hide.disabled = !presentationEnabled;
+          hide.disabled = preferenceLocked();
           hide.setAttribute('aria-disabled', String(hide.disabled));
           hide.addEventListener('click', () => {
             if (hide.disabled) return;
@@ -1291,7 +1355,7 @@ export function renderBoard<T>(
             },
           });
           setIcon(menuButton, 'more-horizontal');
-          menuButton.disabled = !presentationEnabled;
+          menuButton.disabled = preferenceLocked();
           menuButton.setAttribute('aria-disabled', String(menuButton.disabled));
           menuButton.addEventListener('click', (event) => {
             if (menuButton.disabled) return;
@@ -1314,7 +1378,7 @@ export function renderBoard<T>(
                 item
                   .setTitle(`Move ${direction}`)
                   .setIcon(direction === 'left' ? 'arrow-left' : 'arrow-right')
-                  .setDisabled(!presentationEnabled)
+                  .setDisabled(preferenceLocked())
                   .onClick(() =>
                     updateColumnPreference({
                       ...moveBoardColumn(
@@ -1333,7 +1397,7 @@ export function renderBoard<T>(
               item
                 .setTitle('Hide column')
                 .setIcon('eye-off')
-                .setDisabled(!presentationEnabled)
+                .setDisabled(preferenceLocked())
                 .onClick(() =>
                   updateColumnPreference(hideBoardColumn(columnPreference!, column.key)),
                 ),
@@ -1350,7 +1414,7 @@ export function renderBoard<T>(
             },
           });
           setIcon(handle, 'grip-vertical');
-          handle.disabled = !presentationEnabled;
+          handle.disabled = preferenceLocked();
           handle.setAttribute('aria-disabled', String(handle.disabled));
           handle.addEventListener('keydown', (event) => {
             if (handle.disabled) return;
@@ -1629,7 +1693,7 @@ export function renderBoard<T>(
             'aria-label': `Restore ${column.label}`,
           },
         });
-        restore.disabled = !presentationEnabled;
+        restore.disabled = preferenceLocked();
         restore.setAttribute('aria-disabled', String(restore.disabled));
         restore.addEventListener('click', () => {
           if (restore.disabled) return;
@@ -1647,6 +1711,9 @@ export function renderBoard<T>(
   };
 
   render();
+  if (initialPreferenceNeedsSave && columnPreference && options.columnPreferences) {
+    persistColumnPreference(columnPreference, options.columnPreferences.value);
+  }
   return {
     destroy: () => {
       destroyed = true;
@@ -1805,7 +1872,9 @@ export function renderProjectTasksBoard(
           },
         ),
         keyOf: stableTaskStatusKey,
-        revision: ({ task }: ProjectAction) => task.ref.revision,
+        // ProjectAction is the complete card and command-guard projection. Fingerprint
+        // every field deterministically so same-TaskRef dependency/owner edits compete.
+        revision: (action: ProjectAction) => stableFingerprint(action),
         ...(options.publicationSequence !== undefined && {
           publicationSequence: options.publicationSequence,
         }),
@@ -1819,6 +1888,11 @@ export function renderProjectTasksBoard(
         presentationAnnouncement: true,
       }
     : undefined;
+  const blockStatusMutationIfPending = (action: ProjectAction): boolean => {
+    if (!optimisticOverlay?.store.active(stableTaskStatusKey(action))) return false;
+    options.announce?.('Move is already pending');
+    return true;
+  };
   return renderBoard(container, {
     columns: projectActionBoardColumns(options.statuses, options.actions),
     visibleColumnKeys: options.visibleColumnKeys,
@@ -1827,7 +1901,11 @@ export function renderProjectTasksBoard(
     mutation,
     itemKey: ({ task }) => taskPresentationKey(task.ref),
     itemLabel: ({ task }) => task.title,
-    renderItem: options.renderItem,
+    renderItem: (host, action) =>
+      options.renderItem(host, action, {
+        pending: optimisticOverlay?.store.active(stableTaskStatusKey(action)) !== undefined,
+        blockIfPending: () => blockStatusMutationIfPending(action),
+      }),
     session: options.session,
     focusedItemKey: options.focusedItemKey,
     shouldRestoreItemFocus: options.shouldRestoreItemFocus,
@@ -2085,8 +2163,16 @@ export function renderProjectsBoard(
       terminalLeftIds,
       terminalRightIds,
       onChange: async (next) => {
+        const previous = options.settings.projects.view.board;
         options.settings.projects.view.board = next;
-        await options.onSaveSettings();
+        try {
+          await options.onSaveSettings();
+        } catch (error) {
+          if (options.settings.projects.view.board === next) {
+            options.settings.projects.view.board = previous;
+          }
+          throw error;
+        }
       },
     },
   });

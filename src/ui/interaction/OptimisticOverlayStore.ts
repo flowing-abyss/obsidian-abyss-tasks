@@ -27,6 +27,8 @@ interface OptimisticOverlayOwner {
   readonly id: string;
   readonly announce?: (message: string) => void;
   readonly undoAvailable?: boolean;
+  /** The initiating surface has placed Undo authority in an application-owned owner. */
+  readonly undoTransferable?: boolean;
 }
 
 export interface OptimisticOverlayStore<
@@ -109,7 +111,7 @@ interface Entry<TSnapshot, TPatch> {
   matches?: (snapshot: TSnapshot, patch: TPatch) => boolean;
   isSuccess?: (result: CommandResult) => boolean;
   ownerId?: string;
-  undoAvailable?: boolean;
+  undoTransferable?: boolean;
   commandSucceeded?: boolean;
   publicationMatched?: boolean;
 }
@@ -232,8 +234,11 @@ export function createOptimisticOverlayStore<
     entry.commandSucceeded = undefined;
     entry.publicationMatched = undefined;
     if (remove) removeEntry(entry);
-    const message = announcement(reason, entry.undoAvailable);
     const owner = ownerFor(entry.ownerId);
+    const ownerCanPresentUndo =
+      owner?.undoAvailable === true &&
+      (owner.id === entry.ownerId || entry.undoTransferable === true);
+    const message = announcement(reason, ownerCanPresentUndo);
     // Direct stores retain their explicit callback; application stores use a current,
     // mounted owner so a dead popout can never receive the terminal announcement.
     (owner?.announce ?? (entry.ownerId ? undefined : currentOptions.announce))?.(message);
@@ -481,7 +486,7 @@ export function createOptimisticOverlayStore<
         matches: currentOptions.matches,
         isSuccess: currentOptions.isSuccess as (result: CommandResult) => boolean,
         ownerId: owner?.id,
-        undoAvailable: owner?.undoAvailable,
+        undoTransferable: owner?.undoTransferable,
         // Preserve the source watermark across consecutive transactions on one
         // logical entity. Otherwise an old r1 arriving after tx2 could be accepted.
         lastPublicationSequence: existing?.lastPublicationSequence,
