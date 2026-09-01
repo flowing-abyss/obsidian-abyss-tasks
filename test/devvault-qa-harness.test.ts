@@ -20,6 +20,15 @@ interface QaModule {
   validateEvidenceDocument(schema: unknown, value: unknown): void;
   assertAllowedCommand(command: string, args: string[]): void;
   proveExactRunningVault(execute: (...args: any[]) => any): string;
+  normalizeObsidianCliOutput(stdout: string): string;
+  parseJsonEvalOutput(value: string, context: string): unknown;
+  measurementEval(measurement: unknown): string;
+  surfaceNavigationEval(scenario: { navigationEval: string }): string;
+  runCaptureWithRecovery<T>(
+    capture: () => Promise<T>,
+    recover: () => void,
+    safeToRetry: boolean,
+  ): Promise<T>;
   assertSafeEvidenceOut(path: string): string;
   runNativePointerPhase(
     ports: {
@@ -83,6 +92,9 @@ function scenarioDocument(): any {
     expectedWindowTitle: 'Abyss Tasks',
     rootSelector: '.abyss-center-panel',
     expectedLandmark: 'Tasks',
+    navigationEval:
+      "document.querySelector('.abyss-rail-btn[aria-label=\"Tasks\"]')?.click()",
+    readyEval: '!!document.querySelector(".abyss-center-panel")',
     setupEval: ['document.body.dataset.qaSurface="tasks"'],
     stateSnapshot: {
       beforeEval: '({selected:document.activeElement?.getAttribute("aria-label")??null})',
@@ -382,6 +394,14 @@ describe('Dev Vault QA harness scenario contract', () => {
     expect(() => qa.validateAndExpandScenarios(pointerWithoutGeometry)).toThrow(
       /coordinates|threshold|capture|document/iu,
     );
+
+    const missingNavigation = scenarioDocument();
+    delete missingNavigation.surfaces[0]!.navigationEval;
+    expect(() => qa.validateAndExpandScenarios(missingNavigation)).toThrow(/navigation/iu);
+
+    const missingReadiness = scenarioDocument();
+    delete missingReadiness.surfaces[0]!.readyEval;
+    expect(() => qa.validateAndExpandScenarios(missingReadiness)).toThrow(/ready|readiness/iu);
   });
 
   it('expands every required surface across the complete deterministic matrix', async () => {
@@ -624,6 +644,127 @@ describe('Dev Vault QA harness scenario contract', () => {
         stderr: '',
       })),
     ).toThrow(/running vault/iu);
+
+    expect(
+      qa.proveExactRunningVault(() => ({
+        status: 0,
+        stdout: `=> ${expected}`,
+        stderr: '',
+      })),
+    ).toBe(expected);
+    expect(qa.normalizeObsidianCliOutput(`=> ${JSON.stringify('{"ready":true}')}`)).toBe(
+      '{"ready":true}',
+    );
+  });
+
+  it('reports non-JSON eval failures with the scenario and action context', async () => {
+    const qa = await qaModule();
+
+    expect(() =>
+      qa.parseJsonEvalOutput(
+        'Error: Missing text interaction target Table',
+        'projects-table--dark--1440--z1--fine interaction[0] click-text',
+      ),
+    ).toThrow(
+      /projects-table--dark--1440--z1--fine interaction\[0\] click-text.*Missing text interaction target Table/iu,
+    );
+  });
+
+  it('measures against the first visible native Obsidian reference', async () => {
+    const qa = await qaModule();
+    document.body.innerHTML = `
+      <div class="qa-target"></div>
+      <div class="qa-reference is-hidden"></div>
+      <div class="qa-reference is-visible"></div>`;
+    const target = document.querySelector<HTMLElement>('.qa-target')!;
+    const hidden = document.querySelector<HTMLElement>('.qa-reference.is-hidden')!;
+    const visible = document.querySelector<HTMLElement>('.qa-reference.is-visible')!;
+    target.getBoundingClientRect = () => ({ height: 40 }) as DOMRect;
+    hidden.getBoundingClientRect = () => ({ height: 0 }) as DOMRect;
+    visible.getBoundingClientRect = () => ({ height: 20 }) as DOMRect;
+
+    const result = JSON.parse(
+      Function(
+        `return ${qa.measurementEval({
+          type: 'native-reference',
+          selector: '.qa-target',
+          referenceSelector: '.qa-reference',
+        })}`,
+      )(),
+    ) as { value: number; details: { referenceHeight: number } };
+
+    expect(result).toEqual({
+      value: 2,
+      details: { targetHeight: 40, referenceHeight: 20 },
+    });
+  });
+
+  it('returns from an open project before selecting a deterministic portfolio layout', async () => {
+    const qa = await qaModule();
+    const manifest = JSON.parse(
+      await readFile(resolve(process.cwd(), 'scripts/devvault-qa/scenarios.json'), 'utf8'),
+    ) as { surfaces: Array<{ id: string; navigationEval: string }> };
+    const scenario = manifest.surfaces.find(({ id }) => id === 'projects-table')!;
+    document.body.innerHTML = `
+      <button class="abyss-rail-btn" aria-label="Projects"></button>
+      <button class="abyss-project-back"></button>
+      <button data-project-portfolio-layout="overview"></button>`;
+    let backClicks = 0;
+    let layoutClicks = 0;
+    document.querySelector('.abyss-project-back')!.addEventListener('click', () => {
+      backClicks += 1;
+    });
+    document
+      .querySelector('[data-project-portfolio-layout="overview"]')!
+      .addEventListener('click', () => {
+        layoutClicks += 1;
+      });
+
+    await Function(
+      'app',
+      `return ${qa.surfaceNavigationEval(scenario)}`,
+    )({ commands: { executeCommandById: async () => true } });
+
+    expect(backClicks).toBe(1);
+    expect(layoutClicks).toBe(1);
+  });
+
+  it('restarts and retries one read-only surface after a bounded CLI timeout', async () => {
+    const qa = await qaModule();
+    let captures = 0;
+    let recoveries = 0;
+    const timeout = Object.assign(new Error('CLI timed out'), { code: 'QA_CLI_TIMEOUT' });
+
+    await expect(
+      qa.runCaptureWithRecovery(
+        async () => {
+          captures += 1;
+          if (captures === 1) throw timeout;
+          return 'captured';
+        },
+        () => {
+          recoveries += 1;
+        },
+        true,
+      ),
+    ).resolves.toBe('captured');
+    expect({ captures, recoveries }).toEqual({ captures: 2, recoveries: 1 });
+
+    captures = 0;
+    recoveries = 0;
+    await expect(
+      qa.runCaptureWithRecovery(
+        async () => {
+          captures += 1;
+          throw timeout;
+        },
+        () => {
+          recoveries += 1;
+        },
+        false,
+      ),
+    ).rejects.toThrow(/timed out/iu);
+    expect({ captures, recoveries }).toEqual({ captures: 1, recoveries: 0 });
   });
 
   it('rejects evidence paths that traverse an existing symlink', async () => {

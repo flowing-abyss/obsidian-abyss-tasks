@@ -12,7 +12,9 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-center",
       "expectedLandmark": "Inbox",
-      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Tasks\"]')).click();await wait('.abyss-left');const inbox=[...document.querySelectorAll('.abyss-left-item')].find(el=>el.querySelector('.abyss-left-label')?.textContent?.trim()==='Inbox');if(!inbox)throw new Error('Missing Inbox navigation target');inbox.click();return true})()",
+      "readyEval": "document.querySelector('.abyss-center-title')?.textContent?.trim()==='Inbox'&&!!document.querySelector('.abyss-center .abyss-task-card')",
+      "setupEval": [],
       "interactions": [
         {
           "type": "context-menu",
@@ -54,7 +56,7 @@
           "id": "tasks-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-task-card",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 4.5
@@ -66,12 +68,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-panel",
       "expectedLandmark": "Projects",
-      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();return true})()",
+      "readyEval": "!!document.querySelector('.abyss-projects-panel .abyss-virtual-table [data-project-table-row=\"Projects QA/Regular Project.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Table"
-        },
         {
           "type": "key",
           "key": "q",
@@ -105,15 +105,15 @@
         {
           "id": "projects-table-density",
           "type": "density",
-          "selector": ".abyss-project-row",
+          "selector": ".abyss-virtual-table-row[data-project-table-row]",
           "min": 0.5,
           "max": 8
         },
         {
           "id": "projects-table-native-row-ratio",
           "type": "native-reference",
-          "selector": ".abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "selector": ".abyss-virtual-table-row[data-project-table-row]",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 4.5
@@ -125,12 +125,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-board-host",
       "expectedLandmark": "Board",
-      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"board\"]')).click();return true})()",
+      "readyEval": "!!document.querySelector('.abyss-projects-board-host .abyss-board [data-project-path=\"Projects QA/Regular Project.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Board"
-        },
         {
           "type": "key",
           "key": "Home",
@@ -169,7 +167,7 @@
           "id": "projects-board-native-card-ratio",
           "type": "native-reference",
           "selector": ".abyss-board-items > .abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 4.5
@@ -181,12 +179,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-timeline-host",
       "expectedLandmark": "Timeline",
-      "setupEval": ["app.commands.executeCommandById('task-calendar:open-panel')"],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"timeline\"]')).click();return true})()",
+      "readyEval": "!!document.querySelector('.abyss-projects-timeline-host .abyss-timeline [data-timeline-key=\"project:Projects QA/Regular Project.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Timeline"
-        },
         {
           "type": "key",
           "key": "q",
@@ -228,7 +224,7 @@
           "id": "projects-timeline-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-timeline-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -240,15 +236,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-dashboard",
       "expectedLandmark": "Tasks",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"tasks\"]')).click();(await wait('[data-project-layout=\"list\"]')).click();return true})()",
+      "readyEval": "document.querySelector('[data-project-workspace]')?.dataset.scope==='tasks'&&document.querySelector('[data-project-workspace]')?.dataset.layout==='list'&&!!document.querySelector('.abyss-projects-dashboard .abyss-task-card[data-file-path=\"Projects QA/Regular Project.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "List"
-        },
         {
           "type": "key",
           "key": "q",
@@ -290,7 +281,7 @@
           "id": "project-task-list-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-task-card",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 4.5
@@ -302,15 +293,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-dashboard",
       "expectedLandmark": "Tasks",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"tasks\"]')).click();(await wait('[data-project-layout=\"table\"]')).click();return true})()",
+      "readyEval": "document.querySelector('[data-project-workspace]')?.dataset.scope==='tasks'&&document.querySelector('[data-project-workspace]')?.dataset.layout==='table'&&!!document.querySelector('[data-project-task-table-row]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Table"
-        },
         {
           "type": "key",
           "key": "q",
@@ -352,7 +338,7 @@
           "id": "project-task-table-native-row-ratio",
           "type": "native-reference",
           "selector": "[data-project-task-table-row]",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 4.5
@@ -364,15 +350,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-dashboard .abyss-board",
       "expectedLandmark": "Board",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"tasks\"]')).click();(await wait('[data-project-layout=\"board\"]')).click();return true})()",
+      "readyEval": "document.querySelector('[data-project-workspace]')?.dataset.scope==='tasks'&&document.querySelector('[data-project-workspace]')?.dataset.layout==='board'&&!!document.querySelector('.abyss-projects-dashboard .abyss-board .abyss-task-card[data-file-path=\"Projects QA/Regular Project.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Board"
-        },
         {
           "type": "key",
           "key": "Home",
@@ -411,7 +392,7 @@
           "id": "project-task-board-native-card-ratio",
           "type": "native-reference",
           "selector": ".abyss-board-items > .abyss-task-card",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -423,15 +404,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-dashboard .abyss-timeline",
       "expectedLandmark": "Timeline",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"tasks\"]')).click();(await wait('[data-project-layout=\"timeline\"]')).click();return true})()",
+      "readyEval": "document.querySelector('[data-project-workspace]')?.dataset.scope==='tasks'&&document.querySelector('[data-project-workspace]')?.dataset.layout==='timeline'&&!!document.querySelector('.abyss-projects-dashboard .abyss-timeline .abyss-timeline-row')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Timeline"
-        },
         {
           "type": "key",
           "key": "q",
@@ -473,7 +449,7 @@
           "id": "project-task-timeline-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-timeline-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -485,15 +461,10 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-projects-dashboard",
       "expectedLandmark": "Work Notes",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"work-notes\"]')).click();return true})()",
+      "readyEval": "document.querySelector('[data-project-workspace]')?.dataset.scope==='work-notes'&&!!document.querySelector('[data-work-note-path=\"Work Notes QA/Ready Work Note.md\"]')",
+      "setupEval": [],
       "interactions": [
-        {
-          "type": "click-text",
-          "value": "Work Notes"
-        },
         {
           "type": "key",
           "key": "q",
@@ -535,7 +506,7 @@
           "id": "project-work-notes-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -547,10 +518,9 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-right",
       "expectedLandmark": "Description",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('.abyss-task-card')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"tasks\"]')).click();(await wait('[data-project-layout=\"list\"]')).click();(await wait('.abyss-task-card[data-file-path=\"Projects QA/Regular Project.md\"][data-line=\"8\"]')).click();return true})()",
+      "readyEval": "document.querySelector('.abyss-right')?.dataset.inspectorEntity==='task'&&!!document.querySelector('.abyss-right [data-inspector-field=\"description\"]')",
+      "setupEval": [],
       "interactions": [
         {
           "type": "key",
@@ -593,7 +563,7 @@
           "id": "task-inspector-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-inspector-field-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -605,11 +575,9 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-project-inspector",
       "expectedLandmark": "Project",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-identity-control]')?.click()",
-        "document.querySelector('.abyss-project-inspector-open')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('.abyss-project-dashboard-title')).click();return true})()",
+      "readyEval": "!!document.querySelector('.abyss-project-inspector .abyss-project-inspector-fields')",
+      "setupEval": [],
       "interactions": [
         {
           "type": "key",
@@ -652,7 +620,7 @@
           "id": "project-inspector-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-inspector-field-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -664,10 +632,9 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-work-note-inspector",
       "expectedLandmark": "Work Note",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('.abyss-work-note-identity')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"work-notes\"]')).click();(await wait('[data-work-note-path=\"Work Notes QA/Ready Work Note.md\"] [data-work-note-identity-control]')).click();return true})()",
+      "readyEval": "document.querySelector('.abyss-work-note-inspector')?.textContent?.includes('Ready Work Note')===true",
+      "setupEval": [],
       "interactions": [
         {
           "type": "key",
@@ -710,7 +677,7 @@
           "id": "work-note-inspector-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-inspector-field-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -722,10 +689,9 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".abyss-work-note-inspector",
       "expectedLandmark": "Milestone",
-      "setupEval": [
-        "app.commands.executeCommandById('task-calendar:open-panel')",
-        "document.querySelector('[data-project-milestone-identity-control]')?.click()"
-      ],
+      "navigationEval": "(async()=>{const wait=async(selector)=>{for(let i=0;i<80;i+=1){const el=document.querySelector(selector);if(el)return el;await new Promise(resolve=>setTimeout(resolve,50));}throw new Error('Missing navigation target '+selector)};await app.commands.executeCommandById('task-calendar:open-panel');(await wait('.abyss-rail-btn[aria-label=\"Projects\"]')).click();(await wait('[data-project-portfolio-layout=\"overview\"]')).click();const row=await wait('[data-project-table-row=\"Projects QA/Regular Project.md\"]');row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true}));(await wait('[data-project-scope=\"work-notes\"]')).click();(await wait('[data-work-note-path=\"Work Notes QA/Milestone.md\"] [data-work-note-identity-control]')).click();return true})()",
+      "readyEval": "document.querySelector('.abyss-work-note-inspector')?.textContent?.includes('Milestone')===true",
+      "setupEval": [],
       "interactions": [
         {
           "type": "key",
@@ -768,7 +734,7 @@
           "id": "milestones-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-inspector-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -780,6 +746,8 @@
       "expectedWindowTitle": "dev-vault",
       "rootSelector": ".vertical-tab-content-container",
       "expectedLandmark": "Abyss Tasks",
+      "navigationEval": "(async()=>{app.setting.open();app.setting.openTabById('task-calendar');return true})()",
+      "readyEval": "!!document.querySelector('.vertical-tab-content-container .abyss-settings-section-header')",
       "setupEval": ["app.setting.open();app.setting.openTabById('task-calendar')"],
       "interactions": [
         {
@@ -861,7 +829,7 @@
           "id": "work-note-create-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -923,7 +891,7 @@
           "id": "work-note-ownership-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -985,7 +953,7 @@
           "id": "work-note-relations-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-inspector-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1045,7 +1013,7 @@
           "id": "work-note-progress-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-inspector-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1109,7 +1077,7 @@
           "id": "work-note-safe-delete-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-inspector-field-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1178,7 +1146,7 @@
           "id": "milestone-assignment-native-field-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-inspector-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1236,7 +1204,7 @@
           "id": "milestone-progress-filter-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-work-note-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1291,7 +1259,7 @@
           "id": "projects-board-move-native-card-ratio",
           "type": "native-reference",
           "selector": ".abyss-board-items > .abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1363,7 +1331,7 @@
           "id": "projects-board-rollback-native-card-ratio",
           "type": "native-reference",
           "selector": ".abyss-board-items > .abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1431,7 +1399,7 @@
           "id": "projects-timeline-move-resize-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-timeline-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1503,7 +1471,7 @@
           "id": "projects-timeline-rollback-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-timeline-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1571,7 +1539,7 @@
           "id": "pending-conflict-undo-native-card-ratio",
           "type": "native-reference",
           "selector": ".abyss-board-items > .abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1651,7 +1619,7 @@
           "id": "persistence-plugin-reload-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5
@@ -1700,7 +1668,7 @@
           "id": "persistence-app-restart-native-row-ratio",
           "type": "native-reference",
           "selector": ".abyss-project-row",
-          "referenceSelector": ".workspace-tab-header .clickable-icon, .workspace-ribbon .clickable-icon",
+          "referenceSelector": ".workspace-tab-header",
           "metric": "height-ratio",
           "min": 0.75,
           "max": 5

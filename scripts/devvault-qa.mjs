@@ -314,6 +314,15 @@ export function validateAndExpandScenarios(value) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(id)) {
       throw new Error(`${field}.id is invalid: ${id}`);
     }
+    const isSurface = collection === 'surfaces';
+    const navigationEval = isSurface
+      ? nonemptyString(surface.navigationEval, `${field}.navigationEval`)
+      : undefined;
+    const readyEval = isSurface
+      ? nonemptyString(surface.readyEval, `${field}.readyEval`)
+      : undefined;
+    if (navigationEval) validateEvalSyntax(navigationEval, `${field}.navigationEval`);
+    if (readyEval) validateEvalSyntax(readyEval, `${field}.readyEval`, true);
     const setupEval = surface.setupEval;
     if (!Array.isArray(setupEval) || setupEval.some((entry) => typeof entry !== 'string')) {
       throw new Error(`${field}.setupEval must be an array of strings`);
@@ -380,6 +389,8 @@ export function validateAndExpandScenarios(value) {
       ),
       rootSelector: nonemptyString(surface.rootSelector, `${field}.rootSelector`),
       expectedLandmark: nonemptyString(surface.expectedLandmark, `${field}.expectedLandmark`),
+      ...(navigationEval && { navigationEval }),
+      ...(readyEval && { readyEval }),
       setupEval: [...setupEval],
       stateSnapshot: validateStateSnapshot(surface.stateSnapshot, `${field}.stateSnapshot`),
       interactions: validatedInteractions,
@@ -443,6 +454,8 @@ export function validateAndExpandScenarios(value) {
               expectedWindowTitle: surface.expectedWindowTitle,
               rootSelector: surface.rootSelector,
               expectedLandmark: surface.expectedLandmark,
+              navigationEval: surface.navigationEval,
+              readyEval: surface.readyEval,
               setupEval: [...surface.setupEval],
               stateSnapshot: structuredClone(surface.stateSnapshot),
               interactions: surface.interactions.map((action) => structuredClone(action)),
@@ -1211,39 +1224,108 @@ export function assertAllowedCommand(command, args) {
 }
 
 function rawRun(command, args) {
-  const result = spawnSync(command, args, { cwd: REPO_ROOT, encoding: 'utf8' });
+  const result = spawnSync(command, args, {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    timeout: 15_000,
+    killSignal: 'SIGKILL',
+  });
   return {
     status: result.status ?? 1,
     stdout: (result.stdout ?? '').trim(),
     stderr: result.stderr ?? '',
+    timedOut: result.error?.code === 'ETIMEDOUT',
   };
 }
 
 function run(command, args, { optional = false } = {}) {
   assertAllowedCommand(command, args);
   const result = rawRun(command, args);
+  if (result.timedOut) {
+    throw Object.assign(new Error(`${command} ${args.join(' ')} timed out after 15000ms`), {
+      code: 'QA_CLI_TIMEOUT',
+    });
+  }
   if (result.status !== 0 && !optional) {
     throw new Error(`${command} ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
   }
   return result;
 }
 
+function restartObsidianForQa() {
+  run('osascript', ['-e', 'tell application "Obsidian" to quit'], { optional: true });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (run('pgrep', ['-x', 'Obsidian'], { optional: true }).status !== 0) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  }
+  run('open', ['-a', 'Obsidian']);
+  const proofArgs = ['vault=dev-vault', 'eval', 'code=app.vault.adapter.basePath'];
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    assertAllowedCommand('obsidian', proofArgs);
+    const proof = rawRun('obsidian', proofArgs);
+    if (
+      !proof.timedOut &&
+      proof.status === 0 &&
+      normalizeObsidianCliOutput(proof.stdout) === EXPECTED_DEV_VAULT
+    ) {
+      return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+  }
+  throw new Error('Obsidian recovery did not reconnect to the exact Dev Vault');
+}
+
+export async function runCaptureWithRecovery(capture, recover, safeToRetry) {
+  try {
+    return await capture();
+  } catch (error) {
+    if (!safeToRetry || error?.code !== 'QA_CLI_TIMEOUT') throw error;
+    recover();
+    return capture();
+  }
+}
+
 function obsidian(...args) {
   return run('obsidian', ['vault=dev-vault', ...args]);
 }
 
-function obsidianEval(code) {
-  return obsidian('eval', `code=${code}`).stdout;
+function obsidianEval(code, context = 'eval') {
+  const value = normalizeObsidianCliOutput(obsidian('eval', `code=${code}`).stdout);
+  if (/^(?:Error|Evaluation Error)\b/iu.test(value)) {
+    throw new Error(`Obsidian eval failed during ${context}: ${value}`);
+  }
+  return value;
 }
 
-function normalizedCliPath(stdout) {
-  const value = stdout.trim();
+export function normalizeObsidianCliOutput(stdout) {
+  const value = stdout.trim().replace(/^=>\s*/u, '');
   if (!value.startsWith('"')) return value;
   try {
     return JSON.parse(value);
   } catch {
     return value;
   }
+}
+
+export function parseJsonEvalOutput(value, context) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    throw new Error(`Obsidian eval failed during ${context}: ${value}`);
+  }
+}
+
+function waitForEvalTruthy(code, context, attempts = 80) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const observed = obsidianEval(`(async()=>Boolean(await (${code})))()`, context);
+    if (observed === 'true') return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  throw new Error(`Obsidian readiness timed out during ${context}`);
+}
+
+export function surfaceNavigationEval(scenario) {
+  return `(async()=>{document.querySelector('.abyss-project-back')?.click();return await (${scenario.navigationEval})})()`;
 }
 
 /** Proves the app behind the CLI is the exact repository Dev Vault before UI mutation. */
@@ -1259,7 +1341,7 @@ export function proveExactRunningVault(execute = rawRun) {
     proof = execute('obsidian', proofArgs);
   }
   if (proof.status !== 0) throw new Error(`Cannot prove running vault: ${proof.stderr}`);
-  const observed = normalizedCliPath(proof.stdout);
+  const observed = normalizeObsidianCliOutput(proof.stdout);
   if (observed !== EXPECTED_DEV_VAULT) {
     throw new Error(`Refusing wrong running vault: ${observed}`);
   }
@@ -1335,7 +1417,7 @@ export function runNativePointerPhase(ports, points, maxCaptureAttempts = 20) {
   }
 }
 
-function executeAction(action, scenario) {
+function executeAction(action, scenario, context = `${scenario.id} interaction`) {
   if (action.type === 'plugin-reload') {
     obsidian('plugin:reload', 'id=task-calendar');
     return { reloaded: 'task-calendar' };
@@ -1443,7 +1525,7 @@ function executeAction(action, scenario) {
       `Obsidian restart did not reconnect to the exact Dev Vault: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
     );
   }
-  return parseEvalResult(obsidianEval(evaluateAction(action)));
+  return parseEvalResult(obsidianEval(evaluateAction(action), context));
 }
 
 function domainStateEval(code) {
@@ -1451,8 +1533,13 @@ function domainStateEval(code) {
 }
 
 function capturePostconditions(scenario) {
-  return scenario.postconditions.map((condition) => {
-    const actual = parseEvalResult(obsidianEval(domainStateEval(condition.code)));
+  return scenario.postconditions.map((condition, index) => {
+    const actual = parseEvalResult(
+      obsidianEval(
+        domainStateEval(condition.code),
+        `${scenario.id} postcondition[${String(index)}] ${condition.id}`,
+      ),
+    );
     const passed =
       condition.type === 'eval-truthy'
         ? Boolean(actual)
@@ -1466,13 +1553,19 @@ function capturePostconditions(scenario) {
   });
 }
 
+export function measurementEval(measurement) {
+  if (measurement.type === 'density') {
+    return `(()=>{const elements=[...document.querySelectorAll(${JSON.stringify(measurement.selector)})];if(elements.length===0)throw new Error('Missing density target');const top=Math.min(...elements.map(el=>el.getBoundingClientRect().top));const bottom=Math.max(...elements.map(el=>el.getBoundingClientRect().bottom));const height=Math.max(1,bottom-top);return JSON.stringify({value:elements.length*100/height,details:{itemCount:elements.length,spanHeight:height}})})()`;
+  }
+  return `(()=>{const target=document.querySelector(${JSON.stringify(measurement.selector)});const references=[...document.querySelectorAll(${JSON.stringify(measurement.referenceSelector)})];const reference=references.find(el=>el.getBoundingClientRect().height>0);if(!target||!reference)throw new Error('Missing visible native reference measurement target');const targetHeight=target.getBoundingClientRect().height;const referenceHeight=reference.getBoundingClientRect().height;return JSON.stringify({value:targetHeight/referenceHeight,details:{targetHeight,referenceHeight}})})()`;
+}
+
 function captureMeasurements(scenario) {
-  return scenario.measurements.map((measurement) => {
+  return scenario.measurements.map((measurement, index) => {
     const observed = parseEvalResult(
       obsidianEval(
-        measurement.type === 'density'
-          ? `(()=>{const elements=[...document.querySelectorAll(${JSON.stringify(measurement.selector)})];if(elements.length===0)throw new Error('Missing density target');const top=Math.min(...elements.map(el=>el.getBoundingClientRect().top));const bottom=Math.max(...elements.map(el=>el.getBoundingClientRect().bottom));const height=Math.max(1,bottom-top);return JSON.stringify({value:elements.length*100/height,details:{itemCount:elements.length,spanHeight:height}})})()`
-          : `(()=>{const target=document.querySelector(${JSON.stringify(measurement.selector)});const reference=document.querySelector(${JSON.stringify(measurement.referenceSelector)});if(!target||!reference)throw new Error('Missing native reference measurement target');const targetHeight=target.getBoundingClientRect().height;const referenceHeight=reference.getBoundingClientRect().height;if(!(referenceHeight>0))throw new Error('Native reference has zero height');return JSON.stringify({value:targetHeight/referenceHeight,details:{targetHeight,referenceHeight}})})()`,
+        measurementEval(measurement),
+        `${scenario.id} measurement[${String(index)}] ${measurement.id}`,
       ),
     );
     const value = Number(observed?.value);
@@ -1497,14 +1590,17 @@ function observationEval(scenario) {
 }
 
 function assertionFailure(scenario, dom) {
-  for (const assertion of scenario.assertions) {
+  for (const [index, assertion] of scenario.assertions.entries()) {
     if (assertion.type === 'dom-contains' && !dom.includes(assertion.value)) {
       return `DOM did not contain ${assertion.value}`;
     }
     if (assertion.type === 'dom-not-contains' && dom.includes(assertion.value)) {
       return `DOM unexpectedly contained ${assertion.value}`;
     }
-    if (assertion.type === 'eval-truthy' && obsidianEval(assertion.code) !== 'true') {
+    if (
+      assertion.type === 'eval-truthy' &&
+      obsidianEval(assertion.code, `${scenario.id} assertion[${String(index)}]`) !== 'true'
+    ) {
       return `Evaluation was not true: ${assertion.code}`;
     }
   }
@@ -1566,8 +1662,16 @@ export async function verifyEvidenceArtifacts(scenario, record, out) {
 }
 
 async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha256) {
-  obsidianEval(environmentSetup(scenario));
-  for (const code of scenario.setupEval) obsidianEval(code);
+  obsidianEval(environmentSetup(scenario), `${scenario.id} environment setup`);
+  if (scenario.navigationEval) {
+    obsidianEval(surfaceNavigationEval(scenario), `${scenario.id} navigation`);
+  }
+  for (const [index, code] of scenario.setupEval.entries()) {
+    obsidianEval(code, `${scenario.id} setupEval[${String(index)}]`);
+  }
+  if (scenario.readyEval) {
+    waitForEvalTruthy(scenario.readyEval, `${scenario.id} initial root readiness`);
+  }
   const workflowAction =
     scenario.interactions.find(({ workflow }) => workflow === true) ??
     scenario.interactions.find(({ type }) =>
@@ -1586,17 +1690,32 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
   let workflowBefore;
   let workflowAfter;
   let interactionResult;
-  for (const action of scenario.interactions) {
+  for (const [index, action] of scenario.interactions.entries()) {
     if (action === workflowAction)
       workflowBefore = parseEvalResult(
-        obsidianEval(domainStateEval(scenario.stateSnapshot.beforeEval)),
+        obsidianEval(
+          domainStateEval(scenario.stateSnapshot.beforeEval),
+          `${scenario.id} workflow before state`,
+        ),
       );
-    const result = executeAction(action, scenario);
+    const result = executeAction(
+      action,
+      scenario,
+      `${scenario.id} interaction[${String(index)}] ${action.type}`,
+    );
     if (action === workflowAction) {
       interactionResult = result;
     }
   }
-  workflowAfter = parseEvalResult(obsidianEval(domainStateEval(scenario.stateSnapshot.afterEval)));
+  if (scenario.readyEval) {
+    waitForEvalTruthy(scenario.readyEval, `${scenario.id} final root readiness`);
+  }
+  workflowAfter = parseEvalResult(
+    obsidianEval(
+      domainStateEval(scenario.stateSnapshot.afterEval),
+      `${scenario.id} workflow after state`,
+    ),
+  );
   const workflowType =
     workflowAction.type === 'context-menu'
       ? 'context-menu'
@@ -1642,10 +1761,17 @@ async function captureScenario(scenario, out, artifactSha256, fixtureManifestSha
   const screenshot = await analyzePng(screenshotPath);
   const postconditions = capturePostconditions(scenario);
   const measurements = captureMeasurements(scenario);
-  const observation = JSON.parse(obsidianEval(observationEval(scenario)));
+  const observation = parseJsonEvalOutput(
+    obsidianEval(observationEval(scenario), `${scenario.id} observation`),
+    `${scenario.id} observation`,
+  );
   const ax = captureAx(scenario.expectedWindowTitle);
-  const domProjection = JSON.parse(
-    obsidianEval(accessibilityProjectionEval(scenario.rootSelector)),
+  const domProjection = parseJsonEvalOutput(
+    obsidianEval(
+      accessibilityProjectionEval(scenario.rootSelector),
+      `${scenario.id} accessibility projection`,
+    ),
+    `${scenario.id} accessibility projection`,
   );
   const axSnapshot = {
     expectedWindowTitle: scenario.expectedWindowTitle,
@@ -1795,12 +1921,14 @@ async function captureCommand(options) {
   ).trim();
   const records = [];
   await mkdir(join(out, 'evidence'), { recursive: true });
-  for (const scenario of scenarios) {
-    const record = await captureScenario(
-      scenario,
-      out,
-      artifact.source.sha256,
-      fixtureManifestSha256,
+  for (const [index, scenario] of scenarios.entries()) {
+    const readOnlySurface = Boolean(scenario.navigationEval);
+    if (readOnlySurface && index > 0 && index % 48 === 0) restartObsidianForQa();
+    const record = await runCaptureWithRecovery(
+      () =>
+        captureScenario(scenario, out, artifact.source.sha256, fixtureManifestSha256),
+      restartObsidianForQa,
+      readOnlySurface,
     );
     records.push(record);
     await writeFile(
