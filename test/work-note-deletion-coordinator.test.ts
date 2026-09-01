@@ -118,6 +118,8 @@ describe('WorkNoteDeletionCoordinator', () => {
     await expect(
       h.coordinator.delete({ action: 'cancel', expectedTaskRevisions: [] }),
     ).resolves.toEqual({ type: 'cancelled' });
+    expect(h.coordinator.pendingRecovery(note().path)).toBeUndefined();
+    expect(h.coordinator.abandonRecovery(note().path)).toEqual({ type: 'ok' });
     expect(h.tasks.execute).not.toHaveBeenCalled();
     expect(await exists(h.app, note().path)).toBe(true);
   });
@@ -457,6 +459,75 @@ describe('WorkNoteDeletionCoordinator', () => {
       }),
     ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
     expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+  });
+
+  it('retains copied-source recovery across destination validation failures and resumes without recopying', async () => {
+    const source = ownedTask(1);
+    const copiedTask = ownedTask(8, 'Work/B.md');
+    const h = await fixture([source]);
+    h.tasks.queries.list.mockImplementation((query?: { filePath?: string }) =>
+      query?.filePath === 'Work/B.md' ? [copiedTask] : [source],
+    );
+    h.tasks.execute.mockResolvedValueOnce({
+      type: 'partial',
+      operation: 'move',
+      recovery: {
+        source: source.ref,
+        targetPath: 'Work/B.md',
+        copiedTask,
+        state: 'target-copied-source-remains',
+        cause: 'io-error',
+      },
+    });
+    await h.coordinator.preview(note());
+
+    const first = await h.coordinator.delete({
+      action: 'move-to-work-note',
+      destinationWorkNotePath: 'Work/B.md',
+      expectedTaskRevisions: expectedRevisions([source]),
+    });
+    if (first.type !== 'partial') throw new Error('Expected recovery');
+    expect(h.coordinator.pendingRecovery(note().path)).toEqual(first.recovery);
+    expect(h.coordinator.abandonRecovery(note().path)).toEqual({
+      type: 'blocked',
+      reason: 'source-cleanup-required',
+    });
+
+    h.workNotes.get = (path: string) => (path === note().path ? note() : undefined);
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-work-note',
+        destinationWorkNotePath: 'Work/B.md',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery: first.recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'invalid-decision' });
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-project',
+        expectedTaskRevisions: expectedRevisions([source]),
+        recovery: first.recovery,
+      }),
+    ).resolves.toMatchObject({ type: 'invalid-decision' });
+    expect(h.coordinator.pendingRecovery(note().path)).toEqual(first.recovery);
+    expect(h.tasks.execute).toHaveBeenCalledTimes(1);
+
+    h.workNotes.get = (path: string) =>
+      [note(), note('Work/B.md')].find((entry) => entry.path === path);
+    h.tasks.execute.mockImplementation(h.settleTask);
+    const reacquired = h.coordinator.pendingRecovery(note().path);
+    if (!reacquired) throw new Error('Expected coordinator-owned recovery');
+    await expect(
+      h.coordinator.delete({
+        action: 'move-to-work-note',
+        destinationWorkNotePath: 'Work/B.md',
+        expectedTaskRevisions: [...reacquired.settledTaskRefs, ...reacquired.remainingTaskRefs],
+        recovery: reacquired,
+      }),
+    ).resolves.toMatchObject({ type: 'ok', movedTaskCount: 1 });
+    expect(h.tasks.execute.mock.calls.map(([command]) => command.type)).toEqual(['move', 'delete']);
+    expect(h.coordinator.pendingRecovery(note().path)).toBeUndefined();
+    expect(h.coordinator.abandonRecovery(note().path)).toEqual({ type: 'ok' });
   });
 
   it('restarts a later copied-source-remains move using its stable preview Task identity', async () => {

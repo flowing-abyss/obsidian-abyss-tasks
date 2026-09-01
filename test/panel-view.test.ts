@@ -169,6 +169,7 @@ describe('PanelView', () => {
       sourceIdentity,
       attemptGeneration: 1,
     };
+    let ownedRecovery: typeof recovery | undefined;
     const deletion = {
       delete: vi.fn().mockResolvedValue({
         type: 'partial',
@@ -178,28 +179,31 @@ describe('PanelView', () => {
       }),
       preview: vi.fn(),
       previewedTaskRevisions: vi.fn(),
+      pendingRecovery: vi.fn(() => ownedRecovery),
     };
-    const view = new PanelView(
-      leaf,
-      structuredClone(DEFAULT_SETTINGS),
-      makeTagManager(app),
-      taskApplication.index,
-      taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
-      taskApplication.statusRegistry,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      deletion as never,
-    );
+    const makeView = () =>
+      new PanelView(
+        leaf,
+        structuredClone(DEFAULT_SETTINGS),
+        makeTagManager(app),
+        taskApplication.index,
+        taskApplication.tasks as TaskApplicationApi & TaskCaptureApplicationApi,
+        taskApplication.statusRegistry,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        deletion as never,
+      );
+    const view = makeView();
     const workNote = {
       path: 'Work/A.md',
       presetRevision: 1,
@@ -228,10 +232,29 @@ describe('PanelView', () => {
     };
 
     await internal.executeWorkNoteDeletion(workNote, workNote.projectPath, []);
+    ownedRecovery = recovery;
+    deletion.delete.mockResolvedValueOnce({
+      type: 'invalid-decision',
+      reason: 'The recovery destination changed.',
+    });
     await internal.requestWorkNoteDeletion(workNote, [], new MouseEvent('click'));
 
     expect(deletion.delete).toHaveBeenNthCalledWith(
       2,
+      expect.objectContaining({ recovery, expectedTaskRevisions: [] }),
+    );
+    expect(deletion.preview).not.toHaveBeenCalled();
+
+    deletion.delete.mockResolvedValueOnce({
+      type: 'partial',
+      path: workNote.path,
+      reason: 'io-error',
+      recovery,
+    });
+    const reopened = makeView() as unknown as typeof internal;
+    await reopened.requestWorkNoteDeletion(workNote, [], new MouseEvent('click'));
+    expect(deletion.delete).toHaveBeenNthCalledWith(
+      3,
       expect.objectContaining({ recovery, expectedTaskRevisions: [] }),
     );
     expect(deletion.preview).not.toHaveBeenCalled();

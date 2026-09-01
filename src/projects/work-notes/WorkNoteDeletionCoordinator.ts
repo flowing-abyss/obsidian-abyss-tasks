@@ -29,9 +29,24 @@ interface VaultDeletionTransactions {
   readonly tails: Map<string, Promise<void>>;
   readonly generations: Map<string, number>;
   readonly recoveryOnly: Map<string, number>;
+  readonly recoveries: Map<string, WorkNoteDeletionRecovery>;
 }
 
 const vaultDeletionTransactions = new WeakMap<object, VaultDeletionTransactions>();
+
+function cloneRecovery(recovery: WorkNoteDeletionRecovery): WorkNoteDeletionRecovery {
+  return {
+    ...recovery,
+    settledTaskRefs: recovery.settledTaskRefs.map((ref) => ({ ...ref })),
+    remainingTaskRefs: recovery.remainingTaskRefs.map((ref) => ({ ...ref })),
+    sourceIdentity: { ...recovery.sourceIdentity },
+    copiedSourceRemains: recovery.copiedSourceRemains.map((entry) => ({
+      ...entry,
+      source: { ...entry.source },
+      copiedTask: { ...entry.copiedTask, ref: { ...entry.copiedTask.ref } },
+    })),
+  };
+}
 
 export interface WorkNoteDeletionRecovery {
   readonly notePath: string;
@@ -230,7 +245,7 @@ class ObsidianWorkNoteDeletionPort implements WorkNoteDeletionPort {
 
 /**
  * Coordinates destructive Work Note deletion without becoming a Task or note data authority.
- * The recovery record is caller-owned and can be passed back after an external edit is resolved.
+ * Recovery capability state is vault-scoped so a caller can reacquire it after UI teardown.
  */
 export class WorkNoteDeletionCoordinator {
   private previewed?: WorkNoteDeletionPreviewState;
@@ -248,7 +263,12 @@ export class WorkNoteDeletionCoordinator {
   private transactions(): VaultDeletionTransactions {
     let transactions = vaultDeletionTransactions.get(this.app.vault);
     if (!transactions) {
-      transactions = { tails: new Map(), generations: new Map(), recoveryOnly: new Map() };
+      transactions = {
+        tails: new Map(),
+        generations: new Map(),
+        recoveryOnly: new Map(),
+        recoveries: new Map(),
+      };
       vaultDeletionTransactions.set(this.app.vault, transactions);
     }
     return transactions;
@@ -289,6 +309,26 @@ export class WorkNoteDeletionCoordinator {
     return (this.previewed?.tasks ?? []).map(({ ref }) => ({ ...ref }));
   }
 
+  /** Coordinator-owned recovery survives inspector/panel teardown and is safe to resume verbatim. */
+  pendingRecovery(notePath: string): WorkNoteDeletionRecovery | undefined {
+    const recovery = this.transactions().recoveries.get(notePath);
+    return recovery ? cloneRecovery(recovery) : undefined;
+  }
+
+  /** A copied destination can never be abandoned into an ordinary retry that could recopy it. */
+  abandonRecovery(
+    notePath: string,
+  ):
+    | { readonly type: 'ok' }
+    | { readonly type: 'blocked'; readonly reason: 'source-cleanup-required' } {
+    const transactions = this.transactions();
+    if (transactions.recoveryOnly.has(notePath)) {
+      return { type: 'blocked', reason: 'source-cleanup-required' };
+    }
+    transactions.recoveries.delete(notePath);
+    return { type: 'ok' };
+  }
+
   private decision(
     note: WorkNoteSnapshot,
     command: WorkNoteDeleteCommand,
@@ -322,7 +362,7 @@ export class WorkNoteDeletionCoordinator {
     if (copiedSourceRemains.length > 0) {
       this.transactions().recoveryOnly.set(notePath, attemptGeneration);
     }
-    return {
+    const recovery: WorkNoteDeletionRecovery = {
       notePath,
       destinationPath,
       settledTaskRefs: settled.map((ref) => ({ ...ref })),
@@ -337,6 +377,8 @@ export class WorkNoteDeletionCoordinator {
         copiedTask: { ...entry.copiedTask, ref: { ...entry.copiedTask.ref } },
       })),
     };
+    this.transactions().recoveries.set(notePath, cloneRecovery(recovery));
+    return recovery;
   }
 
   private sourceChangedBeforeSettlement(
@@ -433,7 +475,8 @@ export class WorkNoteDeletionCoordinator {
         ),
       };
     }
-    if (command.recovery) transactions.recoveryOnly.delete(note.path);
+    transactions.recoveryOnly.delete(note.path);
+    transactions.recoveries.delete(note.path);
     transactions.generations.set(note.path, currentGeneration + 1);
 
     let settlementIdentity = initialIdentity!;

@@ -217,6 +217,17 @@ export class PanelView extends ItemView {
   >();
   private readonly pendingWorkNoteDeletions = new Set<string>();
 
+  private rememberWorkNoteDeletionRecovery(recovery: WorkNoteDeletionRecovery): void {
+    this.workNoteDeletionRecovery.set(recovery.notePath, {
+      destinationPath: recovery.destinationPath,
+      expectedTaskRevisions: [
+        ...recovery.settledTaskRefs.map((ref) => ({ ...ref })),
+        ...recovery.remainingTaskRefs.map((ref) => ({ ...ref })),
+      ],
+      recovery,
+    });
+  }
+
   private inspectorReturnTarget(origin: InspectorFocusOrigin | null): HTMLElement | null {
     if (origin?.element?.isConnected) return origin.element;
     if (!origin) return null;
@@ -257,17 +268,15 @@ export class PanelView extends ItemView {
         return;
       }
       if (result.type === 'partial') {
-        this.workNoteDeletionRecovery.set(note.path, {
-          destinationPath,
-          expectedTaskRevisions,
-          recovery: result.recovery,
-        });
+        this.rememberWorkNoteDeletionRecovery(result.recovery);
         new Notice(
           `Deletion paused: ${String(result.recovery.remainingTaskCount)} tasks remain. The note was kept.`,
         );
         return;
       }
-      this.workNoteDeletionRecovery.delete(note.path);
+      const pendingRecovery = this.workNoteDeletion.pendingRecovery(note.path);
+      if (pendingRecovery) this.rememberWorkNoteDeletionRecovery(pendingRecovery);
+      else this.workNoteDeletionRecovery.delete(note.path);
       if (result.type !== 'cancelled')
         new Notice('Work note was not deleted. Review changes and retry.');
     } finally {
@@ -281,6 +290,8 @@ export class PanelView extends ItemView {
     event: MouseEvent,
   ): Promise<void> {
     if (!this.workNoteDeletion) return;
+    const ownedRecovery = this.workNoteDeletion.pendingRecovery(note.path);
+    if (ownedRecovery) this.rememberWorkNoteDeletionRecovery(ownedRecovery);
     const recovery = this.workNoteDeletionRecovery.get(note.path);
     if (recovery) {
       await this.executeWorkNoteDeletion(
