@@ -21,7 +21,7 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 - Strict TypeScript. Prefer `async/await`.
 - Tests in `test/*.test.ts` use [obsidian-test-mocks](https://github.com/mnaoumov/obsidian-test-mocks) (auto-setup in `vitest.config.ts`).
 - Conventional commits enforced by commitlint + husky hooks.
-- `npm version` runs `version-bump.mjs` (updates `manifest.json` + `versions.json`), commits, tags with **no `v` prefix**, pushes. CI publishes on `*.*.*` tags. **Never tag manually.** `manifest.json` `id` must stay `task-calendar`.
+- `npm version` runs `version-bump.mjs` (updates `manifest.json` + `versions.json`), commits, tags with **no `v` prefix**, pushes. CI publishes on `*.*.*` tags. **Never tag manually.** `manifest.json` `id` must stay `abyss-tasks`.
 - `docs/` is gitignored — local-only scratch space for plans/specs. **Never commit `docs/`.**
 
 ## Obsidian CLI
@@ -29,14 +29,14 @@ An Obsidian sidebar plugin that renders vault tasks in month, week, and list vie
 [Obsidian CLI](https://obsidian.md/help/cli) controls the running app from the terminal.
 
 ```shell
-obsidian vault="dev-vault" plugin:reload id=task-calendar           # reload after rebuild
-obsidian vault="dev-vault" eval code="app.vault.getFiles().length"  # run JS in app
-obsidian vault="dev-vault" devtools                                 # toggle dev tools
-obsidian vault="dev-vault" dev:screenshot path=screenshot.png       # screenshot
-obsidian vault="dev-vault" dev:dom selector=".abyss-panel-view" text # query DOM
+obsidian vault="dev-vault-tasks" plugin:reload id=abyss-tasks            # reload after rebuild
+obsidian vault="dev-vault-tasks" eval code="app.vault.getFiles().length" # run JS in app
+obsidian vault="dev-vault-tasks" devtools                                  # toggle dev tools
+obsidian vault="dev-vault-tasks" dev:screenshot path=screenshot.png        # screenshot
+obsidian vault="dev-vault-tasks" dev:dom selector=".abyss-panel-view" text # query DOM
 ```
 
-Typical loop: `npm run dev` → `obsidian plugin:reload id=task-calendar`.
+Typical loop: `npm run dev` → `obsidian plugin:reload id=abyss-tasks`.
 
 ## References
 

@@ -37,9 +37,10 @@ GEMINI.md
 .cursor/
 .gemini/
 .kilo/
+.codex/
 
 .mcp.json
 opencode.jsonc
 
 # Dev vault for local testing (not for repo)
-dev-vault/
+dev-vault-tasks/

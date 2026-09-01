@@ -19,9 +19,9 @@ const lockfile = JSON.parse(readFileSync(resolve(ROOT, 'package-lock.json'), 'ut
 };
 
 describe('Abyss Tasks product metadata', () => {
-  it('uses the approved product identity and SSH repository while preserving the plugin ID', () => {
+  it('uses the approved product identity, plugin ID, and SSH repository', () => {
     expect(manifest).toMatchObject({
-      id: 'task-calendar',
+      id: 'abyss-tasks',
       name: 'Abyss Tasks',
       description: 'A task management interface for Markdown tasks in Obsidian',
     });

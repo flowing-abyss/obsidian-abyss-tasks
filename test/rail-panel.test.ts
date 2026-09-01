@@ -211,7 +211,7 @@ describe('RailPanel', () => {
     expect(open).toHaveBeenCalledOnce();
   });
 
-  it('click Settings calls openTabById with task-calendar', () => {
+  it('click Settings calls openTabById with abyss-tasks', () => {
     const state = new AppState();
     const openTabById = vi.fn();
     const panel = new RailPanel(state, { setting: { open: vi.fn(), openTabById } });
@@ -220,7 +220,7 @@ describe('RailPanel', () => {
       (b) => b.getAttribute('aria-label') === 'Settings',
     )!;
     btn.click();
-    expect(openTabById).toHaveBeenCalledWith('task-calendar');
+    expect(openTabById).toHaveBeenCalledWith('abyss-tasks');
   });
 
   it.each(['projects', 'search'] as const)(

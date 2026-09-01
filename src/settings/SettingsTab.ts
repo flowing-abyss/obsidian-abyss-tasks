@@ -581,7 +581,7 @@ export class CalendarSettingsTab extends PluginSettingTab {
           this.shortcutSaveFailed = false;
           this.updateShortcutSavePresentation();
         } catch (error) {
-          console.error('[task-calendar] Could not save shortcut settings', error);
+          console.error('[abyss-tasks] Could not save shortcut settings', error);
           this.shortcutSaveQueued = true;
           this.shortcutSaveFailed = true;
           this.updateShortcutSavePresentation();

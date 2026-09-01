@@ -75,7 +75,7 @@ export class RailPanel {
     settingsBtn.addEventListener('click', () => {
       this.disposeSettingsLifecycle();
       this.app.setting?.open?.();
-      this.app.setting?.openTabById?.('task-calendar');
+      this.app.setting?.openTabById?.('abyss-tasks');
       const modal = this.app.setting?.modalEl;
       const OwnerMutationObserver = modal?.ownerDocument.defaultView?.MutationObserver;
       if (!modal?.isConnected || !OwnerMutationObserver) return;

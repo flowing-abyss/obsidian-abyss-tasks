@@ -58,7 +58,7 @@ function wireLinks(holder: HTMLElement, tokens: LinkToken[], opts: RenderTaskTex
       if (href) {
         opts.app.workspace.trigger('hover-link', {
           event: e,
-          source: 'task-calendar',
+          source: 'abyss-tasks',
           hoverParent: holder,
           targetEl: a,
           linktext: href,

@@ -9,7 +9,7 @@ import { useRealMoment } from './helpers';
 useRealMoment();
 
 const MANIFEST = {
-  id: 'task-calendar',
+  id: 'abyss-tasks',
   name: 'Abyss Tasks',
   version: '1.0.0',
 } as ConstructorParameters<typeof TaskCalendarPlugin>[1];

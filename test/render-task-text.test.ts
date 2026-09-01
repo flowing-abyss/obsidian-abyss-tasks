@@ -9,6 +9,30 @@ afterEach(() => {
 });
 
 describe('renderTaskText link occurrence pairing', () => {
+  it('identifies hover-link events with the abyss-tasks plugin ID', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(MarkdownRenderer, 'render').mockImplementation(async (_app, _markdown, holder) => {
+      const anchor = holder.createEl('a', { text: 'Project' });
+      anchor.addClass('internal-link');
+      anchor.setAttribute('data-href', 'Project');
+    });
+    const trigger = vi.fn();
+    const host = document.body.createDiv();
+
+    renderTaskText(host, '[[Project]]', {
+      app: { workspace: { trigger } } as unknown as App,
+      sourcePath: 'tasks.md',
+      component: new Component(),
+    });
+    await vi.runAllTimersAsync();
+    host.querySelector('a')!.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+
+    expect(trigger).toHaveBeenCalledWith(
+      'hover-link',
+      expect.objectContaining({ source: 'abyss-tasks' }),
+    );
+  });
+
   it.each([
     ['`[[Same]]` [[Same]]', 'Same', '[[Same]]'],
     ['`[Same](Same)` [Same](Same)', 'Same', '[Same](Same)'],

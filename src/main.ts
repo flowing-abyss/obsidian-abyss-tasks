@@ -123,7 +123,7 @@ export default class TaskCalendarPlugin extends Plugin {
     ) => {
       const container = (dv as { container?: HTMLElement } | null)?.container ?? null;
       if (!container) {
-        console.warn('[task-calendar] renderCalendar: no Dataview container found');
+        console.warn('[abyss-tasks] renderCalendar: no Dataview container found');
         return;
       }
       const renderer = new CalendarRenderer(
