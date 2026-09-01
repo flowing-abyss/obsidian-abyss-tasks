@@ -2833,6 +2833,7 @@ describe('CenterPanel projects mode teardown (regression)', () => {
           prerequisites: [{ filePath: 'Projects/A.md', line: 0, revision: 'prep' }],
         },
         owner: { type: 'work-note', path: 'Work Notes/Research.md' },
+        milestonePath: 'Work Notes/Release.md',
       };
       const state = new AppState();
       const panel = makeStaticPanel(state, [current]);
@@ -2861,6 +2862,12 @@ describe('CenterPanel projects mode teardown (regression)', () => {
         expect(card).toBeDefined();
         expect(badge.classList.contains('abyss-task-count-badge')).toBe(true);
         expect(badge.getAttribute('aria-label')).toBe('Blocked by 1 prerequisite');
+        expect(
+          card.querySelector('.abyss-task-work-note-backlink')?.getAttribute('aria-label'),
+        ).toBe('Open owning Work Note Work Notes/Research.md');
+        expect(
+          card.querySelector('.abyss-task-milestone-backlink')?.getAttribute('aria-label'),
+        ).toBe('Open Milestone Work Notes/Release.md');
         if (layout === 'list') {
           expect(card.querySelector('.abyss-status-marker')?.getAttribute('aria-disabled')).toBe(
             'true',

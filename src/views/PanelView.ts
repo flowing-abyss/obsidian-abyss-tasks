@@ -1,4 +1,4 @@
-import { ItemView, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
+import { ItemView, Menu, Notice, Platform, setIcon, TFile, type WorkspaceLeaf } from 'obsidian';
 import { AppState } from '../app/AppState';
 import { CenterPanel } from '../panels/CenterPanel';
 import { LeftPanel } from '../panels/LeftPanel';
@@ -17,8 +17,12 @@ import { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectWorkspaceCoordinator } from '../projects/ProjectWorkspaceCoordinator';
 import { inspectProjectLifecycleFrontmatter } from '../projects/lifecycle';
 import type { ProjectWorkspaceSnapshot } from '../projects/types';
+import type { MilestoneCommandAdapter } from '../projects/work-notes/MilestoneCommandAdapter';
 import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
+import type { WorkNoteDeletionCoordinator } from '../projects/work-notes/WorkNoteDeletionCoordinator';
 import type { WorkNoteIndex } from '../projects/work-notes/WorkNoteIndex';
+import type { WorkNoteRelationCommandService } from '../projects/work-notes/WorkNoteRelationCommandService';
+import type { RelationWriteCommand, WorkNoteSnapshot } from '../projects/work-notes/types';
 import { DailyNoteResolver } from '../resolvers/DailyNoteResolver';
 import type { ShortcutActionId } from '../settings/shortcuts';
 import type { CalendarSettings } from '../settings/types';
@@ -45,6 +49,7 @@ import {
 import { mountInspectorShell } from '../ui/inspector/InspectorShell';
 import { InteractionRegistry } from '../ui/interactionOwnership';
 import { nativeInteractionBlocksPanelShortcuts } from '../ui/nativeInteractionBlocker';
+import { showMenuAtMouseEventWithFocus } from '../ui/nativeMenuFocus';
 import { PanelShortcutRouter } from '../ui/panelShortcutRouter';
 import { InspectorDraftRegistry } from '../ui/projectDraftContinuity';
 import {
@@ -199,6 +204,77 @@ export class PanelView extends ItemView {
     );
   }
 
+  private async executeWorkNoteDeletion(
+    note: WorkNoteSnapshot,
+    destinationPath: string,
+    expectedTaskRevisions: readonly TaskRef[],
+  ): Promise<void> {
+    if (!this.workNoteDeletion) return;
+    const result = await this.workNoteDeletion.delete({
+      note,
+      action: destinationPath === note.projectPath ? 'move-to-project' : 'move-to-work-note',
+      ...(destinationPath !== note.projectPath && {
+        destinationWorkNotePath: destinationPath,
+      }),
+      expectedTaskRevisions,
+    });
+    if (result.type === 'ok') {
+      new Notice(`${note.kind === 'milestone' ? 'Milestone' : 'Work note'} deleted.`);
+      this.state.batch(() => {
+        this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
+        this.state.set('inspectorOrigin', null);
+      });
+      this.center.refresh();
+      return;
+    }
+    if (result.type === 'partial') {
+      new Notice(
+        `Deletion paused: ${String(result.recovery.remainingTaskCount)} tasks remain. The note was kept.`,
+      );
+      return;
+    }
+    if (result.type !== 'cancelled')
+      new Notice('Work note was not deleted. Review changes and retry.');
+  }
+
+  private async requestWorkNoteDeletion(
+    note: WorkNoteSnapshot,
+    candidates: readonly WorkNoteSnapshot[],
+    event: MouseEvent,
+  ): Promise<void> {
+    if (!this.workNoteDeletion) return;
+    const preview = await this.workNoteDeletion.preview(note);
+    if (preview.type === 'invalid') {
+      new Notice('Work note was not deleted because ownership changed.');
+      return;
+    }
+    const expectedTaskRevisions = this.workNoteDeletion.previewedTaskRevisions();
+    if (preview.type === 'ready') {
+      await this.executeWorkNoteDeletion(note, note.projectPath, expectedTaskRevisions);
+      return;
+    }
+    const menu = new Menu();
+    menu.addItem((item) =>
+      item
+        .setTitle(`Move ${String(preview.taskCount)} tasks to project and delete`)
+        .setIcon('folder-input')
+        .onClick(() => this.executeWorkNoteDeletion(note, note.projectPath, expectedTaskRevisions)),
+    );
+    for (const candidate of candidates.filter(
+      (candidate) => candidate.path !== note.path && candidate.projectPath === note.projectPath,
+    )) {
+      menu.addItem((item) =>
+        item
+          .setTitle(
+            `Move tasks to ${(candidate.path.split('/').pop() ?? candidate.path).replace(/\.md$/u, '')}`,
+          )
+          .setIcon('notebook-tabs')
+          .onClick(() => this.executeWorkNoteDeletion(note, candidate.path, expectedTaskRevisions)),
+      );
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  }
+
   constructor(
     leaf: WorkspaceLeaf,
     private settings: CalendarSettings,
@@ -218,6 +294,9 @@ export class PanelView extends ItemView {
       ConstructorParameters<typeof ProjectCommandService>[2]
     >,
     private readonly projectWorkspacePreferenceOwner?: object,
+    private readonly workNoteRelations?: WorkNoteRelationCommandService,
+    private readonly milestoneCommands?: MilestoneCommandAdapter,
+    private readonly workNoteDeletion?: WorkNoteDeletionCoordinator,
   ) {
     super(leaf);
   }
@@ -398,6 +477,8 @@ export class PanelView extends ItemView {
               task.ref.filePath === candidate.ref.filePath && task.ref.line === candidate.ref.line,
           ) === true,
       (settled) => this.projectWorkspace?.awaitTaskPublication(settled) ?? Promise.resolve(),
+      this.workNoteRelations,
+      this.milestoneCommands,
     );
     this.right = new RightPanel(
       this.state,
@@ -406,7 +487,50 @@ export class PanelView extends ItemView {
       this.settings,
       undefined,
       this.tasks,
-      undefined,
+      (actions) => {
+        const root = this.state.get('taskStack')[0];
+        if (!root || !('source' in root)) return;
+        const snapshots = this.projectWorkspace?.list() ?? [];
+        const action = snapshots
+          .flatMap(({ tasks }) => tasks)
+          .find(
+            ({ task }) =>
+              task.ref.filePath === root.ref.filePath && task.ref.line === root.ref.line,
+          );
+        const ownerPath = action?.owner.type === 'work-note' ? action.owner.path : undefined;
+        if (ownerPath && ownerPath !== action?.milestonePath) {
+          const backlink = actions.createEl('button', {
+            cls: 'abyss-task-work-note-backlink',
+            text: (ownerPath.split('/').pop() ?? ownerPath).replace(/\.md$/u, ''),
+            attr: {
+              type: 'button',
+              'aria-label': `Open owning Work Note ${ownerPath}`,
+              title: 'Open owning work note',
+            },
+          });
+          setIcon(backlink, 'notebook-tabs');
+          backlink.addEventListener('click', () => {
+            const file = this.app.vault.getAbstractFileByPath(ownerPath);
+            if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+          });
+        }
+        if (!action?.milestonePath) return;
+        const milestonePath = action.milestonePath;
+        const milestone = actions.createEl('button', {
+          cls: 'abyss-task-milestone-backlink',
+          text: (milestonePath.split('/').pop() ?? milestonePath).replace(/\.md$/u, ''),
+          attr: {
+            type: 'button',
+            'aria-label': `Open Milestone ${milestonePath}`,
+            title: 'Open milestone',
+          },
+        });
+        setIcon(milestone, 'milestone');
+        milestone.addEventListener('click', () => {
+          const file = this.app.vault.getAbstractFileByPath(milestonePath);
+          if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+        });
+      },
       (event) => this.trackOwnWrite(event),
       this.commentTimeContext,
       this.interactionRegistry,
@@ -556,10 +680,74 @@ export class PanelView extends ItemView {
           return () => undefined;
         }
         const setStatus = (current: typeof note, statusId: string) => {
+          if (current.kind === 'milestone' && this.milestoneCommands) {
+            return this.milestoneCommands.setLifecycle(current, statusId);
+          }
           const observed = this.workNoteCommands!.observe(current);
           return observed
             ? this.workNoteCommands!.setStatus(observed, statusId)
             : Promise.resolve({ type: 'invalid' as const, field: 'path' as const });
+        };
+        const relationCandidates = snapshots
+          .filter(({ project }) => project.path === note.projectPath)
+          .flatMap((snapshot) => [...snapshot.workNotes, ...snapshot.milestones]);
+        const relationObservation = this.workNoteCommands.observe(note);
+        const relationCommand = <TValue extends string | null>(
+          field: 'milestone' | 'related' | 'blockedBy',
+          value: TValue,
+        ): RelationWriteCommand<TValue> => ({
+          notePath: note.path,
+          expectedRaw:
+            relationObservation?.fields[this.settings.projects.workNoteCompatibility.fields[field]],
+          expectedPresetRevision: String(note.presetRevision),
+          expectedPresetFingerprint: note.presetFingerprint,
+          value,
+        });
+        const setMilestoneRelation = (
+          _current: typeof note,
+          milestone: typeof note | null,
+        ): void => {
+          void this.workNoteRelations
+            ?.setMilestone(relationCommand('milestone', milestone?.path ?? null))
+            .then(onDraftSettled);
+        };
+        const toggleRelatedRelation = (
+          _current: typeof note,
+          target: typeof note,
+          present: boolean,
+        ): void => {
+          const command = relationCommand('related', target.path);
+          void (
+            present
+              ? this.workNoteRelations?.removeRelated(command)
+              : this.workNoteRelations?.addRelated(command)
+          )?.then(onDraftSettled);
+        };
+        const toggleBlockedByRelation = (
+          _current: typeof note,
+          target: typeof note,
+          present: boolean,
+        ): void => {
+          const command = relationCommand('blockedBy', target.path);
+          void (
+            present
+              ? this.workNoteRelations?.removeBlockedBy(command)
+              : this.workNoteRelations?.addBlockedBy(command)
+          )?.then(onDraftSettled);
+        };
+        const showOwnedTasks = (): void => {
+          const tasks = this.collectionState?.scopeSession('tasks');
+          if (tasks) {
+            tasks.textQuery = '';
+            tasks.openSurface = `work-note-owner:${note.path}`;
+          }
+          if (this.collectionState) this.collectionState.scope = 'tasks';
+          this.state.batch(() => {
+            this.state.set('projectsPanel', { view: 'dashboard', path: note.projectPath });
+            this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
+            this.state.set('inspectorOrigin', null);
+          });
+          this.center.refresh();
         };
         const shell = mountInspectorShell(host, {
           label: 'Work Note details',
@@ -578,6 +766,23 @@ export class PanelView extends ItemView {
               commandsEnabled: this.workNoteCommands!.capabilities().update,
               onSetStatus: setStatus,
               openNote,
+              ...(this.workNoteRelations && relationObservation
+                ? {
+                    relationCandidates,
+                    onSetMilestone: setMilestoneRelation,
+                    onToggleRelated: toggleRelatedRelation,
+                    onToggleBlockedBy: toggleBlockedByRelation,
+                  }
+                : {}),
+              taskRollup: snapshots
+                .find(({ project }) => project.path === note.projectPath)
+                ?.workNoteTaskRollups?.get(note.path),
+              onShowTasks: showOwnedTasks,
+              ...(this.workNoteDeletion && {
+                onDelete: (current, event) => {
+                  void this.requestWorkNoteDeletion(current, relationCandidates, event);
+                },
+              }),
               draftRegistry: this.inspectorDrafts,
               onDraftSettled,
             }),

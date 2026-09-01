@@ -147,7 +147,7 @@ describe('Timeline projections', () => {
     });
   });
 
-  it('keeps range-like milestone metadata in the diagnostic tray', () => {
+  it('keeps a milestone date range as a distinct range carrier', () => {
     expect(
       workNoteTimelineItem(
         workNote({
@@ -155,7 +155,11 @@ describe('Timeline projections', () => {
           range: parseProjectRange('2026-08-24', '2026-08-26'),
         }),
       ),
-    ).toMatchObject({ kind: 'invalid', reason: 'milestone-range' });
+    ).toMatchObject({
+      kind: 'range',
+      startMs: Date.parse('2026-08-24T00:00:00.000Z'),
+      endMs: Date.parse('2026-08-26T00:00:00.000Z'),
+    });
   });
 
   it('keeps exact raw endpoint values in separate Project, Work Note, and Task adapters', () => {

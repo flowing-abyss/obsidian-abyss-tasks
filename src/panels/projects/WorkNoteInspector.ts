@@ -1,4 +1,5 @@
 import { Menu, setIcon } from 'obsidian';
+import type { TaskRollup } from '../../projects/types';
 import type {
   WorkNoteCommandResult,
   WorkNoteSnapshot,
@@ -26,6 +27,21 @@ export interface WorkNoteInspectorOptions {
   readonly onClose?: () => void;
   readonly draftRegistry?: InspectorDraftRegistry;
   readonly onDraftSettled?: () => void;
+  readonly taskRollup?: TaskRollup;
+  readonly onShowTasks?: (note: WorkNoteSnapshot) => void;
+  readonly onDelete?: (note: WorkNoteSnapshot, event: MouseEvent) => void;
+  readonly relationCandidates?: readonly WorkNoteSnapshot[];
+  readonly onSetMilestone?: (note: WorkNoteSnapshot, milestone: WorkNoteSnapshot | null) => void;
+  readonly onToggleRelated?: (
+    note: WorkNoteSnapshot,
+    target: WorkNoteSnapshot,
+    present: boolean,
+  ) => void;
+  readonly onToggleBlockedBy?: (
+    note: WorkNoteSnapshot,
+    target: WorkNoteSnapshot,
+    present: boolean,
+  ) => void;
 }
 
 function basename(path: string): string {
@@ -45,6 +61,83 @@ function metadataRow(host: HTMLElement, label: string, value: string): HTMLEleme
   const row = host.createDiv({ cls: 'abyss-work-note-inspector-row' });
   row.createSpan({ cls: 'abyss-work-note-inspector-label', text: label });
   return row.createSpan({ cls: 'abyss-work-note-inspector-value', text: value });
+}
+
+function relationRow(
+  host: HTMLElement,
+  label: string,
+  paths: readonly string[],
+  openNote: (path: string) => void,
+): void {
+  const row = host.createDiv({ cls: 'abyss-work-note-inspector-row' });
+  row.createSpan({ cls: 'abyss-work-note-inspector-label', text: label });
+  const values = row.createSpan({ cls: 'abyss-work-note-inspector-value' });
+  paths.forEach((path, index) => {
+    const target = values.createEl('button', {
+      cls: 'abyss-work-note-relation-link',
+      text: basename(path),
+      attr: { type: 'button', 'aria-label': `Open ${basename(path)}` },
+    });
+    target.addEventListener('click', () => openNote(path));
+    if (index < paths.length - 1) values.createSpan({ text: ', ' });
+  });
+}
+
+function relationEditButton(
+  host: HTMLElement,
+  label: 'Milestone' | 'Related' | 'Blocked by',
+  note: WorkNoteSnapshot,
+  options: WorkNoteInspectorOptions,
+): void {
+  let enabled = options.onToggleBlockedBy !== undefined;
+  if (label === 'Milestone') enabled = options.onSetMilestone !== undefined;
+  else if (label === 'Related') enabled = options.onToggleRelated !== undefined;
+  if (!enabled) return;
+  const edit = host.createEl('button', {
+    cls: 'abyss-work-note-relation-edit',
+    text: 'Edit',
+    attr: {
+      type: 'button',
+      'aria-label': `Edit ${label} relation${label === 'Milestone' ? '' : 's'}`,
+    },
+  });
+  edit.addEventListener('click', (event) => {
+    const menu = new Menu();
+    const candidates = (options.relationCandidates ?? []).filter(
+      (candidate) => candidate.path !== note.path && candidate.projectPath === note.projectPath,
+    );
+    if (label === 'Milestone') {
+      menu.addItem((item) =>
+        item
+          .setTitle('Clear milestone')
+          .setChecked(note.milestonePath === undefined)
+          .onClick(() => options.onSetMilestone?.(note, null)),
+      );
+      for (const candidate of candidates.filter(({ kind }) => kind === 'milestone')) {
+        menu.addItem((item) =>
+          item
+            .setTitle(basename(candidate.path))
+            .setChecked(note.milestonePath === candidate.path)
+            .onClick(() => options.onSetMilestone?.(note, candidate)),
+        );
+      }
+    } else {
+      const presentPaths = label === 'Related' ? note.relatedPaths : note.blockedByPaths;
+      for (const candidate of candidates) {
+        const present = presentPaths.includes(candidate.path);
+        menu.addItem((item) =>
+          item
+            .setTitle(basename(candidate.path))
+            .setChecked(present)
+            .onClick(() => {
+              if (label === 'Related') options.onToggleRelated?.(note, candidate, present);
+              else options.onToggleBlockedBy?.(note, candidate, present);
+            }),
+        );
+      }
+    }
+    showMenuAtMouseEventWithFocus(menu, event);
+  });
 }
 
 function draftResultText(result: InspectorDraftResult | undefined): string {
@@ -126,6 +219,30 @@ export function renderWorkNoteInspector(
   });
   setIcon(open, 'file-text');
   open.addEventListener('click', () => options.openNote(note.path));
+  if (options.onShowTasks) {
+    const tasks = header.createEl('button', {
+      cls: 'abyss-work-note-show-tasks',
+      attr: {
+        type: 'button',
+        'aria-label': `Show tasks in ${basename(note.path)}`,
+        title: `Show tasks in ${basename(note.path)}`,
+      },
+    });
+    setIcon(tasks, 'list-checks');
+    tasks.addEventListener('click', () => options.onShowTasks?.(note));
+  }
+  if (options.onDelete) {
+    const remove = header.createEl('button', {
+      cls: 'abyss-work-note-delete',
+      attr: {
+        type: 'button',
+        'aria-label': 'Delete work note',
+        title: 'Delete work note',
+      },
+    });
+    setIcon(remove, 'trash-2');
+    remove.addEventListener('click', (event) => options.onDelete?.(note, event));
+  }
   const statusDefinition = note.statusId
     ? options.statuses.find(({ id }) => id === note.statusId)
     : undefined;
@@ -206,16 +323,22 @@ export function renderWorkNoteInspector(
   }
   if (note.milestonePath || note.blockedByPaths.length > 0 || note.relatedPaths.length > 0) {
     const relations = renderInspectorField(metadata, 'relations', 'Relations').content;
-    if (note.milestonePath) metadataRow(relations, 'Milestone', basename(note.milestonePath));
+    if (note.milestonePath) {
+      relationRow(relations, 'Milestone', [note.milestonePath], options.openNote);
+    }
     if (note.blockedByPaths.length > 0) {
-      metadataRow(relations, 'Blocked by', note.blockedByPaths.map(basename).join(', '));
+      relationRow(relations, 'Blocked by', note.blockedByPaths, options.openNote);
     }
     if (note.relatedPaths.length > 0) {
-      metadataRow(relations, 'Related', note.relatedPaths.map(basename).join(', '));
+      relationRow(relations, 'Related', note.relatedPaths, options.openNote);
     }
   } else {
     renderInspectorField(metadata, 'relations', 'Relations').content.setText('None');
   }
+  const relationEditors = metadata.createDiv({ cls: 'abyss-work-note-relation-editors' });
+  relationEditButton(relationEditors, 'Milestone', note, options);
+  relationEditButton(relationEditors, 'Related', note, options);
+  relationEditButton(relationEditors, 'Blocked by', note, options);
   if (note.diagnostics.length > 0) {
     const diagnostics = renderInspectorField(container, 'diagnostics', 'Diagnostics').content;
     diagnostics.addClass('abyss-work-note-inspector-diagnostics');
@@ -226,5 +349,12 @@ export function renderWorkNoteInspector(
     renderInspectorField(container, 'diagnostics', 'Diagnostics').content.setText('None');
   }
   renderInspectorField(container, 'comments', 'Comments').content.setText('Unavailable');
-  renderInspectorField(container, 'progress', 'Progress').content.setText('Unavailable');
+  const progress = renderInspectorField(container, 'progress', 'Progress').content;
+  if (options.taskRollup?.progress === null || options.taskRollup === undefined) {
+    progress.setText(options.taskRollup ? 'No active tasks' : 'Unavailable');
+  } else {
+    progress.setText(
+      `${String(options.taskRollup.done)} of ${String(options.taskRollup.total)} complete`,
+    );
+  }
 }

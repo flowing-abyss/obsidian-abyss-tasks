@@ -197,6 +197,9 @@ export class WorkNoteCommandService {
       preset.fields.start,
       preset.fields.end,
       preset.fields.updated,
+      preset.fields.milestone,
+      preset.fields.blockedBy,
+      preset.fields.related,
     ]);
     const marker = preset.creation?.kindMarkers[snapshot.kind];
     if (marker?.kind === 'property') properties.add(marker.property);
@@ -470,6 +473,44 @@ export class WorkNoteCommandService {
       return { type: 'ok', path: observed.path };
     } catch (error) {
       if (error instanceof AbortWorkNoteCommand) return error.result;
+      return { type: 'io-error' };
+    }
+  }
+
+  async setTitle(snapshot: WorkNoteSnapshot, title: string): Promise<WorkNoteCommandResult> {
+    const expectation = {
+      presetRevision: snapshot.presetRevision,
+      presetFingerprint: snapshot.presetFingerprint,
+    };
+    const blocked = this.compatibility('update', expectation);
+    if (blocked) return blocked;
+    const nextTitle = cleanTitle(title);
+    if (!nextTitle) return { type: 'invalid', field: 'title' };
+    const file = this.app.vault.getAbstractFileByPath(snapshot.path);
+    if (!(file instanceof TFile)) return { type: 'invalid', field: 'path' };
+    const audit = await this.index.audit();
+    const latest = audit.snapshots.find(({ path }) => path === snapshot.path);
+    if (
+      !audit.capabilities.update ||
+      !latest ||
+      latest.kind !== snapshot.kind ||
+      latest.projectPath !== snapshot.projectPath
+    ) {
+      return { type: 'compatibility-conflict', reason: 'eligibility-changed' };
+    }
+    const folder = snapshot.path.includes('/')
+      ? snapshot.path.slice(0, snapshot.path.lastIndexOf('/'))
+      : '';
+    const folderPrefix = folder ? `${folder}/` : '';
+    const nextPath = normalizePath(`${folderPrefix}${nextTitle}.md`);
+    if (nextPath === snapshot.path) return { type: 'unchanged', path: snapshot.path };
+    if (this.app.vault.getAbstractFileByPath(nextPath)) return { type: 'invalid', field: 'title' };
+    try {
+      await this.app.fileManager.renameFile(file, nextPath);
+      this.index.refresh();
+      await this.index.flushPending();
+      return { type: 'ok', path: nextPath };
+    } catch {
       return { type: 'io-error' };
     }
   }

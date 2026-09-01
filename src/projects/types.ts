@@ -81,6 +81,8 @@ export interface ProjectAction {
   readonly owner:
     | { readonly type: 'project'; readonly path: string }
     | { readonly type: 'work-note'; readonly path: string };
+  /** Inherited from the physical Work Note owner, or equal to a Milestone source note. */
+  readonly milestonePath?: string;
 }
 
 export type ProjectWorkspaceDiagnostic =
@@ -102,6 +104,8 @@ export interface ProjectWorkspaceSnapshot {
   readonly milestones: readonly WorkNoteSnapshot[];
   readonly taskRollup: TaskRollup;
   readonly workNoteRollup: WorkNoteRollup;
+  /** Present on live workspace snapshots; optional for legacy projection fixtures. */
+  readonly workNoteTaskRollups?: ReadonlyMap<string, TaskRollup>;
   readonly milestoneRollups: ReadonlyMap<string, MilestoneRollup>;
   readonly workNoteRelations: readonly WorkNoteRelationProjection[];
   readonly overdue: { readonly tasks: number; readonly workNotes: number };

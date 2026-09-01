@@ -11,8 +11,10 @@ import type { ProjectStore } from '../../projects/ProjectStore';
 import { parseProjectDate } from '../../projects/projectDates';
 import type { ProjectPropertyWrite } from '../../projects/properties/ProjectPropertyAdapter';
 import type { ProjectPropertyWriteResult } from '../../projects/properties/ProjectPropertyCommands';
-import type { ProjectPriority, ProjectWorkspaceSnapshot } from '../../projects/types';
+import type { ProjectPriority, ProjectWorkspaceSnapshot, TaskRollup } from '../../projects/types';
+import type { MilestoneCommandAdapter } from '../../projects/work-notes/MilestoneCommandAdapter';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
+import type { WorkNoteRelationCommandService } from '../../projects/work-notes/WorkNoteRelationCommandService';
 import { isAuditAccepted } from '../../projects/work-notes/compatibility';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
@@ -85,6 +87,8 @@ export interface ProjectsPanelOptions {
   /** CenterPanel retains and remounts the exact pending Portfolio Undo authority. */
   boardUndoTransferable?: boolean;
   workNoteCommands?: WorkNoteCommandService;
+  workNoteRelations?: WorkNoteRelationCommandService;
+  milestoneCommands?: MilestoneCommandAdapter;
   projectCommands?: ProjectCommandService;
   workspaceSession?: ProjectWorkspaceSession;
   onAnnounce?: (message: string) => void;
@@ -131,6 +135,8 @@ export class ProjectsPanel {
   private readonly boardUndoOwner: ProjectsPanelOptions['boardUndoOwner'];
   private readonly boardUndoTransferable: boolean;
   private readonly workNoteCommands: WorkNoteCommandService | undefined;
+  private readonly workNoteRelations: WorkNoteRelationCommandService | undefined;
+  private readonly milestoneCommands: MilestoneCommandAdapter | undefined;
   private readonly projectCommands: ProjectCommandService | undefined;
   private readonly workspaceSession: ProjectWorkspaceSession;
   private readonly persistCollectionPreferences: boolean;
@@ -177,6 +183,8 @@ export class ProjectsPanel {
       opts.boardUndoOwner !== undefined &&
       opts.onBoardUndoPending !== undefined;
     this.workNoteCommands = opts.workNoteCommands;
+    this.workNoteRelations = opts.workNoteRelations;
+    this.milestoneCommands = opts.milestoneCommands;
     this.projectCommands = opts.projectCommands;
     this.workspaceSession = opts.workspaceSession ?? new ProjectWorkspaceSession();
     this.workspaceSession.bindCollectionPreferences(settings, opts.onSaveSettings);
@@ -333,9 +341,25 @@ export class ProjectsPanel {
     note: ProjectWorkspaceSnapshot['workNotes'][number],
     statusId: string,
   ): Promise<WorkNoteCommandResult> {
+    if (note.kind === 'milestone' && this.milestoneCommands) {
+      return this.milestoneCommands.setLifecycle(note, statusId);
+    }
     const observed = this.workNoteCommands?.observe(note);
     if (!this.workNoteCommands || !observed) return { type: 'invalid', field: 'path' };
     return this.workNoteCommands.setStatus(observed, statusId);
+  }
+
+  private showTasksForWorkNote(note: WorkNoteSnapshot): void {
+    const tasks = this.workspaceSession.scopeSession('tasks');
+    tasks.textQuery = '';
+    tasks.openSurface = `work-note-owner:${note.path}`;
+    this.workspaceSession.scope = 'tasks';
+    this.state.batch(() => {
+      this.state.set('taskStack', []);
+      this.state.set('inspectorSelection', { type: 'project', path: note.projectPath });
+      this.state.set('inspectorOrigin', null);
+    });
+    this.render();
   }
 
   private renderWorkNotes(
@@ -345,6 +369,7 @@ export class ProjectsPanel {
     viewState: WorkNotesViewState,
     layout: 'list' | 'board',
     milestoneRollups: ReadonlyMap<string, MilestoneRollup>,
+    taskRollups: ReadonlyMap<string, TaskRollup> | undefined,
     canonicalNotes: ProjectWorkspaceSnapshot['workNotes'] = notes,
   ): ProjectChildRenderHandle {
     if (!this.workNoteCommands) return { destroy: () => undefined };
@@ -383,8 +408,12 @@ export class ProjectsPanel {
       createEnabled: capabilities.create,
       projectPath,
       onCreate: (request) => this.workNoteCommands!.create(request),
+      ...(this.milestoneCommands && {
+        onCreateMilestone: (request) => this.milestoneCommands!.create(request),
+      }),
       onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
       openNote: (path) => this.openNote(path),
+      onShowTasks: (note) => this.showTasksForWorkNote(note),
       session: this.workspaceSession.workNotes,
       announce: this.onAnnounce,
       overlayScope: this.app,
@@ -399,6 +428,7 @@ export class ProjectsPanel {
       isNarrow,
       coarsePointer,
       milestoneRollups,
+      ...(taskRollups && { taskRollups }),
       onSelect: (note, origin) => {
         const selection = deriveInspectorSelection({
           project: { type: 'project', path: note.projectPath },
@@ -436,8 +466,12 @@ export class ProjectsPanel {
             createEnabled: capabilities.create,
             projectPath,
             onCreate: (request) => this.workNoteCommands!.create(request),
+            ...(this.milestoneCommands && {
+              onCreateMilestone: (request) => this.milestoneCommands!.create(request),
+            }),
             onSetStatus: (note, statusId) => this.setWorkNoteStatus(note, statusId),
             openNote: (path) => this.openNote(path),
+            onShowTasks: (note) => this.showTasksForWorkNote(note),
             session: this.workspaceSession.workNotes,
             announce: this.onAnnounce,
             overlayScope: this.app,
@@ -455,6 +489,7 @@ export class ProjectsPanel {
             isNarrow,
             coarsePointer,
             milestoneRollups,
+            ...(taskRollups && { taskRollups }),
             onSelect: (note, origin) => {
               const selection = deriveInspectorSelection({
                 project: { type: 'project', path: note.projectPath },
@@ -504,6 +539,7 @@ export class ProjectsPanel {
         notes,
         canonicalNotes,
         commands,
+        ...(this.milestoneCommands && { milestoneAdapter: this.milestoneCommands }),
         commandsEnabled: commands.capabilities().update,
         overlayScope: this.app,
         ...(this.publicationSequence !== undefined && {
@@ -684,6 +720,7 @@ export class ProjectsPanel {
                   statuses: this.workNoteCommands!.statuses(),
                   viewState,
                   textQuery,
+                  milestoneRollups: snapshot.milestoneRollups,
                 }),
               renderWorkNotes: (host, path, notes, viewState) =>
                 this.renderWorkNotes(
@@ -693,6 +730,7 @@ export class ProjectsPanel {
                   viewState,
                   'list',
                   snapshot.milestoneRollups,
+                  snapshot.workNoteTaskRollups,
                   canonicalWorkNotes,
                 ),
               renderWorkNoteBoard: (host, path, notes) =>
@@ -703,6 +741,7 @@ export class ProjectsPanel {
                   this.workspaceSession.collectionView(path, 'work-notes'),
                   'board',
                   snapshot.milestoneRollups,
+                  snapshot.workNoteTaskRollups,
                   canonicalWorkNotes,
                 ),
               renderWorkNoteTimeline: (host, projectPath, notes) =>
@@ -796,7 +835,10 @@ export class ProjectsPanel {
           }),
           ...(this.pathSuccessor && { pathSuccessor: this.pathSuccessor }),
           ...(this.workNoteCommands?.capabilities().update === true
-            ? { milestoneCommands: this.workNoteCommands }
+            ? {
+                milestoneCommands: this.workNoteCommands,
+                ...(this.milestoneCommands && { milestoneAdapter: this.milestoneCommands }),
+              }
             : {}),
           session: this.workspaceSession.portfolioTimeline,
           isNarrow,

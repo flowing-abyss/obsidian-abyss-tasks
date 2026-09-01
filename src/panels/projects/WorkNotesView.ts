@@ -1,4 +1,6 @@
 import { Menu, setIcon } from 'obsidian';
+import type { TaskRollup } from '../../projects/types';
+import { buildMilestoneProjection } from '../../projects/work-notes/MilestoneProjection';
 import type { MilestoneRollup } from '../../projects/work-notes/rollups';
 import type {
   WorkNoteCommandResult,
@@ -41,6 +43,9 @@ export interface WorkNotesViewOptions {
   readonly onCreate?: (
     request: WorkNoteCreateRequest,
   ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
+  readonly onCreateMilestone?: (
+    request: Omit<WorkNoteCreateRequest, 'kind'>,
+  ) => Promise<WorkNoteCommandResult> | WorkNoteCommandResult;
   readonly onSetStatus: (
     note: WorkNoteSnapshot,
     statusId: string,
@@ -51,6 +56,8 @@ export interface WorkNotesViewOptions {
   readonly isNarrow?: boolean;
   readonly coarsePointer?: boolean;
   readonly milestoneRollups?: ReadonlyMap<string, MilestoneRollup>;
+  readonly taskRollups?: ReadonlyMap<string, TaskRollup>;
+  readonly onShowTasks?: (note: WorkNoteSnapshot) => void;
   /** The plugin application is the lifetime boundary for pending board status projections. */
   readonly overlayScope?: object;
   /** Board layout persists in the scoped collection preference, never this mounted session. */
@@ -86,6 +93,22 @@ function statusText(note: WorkNoteSnapshot, statuses: readonly WorkNoteStatusDef
   );
 }
 
+function progressText(
+  note: WorkNoteSnapshot,
+  options: Pick<WorkNotesViewOptions, 'milestoneRollups' | 'taskRollups'>,
+): string | undefined {
+  if (note.kind === 'milestone') {
+    const rollup = options.milestoneRollups?.get(note.path);
+    return rollup?.progress === null || rollup === undefined
+      ? undefined
+      : `${String(rollup.completed)} of ${String(rollup.active + rollup.completed)} complete`;
+  }
+  const rollup = options.taskRollups?.get(note.path);
+  return rollup?.progress === null || rollup === undefined
+    ? undefined
+    : `${String(rollup.done)} of ${String(rollup.total)} complete`;
+}
+
 function groupKey(
   note: WorkNoteSnapshot,
   groupBy: NonNullable<WorkNotesViewOptions['viewState']>['groupBy'],
@@ -94,6 +117,14 @@ function groupKey(
   if (groupBy === 'status') return statusText(note, statuses);
   if (groupBy === 'priority') return note.priority ?? 'No priority';
   if (groupBy === 'milestone') return note.kind === 'milestone' ? 'Milestones' : 'Work Notes';
+  if (groupBy === 'date-state') {
+    if (note.kind === 'milestone') {
+      const state = buildMilestoneProjection(note).state;
+      return state.type === 'ready' ? 'Dated' : state.label;
+    }
+    if (note.range.issue) return 'Date needs attention';
+    return note.range.start || note.range.end ? 'Dated' : 'No date set';
+  }
   return '';
 }
 
@@ -129,7 +160,10 @@ function workNoteListEntries(
 }
 
 export function selectWorkNotes(
-  options: Pick<WorkNotesViewOptions, 'notes' | 'statuses' | 'textQuery' | 'viewState'>,
+  options: Pick<
+    WorkNotesViewOptions,
+    'milestoneRollups' | 'notes' | 'statuses' | 'textQuery' | 'viewState'
+  >,
 ): readonly WorkNoteSnapshot[] {
   if (!options.viewState) return [...options.notes];
   const allowed = options.viewState?.statusIds;
@@ -164,6 +198,11 @@ export function selectWorkNotes(
       if (field === 'start') return note.range.start?.raw ?? '';
       if (field === 'end') return note.range.end?.raw ?? '';
       if (field === 'updated') return note.updated ?? '';
+      if (field === 'progress' && note.kind === 'milestone') {
+        return String(
+          buildMilestoneProjection(note, options.milestoneRollups?.get(note.path)).progress ?? -1,
+        );
+      }
       return basename(note.path);
     };
     const groupBy = options.viewState?.groupBy ?? 'none';
@@ -211,20 +250,16 @@ function renderRow(
       'data-work-note-path': note.path,
     },
   });
+  const progress = progressText(note, options);
   const milestoneRollup =
     note.kind === 'milestone' ? options.milestoneRollups?.get(note.path) : undefined;
-  const progressText =
-    milestoneRollup?.progress === null || milestoneRollup === undefined
-      ? undefined
-      : `${String(milestoneRollup.completed)} of ${String(
-          milestoneRollup.active + milestoneRollup.completed,
-        )} complete`;
+  const taskRollup = note.kind === 'ordinary' ? options.taskRollups?.get(note.path) : undefined;
   const identityLabel = [
     'Work note details',
     basename(note.path),
     note.kind === 'milestone' ? 'Milestone' : 'Ordinary',
     statusText(note, options.statuses),
-    progressText,
+    progress,
   ]
     .filter((part): part is string => part !== undefined)
     .join(', ');
@@ -268,8 +303,8 @@ function renderRow(
         priority: { value: note.priority, className: 'abyss-work-note-priority' },
       }),
       ...(range && { date: { value: range, className: 'abyss-work-note-date' } }),
-      ...(progressText && {
-        progress: { value: progressText, className: 'abyss-work-note-rollup' },
+      ...(progress && {
+        progress: { value: progress, className: 'abyss-work-note-rollup' },
       }),
       ...(diagnostic && {
         health: {
@@ -291,6 +326,18 @@ function renderRow(
             options.openNote(note.path);
           },
         },
+        ...(options.onShowTasks
+          ? [
+              {
+                label: `Show tasks in ${basename(note.path)}`,
+                icon: 'list-checks',
+                onClick: (event: MouseEvent) => {
+                  event.stopPropagation();
+                  options.onShowTasks?.(note);
+                },
+              },
+            ]
+          : []),
       ],
     }).render(row);
     identity.dataset['inspectorOriginKey'] = inspectorSelectionKey({
@@ -334,6 +381,12 @@ function renderRow(
         milestoneRollup.active + milestoneRollup.completed,
       )}`,
     });
+  } else if (taskRollup?.progress !== null && taskRollup !== undefined) {
+    meta.createSpan({
+      cls: 'abyss-work-note-rollup',
+      text: `${String(taskRollup.done)}/${String(taskRollup.total)}`,
+      attr: { 'data-work-note-task-progress': '' },
+    });
   }
   if (options.layout === 'list') {
     const status = row.createEl('button', {
@@ -362,6 +415,21 @@ function renderRow(
       event.stopPropagation();
       options.openNote(note.path);
     });
+    if (options.onShowTasks) {
+      const tasks = row.createEl('button', {
+        cls: 'abyss-work-note-show-tasks',
+        attr: {
+          type: 'button',
+          'aria-label': `Show tasks in ${basename(note.path)}`,
+          title: `Show tasks in ${basename(note.path)}`,
+        },
+      });
+      setIcon(tasks, 'list-checks');
+      tasks.addEventListener('click', (event) => {
+        event.stopPropagation();
+        options.onShowTasks?.(note);
+      });
+    }
   }
   identity.addEventListener('click', () => {
     select(identity);
@@ -585,6 +653,37 @@ export function renderWorkNotesView(
   const presenter = createWorkNoteResultPresenter(container);
   const toolbar = container.createDiv({ cls: 'abyss-work-notes-toolbar' });
   const content = container.createDiv({ cls: 'abyss-work-notes-content' });
+  if (options.onCreateMilestone && options.projectPath) {
+    const createMilestone = toolbar.createEl('button', {
+      cls: 'abyss-milestone-create',
+      text: 'Milestone',
+      attr: { type: 'button', 'aria-label': 'New milestone', title: 'New milestone' },
+    });
+    createMilestone.addEventListener('click', () => {
+      if (toolbar.querySelector('.abyss-milestone-create-input')) return;
+      const input = toolbar.createEl('input', {
+        cls: 'abyss-milestone-create-input',
+        attr: { type: 'text', placeholder: 'Milestone title', 'aria-label': 'Milestone title' },
+      });
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          input.remove();
+          createMilestone.focus();
+          return;
+        }
+        if (event.key !== 'Enter' || !input.value.trim()) return;
+        const title = input.value.trim();
+        input.disabled = true;
+        void Promise.resolve(
+          options.onCreateMilestone!({ title, projectPath: options.projectPath! }),
+        ).then((result) => {
+          if (result.type === 'ok' || result.type === 'unchanged') input.remove();
+          else input.disabled = false;
+        });
+      });
+      input.focus();
+    });
+  }
   if (options.onCreate && options.projectPath) {
     const create = toolbar.createEl('button', {
       cls: 'abyss-work-note-create',

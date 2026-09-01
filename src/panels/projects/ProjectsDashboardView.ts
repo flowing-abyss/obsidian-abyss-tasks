@@ -130,14 +130,22 @@ export function renderProjectDashboard(
   const taskViewState = (): ProjectTasksViewState => session.collectionView(project.path, 'tasks');
   const workNotesViewState = (): WorkNotesViewState =>
     session.collectionView(project.path, 'work-notes');
-  const selectedTasks = (): readonly (typeof snapshot.tasks)[number][] =>
-    selectProjectTasks({
+  const selectedTasks = (): readonly (typeof snapshot.tasks)[number][] => {
+    const selected = selectProjectTasks({
       actions: snapshot.tasks,
       viewState: taskViewState(),
       settings: ctx.settings,
       ...(ctx.nextActionState && { nextActionState: ctx.nextActionState }),
       ...(taskScope.textQuery && { textQuery: taskScope.textQuery }),
     });
+    const ownerPrefix = 'work-note-owner:';
+    const ownerPath = taskScope.openSurface?.startsWith(ownerPrefix)
+      ? taskScope.openSurface.slice(ownerPrefix.length)
+      : null;
+    return ownerPath
+      ? selected.filter(({ owner }) => owner.type === 'work-note' && owner.path === ownerPath)
+      : selected;
+  };
   const selectedWorkNotes = (): typeof allWorkNotes =>
     (ctx.selectWorkNotes?.(allWorkNotes, workNotesViewState(), workNotesScope.textQuery) ??
       allWorkNotes) as typeof allWorkNotes;
@@ -620,7 +628,7 @@ export function renderProjectDashboard(
     const values =
       scope === 'tasks'
         ? (['none', 'date', 'priority', 'tag', 'status'] as const)
-        : (['none', 'status', 'priority', 'milestone'] as const);
+        : (['none', 'status', 'priority', 'milestone', 'date-state'] as const);
     for (const value of values) {
       menu.addItem((item) =>
         item
@@ -646,7 +654,7 @@ export function renderProjectDashboard(
     const fields =
       scope === 'tasks'
         ? (['date', 'priority', 'title', 'tag', 'status'] as const)
-        : (['title', 'status', 'priority', 'start', 'end', 'updated'] as const);
+        : (['title', 'status', 'priority', 'start', 'end', 'updated', 'progress'] as const);
     for (const field of fields) {
       menu.addItem((item) =>
         item.setTitle(`${field[0]!.toUpperCase()}${field.slice(1)}`).onClick(() => {

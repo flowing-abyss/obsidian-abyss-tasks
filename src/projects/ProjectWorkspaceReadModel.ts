@@ -118,6 +118,7 @@ function snapshotSignature(snapshot: ProjectWorkspaceSnapshot): string {
   return JSON.stringify({
     ...snapshot,
     milestoneRollups: [...snapshot.milestoneRollups.entries()],
+    workNoteTaskRollups: [...(snapshot.workNoteTaskRollups?.entries() ?? [])],
   });
 }
 
@@ -429,7 +430,11 @@ export class ProjectWorkspaceReadModel {
     const projectNotes = this.projectNotes(project.path, context);
     const projectActions: ProjectAction[] = [];
     const seen = new Set<string>();
-    const append = (task: TaskSnapshot, owner: ProjectAction['owner']): void => {
+    const append = (
+      task: TaskSnapshot,
+      owner: ProjectAction['owner'],
+      milestonePath?: string,
+    ): void => {
       const key = taskIdentity(task);
       if (seen.has(key)) return;
       seen.add(key);
@@ -437,6 +442,7 @@ export class ProjectWorkspaceReadModel {
         task,
         projectPath: project.path,
         owner,
+        ...(milestonePath && { milestonePath }),
         dependency: this.options.dependencies?.evaluateCompletion(task) ?? { type: 'allowed' },
       });
     };
@@ -445,7 +451,11 @@ export class ProjectWorkspaceReadModel {
     }
     for (const note of projectNotes) {
       for (const task of context.tasksByPath.get(note.path) ?? []) {
-        append(task, { type: 'work-note', path: note.path });
+        append(
+          task,
+          { type: 'work-note', path: note.path },
+          note.kind === 'milestone' ? note.path : note.milestonePath,
+        );
       }
     }
     projectActions.sort(taskOrder);
@@ -476,6 +486,11 @@ export class ProjectWorkspaceReadModel {
         return rollup ? [[milestone.path, rollup] as const] : [];
       }),
     );
+    const workNoteTaskRollups = new Map(
+      projectNotes.map(
+        (note) => [note.path, computeTaskRollup(context.tasksByPath.get(note.path) ?? [])] as const,
+      ),
+    );
     const snapshotTasks = projectActions.map(({ task }) => task);
     const actionableDependencies = projectActions.filter(
       ({ task }) => task.status !== 'done' && task.status !== 'cancelled',
@@ -490,6 +505,7 @@ export class ProjectWorkspaceReadModel {
       milestones,
       taskRollup: computeTaskRollup(snapshotTasks),
       workNoteRollup: computeWorkNoteRollup(projectNotes, context.statuses),
+      workNoteTaskRollups,
       milestoneRollups,
       workNoteRelations: relations,
       overdue: {

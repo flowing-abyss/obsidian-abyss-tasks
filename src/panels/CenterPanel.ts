@@ -1,4 +1,4 @@
-import { Component, Menu, Notice, setIcon, type App, type MenuItem } from 'obsidian';
+import { Component, Menu, Notice, setIcon, TFile, type App, type MenuItem } from 'obsidian';
 import type { AppState } from '../app/AppState';
 import { listSelectionToKey, normalizeStatusGroups, statusGroupsEqual } from '../app/listViewState';
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
@@ -16,7 +16,9 @@ import type { ProjectCommandService } from '../projects/ProjectCommandService';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';
 import type { ProjectAction, ProjectWorkspaceSnapshot } from '../projects/types';
+import type { MilestoneCommandAdapter } from '../projects/work-notes/MilestoneCommandAdapter';
 import type { WorkNoteCommandService } from '../projects/work-notes/WorkNoteCommandService';
+import type { WorkNoteRelationCommandService } from '../projects/work-notes/WorkNoteRelationCommandService';
 import { DEFAULT_VIEW_CONFIG, getListViewDefaults } from '../settings/defaults';
 import type {
   CalendarSettings,
@@ -345,6 +347,8 @@ export class CenterPanel {
       candidate: TaskSnapshot,
     ) => boolean,
     private readonly awaitProjectMembership?: ConstructorParameters<typeof NextActionService>[2],
+    private readonly workNoteRelations?: WorkNoteRelationCommandService,
+    private readonly milestoneCommands?: MilestoneCommandAdapter,
   ) {
     this.projectWorkspaceSession = collectionState;
     if (projectSnapshots.length > 0)
@@ -1086,6 +1090,11 @@ export class CenterPanel {
             } else {
               const card = this.renderTaskCard(rowsHost, row.action.task, {
                 projectPath,
+                ...(row.action.owner.type === 'work-note' &&
+                  row.action.owner.path !== row.action.milestonePath && {
+                    workNoteOwnerPath: row.action.owner.path,
+                  }),
+                ...(row.action.milestonePath && { milestonePath: row.action.milestonePath }),
                 dependencyDecision: row.action.dependency,
                 projectTaskCollection: true,
                 ...(this.tasks && {
@@ -1284,6 +1293,11 @@ export class CenterPanel {
         renderItem: (container, action, statusGuard) =>
           this.renderTaskCard(container, action.task, {
             projectPath: path,
+            ...(action.owner.type === 'work-note' &&
+              action.owner.path !== action.milestonePath && {
+                workNoteOwnerPath: action.owner.path,
+              }),
+            ...(action.milestonePath && { milestonePath: action.milestonePath }),
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
             projectTaskBoard: true,
@@ -1439,6 +1453,11 @@ export class CenterPanel {
         renderTask: (identity, action) => {
           this.renderTaskCard(identity, action.task, {
             projectPath: path,
+            ...(action.owner.type === 'work-note' &&
+              action.owner.path !== action.milestonePath && {
+                workNoteOwnerPath: action.owner.path,
+              }),
+            ...(action.milestonePath && { milestonePath: action.milestonePath }),
             dependencyDecision: action.dependency,
             projectTaskCollection: true,
             ...(this.tasks && {
@@ -1654,13 +1673,15 @@ export class CenterPanel {
             },
             boardUndoTransferable: true,
             workNoteCommands: this.workNoteCommands,
+            workNoteRelations: this.workNoteRelations,
+            milestoneCommands: this.milestoneCommands,
             projectCommands: this.projectCommands,
             workspaceSession: this.projectWorkspaceSession,
             onAnnounce: (message) => {
               this.selectionLiveRegion().textContent = message;
             },
             onTaskContextMenu: (event, projectPath, action, anchor) =>
-              this.showProjectNextActionMenu(event, projectPath, action.task, anchor),
+              this.showProjectNextActionMenu(event, projectPath, action, anchor),
             ...(this.tasks && {
               nextActionState: (task) => projectedNextAction(this.tasks!, task),
             }),
@@ -2704,6 +2725,8 @@ export class CenterPanel {
     task: TaskSnapshot,
     context: {
       readonly projectPath?: string;
+      readonly workNoteOwnerPath?: string;
+      readonly milestonePath?: string;
       readonly manageStatusMenu?: boolean;
       readonly manageStatusMarker?: boolean;
       readonly dependencyDecision?: DependencyCompletionDecision;
@@ -2858,6 +2881,32 @@ export class CenterPanel {
           },
         ],
       }).render(card);
+      if (context.workNoteOwnerPath) {
+        const ownerPath = context.workNoteOwnerPath;
+        const owner = card.createEl('button', {
+          cls: 'abyss-task-work-note-backlink',
+          text: (ownerPath.split('/').pop() ?? ownerPath).replace(/\.md$/u, ''),
+          attr: { type: 'button', 'aria-label': `Open owning Work Note ${ownerPath}` },
+        });
+        owner.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const file = this.app.vault.getAbstractFileByPath(ownerPath);
+          if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+        });
+      }
+      if (context.milestonePath) {
+        const milestonePath = context.milestonePath;
+        const milestone = card.createEl('button', {
+          cls: 'abyss-task-milestone-backlink',
+          text: (milestonePath.split('/').pop() ?? milestonePath).replace(/\.md$/u, ''),
+          attr: { type: 'button', 'aria-label': `Open Milestone ${milestonePath}` },
+        });
+        milestone.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const file = this.app.vault.getAbstractFileByPath(milestonePath);
+          if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+        });
+      }
     } else {
       const cardContent = card;
       const mainRow = cardContent.createDiv({ cls: 'abyss-task-card-main-row' });
@@ -2943,7 +2992,12 @@ export class CenterPanel {
         this.settings.customFilePath,
       );
       const hasRightMeta =
-        showSourceNote || (d && !suppressToday) || task.planning.time || tags.length > 0;
+        showSourceNote ||
+        context.workNoteOwnerPath !== undefined ||
+        context.milestonePath !== undefined ||
+        (d && !suppressToday) ||
+        task.planning.time ||
+        tags.length > 0;
       if (hasRightMeta) {
         const metaRight = mainRow.createDiv({ cls: 'abyss-task-meta-right' });
 
@@ -2993,6 +3047,34 @@ export class CenterPanel {
         if (showSourceNote) {
           renderSourceNoteChip(metaRight, task, (filePath) => {
             addPropertyFilter({ type: 'file', filePath });
+          });
+        }
+
+        if (context.workNoteOwnerPath) {
+          const ownerPath = context.workNoteOwnerPath;
+          const owner = metaRight.createEl('button', {
+            cls: 'abyss-task-work-note-backlink',
+            text: (ownerPath.split('/').pop() ?? ownerPath).replace(/\.md$/u, ''),
+            attr: { type: 'button', 'aria-label': `Open owning Work Note ${ownerPath}` },
+          });
+          owner.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const file = this.app.vault.getAbstractFileByPath(ownerPath);
+            if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+          });
+        }
+
+        if (context.milestonePath) {
+          const milestonePath = context.milestonePath;
+          const milestone = metaRight.createEl('button', {
+            cls: 'abyss-task-milestone-backlink',
+            text: (milestonePath.split('/').pop() ?? milestonePath).replace(/\.md$/u, ''),
+            attr: { type: 'button', 'aria-label': `Open Milestone ${milestonePath}` },
+          });
+          milestone.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const file = this.app.vault.getAbstractFileByPath(milestonePath);
+            if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
           });
         }
 
@@ -3418,20 +3500,61 @@ export class CenterPanel {
   }
 
   /** The Project Table and task cards invoke one canonical task action model. */
+  private populateMilestoneAssignmentMenu(
+    menu: Menu,
+    project: ProjectWorkspaceSnapshot,
+    action: ProjectAction,
+  ): void {
+    if (!this.milestoneCommands || project.milestones.length === 0) return;
+    const ownerNote =
+      action.owner.type === 'work-note'
+        ? [...project.workNotes, ...project.milestones].find(
+            ({ path }) => path === action.owner.path,
+          )
+        : undefined;
+    const expectedMilestoneRaw = ownerNote
+      ? this.workNoteCommands?.observe(ownerNote)?.fields[
+          this.settings.projects.workNoteCompatibility.fields.milestone
+        ]
+      : undefined;
+    menu.addItem((item) => {
+      item.setTitle('Move to milestone').setIcon('milestone').setSection('actions');
+      const submenu = getSubmenu(item);
+      for (const milestone of project.milestones) {
+        submenu.addItem((target) =>
+          target
+            .setTitle((milestone.path.split('/').pop() ?? milestone.path).replace(/\.md$/u, ''))
+            .setChecked(action.milestonePath === milestone.path)
+            .onClick(() => {
+              void this.milestoneCommands!.assignTask({
+                task: action.task,
+                owner: action.owner,
+                milestone,
+                ...(ownerNote && { ownerNote }),
+                ...(expectedMilestoneRaw !== undefined && { expectedMilestoneRaw }),
+              });
+            }),
+        );
+      }
+    });
+  }
+
   private showProjectNextActionMenu(
     event: MouseEvent,
     projectPath: string,
-    task: TaskSnapshot,
+    action: ProjectAction,
     anchor?: HTMLElement,
   ): void {
     event.preventDefault();
     const menu = new Menu();
-    this.populateCanonicalTaskMenu(menu, task, anchor ?? this.el, {
+    this.populateCanonicalTaskMenu(menu, action.task, anchor ?? this.el, {
       projectPath,
       ...(this.tasks && {
         nextActionState: (candidate) => projectedNextAction(this.tasks!, candidate),
       }),
     });
+    const project = this.projectSnapshots.find(({ project }) => project.path === projectPath);
+    if (project) this.populateMilestoneAssignmentMenu(menu, project, action);
     showMenuAtMouseEventWithFocus(menu, event, {
       ...(anchor && { restoreFocusTo: anchor }),
     });

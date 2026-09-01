@@ -118,9 +118,9 @@ export interface ProjectTasksViewState {
 }
 
 export interface WorkNotesViewState {
-  readonly groupBy: 'none' | 'status' | 'priority' | 'milestone';
+  readonly groupBy: 'none' | 'status' | 'priority' | 'milestone' | 'date-state';
   readonly sortBy: {
-    field: 'title' | 'status' | 'priority' | 'start' | 'end' | 'updated';
+    field: 'title' | 'status' | 'priority' | 'start' | 'end' | 'updated' | 'progress';
     dir: 'asc' | 'desc';
   };
   readonly statusIds: readonly string[];

@@ -135,8 +135,25 @@ export type WorkNoteCommandResult =
   | { type: 'conflict'; field: string }
   | { type: 'compatibility-conflict'; reason: string }
   | { type: 'partial'; path: string; reason: string }
-  | { type: 'invalid'; field: string }
+  | { type: 'invalid'; field: string; reason?: string }
   | { type: 'io-error' };
+
+export interface RelationWriteCommand<TValue> {
+  readonly notePath: string;
+  readonly expectedRaw: unknown;
+  readonly expectedPresetRevision: string;
+  readonly expectedPresetFingerprint: string;
+  readonly value: TValue;
+}
+
+export interface WorkNoteRelationCommands {
+  setMilestone(command: RelationWriteCommand<string | null>): Promise<WorkNoteCommandResult>;
+  clearMilestone(command: RelationWriteCommand<null>): Promise<WorkNoteCommandResult>;
+  addRelated(command: RelationWriteCommand<string>): Promise<WorkNoteCommandResult>;
+  removeRelated(command: RelationWriteCommand<string>): Promise<WorkNoteCommandResult>;
+  addBlockedBy(command: RelationWriteCommand<string>): Promise<WorkNoteCommandResult>;
+  removeBlockedBy(command: RelationWriteCommand<string>): Promise<WorkNoteCommandResult>;
+}
 
 export interface WorkNoteSourceFile {
   readonly path: string;

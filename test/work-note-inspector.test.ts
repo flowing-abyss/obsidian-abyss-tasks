@@ -27,6 +27,37 @@ const snapshot: WorkNoteSnapshot = {
 };
 
 describe('renderWorkNoteInspector', () => {
+  it('shows physical Task progress and exposes Work Note to filtered Tasks navigation', () => {
+    const root = freshContainer();
+    const onShowTasks = vi.fn();
+    renderWorkNoteInspector(root, snapshot, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      taskRollup: { total: 4, done: 3, cancelled: 0, inProgress: 0, open: 1, progress: 0.75 },
+      onShowTasks,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(root.querySelector('[data-inspector-field="progress"]')?.textContent).toContain(
+      '3 of 4 complete',
+    );
+    root.querySelector<HTMLButtonElement>('[aria-label="Show tasks in Research"]')!.click();
+    expect(onShowTasks).toHaveBeenCalledWith(snapshot);
+  });
+  it('exposes deletion only through the guarded coordinator intent', () => {
+    const root = freshContainer();
+    const onDelete = vi.fn();
+    renderWorkNoteInspector(root, snapshot, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      onDelete,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    const button = root.querySelector<HTMLButtonElement>('[aria-label="Delete work note"]')!;
+    button.click();
+    expect(onDelete).toHaveBeenCalledWith(snapshot, expect.any(MouseEvent));
+  });
   it('uses the shared inspector field-row contract for its status, metadata, and relations', () => {
     const root = freshContainer();
     renderWorkNoteInspector(root, snapshot, {
@@ -57,10 +88,11 @@ describe('renderWorkNoteInspector', () => {
 
   it('renders note identity and rich supporting metadata without task controls', () => {
     const root = freshContainer();
+    const openNote = vi.fn();
     renderWorkNoteInspector(root, snapshot, {
       statuses: DEFAULT_SETTINGS.projects.statuses,
       onSetStatus: vi.fn(),
-      openNote: vi.fn(),
+      openNote,
     });
 
     expect(root.querySelector('h3')?.textContent).toBe('Research');
@@ -75,8 +107,60 @@ describe('renderWorkNoteInspector', () => {
     expect(root.textContent).toContain('Blocker');
     expect(root.textContent).toContain('Related');
     expect(root.textContent).toContain('Unknown status');
+    root.querySelector<HTMLButtonElement>('[aria-label="Open Milestone"]')!.click();
+    expect(openNote).toHaveBeenCalledWith('Work Notes/Milestone.md');
     expect(root.querySelector('input[type="checkbox"]')).toBeNull();
     expect(root.querySelector('[data-work-note-task-command]')).toBeNull();
+  });
+
+  it('exposes guarded relation editor intents through native controls', () => {
+    const root = freshContainer();
+    const onSetMilestone = vi.fn();
+    const onToggleRelated = vi.fn();
+    const menuItems: Array<{ title: string; callback?: () => unknown }> = [];
+    vi.spyOn(Menu.prototype, 'addItem').mockImplementation(function (this: Menu, build) {
+      const captured = { title: '' } as { title: string; callback?: () => unknown };
+      const item = {
+        setTitle(title: string) {
+          captured.title = title;
+          return this;
+        },
+        setChecked() {
+          return this;
+        },
+        onClick(callback: () => unknown) {
+          captured.callback = callback;
+          return this;
+        },
+      } as unknown as MenuItem;
+      build(item);
+      menuItems.push(captured);
+      return this;
+    });
+    renderWorkNoteInspector(root, snapshot, {
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+      relationCandidates: [
+        { ...snapshot, path: 'Work Notes/Milestone.md', kind: 'milestone' },
+        { ...snapshot, path: 'Work Notes/Related.md', milestonePath: undefined },
+      ],
+      onSetMilestone,
+      onToggleRelated,
+    });
+
+    root.querySelector<HTMLButtonElement>('[aria-label="Edit Milestone relation"]')!.click();
+    menuItems.find(({ title }) => title === 'Clear milestone')!.callback!();
+    expect(onSetMilestone).toHaveBeenCalledWith(snapshot, null);
+
+    menuItems.length = 0;
+    root.querySelector<HTMLButtonElement>('[aria-label="Edit Related relations"]')!.click();
+    menuItems.find(({ title }) => title === 'Related')!.callback!();
+    expect(onToggleRelated).toHaveBeenCalledWith(
+      snapshot,
+      expect.objectContaining({ path: 'Work Notes/Related.md' }),
+      true,
+    );
   });
 
   it('renders absent optional metadata as Not set while reserving Unavailable for unsupported fields', () => {

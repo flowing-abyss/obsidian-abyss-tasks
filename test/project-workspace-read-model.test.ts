@@ -125,6 +125,59 @@ describe('ProjectWorkspaceReadModel', () => {
       direct.ref,
       inherited.ref,
     ]);
+    expect(readModel.get(projectPath)?.tasks.map(({ owner }) => owner)).toEqual([
+      { type: 'project', path: projectPath },
+      { type: 'work-note', path: 'Work/A.md' },
+    ]);
+  });
+
+  it('projects physical Work Note ownership, progress, and inherited Milestone membership', () => {
+    const milestonePath = 'Work/M.md';
+    const readModel = modelFixture(
+      [
+        action('Work/A.md', 1, 'done'),
+        action('Work/A.md', 2, 'open'),
+        action(milestonePath, 1, 'done'),
+      ],
+      [
+        workNote('Work/A.md', 'active', { milestonePath }),
+        workNote(milestonePath, 'active', { kind: 'milestone' }),
+      ],
+    );
+    const snapshot = readModel.get(projectPath)!;
+
+    expect(snapshot.workNoteTaskRollups?.get('Work/A.md')).toMatchObject({
+      total: 2,
+      done: 1,
+      progress: 0.5,
+    });
+    expect(
+      snapshot.tasks.map(({ task: candidate, owner, milestonePath: inherited }) => ({
+        line: candidate.ref.line,
+        source: candidate.ref.filePath,
+        owner,
+        milestonePath: inherited,
+      })),
+    ).toEqual([
+      {
+        line: 1,
+        source: 'Work/A.md',
+        owner: { type: 'work-note', path: 'Work/A.md' },
+        milestonePath,
+      },
+      {
+        line: 2,
+        source: 'Work/A.md',
+        owner: { type: 'work-note', path: 'Work/A.md' },
+        milestonePath,
+      },
+      {
+        line: 1,
+        source: milestonePath,
+        owner: { type: 'work-note', path: milestonePath },
+        milestonePath,
+      },
+    ]);
   });
 
   it('counts a Task even when its Work Note is dropped', () => {

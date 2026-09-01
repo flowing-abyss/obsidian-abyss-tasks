@@ -104,8 +104,11 @@ export function workNoteTimelineItem(note: WorkNoteSnapshot): TimelineItem {
   if (note.range.issue) return { kind: 'invalid', key, reason: note.range.issue };
   const { start, end } = note.range;
   if (note.kind === 'milestone') {
-    if (end) return { kind: 'invalid', key, reason: 'milestone-range' };
-    if (start) return { kind: 'point', key, atMs: start.instantMs, role: 'milestone' };
+    if (start && end) {
+      return { kind: 'range', key, startMs: start.instantMs, endMs: end.instantMs };
+    }
+    const point = start ?? end;
+    if (point) return { kind: 'point', key, atMs: point.instantMs, role: 'milestone' };
     return { kind: 'undated', key };
   }
   if (start && end) return { kind: 'range', key, startMs: start.instantMs, endMs: end.instantMs };
@@ -125,7 +128,17 @@ export function workNoteTimelineEntry(
     dateByRole: {
       ...(note.kind === 'ordinary' && note.range.start && { start: note.range.start.raw }),
       ...(note.kind === 'ordinary' && note.range.end && { end: note.range.end.raw }),
-      ...(note.kind === 'milestone' && note.range.start && { milestone: note.range.start.raw }),
+      ...(note.kind === 'milestone' &&
+        note.range.start &&
+        note.range.end && {
+          start: note.range.start.raw,
+          end: note.range.end.raw,
+        }),
+      ...(note.kind === 'milestone' &&
+        !(note.range.start && note.range.end) &&
+        (note.range.start ?? note.range.end) && {
+          milestone: (note.range.start ?? note.range.end)!.raw,
+        }),
     },
   };
 }

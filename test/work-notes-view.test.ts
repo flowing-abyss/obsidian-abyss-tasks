@@ -87,6 +87,52 @@ function note(index: number, over: Partial<WorkNoteSnapshot> = {}): WorkNoteSnap
 }
 
 describe('renderWorkNotesView', () => {
+  it('shows physical Task progress and navigates from a Work Note to its filtered Tasks', () => {
+    const root = freshContainer();
+    const onShowTasks = vi.fn();
+    const current = note(1);
+    renderWorkNotesView(root, {
+      notes: [current],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      taskRollups: new Map([
+        [
+          current.path,
+          { total: 3, done: 2, cancelled: 0, inProgress: 0, open: 1, progress: 2 / 3 },
+        ],
+      ]),
+      onShowTasks,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    expect(root.querySelector('[data-work-note-task-progress]')?.textContent).toBe('2/3');
+    root.querySelector<HTMLButtonElement>('[aria-label="Show tasks in Work note 001"]')!.click();
+    expect(onShowTasks).toHaveBeenCalledWith(current);
+  });
+
+  it('creates a first-class Milestone through a distinct collection action', () => {
+    const root = freshContainer();
+    const onCreateMilestone = vi.fn().mockResolvedValue({ type: 'ok', path: 'Work/M.md' });
+    renderWorkNotesView(root, {
+      notes: [],
+      statuses: DEFAULT_SETTINGS.projects.statuses,
+      layout: 'list',
+      projectPath: 'Projects/P.md',
+      onCreateMilestone,
+      onSetStatus: vi.fn(),
+      openNote: vi.fn(),
+    });
+
+    root.querySelector<HTMLButtonElement>('[aria-label="New milestone"]')!.click();
+    const input = root.querySelector<HTMLInputElement>('[aria-label="Milestone title"]')!;
+    input.value = 'Release';
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(onCreateMilestone).toHaveBeenCalledWith({
+      title: 'Release',
+      projectPath: 'Projects/P.md',
+    });
+  });
   it.each([
     ['title', 'Release brief'],
     ['path', 'Research'],

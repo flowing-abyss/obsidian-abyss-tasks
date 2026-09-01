@@ -99,6 +99,28 @@ describe('WorkNoteCommandService', () => {
     expect(h.service.capabilities()).toEqual({ update: true, create: true });
   });
 
+  it('captures exact relation carriers for production raw-value CAS', async () => {
+    const h = await fixture();
+    const snapshot = h.index.list()[0] ?? (await h.index.audit()).snapshots[0]!;
+    const file = await fileAt(h.app, snapshot.path);
+    const cached = h.app.metadataCache.getFileCache(file)!;
+    vi.spyOn(h.app.metadataCache, 'getFileCache').mockReturnValue({
+      ...cached,
+      frontmatter: {
+        ...cached.frontmatter,
+        Milestone: '[[Work Notes/Release]]',
+        'Blocked by': ['[[Work Notes/Blocker]]'],
+        Related: '[[Work Notes/Peer]]',
+      },
+    });
+
+    expect(h.service.observe(snapshot)?.fields).toMatchObject({
+      Milestone: '[[Work Notes/Release]]',
+      'Blocked by': ['[[Work Notes/Blocker]]'],
+      Related: '[[Work Notes/Peer]]',
+    });
+  });
+
   it('exposes the accepted Work Note status IDs instead of unrelated Project status IDs', async () => {
     const h = await fixture();
 

@@ -1,4 +1,4 @@
-import { Plugin } from 'obsidian';
+import { Plugin, TFile } from 'obsidian';
 import { buildCommitIdentity } from './buildIdentity';
 import { registerCodeBlock, resolveConfig } from './code-block/registerCodeBlock';
 import { disposeProjectWorkspacePreferenceAuthority } from './panels/projects/ProjectWorkspaceSession';
@@ -8,6 +8,7 @@ import { ProjectCommandService } from './projects/ProjectCommandService';
 import { ProjectStore } from './projects/ProjectStore';
 import { ProjectWorkspaceCoordinator } from './projects/ProjectWorkspaceCoordinator';
 import { PROHIBITED_WORK_NOTE_MUTATION_COMMAND_IDS } from './projects/work-notes/commands';
+import { MilestoneCommandAdapter } from './projects/work-notes/MilestoneCommandAdapter';
 import type {
   WorkNoteCompatibilityAcceptanceResult,
   WorkNoteCompatibilityDisableResult,
@@ -18,7 +19,9 @@ import type {
   WorkNoteValidatedApplyResult,
 } from './projects/work-notes/types';
 import { WorkNoteCommandService } from './projects/work-notes/WorkNoteCommandService';
+import { WorkNoteDeletionCoordinator } from './projects/work-notes/WorkNoteDeletionCoordinator';
 import { WorkNoteIndex } from './projects/work-notes/WorkNoteIndex';
+import { WorkNoteRelationCommandService } from './projects/work-notes/WorkNoteRelationCommandService';
 import { DailyNoteResolver } from './resolvers/DailyNoteResolver';
 import { DEFAULT_SETTINGS } from './settings/defaults';
 import { migrateSettings } from './settings/migration';
@@ -65,6 +68,9 @@ export default class TaskCalendarPlugin extends Plugin {
   private projectWorkspace!: ProjectWorkspaceCoordinator;
   private workNoteIndex!: WorkNoteIndex;
   private workNoteCommands!: WorkNoteCommandService;
+  private workNoteRelations!: WorkNoteRelationCommandService;
+  private milestoneCommands!: MilestoneCommandAdapter;
+  private workNoteDeletion!: WorkNoteDeletionCoordinator;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -135,6 +141,26 @@ export default class TaskCalendarPlugin extends Plugin {
       this.workNoteIndex,
       () => this.settings.projects.statuses,
     );
+    this.workNoteRelations = new WorkNoteRelationCommandService(
+      this.app,
+      () => this.settings.projects.workNoteCompatibility,
+      this.workNoteIndex,
+    );
+    this.milestoneCommands = new MilestoneCommandAdapter({
+      tasks: this.tasks,
+      workNotes: this.workNoteCommands,
+      relations: this.workNoteRelations,
+      open: (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) void this.app.workspace.getLeaf(false).openFile(file);
+      },
+      rename: (note, title) => this.workNoteCommands.setTitle(note, title),
+    });
+    this.workNoteDeletion = new WorkNoteDeletionCoordinator(
+      this.app,
+      this.tasks,
+      this.workNoteIndex,
+    );
     this.projectStore = new ProjectStore(this.app, this.queries, this.settings);
     this.projectWorkspace = new ProjectWorkspaceCoordinator(
       this.projectStore,
@@ -168,6 +194,9 @@ export default class TaskCalendarPlugin extends Plugin {
           this.dependencyPolicy,
           clock,
           this,
+          this.workNoteRelations,
+          this.milestoneCommands,
+          this.workNoteDeletion,
         ),
     );
 

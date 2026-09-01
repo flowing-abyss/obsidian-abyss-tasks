@@ -12,6 +12,7 @@ import type {
   ProjectDateValue,
   ProjectWorkspaceSnapshot,
 } from '../../projects/types';
+import type { MilestoneCommandAdapter } from '../../projects/work-notes/MilestoneCommandAdapter';
 import type { WorkNoteCommandService } from '../../projects/work-notes/WorkNoteCommandService';
 import type { WorkNoteCommandResult, WorkNoteSnapshot } from '../../projects/work-notes/types';
 import { taskReconciliationKey, type TaskCommandResult, type TaskSnapshot } from '../../tasks';
@@ -125,7 +126,7 @@ export interface TimelineViewOptions<T> {
   readonly identityWidth?: number;
   readonly today?: string;
   readonly coarsePointer?: boolean;
-  readonly undatedRole?: TimelinePointRole;
+  readonly undatedRole?: TimelinePointRole | ((entry: TimelineEntry<T>) => TimelinePointRole);
   readonly onPresentationChange?: (presentation: {
     readonly scale: TimelineScale<TimelineScope>;
     readonly identityWidth: number;
@@ -193,6 +194,7 @@ export interface ProjectsTimelineOptions {
   readonly canonicalSnapshots?: readonly ProjectWorkspaceSnapshot[];
   readonly commands: ProjectCommandService;
   readonly milestoneCommands?: WorkNoteCommandService;
+  readonly milestoneAdapter?: Pick<MilestoneCommandAdapter, 'observeDates' | 'setDates'>;
   readonly session?: LogicalViewportSession;
   readonly isNarrow?: boolean;
   readonly onMutation?: (project: Project, result: ProjectRangeCommandResult) => void;
@@ -230,6 +232,8 @@ export interface WorkNotesTimelineOptions {
   readonly overlayScope?: object;
   readonly publicationSequence?: number;
   readonly pathSuccessor?: (observedPath: string, publishedPath: string) => boolean;
+  readonly today?: string;
+  readonly milestoneAdapter?: Pick<MilestoneCommandAdapter, 'observeDates' | 'setDates'>;
 }
 
 export interface TasksTimelineOptions {
@@ -853,7 +857,10 @@ function renderTimelineMount<T>(
     if (!(event.target instanceof HTMLInputElement) || !event.target.value) return;
     const entry = scheduleEntryByInput.get(event.target);
     if (!entry) return;
-    const role = options.undatedRole ?? 'scheduled';
+    const role =
+      typeof options.undatedRole === 'function'
+        ? options.undatedRole(entry)
+        : (options.undatedRole ?? 'scheduled');
     if (canSetDate(entry, role)) void commit(entry, role, event.target.value, event.target);
   };
   root.addEventListener('change', onScheduleChange);
@@ -1839,7 +1846,14 @@ function renderTimelineMount<T>(
               });
               bindTimelineRepair(confirm, entry, confirmRepair);
             }
-          } else if (canSetDate(entry, options.undatedRole ?? 'scheduled')) {
+          } else if (
+            canSetDate(
+              entry,
+              typeof options.undatedRole === 'function'
+                ? options.undatedRole(entry)
+                : (options.undatedRole ?? 'scheduled'),
+            )
+          ) {
             const schedule = row.createEl('input', {
               cls: 'abyss-timeline-touch-target',
               attr: {
@@ -1965,8 +1979,11 @@ export function renderProjectsTimeline(
   );
   const milestoneObservations = new Map(
     entries.flatMap((entry) => {
-      if (entry.value.kind !== 'milestone' || !options.milestoneCommands) return [];
-      return [[entry.item.key, options.milestoneCommands.observeRange(entry.value.note)] as const];
+      if (entry.value.kind !== 'milestone') return [];
+      const observation =
+        options.milestoneAdapter?.observeDates(entry.value.note) ??
+        options.milestoneCommands?.observeRange(entry.value.note);
+      return observation ? [[entry.item.key, observation] as const] : [];
     }),
   );
   const today = options.today ?? localToday();
@@ -2002,7 +2019,7 @@ export function renderProjectsTimeline(
         : undefined,
     ),
     scope: 'portfolio',
-    undatedRole: 'start',
+    undatedRole: (entry) => (entry.value.kind === 'milestone' ? 'milestone' : 'start'),
     today,
     ...(options.scale && { scale: options.scale }),
     ...(options.identityWidth !== undefined && { identityWidth: options.identityWidth }),
@@ -2086,8 +2103,12 @@ export function renderProjectsTimeline(
     canSetDate: (entry, role) =>
       entry.value.kind === 'project'
         ? role === 'start' || role === 'end'
-        : options.milestoneCommands !== undefined && (role === 'milestone' || role === 'start'),
-    canSetRange: (entry) => entry.value.kind === 'project',
+        : (options.milestoneAdapter !== undefined || options.milestoneCommands !== undefined) &&
+          (role === 'milestone' || role === 'start' || role === 'end'),
+    canSetRange: (entry) =>
+      entry.value.kind === 'project' ||
+      (entry.item.kind === 'range' &&
+        (options.milestoneAdapter !== undefined || options.milestoneCommands !== undefined)),
     onSetDate: async (entry, role, date) => {
       if (entry.value.kind === 'project') {
         if (role !== 'start' && role !== 'end') {
@@ -2101,16 +2122,20 @@ export function renderProjectsTimeline(
         options.onMutation?.(entry.value.project, result);
         return result;
       }
-      const commands = options.milestoneCommands;
       const observation = milestoneObservations.get(entry.item.key);
-      if (!commands || !observation || (role !== 'milestone' && role !== 'start')) {
+      if (!observation || (role !== 'milestone' && role !== 'start' && role !== 'end')) {
         return { type: 'invalid', field: 'path' };
       }
-      const field = 'start';
-      const current = observation.start;
+      let field: 'start' | 'end' = 'start';
+      if (role === 'end' || (role === 'milestone' && observation.end && !observation.start)) {
+        field = 'end';
+      }
+      const current = observation[field];
       const value = movedProjectDate(current, date);
       if (!value) return { type: 'invalid', field };
-      const result = await commands.setRange(observation.observed, { [field]: value });
+      const result = options.milestoneAdapter
+        ? await options.milestoneAdapter.setDates(entry.value.note, { [field]: value })
+        : await options.milestoneCommands!.setRange(observation.observed, { [field]: value });
       options.onMilestoneMutation?.(entry.value.note, result);
       return result;
     },
@@ -2129,7 +2154,18 @@ export function renderProjectsTimeline(
         options.onMutation?.(entry.value.project, result);
         return result;
       }
-      return { type: 'invalid', field: 'milestone-range' };
+      const observation = milestoneObservations.get(entry.item.key);
+      if (!observation) return { type: 'invalid', field: 'path' };
+      const nextStart = movedProjectDate(observation.start, start);
+      const nextEnd = movedProjectDate(observation.end, end);
+      if (!nextStart) return { type: 'invalid', field: 'start' };
+      if (!nextEnd) return { type: 'invalid', field: 'end' };
+      const patch = { start: nextStart, end: nextEnd };
+      const result = options.milestoneAdapter
+        ? await options.milestoneAdapter.setDates(entry.value.note, patch)
+        : await options.milestoneCommands!.setRange(observation.observed, patch);
+      options.onMilestoneMutation?.(entry.value.note, result);
+      return result;
     },
     repairProposal: (entry) => repairs.get(entry.item.key),
     onConfirmRepair: async (entry) => {
@@ -2149,10 +2185,16 @@ export function renderWorkNotesTimeline(
   container: HTMLElement,
   options: WorkNotesTimelineOptions,
 ): TimelineViewHandle {
-  const prepared = options.notes.map((note) => ({
-    entry: workNoteTimelineEntry(note),
-    observation: options.commandsEnabled === false ? null : options.commands.observeRange(note),
-  }));
+  const prepared = options.notes.map((note) => {
+    let observation = null;
+    if (options.commandsEnabled !== false) {
+      observation =
+        note.kind === 'milestone' && options.milestoneAdapter
+          ? options.milestoneAdapter.observeDates(note)
+          : options.commands.observeRange(note);
+    }
+    return { entry: workNoteTimelineEntry(note), observation };
+  });
   const canonicalEntries = options.canonicalNotes?.map(workNoteTimelineEntry);
   const observations = new Map(
     prepared.map(({ entry, observation }) => [entry.item.key, observation] as const),
@@ -2162,14 +2204,20 @@ export function renderWorkNotesTimeline(
     role: TimelinePointRole,
     date: string,
   ): Promise<WorkNoteCommandResult> => {
-    const field = role === 'milestone' ? 'start' : role;
-    if (field !== 'start' && field !== 'end') return { type: 'invalid', field };
     const observation = observations.get(entry.item.key);
     if (!observation) return { type: 'invalid', field: 'path' };
+    let field = role;
+    if (role === 'milestone') {
+      field = observation.end && !observation.start ? 'end' : 'start';
+    }
+    if (field !== 'start' && field !== 'end') return { type: 'invalid', field };
     const current = observation[field];
     const value = movedProjectDate(current, date);
     if (!value) return { type: 'invalid', field };
-    const result = await options.commands.setRange(observation.observed, { [field]: value });
+    const result =
+      entry.value.kind === 'milestone' && options.milestoneAdapter
+        ? await options.milestoneAdapter.setDates(entry.value, { [field]: value })
+        : await options.commands.setRange(observation.observed, { [field]: value });
     options.onMutation?.(entry.value, result);
     return result;
   };
@@ -2184,10 +2232,11 @@ export function renderWorkNotesTimeline(
     const nextEnd = observation.end && movedProjectDate(observation.end, end);
     if (!nextStart) return { type: 'invalid', field: 'start' };
     if (!nextEnd) return { type: 'invalid', field: 'end' };
-    const result = await options.commands.setRange(observation.observed, {
-      start: nextStart,
-      end: nextEnd,
-    });
+    const patch = { start: nextStart, end: nextEnd };
+    const result =
+      entry.value.kind === 'milestone' && options.milestoneAdapter
+        ? await options.milestoneAdapter.setDates(entry.value, patch)
+        : await options.commands.setRange(observation.observed, patch);
     options.onMutation?.(entry.value, result);
     return result;
   };
@@ -2204,7 +2253,8 @@ export function renderWorkNotesTimeline(
         : undefined,
     ),
     scope: 'workNotes',
-    undatedRole: 'start',
+    undatedRole: (entry) => (entry.value.kind === 'milestone' ? 'milestone' : 'start'),
+    ...(options.today && { today: options.today }),
     ...(options.scale && { scale: options.scale }),
     ...(options.identityWidth !== undefined && { identityWidth: options.identityWidth }),
     ...(options.onPresentationChange && {
