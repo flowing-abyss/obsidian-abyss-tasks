@@ -24,6 +24,7 @@ function cloneNodeRef(ref: TaskNodeRef): TaskNodeRef {
 function cloneComment(comment: TaskCommentSnapshot): TaskCommentSnapshot {
   return {
     ...comment,
+    ...(comment.timestamp === undefined ? {} : { timestamp: { ...comment.timestamp } }),
     ref: { ...comment.ref, parent: cloneNodeRef(comment.ref.parent) },
   };
 }

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { atomDateTime } from '../../src/tasks/domain/commentTimestamp';
 import {
   buildTaskDependencyGraph,
   enumerateTaskNodes,
 } from '../../src/tasks/domain/taskDependencies';
 import type { TaskNodeRef, TaskSnapshot, TaskStatus } from '../../src/tasks/domain/types';
-import { canonicalStatusCatalog, expectDefined, subtask, task } from '../helpers';
+import { localDate } from '../../src/tasks/domain/validation';
+import { canonicalStatusCatalog, expectDefined, subtask, task, taskComment } from '../helpers';
 
 function root(id: string, dependsOn: readonly string[] = [], symbol = ' '): TaskSnapshot {
   return task({
@@ -247,4 +249,49 @@ describe('task dependency graph', () => {
     expect(result.dependencies(target(b)).blockedBy).toHaveLength(1);
     expect(a.ref.filePath).toBe('a.md');
   });
+
+  it.each(['root', 'nested'] as const)(
+    'detaches %s comment timestamps before freezing dependency snapshots',
+    (location) => {
+      const a = root('a');
+      const child = subtask({ title: 'child', ref: { parent: target(a) } });
+      const parent: TaskNodeRef =
+        location === 'root' ? target(a) : { type: 'subtask', ref: child.ref };
+      const comments = [
+        taskComment({
+          ref: { parent },
+          timestamp: { precision: 'day', value: localDate('2026-09-05'), raw: '2026-09-05' },
+        }),
+        taskComment({
+          ref: { parent, relativeLine: 2 },
+          timestamp: {
+            precision: 'instant',
+            atom: atomDateTime('2026-09-05T00:00:00Z'),
+            epochMs: 1788566400000,
+            raw: '2026-09-05T00:00:00Z',
+          },
+        }),
+      ];
+      const source =
+        location === 'root' ? { ...a, comments } : { ...a, subtasks: [{ ...child, comments }] };
+      const nodes = enumerateTaskNodes([source]);
+      const output = expectDefined(
+        nodes.find((item) => item.node.title === (location === 'root' ? 'a' : 'child')),
+      ).node.comments;
+
+      for (const [index, comment] of comments.entries()) {
+        const original = expectDefined(comment.timestamp);
+        const cloned = expectDefined(output[index]?.timestamp);
+        expect(Object.isFrozen(original)).toBe(false);
+        expect(cloned).not.toBe(original);
+        expect(Object.isFrozen(cloned)).toBe(true);
+        expect(cloned).toEqual(original);
+        expect(Reflect.set(original, 'raw', 'changed')).toBe(true);
+      }
+      expect(output.map((comment) => comment.timestamp?.raw)).toEqual([
+        '2026-09-05',
+        '2026-09-05T00:00:00Z',
+      ]);
+    },
+  );
 });
