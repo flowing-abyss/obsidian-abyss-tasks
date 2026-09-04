@@ -7,6 +7,11 @@ pnpm-lock.yaml
 # Vendored skill library — not ours to reformat.
 .ai/skills/
 
+# CodeGraph owns a marker-fenced block in this canonical instructions file.
+# Its installer format is intentionally preserved byte-for-byte and differs
+# from Prettier's Markdown whitespace around the opening marker.
+.ai/configs/AGENTS.md
+
 # Generated symlinks back into .ai/configs/ — Prettier refuses to follow
 # symlinks, and the real files (under .ai/configs/) are formatted directly.
 /AGENTS.md

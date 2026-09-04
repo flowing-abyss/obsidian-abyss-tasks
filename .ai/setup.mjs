@@ -57,6 +57,10 @@ const links = [
   ['.pi/skills', '.ai/skills'],
   ['.agents/skills', '.ai/skills'],
 
+  // Claude Code's local CodeGraph installer writes project instructions here.
+  // Keep it on the same canonical source as every other agent instruction file.
+  ['.claude/CLAUDE.md', path.join('.ai/configs', 'AGENTS.md')],
+
   // AGENTS.md is the canonical agent-instructions file (mirrored from
   // `.ai/configs/AGENTS.md` below, like everything else). CLAUDE.md is
   // just a name Claude Code specifically looks for, so it links straight to

@@ -2,9 +2,9 @@
 // real tree, not a separate validation framework and not synthetic
 // fixtures. Checks objective, mechanically-verifiable properties only:
 // broken links, dangling formal skill references, and the specific hook
-// registrations this template actually depends on. It does not check
-// Markdown prose, workflow explanations, or hardcoded skill lists — those
-// turn tests into a second specification and drift from the real docs.
+// registrations this template actually depends on. It does not generally
+// check Markdown prose, workflow explanations, or hardcoded skill lists —
+// externally owned, byte-exact integration blocks are the sole exception.
 
 import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
@@ -80,23 +80,46 @@ test('inject-superpowers.mjs is registered in the Claude Code and Codex configs'
   assert.match(codex, /inject-superpowers\.mjs/);
 });
 
-test('CodeGraph is enabled, Serena is absent, and canonical instructions explain indexing', () => {
+test('CodeGraph is wired exactly as its local installer expects for every configured agent', () => {
   const codex = readFileSync(path.join(configsRoot, '.codex', 'config.toml'), 'utf8');
   const opencode = JSON.parse(readFileSync(path.join(configsRoot, 'opencode.json'), 'utf8'));
   const claude = JSON.parse(readFileSync(path.join(configsRoot, '.mcp.json'), 'utf8'));
+  const claudeSettings = JSON.parse(
+    readFileSync(path.join(configsRoot, '.claude', 'settings.json'), 'utf8'),
+  );
   const agents = readFileSync(path.join(configsRoot, 'AGENTS.md'), 'utf8');
+  const expectedInstructions = `<!-- CODEGRAPH_START -->
+## CodeGraph
 
-  assert.match(codex, /\[mcp_servers\.codegraph\][\s\S]*?enabled = true/);
+In repositories indexed by CodeGraph (a \`.codegraph/\` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
+
+- **MCP tool** (when available): \`codegraph_explore\` answers most code questions in one call — the relevant symbols' verbatim source plus the call paths between them, including dynamic-dispatch hops grep can't follow. Name a file or symbol in the query to read its current line-numbered source. If it's listed but deferred, load it by name via tool search.
+- **Shell** (always works): \`codegraph explore "<symbol names or question>"\` prints the same output.
+
+If there is no \`.codegraph/\` directory, skip CodeGraph entirely — indexing is the user's decision.
+<!-- CODEGRAPH_END -->`;
+
+  assert.match(
+    codex,
+    /\[mcp_servers\.codegraph\]\ncommand = "codegraph"\nargs = \["serve", "--mcp"\]/,
+  );
   assert.doesNotMatch(codex, /mcp_servers\.serena/);
   assert.equal(opencode.mcp?.codegraph?.enabled, true);
   assert.equal(opencode.mcp?.serena, undefined);
   assert.deepEqual(claude.mcpServers?.codegraph, {
+    type: 'stdio',
     command: 'codegraph',
     args: ['serve', '--mcp'],
   });
   assert.equal(claude.mcpServers?.serena, undefined);
-  assert.match(agents, /codegraph init --yes/);
-  assert.match(agents, /codegraph status/);
+  assert.ok(claudeSettings.permissions?.allow?.includes('mcp__codegraph__*'));
+  assert.ok(
+    claudeSettings.hooks?.UserPromptSubmit?.some((entry) =>
+      entry.hooks?.some((hook) => hook.command === 'codegraph prompt-hook'),
+    ),
+  );
+  const markerSections = agents.match(/<!-- CODEGRAPH_START -->[\s\S]*?<!-- CODEGRAPH_END -->/gu);
+  assert.deepEqual(markerSections, [expectedInstructions]);
 });
 
 test('every Codex command hook has a commandWindows counterpart', () => {

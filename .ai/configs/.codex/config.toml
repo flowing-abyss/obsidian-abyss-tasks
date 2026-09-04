@@ -6,7 +6,6 @@ enabled = false
 [mcp_servers.codegraph]
 command = "codegraph"
 args = ["serve", "--mcp"]
-enabled = true
 
 [mcp_servers.github]
 url = "https://api.githubcopilot.com/mcp/"
