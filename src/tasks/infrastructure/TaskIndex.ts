@@ -17,6 +17,14 @@ import { cloneTaskSnapshot } from '../domain/cloneTaskSnapshot';
 import type { TaskResolutionCandidate } from '../domain/commands';
 import type { StatusCatalog } from '../domain/StatusCatalog';
 import {
+  buildTaskDependencyGraph,
+  enumerateTaskNodes,
+  type TaskDependencyEligibility,
+  type TaskDependencyGraph,
+  type TaskDependencyProjection,
+  type TaskNodeSnapshot,
+} from '../domain/taskDependencies';
+import {
   reconcileRootTransitions,
   taskReconciliationKey,
   type ProvenRootRevisionOverride,
@@ -918,6 +926,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   private initialized = false;
   private destroyed = false;
   private statusCatalog: StatusCatalog;
+  private dependencyGraph: TaskDependencyGraph | undefined;
   private readonly blockEditor = new TaskBlockEditor();
   private readonly locator: TaskLocator;
 
@@ -931,6 +940,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
 
   setStatusCatalog(statusCatalog: StatusCatalog): void {
     this.statusCatalog = statusCatalog;
+    this.dependencyGraph = undefined;
   }
 
   async initialize(): Promise<void> {
@@ -965,6 +975,25 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     const tasks = initialQueryTasks(this.taskMap, query);
     const filtered = filterQueryTasks(tasks, query);
     return [...filtered].sort(stableTaskOrder).map(cloneTaskSnapshot);
+  }
+
+  listNodes(query?: TaskQuery): readonly TaskNodeSnapshot[] {
+    return enumerateTaskNodes(filterQueryTasks(initialQueryTasks(this.taskMap, query), query));
+  }
+
+  dependencies(target: TaskNodeRef): TaskDependencyProjection {
+    return this.currentDependencyGraph().dependencies(target);
+  }
+
+  dependencyEligibility(blocker: TaskNodeRef, dependent: TaskNodeRef): TaskDependencyEligibility {
+    return this.currentDependencyGraph().eligibility(blocker, dependent);
+  }
+
+  private currentDependencyGraph(): TaskDependencyGraph {
+    this.dependencyGraph ??= buildTaskDependencyGraph(this.listNodes(), (symbol) =>
+      this.statusCatalog.statusForSymbol(symbol),
+    );
+    return this.dependencyGraph;
   }
 
   forCalendarProjection(dates: readonly LocalDate[]): CalendarProjectionSources {
@@ -1032,6 +1061,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     this.fileLifecycles = new WeakMap();
     this.pendingReads.clear();
     this.taskMap.clear();
+    this.dependencyGraph = undefined;
     this.fileGenerations.clear();
     this.reconciliationTransitions.clear();
     this.options.refAuthority?.clear();
@@ -1306,6 +1336,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   }
 
   private installFileTasks(filePath: string, tasks: readonly TaskSnapshot[]): void {
+    this.dependencyGraph = undefined;
     if (tasks.length > 0) this.taskMap.set(filePath, tasks);
     else this.taskMap.delete(filePath);
     const sources = calendarSources(tasks);
@@ -1453,6 +1484,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
   }
 
   private removeFile(filePath: string): void {
+    this.dependencyGraph = undefined;
     this.taskMap.delete(filePath);
     this.calendarDateIndex.updateFile(filePath, []);
     this.recurringSourcesByFile.delete(filePath);

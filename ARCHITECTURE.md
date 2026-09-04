@@ -166,6 +166,25 @@ authored duplicates, as immutable projections sourced only from Tasks-compatible
 without migration. Generated recurrence occurrences strip both task IDs and dependency edges, while
 the completed original occurrence retains its authored carriers.
 
+The pure `taskDependencies` domain module enumerates persisted roots and subtasks in canonical
+file/root/source order. Each node carries its root and the complete subtask path for rebuilding a
+structural inspector frame. Recurrence forecasts are not graph nodes. Concrete `TaskIndex` methods
+derive direct `Blocked by` rows in declared ID order and inverse `Blocks` rows in source order;
+these methods remain internal until an application consumer needs the capability.
+
+Dependency activity follows Tasks semantics: both the dependent and a matching prerequisite must
+be open or in progress under the live status catalog. Done and cancelled endpoints never contribute
+active counts. Missing IDs remain visible but non-blocking. Duplicate IDs produce one ambiguous
+prerequisite row, active if any matching task is active; each matching task's inverse relation uses
+its own status. Authored duplicate declarations collapse in the projection, and authored cycles stay
+visible as direct relations. Eligibility separately rejects edges that would introduce cycles.
+
+`TaskIndex` owns the derived graph cache and invalidates it when indexed file content changes,
+files are renamed or deleted, or `setStatusCatalog()` replaces the catalog. Relation activity is
+classified at query time, including in-place catalog updates, without reparsing Markdown. Node and
+relation results are detached through snapshot cloning and frozen, so callers cannot alter the
+index or subsequent projections. No dependency data is persisted outside Markdown.
+
 ### Editing an existing task
 
 1. A panel or calendar renderer translates the interaction into a `TaskCommand`.

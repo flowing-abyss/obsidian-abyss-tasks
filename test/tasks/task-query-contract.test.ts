@@ -32,6 +32,28 @@ async function queryIndex(files: Record<string, string>): Promise<TaskIndex> {
 }
 
 describe('TaskQueryApi contract', () => {
+  it('enumerates only persisted nodes with hierarchy and detached dependency values', async () => {
+    const index = await queryIndex({
+      'z.md': '- [ ] last',
+      'a.md': '- [ ] recurring 🆔 a 🔁 every day 📅 2026-09-05\n  - [ ] child ⛔ a\n    - [ ] leaf',
+    });
+    index.forCalendarProjection([localDate('2026-09-10'), localDate('2026-09-11')]);
+    const nodes = index.listNodes();
+    expect(nodes.map(({ node, path }) => [node.title, path.map((item) => item.title)])).toEqual([
+      ['recurring', []],
+      ['child', ['child']],
+      ['leaf', ['child', 'leaf']],
+      ['last', []],
+    ]);
+    expect(index.listNodes({ filePath: 'z.md' }).map((item) => item.node.title)).toEqual(['last']);
+    const child = nodes[1];
+    if (child === undefined) throw new Error('missing child');
+    expect(Reflect.set(child.node.dependsOn, 'length', 0)).toBe(false);
+    expect(index.dependencies(child.target).activeBlockedByCount).toBe(1);
+    expect(index.listNodes()).toHaveLength(4);
+    index.destroy();
+  });
+
   it('applies the exact current file, folder, tag, status, and list-date semantics', async () => {
     const index = await queryIndex({
       'Work/2026-07-01.md': [

@@ -137,6 +137,53 @@ function captureCreateCallback(
 }
 
 describe('TaskIndex lifecycle and events', () => {
+  it('refreshes dependency projections after catalog changes, edits, rename and deletion', async () => {
+    const { app, index, fireChanged } = await setup({
+      'a.md': '- [?] blocker 🆔 a',
+      'b.md': '- [ ] dependent ⛔ a',
+    });
+    await index.initialize();
+    const dependent = (): taskTypes.TaskNodeRef => ({
+      type: 'task',
+      ref: expectDefined(index.list({ filePath: 'b.md' })[0]).ref,
+    });
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(1);
+    const catalog = canonicalStatusCatalog();
+    catalog.replace([
+      ...catalog.all(),
+      { id: 'custom', symbol: '?', type: 'cancelled', defaultForType: false },
+    ]);
+    index.setStatusCatalog(catalog);
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(0);
+    expect(index.list({ filePath: 'a.md' })[0]?.status).toBe('open');
+    catalog.replace(catalog.all().filter((rule) => rule.symbol !== '?'));
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(1);
+    fireChanged(mdFile(app, 'a.md'), '- [x] blocker 🆔 a', taskCache());
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(0);
+    fireChanged(mdFile(app, 'a.md'), '- [ ] blocker 🆔 a', taskCache());
+    const beforeRename = expectDefined(
+      index.listNodes().find((item) => item.node.title === 'blocker'),
+    ).target;
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(1);
+    await app.vault.rename(mdFile(app, 'a.md'), 'renamed.md');
+    await flushMicrotasks();
+    expect(index.dependencies(dependent()).blockedBy[0]).toMatchObject({
+      task: { root: { source: { filePath: 'renamed.md' } } },
+    });
+    expect(index.dependencyEligibility(beforeRename, dependent())).toEqual({
+      type: 'rejected',
+      reason: 'unavailable',
+    });
+    await app.fileManager.trashFile(mdFile(app, 'renamed.md'));
+    await flushMicrotasks();
+    expect(index.dependencies(dependent()).blockedBy).toEqual([
+      { type: 'unavailable', dependencyId: 'a', reason: 'missing' },
+    ]);
+    expect(index.dependencies(dependent()).activeBlockedByCount).toBe(0);
+    index.destroy();
+    expect(index.listNodes()).toEqual([]);
+  });
+
   it('distinguishes a plugin-owned authority successor and safely applies the intent', async () => {
     const source = '- [ ] alpha\n';
     const candidate = '- [ ] beta\n';
