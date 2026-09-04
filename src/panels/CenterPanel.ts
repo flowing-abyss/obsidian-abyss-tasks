@@ -536,6 +536,12 @@ export class CenterPanel {
         card.dataset['filePath'] === rootTaskRef(root).filePath &&
         card.dataset['line'] === String(taskNodeLine(root as TaskSnapshot, current));
       card.classList.toggle('is-selected', isSelected);
+      this.syncTaskDeleteButton(
+        card,
+        isSelected && current === root && this.selectedTaskKeys.size === 0
+          ? (root as TaskSnapshot)
+          : undefined,
+      );
     });
   }
 
@@ -2057,8 +2063,9 @@ export class CenterPanel {
   }
 
   private renderTaskCard(container: HTMLElement, task: TaskSnapshot): void {
+    const isSelected = this.isTaskCardSelected(task);
     const card = container.createDiv({
-      cls: `abyss-task-card${this.isTaskCardSelected(task) ? ' is-selected' : ''}`,
+      cls: `abyss-task-card${isSelected ? ' is-selected' : ''}`,
       attr: { tabindex: '-1' },
     });
     applyTaskPresentationIdentity(card, task.ref);
@@ -2069,7 +2076,11 @@ export class CenterPanel {
     this.renderTaskStatus(mainRow, task);
     this.renderTaskCardBody(mainRow, card, task);
     this.renderTaskCardMetadata(mainRow, task);
-    this.mountTaskCardInteractions(card, mainRow, task);
+    this.mountTaskCardInteractions(card, task);
+    this.syncTaskDeleteButton(
+      card,
+      isSelected && this.selectedTaskKeys.size === 0 ? task : undefined,
+    );
   }
 
   private isTaskCardSelected(task: TaskSnapshot): boolean {
@@ -2260,14 +2271,27 @@ export class CenterPanel {
     );
   }
 
-  private mountTaskCardInteractions(
-    card: HTMLElement,
-    mainRow: HTMLElement,
-    task: TaskSnapshot,
-  ): void {
+  private mountTaskCardInteractions(card: HTMLElement, task: TaskSnapshot): void {
     card.addEventListener('click', (event) => {
       this.handleTaskCardClick(event, task);
     });
+    this.mountTaskCardDrag(card, task);
+    card.addEventListener('contextmenu', (event) => {
+      this.handleTaskContextMenu(event, card, task);
+    });
+  }
+
+  private syncTaskDeleteButton(card: HTMLElement, task: TaskSnapshot | undefined): void {
+    const mainRow = card.querySelector<HTMLElement>('.abyss-task-card-main-row');
+    if (mainRow == null) return;
+    const existing = mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn');
+    if (task === undefined) {
+      existing?.remove();
+      mainRow.removeClass('abyss-task-card-main-row--has-delete');
+      return;
+    }
+    mainRow.addClass('abyss-task-card-main-row--has-delete');
+    if (existing != null) return;
     const deleteButton = mainRow.createEl('button', {
       cls: 'abyss-task-delete-btn',
       attr: { title: 'Delete task', 'aria-label': 'Delete task' },
@@ -2276,10 +2300,6 @@ export class CenterPanel {
     deleteButton.addEventListener('click', (event) => {
       event.stopPropagation();
       runAsyncAction(this.deleteTask(task), 'Could not complete UI action');
-    });
-    this.mountTaskCardDrag(card, task);
-    card.addEventListener('contextmenu', (event) => {
-      this.handleTaskContextMenu(event, card, task);
     });
   }
 
@@ -4226,6 +4246,7 @@ export class CenterPanel {
         }
       }
     });
+    this.updateTaskStackSelection();
 
     const live =
       this.el.querySelector<HTMLElement>('.abyss-selection-live') ??

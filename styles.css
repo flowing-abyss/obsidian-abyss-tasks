@@ -3893,7 +3893,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 
 /* Delete button on task card */
 .abyss-task-delete-btn {
-  opacity: 0;
   background: transparent;
   border: none;
   color: var(--text-muted);
@@ -3907,7 +3906,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   border-radius: 4px;
   flex-shrink: 0;
   transition:
-    opacity 0.1s,
     color 0.1s,
     background 0.1s;
   padding: 0;
@@ -3918,10 +3916,6 @@ body.is-mobile .tasksCalendar .statisticPopup li {
   display: block;
   width: 16px;
   height: 16px;
-}
-
-.abyss-task-card:hover .abyss-task-delete-btn {
-  opacity: 1;
 }
 
 .abyss-task-delete-btn:hover {
@@ -3935,8 +3929,12 @@ body.is-mobile .tasksCalendar .statisticPopup li {
 @container abyss-task-list (max-width: 28rem) {
   .abyss-task-card-main-row {
     display: grid;
-    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
+    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr);
     gap: 2px var(--abyss-task-card-primary-gap);
+  }
+
+  .abyss-task-card-main-row--has-delete {
+    grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px;
   }
 
   .abyss-task-card-main-row > .abyss-status-marker {

@@ -271,7 +271,7 @@ async function makePanel(
 describe('CenterPanel task-card primary row', () => {
   fixedToday('2026-06-25');
 
-  it('keeps every primary control in one row and renders the description below it', () => {
+  it('mounts the delete control in the primary row only after task activation', () => {
     const snapshot = task({
       title: 'Pay Migaku',
       recurrence: 'every week',
@@ -294,8 +294,8 @@ describe('CenterPanel task-card primary row', () => {
         expect.stringContaining('abyss-status-marker'),
         'abyss-task-body',
         'abyss-task-meta-right',
-        'abyss-task-delete-btn',
       ]);
+      expect(mainRow.querySelector('.abyss-task-delete-btn')).toBeNull();
 
       const titleRow = expectDefined(mainRow.querySelector<HTMLElement>('.abyss-task-title-row'));
       const recurrence = expectDefined(
@@ -307,9 +307,23 @@ describe('CenterPanel task-card primary row', () => {
       expect(description.parentElement).toBe(card);
       expect(description.previousElementSibling).toBe(mainRow);
 
-      const deleteButton = expectDefined(
-        mainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn'),
+      card.click();
+      expect(state.get('taskStack')).toEqual([snapshot]);
+      const activeCard = expectDefined(
+        panel['el'].querySelector<HTMLElement>('.abyss-task-card.is-selected'),
       );
+      const activeMainRow = expectDefined(
+        activeCard.querySelector<HTMLElement>('.abyss-task-card-main-row'),
+      );
+      const deleteButton = expectDefined(
+        activeMainRow.querySelector<HTMLButtonElement>('.abyss-task-delete-btn'),
+      );
+      expect(Array.from(activeMainRow.children, (child) => child.className)).toEqual([
+        expect.stringContaining('abyss-status-marker'),
+        'abyss-task-body',
+        'abyss-task-meta-right',
+        'abyss-task-delete-btn',
+      ]);
       expect(deleteButton.querySelector('svg[data-lucide="x"]')).not.toBeNull();
       expect(deleteButton.textContent).toBe('');
     } finally {

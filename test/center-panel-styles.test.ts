@@ -72,6 +72,10 @@ describe('CenterPanel task metadata styles', () => {
     const center = declarationsFor('.abyss-center');
     const compact = atRuleBlock('@container abyss-task-list (max-width: 28rem)');
     const mainRow = declarationsForSource(compact, '.abyss-task-card-main-row');
+    const mainRowWithDelete = declarationsForSource(
+      compact,
+      '.abyss-task-card-main-row--has-delete',
+    );
     const metadata = declarationsForSource(compact, '.abyss-task-meta-right');
     const sourceNote = declarationsForSource(compact, '.abyss-task-source-note');
 
@@ -79,11 +83,22 @@ describe('CenterPanel task metadata styles', () => {
     expect(center).toContain('container-name: abyss-task-list');
     expect(mainRow).toContain('display: grid');
     expect(mainRow).toContain(
+      'grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr)',
+    );
+    expect(mainRow).not.toContain('minmax(0, 1fr) 24px');
+    expect(mainRowWithDelete).toContain(
       'grid-template-columns: var(--abyss-task-card-marker-size) minmax(0, 1fr) 24px',
     );
     expect(metadata).toContain('grid-column: 2 / -1');
     expect(metadata).toContain('grid-row: 2');
     expect(sourceNote).toContain('white-space: nowrap');
+  });
+
+  it('keeps a mounted delete button visible without a card-hover reveal rule', () => {
+    const deleteButton = declarationsFor('.abyss-task-delete-btn');
+
+    expect(deleteButton).not.toContain('opacity: 0');
+    expect(declarationsFor('.abyss-task-card:hover .abyss-task-delete-btn')).toBe('');
   });
 
   it('keeps hover and selection states paint-only so controls do not shift', () => {

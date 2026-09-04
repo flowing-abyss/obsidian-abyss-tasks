@@ -109,6 +109,34 @@ describe('CenterPanel multi-selection', () => {
     expect(expectDefined(cards[1]).classList.contains('abyss-multi-selected')).toBe(false);
   });
 
+  it('mounts one delete button only on the active root task', () => {
+    const { el, state } = makeCenter([t1, t2]);
+    const [first, second] = cards(el);
+
+    expect(el.querySelectorAll('.abyss-task-delete-btn')).toHaveLength(0);
+
+    click(expectDefined(first));
+    expect(expectDefined(first).querySelector('.abyss-task-delete-btn')).not.toBeNull();
+    expect(expectDefined(second).querySelector('.abyss-task-delete-btn')).toBeNull();
+
+    click(expectDefined(second));
+    expect(expectDefined(first).querySelector('.abyss-task-delete-btn')).toBeNull();
+    expect(expectDefined(second).querySelector('.abyss-task-delete-btn')).not.toBeNull();
+    expect(el.querySelectorAll('.abyss-task-delete-btn')).toHaveLength(1);
+
+    click(expectDefined(first), { ctrlKey: true });
+    expect(expectDefined(first).classList.contains('abyss-multi-selected')).toBe(true);
+    expect(expectDefined(first).querySelector('.abyss-task-delete-btn')).toBeNull();
+    expect(el.querySelectorAll('.abyss-task-delete-btn')).toHaveLength(0);
+
+    click(expectDefined(first), { ctrlKey: true });
+    expect(expectDefined(first).classList.contains('abyss-multi-selected')).toBe(false);
+    expect(expectDefined(second).querySelector('.abyss-task-delete-btn')).not.toBeNull();
+
+    state.set('taskStack', []);
+    expect(el.querySelectorAll('.abyss-task-delete-btn')).toHaveLength(0);
+  });
+
   it('creates the selection live region without an initial announcement', () => {
     const { el } = makeCenter([t1, t2]);
 
