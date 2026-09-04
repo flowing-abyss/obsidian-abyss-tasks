@@ -1,5 +1,5 @@
 import { TFile, type App } from 'obsidian';
-import { parseLinks } from '../../../parser/links';
+import { parseLinks } from '../../../markdown/links';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,

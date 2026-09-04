@@ -1,5 +1,5 @@
 import { Component, type App } from 'obsidian';
-import type { LinkToken } from '../parser/links';
+import type { LinkToken } from '../markdown/links';
 import { DEFAULT_VIEW_CONFIG } from '../settings/defaults';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';

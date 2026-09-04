@@ -1,7 +1,7 @@
 import type { App } from 'obsidian';
 import { Component, setIcon } from 'obsidian';
 import type { AppState } from '../app/AppState';
-import type { LinkToken } from '../parser/links';
+import type { LinkToken } from '../markdown/links';
 import { formatDurationFromMinutes, parseDurationToMinutes } from '../parser/TaskParser';
 
 import type { CalendarSettings } from '../settings/types';

@@ -1,3 +1,4 @@
+import { collapseLinks } from '../markdown/links';
 import type { TaskPriority } from '../tasks/domain/types';
 import type {
   ParsedTaskLine,
@@ -8,7 +9,6 @@ import {
   isLegacyTaskRecurrenceSpanConsumed,
   legacyTaskRecurrenceFromParsed,
 } from './extractMetadata';
-import { collapseLinks } from './links';
 import type { ParseContext, Task } from './types';
 
 const PRIORITY_MARKER: Readonly<Record<TaskPriority, string>> = {

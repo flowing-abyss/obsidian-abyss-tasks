@@ -1,4 +1,4 @@
-import { parseLinks } from '../../src/parser/links';
+import { parseLinks } from '../../src/markdown/links';
 import type {
   RecurrenceCompletionRequest,
   RecurrenceCompletionRevisionRequest,

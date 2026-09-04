@@ -1,5 +1,5 @@
 import { Modal, Setting, type App } from 'obsidian';
-import { buildLinkRaw, type LinkToken } from '../parser/links';
+import { buildLinkRaw, type LinkToken } from '../markdown/links';
 import { NoteSuggest } from './NoteSuggest';
 import { noInteractionOwnership, type InteractionOwnershipPort } from './interactionOwnership';
 

@@ -5,7 +5,7 @@ import {
   pairAnchorsToTokens,
   parseLinks,
   type LinkToken,
-} from '../src/parser/links';
+} from '../src/markdown/links';
 import { expectDefined } from './helpers';
 
 function insecureUrl(host: string): string {

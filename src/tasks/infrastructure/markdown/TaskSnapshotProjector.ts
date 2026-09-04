@@ -1,4 +1,4 @@
-import { countLinksIn } from '../../../parser/links';
+import { countLinksIn } from '../../../markdown/links';
 import type { CommentTimestamp } from '../../domain/commentTimestamp';
 import { parseCommentTimestampPrefix } from '../../domain/commentTimestamp';
 import type { StatusCatalog } from '../../domain/StatusCatalog';

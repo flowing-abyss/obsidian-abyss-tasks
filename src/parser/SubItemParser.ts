@@ -1,7 +1,7 @@
+import { collapseLinks } from '../markdown/links';
 import type { StatusCatalog } from '../tasks/domain/StatusCatalog';
 import { parseCommentTimestampPrefix } from '../tasks/domain/commentTimestamp';
 import { extractMetadata, type ExtractedMetadata } from './extractMetadata';
-import { collapseLinks } from './links';
 import type { SubTask, TaskComment } from './types';
 
 export interface SubItemResult {

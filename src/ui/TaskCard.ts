@@ -1,5 +1,5 @@
 import { Notice, Platform, type App, type Component } from 'obsidian';
-import type { LinkToken } from '../parser/links';
+import type { LinkToken } from '../markdown/links';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { TaskSnapshot } from '../tasks';
 import { isForecastCalendarTask } from '../views/calendarOccurrences';

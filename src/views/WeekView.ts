@@ -1,6 +1,6 @@
 import { Component, type App } from 'obsidian';
 import { resolveWeekStartPosition } from '../domain/weekGridOffset';
-import type { LinkToken } from '../parser/links';
+import type { LinkToken } from '../markdown/links';
 import type { ResolvedConfig } from '../settings/types';
 import type { StatusRegistry } from '../status/StatusRegistry';
 import type { LocalDate, TaskSnapshot } from '../tasks';

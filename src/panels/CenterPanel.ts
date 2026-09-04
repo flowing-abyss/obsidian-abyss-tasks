@@ -7,7 +7,7 @@ import {
   statusGroupsEqual,
 } from '../app/listViewState';
 import { firstVisibleWeekDate } from '../domain/weekGridOffset';
-import type { LinkToken } from '../parser/links';
+import type { LinkToken } from '../markdown/links';
 import { PRIORITY_LEVELS } from '../priority';
 import type { ProjectManager } from '../projects/ProjectManager';
 import type { ProjectStore } from '../projects/ProjectStore';

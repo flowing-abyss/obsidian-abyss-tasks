@@ -1,4 +1,4 @@
-import { parseLinks } from '../../../parser/links';
+import { parseLinks } from '../../../markdown/links';
 import { type StatusCatalog } from '../../domain/StatusCatalog';
 import { parseRecurrenceRule } from '../../domain/recurrence';
 import {

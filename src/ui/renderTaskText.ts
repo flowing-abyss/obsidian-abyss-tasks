@@ -1,5 +1,5 @@
 import { Keymap, MarkdownRenderer, Menu, type App, type Component, type MenuItem } from 'obsidian';
-import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../parser/links';
+import { pairAnchorsToTokens, parseLinks, type LinkToken } from '../markdown/links';
 import { showMenuAtMouseEventWithFocus } from './nativeMenuFocus';
 import { runAsyncAction } from './runAsyncAction';
 

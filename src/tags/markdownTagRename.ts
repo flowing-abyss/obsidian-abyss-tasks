@@ -1,4 +1,4 @@
-import { inlineCodeRanges, type SourceRange } from '../parser/inlineCode';
+import { inlineCodeRanges, type SourceRange } from '../markdown/inlineCode';
 
 export type TagRenameScope = 'exact' | 'prefix';
 

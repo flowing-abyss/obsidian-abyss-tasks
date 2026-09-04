@@ -1,7 +1,7 @@
 import type { App } from 'obsidian';
 import { describe, expect, it, vi } from 'vitest';
 import { firstVisibleWeekDate } from '../src/domain/weekGridOffset';
-import type { LinkToken } from '../src/parser/links';
+import type { LinkToken } from '../src/markdown/links';
 import { buildDefaultTaskStatuses } from '../src/settings/defaults';
 import { StatusRegistry } from '../src/status/StatusRegistry';
 import type { TaskSnapshot as Task } from '../src/tasks';
