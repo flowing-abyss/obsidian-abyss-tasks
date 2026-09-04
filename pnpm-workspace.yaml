@@ -4,9 +4,14 @@ packages:
 minimumReleaseAge: 1440
 blockExoticSubdeps: true
 saveExact: true
+strictPeerDependencies: true
 peerDependencyRules:
   allowedVersions:
-    'eslint-plugin-obsidianmd>obsidian': '*'
+    'eslint-plugin-obsidianmd@0.4.2>obsidian': '1.13.1'
+overrides:
+  'eslint-plugin-sonarjs@4.2.0>typescript': '5.9.3'
+allowedDeprecatedVersions:
+  eslint: '9.39.5'
 
 allowBuilds:
   '@parcel/watcher': false
