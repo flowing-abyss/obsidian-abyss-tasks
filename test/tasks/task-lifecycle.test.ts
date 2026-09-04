@@ -18,7 +18,10 @@ import { TaskIndex } from '../../src/tasks/infrastructure/TaskIndex';
 import { TaskBlockEditor } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
-import { ObsidianTaskDestinationProvider } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
+import {
+  ObsidianTaskDestinationProvider,
+  type ConfiguredTaskDestination,
+} from '../../src/tasks/infrastructure/obsidian/ObsidianTaskDestinationProvider';
 import { ObsidianTaskRepository } from '../../src/tasks/infrastructure/obsidian/ObsidianTaskRepository';
 import { presentTaskCreationResult } from '../../src/ui/taskCommandResult';
 import { createAppWithFiles, methodOf, taskQueryApi, useRealMoment } from '../helpers';
@@ -104,10 +107,11 @@ function applicationFor(app: App, settings: CalendarSettings) {
     locator: new TaskLocator(),
     snapshotsFromContent: (filePath, content) => index.snapshotsFromContent(filePath, content),
   });
+  const dailyNotes = new DailyNoteResolver(app, settings);
   const provider = new ObsidianTaskDestinationProvider(
     app,
-    settings,
-    new DailyNoteResolver(app, settings),
+    () => configuredDestination(settings),
+    () => dailyNotes.planDailyNoteDestination(),
   );
   return new TaskApplicationService(
     index,
@@ -116,6 +120,17 @@ function applicationFor(app: App, settings: CalendarSettings) {
     { today: () => localDate('2026-07-14') },
     provider,
   );
+}
+
+function configuredDestination(settings: CalendarSettings): ConfiguredTaskDestination {
+  return {
+    addToToday: settings.addToToday,
+    customFilePath: settings.customFilePath,
+    insertion:
+      settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0
+        ? { type: 'section', heading: settings.taskInsertionSection }
+        : { type: 'append' },
+  };
 }
 
 function rootRef(harness: Harness, content: string, line = 0): TaskRef {
@@ -743,10 +758,11 @@ describe('TaskApplicationService lifecycle settings', () => {
 describe('ObsidianTaskDestinationProvider', () => {
   it('plans an existing explicit destination without creating it', async () => {
     const app = await createAppWithFiles({ 'existing.md': '# Existing\n' });
+    const dailyNotes = new DailyNoteResolver(app, DEFAULT_SETTINGS);
     const provider = new ObsidianTaskDestinationProvider(
       app,
-      DEFAULT_SETTINGS,
-      new DailyNoteResolver(app, DEFAULT_SETTINGS),
+      () => configuredDestination(DEFAULT_SETTINGS),
+      () => dailyNotes.planDailyNoteDestination(),
     );
     const create = vi.spyOn(app.vault, 'create');
 
@@ -785,7 +801,11 @@ describe('ObsidianTaskDestinationProvider', () => {
       taskInsertionSection: '## Tasks',
     };
     const resolver = new DailyNoteResolver(app, settings);
-    const provider = new ObsidianTaskDestinationProvider(app, settings, resolver);
+    const provider = new ObsidianTaskDestinationProvider(
+      app,
+      () => configuredDestination(settings),
+      () => resolver.planDailyNoteDestination(),
+    );
 
     const result = await provider.resolveConfiguredDefault();
 
@@ -804,31 +824,51 @@ describe('ObsidianTaskDestinationProvider', () => {
 
   it('creates an empty configured custom note and reports absent or failed destinations', async () => {
     const app = await createAppWithFiles({});
-    const customSettings = {
-      ...DEFAULT_SETTINGS,
+    let configured: ConfiguredTaskDestination = {
       addToToday: false,
       customFilePath: 'Inbox.md',
+      insertion: { type: 'append' },
     };
     const custom = new ObsidianTaskDestinationProvider(
       app,
-      customSettings,
-      new DailyNoteResolver(app, customSettings),
+      () => configured,
+      () => {
+        throw new Error('daily plan not requested');
+      },
     );
+    const firstPlan = await custom.planConfiguredDefault();
+    expect(firstPlan?.destination.filePath).toBe('Inbox.md');
+    expect(firstPlan?.destination.insertion).not.toBe(configured.insertion);
+    configured = {
+      addToToday: false,
+      customFilePath: 'Later.md',
+      insertion: { type: 'section', heading: '## Tasks' },
+    };
+    expect((await custom.planConfiguredDefault())?.destination).toEqual({
+      filePath: 'Later.md',
+      insertion: { type: 'section', heading: '## Tasks' },
+    });
+
     await expect(custom.resolveConfiguredDefault()).resolves.toEqual({
       type: 'resolved',
-      destination: { filePath: 'Inbox.md', insertion: { type: 'append' } },
+      destination: {
+        filePath: 'Later.md',
+        insertion: { type: 'section', heading: '## Tasks' },
+      },
     });
-    expect(app.vault.getAbstractFileByPath('Inbox.md')).toBeInstanceOf(TFile);
+    expect(app.vault.getAbstractFileByPath('Later.md')).toBeInstanceOf(TFile);
 
-    const unavailableSettings = {
-      ...DEFAULT_SETTINGS,
+    const unavailableConfiguration: ConfiguredTaskDestination = {
       addToToday: false,
       customFilePath: '',
+      insertion: { type: 'append' },
     };
     const unavailable = new ObsidianTaskDestinationProvider(
       app,
-      unavailableSettings,
-      new DailyNoteResolver(app, unavailableSettings),
+      () => unavailableConfiguration,
+      () => {
+        throw new Error('daily plan not requested');
+      },
     );
     await expect(unavailable.resolveConfiguredDefault()).resolves.toEqual({
       type: 'unavailable',
@@ -838,10 +878,39 @@ describe('ObsidianTaskDestinationProvider', () => {
     vi.spyOn(failedApp.vault, 'create').mockRejectedValue(new Error('disk full'));
     const failed = new ObsidianTaskDestinationProvider(
       failedApp,
-      customSettings,
-      new DailyNoteResolver(failedApp, customSettings),
+      () => configured,
+      () => {
+        throw new Error('daily plan not requested');
+      },
     );
     await expect(failed.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
+  });
+
+  it('reports thrown or rejected daily-note plans as unavailable', async () => {
+    const app = await createAppWithFiles({});
+    const configuration: ConfiguredTaskDestination = {
+      addToToday: true,
+      customFilePath: '',
+      insertion: { type: 'append' },
+    };
+    const thrown = new ObsidianTaskDestinationProvider(
+      app,
+      () => configuration,
+      () => {
+        throw new Error('resolver failed');
+      },
+    );
+    const rejected = new ObsidianTaskDestinationProvider(
+      app,
+      () => configuration,
+      () => ({
+        destination: { filePath: 'daily/today.md', insertion: { type: 'append' } },
+        prepare: async () => await Promise.reject(new Error('provider failed')),
+      }),
+    );
+
+    await expect(thrown.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
+    await expect(rejected.resolveConfiguredDefault()).resolves.toEqual({ type: 'unavailable' });
   });
 });
 

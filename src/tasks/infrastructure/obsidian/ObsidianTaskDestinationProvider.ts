@@ -1,6 +1,4 @@
 import { TFile, normalizePath, type App } from 'obsidian';
-import type { DailyNoteResolver } from '../../../resolvers/DailyNoteResolver';
-import type { CalendarSettings } from '../../../settings/types';
 import type {
   TaskDestinationPlan,
   TaskDestinationProvider,
@@ -8,29 +6,33 @@ import type {
 } from '../../application/TaskDestinationProvider';
 import type { TaskDestination, TaskInsertionPolicy } from '../../domain/types';
 
-function configuredInsertion(settings: CalendarSettings): TaskInsertionPolicy {
-  return settings.taskInsertionMode === 'section' && settings.taskInsertionSection.trim().length > 0
-    ? { type: 'section', heading: settings.taskInsertionSection }
-    : { type: 'append' };
+export interface ConfiguredTaskDestination {
+  readonly addToToday: boolean;
+  readonly customFilePath: string;
+  readonly insertion: TaskInsertionPolicy;
 }
+
+type CurrentTaskDestinationConfiguration = () => ConfiguredTaskDestination;
+type PlanDailyNoteDestination = () => TaskDestinationPlan;
 
 export class ObsidianTaskDestinationProvider implements TaskDestinationProvider {
   constructor(
     private readonly app: App,
-    private readonly settings: CalendarSettings,
-    private readonly dailyNotes: DailyNoteResolver,
+    private readonly currentConfiguration: CurrentTaskDestinationConfiguration,
+    private readonly planDailyNoteDestination: PlanDailyNoteDestination,
   ) {}
 
   planConfiguredDefault(): Promise<TaskDestinationPlan | undefined> {
     try {
-      if (this.settings.addToToday) {
-        return Promise.resolve(this.safePlan(this.dailyNotes.planDailyNoteDestination()));
+      const configuration = this.currentConfiguration();
+      if (configuration.addToToday) {
+        return Promise.resolve(this.safePlan(this.planDailyNoteDestination()));
       }
-      const configuredPath = this.settings.customFilePath.trim();
+      const configuredPath = configuration.customFilePath.trim();
       if (configuredPath.length === 0) return Promise.resolve(undefined);
       return this.planExplicit({
         filePath: configuredPath,
-        insertion: configuredInsertion(this.settings),
+        insertion: { ...configuration.insertion },
       });
     } catch {
       return Promise.resolve(undefined);

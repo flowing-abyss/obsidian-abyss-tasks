@@ -770,6 +770,7 @@ export function configuredTaskApplication(
     snapshotsFromContent: (path, content) => index.snapshotsFromContent(path, content),
     ...(refAuthority === undefined ? {} : { refAuthority, snapshotState: index }),
   });
+  const dailyNotes = new DailyNoteResolver(app, settings);
   const tasks = new TaskApplicationService(
     index,
     repository,
@@ -778,7 +779,19 @@ export function configuredTaskApplication(
       () => Date.now(),
       (epochMs) => -new Date(epochMs).getTimezoneOffset(),
     ),
-    new ObsidianTaskDestinationProvider(app, settings, new DailyNoteResolver(app, settings)),
+    new ObsidianTaskDestinationProvider(
+      app,
+      () => ({
+        addToToday: settings.addToToday,
+        customFilePath: settings.customFilePath,
+        insertion:
+          settings.taskInsertionMode === 'section' &&
+          settings.taskInsertionSection.trim().length > 0
+            ? { type: 'section', heading: settings.taskInsertionSection }
+            : { type: 'append' },
+      }),
+      () => dailyNotes.planDailyNoteDestination(),
+    ),
   );
   return {
     index,

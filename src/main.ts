@@ -72,10 +72,19 @@ export default class TaskCalendarPlugin extends Plugin {
       refAuthority,
       snapshotState: this.taskIndex,
     });
+    const dailyNotes = new DailyNoteResolver(this.app, this.settings);
     const destinationProvider = new ObsidianTaskDestinationProvider(
       this.app,
-      this.settings,
-      new DailyNoteResolver(this.app, this.settings),
+      () => ({
+        addToToday: this.settings.addToToday,
+        customFilePath: this.settings.customFilePath,
+        insertion:
+          this.settings.taskInsertionMode === 'section' &&
+          this.settings.taskInsertionSection.trim().length > 0
+            ? { type: 'section', heading: this.settings.taskInsertionSection }
+            : { type: 'append' },
+      }),
+      () => dailyNotes.planDailyNoteDestination(),
     );
     this.tasks = new TaskApplicationService(
       this.taskIndex,
