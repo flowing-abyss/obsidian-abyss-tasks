@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // Validates the built release artifacts (manifest.json, versions.json, main.js,
-// styles.css) the way Obsidian and its community-plugin review actually consume
-// them — catches drift that unit tests and `tsc` can't see, e.g. a hand-edited
-// manifest.json that no longer matches versions.json, or a Node built-in that
-// slipped into main.js for a plugin that claims mobile support.
+// dist/styles.css) the way Obsidian and its community-plugin review actually
+// consume them — catches drift that unit tests and `tsc` can't see, e.g. a
+// hand-edited manifest.json that no longer matches versions.json, or a Node
+// built-in that slipped into main.js for a plugin that claims mobile support.
 //
-// Run standalone (`pnpm run release:check`) against an already-built main.js,
-// or as part of `pnpm run verify`, which runs it right after `pnpm run build`.
+// Run standalone (`pnpm run release:check`) against already-generated release
+// artifacts, or as part of `pnpm run verify`, which builds main.js and generates
+// dist/styles.css before running this checker.
 //
 // `--release-ready` additionally fails on unfilled template placeholders
 // (manifest.id/name/author/description, package.json's name, LICENSE's
