@@ -492,6 +492,15 @@ function normalizedSubtaskFields(overrides: SubtaskFixtureInput): {
   };
 }
 
+function subtaskDependencyFields(
+  overrides: SubtaskFixtureInput,
+): Pick<SubtaskSnapshot, 'dependencyId' | 'dependsOn'> {
+  return {
+    ...(overrides.dependencyId === undefined ? {} : { dependencyId: overrides.dependencyId }),
+    dependsOn: [...(overrides.dependsOn ?? [])],
+  };
+}
+
 /** Build one detached final-contract subtask snapshot. */
 export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
   const {
@@ -532,7 +541,7 @@ export function subtask(overrides: SubtaskFixtureInput = {}): SubtaskSnapshot {
     onCompletionExplicit: false,
     planning: { ...planning } as SubtaskSnapshot['planning'],
     tags: [...tags],
-    dependsOn: [],
+    ...subtaskDependencyFields(overrides),
     subtasks: [...subtasks],
     comments: [...comments],
     ...(overrides.recurrence === undefined ? {} : { recurrence: overrides.recurrence }),

@@ -84,6 +84,32 @@ describe('projectCalendarOccurrences', () => {
     expect(result.issues).toEqual([]);
   });
 
+  it('retains dependency metadata for materialized occurrences and strips it from forecasts', () => {
+    const recurring = source(
+      task({
+        title: 'dependent recurrence',
+        dependencyId: 'daily-build',
+        dependsOn: ['schema', 'auth', 'schema'],
+        planning: { due: '2026-08-08' },
+        recurrence: 'every day',
+      }),
+    );
+    const materializedOccurrence = expectDefined(
+      project({ materialized: [recurring] }).occurrences[0],
+    );
+    const forecastOccurrence = expectDefined(
+      project({ recurringSources: [recurring] }, range('2026-08-09', '2026-08-09')).occurrences[0],
+    );
+
+    expect(taskSnapshotForCalendarOccurrence(materializedOccurrence)).toMatchObject({
+      dependencyId: 'daily-build',
+      dependsOn: ['schema', 'auth', 'schema'],
+    });
+    const forecast = taskSnapshotForCalendarOccurrence(forecastOccurrence);
+    expect(forecast.dependencyId).toBeUndefined();
+    expect(forecast.dependsOn).toEqual([]);
+  });
+
   it('projects daily and weekly sources whose current occurrence is outside the viewport', () => {
     const daily = rootSource('daily', {
       line: 2,

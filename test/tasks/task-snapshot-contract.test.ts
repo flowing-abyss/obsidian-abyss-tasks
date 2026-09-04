@@ -91,7 +91,7 @@ describe('TaskSnapshot contract', () => {
     index.destroy();
   });
 
-  it('projects ordered de-duplicated dependency metadata for roots and nested subtasks', async () => {
+  it('preserves authored dependency order and duplicates for roots and nested subtasks', async () => {
     const content = [
       '- [ ] Build API 🆔 build-api ⛔ schema, auth, schema',
       '  - [ ] Integrate client 🆔 client ⛔ build-api, auth, build-api',
@@ -101,15 +101,27 @@ describe('TaskSnapshot contract', () => {
     expect(index.list()[0]).toMatchObject({
       markdownTitle: 'Build API',
       dependencyId: 'build-api',
-      dependsOn: ['schema', 'auth'],
+      dependsOn: ['schema', 'auth', 'schema'],
       subtasks: [
         {
           markdownTitle: 'Integrate client',
           dependencyId: 'client',
-          dependsOn: ['build-api', 'auth'],
+          dependsOn: ['build-api', 'auth', 'build-api'],
         },
       ],
     });
+    index.destroy();
+  });
+
+  it('returns detached non-empty dependency lists for nested subtasks', async () => {
+    const { index } = await snapshotIndex('- [ ] root\n  - [ ] child ⛔ schema, auth');
+    const firstChild = expectDefined(expectDefined(index.list()[0]).subtasks[0]);
+
+    expect(firstChild.dependsOn).toEqual(['schema', 'auth']);
+    (firstChild.dependsOn as unknown as string[]).push('mutated');
+
+    const freshChild = expectDefined(expectDefined(index.list()[0]).subtasks[0]);
+    expect(freshChild.dependsOn).toEqual(['schema', 'auth']);
     index.destroy();
   });
 

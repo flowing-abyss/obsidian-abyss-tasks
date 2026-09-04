@@ -1,7 +1,7 @@
 import { Platform, setIcon } from 'obsidian';
 import { describe, expect, it } from 'vitest';
 import type { CalendarSettings } from '../src/settings/types';
-import { task, useRealMoment, withMobile } from './helpers';
+import { subtask, task, useRealMoment, withMobile } from './helpers';
 
 describe('test helpers', () => {
   describe('useRealMoment', () => {
@@ -34,6 +34,17 @@ describe('test helpers', () => {
       expect(t.status).toBe('done');
       expect(t.priority).toBe('A');
       expect(t.planning.due).toBe('2026-06-24');
+    });
+  });
+
+  describe('subtask builder', () => {
+    it('preserves dependency metadata and clones the dependency list override', () => {
+      const dependsOn = ['schema', 'auth', 'schema'];
+      const child = subtask({ dependencyId: 'build-api', dependsOn });
+
+      expect(child.dependencyId).toBe('build-api');
+      expect(child.dependsOn).toEqual(['schema', 'auth', 'schema']);
+      expect(child.dependsOn).not.toBe(dependsOn);
     });
   });
 
