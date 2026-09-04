@@ -2838,6 +2838,7 @@ describe('CenterPanel calendar mode — Today/Week/Month switcher', () => {
       priority: 'D' as const,
       planning: { due: '2026-08-09' as LocalDate, time: localTime('09:00') },
       tags: [],
+      dependsOn: [],
       recurrence: 'every day',
       onCompletion: 'keep' as const,
       onCompletionExplicit: false,

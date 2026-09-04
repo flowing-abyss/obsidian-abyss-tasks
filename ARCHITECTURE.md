@@ -160,6 +160,12 @@ sidebar. Its render child owns cleanup when Obsidian removes the block from the 
 3. `TaskQueryApi` exposes filtered lists, reference resolution, and calendar projection sources.
 4. Subscribers refresh presentation from the updated snapshots.
 
+`TaskSnapshot` and `SubtaskSnapshot` expose `dependencyId` and ordered, de-duplicated `dependsOn`
+values as immutable projections sourced only from Tasks-compatible `🆔 id` and `⛔ id-1, id-2`
+Markdown carriers. The source Markdown remains authoritative and is read in place without migration.
+Generated recurrence occurrences strip both task IDs and dependency edges, while the completed
+original occurrence retains its authored carriers.
+
 ### Editing an existing task
 
 1. A panel or calendar renderer translates the interaction into a `TaskCommand`.

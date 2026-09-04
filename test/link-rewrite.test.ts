@@ -214,6 +214,7 @@ describe('task link rewrite delegation', () => {
       onCompletionExplicit: false,
       planning: {},
       tags: [],
+      dependsOn: [],
       subtasks: [],
       comments: [],
       source: {

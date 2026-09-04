@@ -1399,6 +1399,7 @@ describe('RightPanel popovers', () => {
       onCompletionExplicit: false,
       planning: {},
       tags: [],
+      dependsOn: [],
       subtasks: [],
       comments: [],
       source: {

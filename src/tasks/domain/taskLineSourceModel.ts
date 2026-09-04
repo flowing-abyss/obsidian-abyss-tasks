@@ -44,6 +44,8 @@ export interface TaskLineSourceModel {
   readonly statusAt: number;
   readonly markdownTitle: string;
   readonly tags: readonly string[];
+  readonly dependencyId?: string;
+  readonly dependsOn: readonly string[];
   readonly spans: readonly TaskLineSourceSpan[];
   readonly carriers: readonly TaskLineSourceCarrier[];
   readonly occurrences: ReadonlyMap<TaskLineSourceSpanKind, readonly TaskLineSourceSpan[]>;
@@ -885,6 +887,13 @@ function planningFor(accepted: readonly Candidate[]): TaskLineSourceModel['plann
   return planning;
 }
 
+function dependsOnFor(accepted: readonly Candidate[]): readonly string[] {
+  return (firstString(accepted, 'depends-on') ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
 export function parseTaskLineSourceModel(original: string): TaskLineSourceModel | null {
   const context = taskLineParseContext(original);
   if (context == null) return null;
@@ -897,6 +906,7 @@ export function parseTaskLineSourceModel(original: string): TaskLineSourceModel 
     .replace(/\s{2,}/gu, ' ')
     .trim();
   const recurrence = firstString(accepted, 'recurrence');
+  const dependencyId = firstString(accepted, 'task-id');
   const onCompletionValue = firstString(accepted, 'on-completion')?.toLowerCase();
   const onCompletion: OnCompletion = onCompletionValue === 'delete' ? 'delete' : 'keep';
   return {
@@ -909,6 +919,8 @@ export function parseTaskLineSourceModel(original: string): TaskLineSourceModel 
     tags: accepted
       .filter((candidate) => candidate.kind === 'tag')
       .map((candidate) => original.slice(candidate.from, candidate.to)),
+    ...(dependencyId !== undefined && { dependencyId }),
+    dependsOn: dependsOnFor(accepted),
     spans,
     carriers: accepted,
     occurrences,

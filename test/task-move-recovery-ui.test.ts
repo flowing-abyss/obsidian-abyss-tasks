@@ -21,6 +21,7 @@ function snapshot(ref: TaskRef, originalBlock = '- [ ] task'): TaskSnapshot {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {

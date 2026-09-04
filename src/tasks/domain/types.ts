@@ -118,13 +118,18 @@ interface TaskPresentationMetadata {
   readonly noteIcon?: string;
 }
 
+export interface TaskDependencyFields {
+  readonly dependencyId?: string;
+  readonly dependsOn: readonly string[];
+}
+
 export interface TaskCommentSnapshot {
   readonly ref: CommentRef;
   readonly timestamp?: CommentTimestamp;
   readonly text: string;
 }
 
-export interface SubtaskSnapshot {
+export interface SubtaskSnapshot extends TaskDependencyFields {
   readonly ref: SubtaskRef;
   readonly title: string;
   readonly markdownTitle: string;
@@ -141,7 +146,7 @@ export interface SubtaskSnapshot {
   readonly description?: string;
 }
 
-export interface TaskSnapshot {
+export interface TaskSnapshot extends TaskDependencyFields {
   readonly ref: TaskRef;
   readonly title: string;
   readonly markdownTitle: string;

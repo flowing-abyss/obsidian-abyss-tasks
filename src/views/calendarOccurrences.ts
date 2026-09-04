@@ -387,6 +387,9 @@ export function taskSnapshotForCalendarOccurrence(occurrence: CalendarOccurrence
     priority: node.priority,
     planning: { ...occurrence.planning },
     tags: [...node.tags],
+    ...(occurrence.kind === 'materialized' &&
+      node.dependencyId !== undefined && { dependencyId: node.dependencyId }),
+    dependsOn: occurrence.kind === 'materialized' ? [...node.dependsOn] : [],
     ...(node.recurrence !== undefined && { recurrence: node.recurrence }),
     onCompletion: node.onCompletion,
     onCompletionExplicit: node.onCompletionExplicit,

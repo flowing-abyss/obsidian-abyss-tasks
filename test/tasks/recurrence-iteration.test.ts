@@ -255,24 +255,38 @@ describe('prepareRecurrenceIteration', () => {
   );
 
   it('removes every task identity carrier from the clean copy', () => {
-    expect(
-      prepareRecurrenceIteration({
-        rootBlock:
-          '- [/] Owner 🔁 every day 🆔 first 🆔 second ⛔ before ⛔ after\n' +
-          '  - [ ] Child 🆔 child-one 🆔 child-two ⛔ owner ⛔ sibling',
-        ownerRelativeLine: 0,
-        nextPlanning: {},
-        dayDelta: 1,
-        doneSymbol: 'x',
-        todoSymbol: ' ',
-        today: localDate('2026-08-01'),
-        addCreatedDate: false,
-        addCompletionDate: true,
-      }),
-    ).toMatchObject({
+    const result = prepareRecurrenceIteration({
+      rootBlock:
+        '- [/] Owner 🔁 every day 🆔 first 🆔 second ⛔ before ⛔ after\n' +
+        '  - [ ] Child 🆔 child-one 🆔 child-two ⛔ owner ⛔ sibling',
+      ownerRelativeLine: 0,
+      nextPlanning: {},
+      dayDelta: 1,
+      doneSymbol: 'x',
+      todoSymbol: ' ',
+      today: localDate('2026-08-01'),
+      addCreatedDate: false,
+      addCompletionDate: true,
+    });
+
+    expect(result).toMatchObject({
       type: 'prepared',
       cleanSubtree: '- [ ] Owner 🔁 every day\n  - [ ] Child',
     });
+    expect(result.type).toBe('prepared');
+    if (result.type !== 'prepared') return;
+
+    const original = codec.parseLine(result.completedSubtree.split('\n')[0] ?? '', {
+      filePath: 'tasks.md',
+      line: 0,
+    });
+    const generated = codec.parseLine(result.cleanSubtree.split('\n')[0] ?? '', {
+      filePath: 'tasks.md',
+      line: 0,
+    });
+    expect(original).toMatchObject({ dependencyId: 'first', dependsOn: ['before'] });
+    expect(generated?.dependencyId).toBeUndefined();
+    expect(generated?.dependsOn).toEqual([]);
   });
 
   it.each([

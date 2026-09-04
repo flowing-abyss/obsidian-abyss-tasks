@@ -174,6 +174,7 @@ describe('CenterPanel planning API delegation', () => {
         onCompletionExplicit: false,
         planning: {},
         tags: [],
+        dependsOn: [],
         subtasks: [],
         comments: [],
         source: {
@@ -282,6 +283,7 @@ describe('CenterPanel planning API delegation', () => {
           duration: 60,
         } as never,
         tags: [],
+        dependsOn: [],
         subtasks: [],
         comments: [],
         source: {

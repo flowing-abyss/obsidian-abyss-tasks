@@ -34,6 +34,7 @@ function cloneSubtask(task: SubtaskSnapshot): SubtaskSnapshot {
     ref: { ...task.ref, parent: cloneNodeRef(task.ref.parent) },
     planning: { ...task.planning },
     tags: [...task.tags],
+    dependsOn: [...task.dependsOn],
     subtasks: task.subtasks.map(cloneSubtask),
     comments: task.comments.map(cloneComment),
   };
@@ -45,6 +46,7 @@ export function cloneTaskSnapshot(task: TaskSnapshot): TaskSnapshot {
     ref: cloneTaskRef(task.ref),
     planning: { ...task.planning },
     tags: [...task.tags],
+    dependsOn: [...task.dependsOn],
     subtasks: task.subtasks.map(cloneSubtask),
     comments: task.comments.map(cloneComment),
     source: { ...task.source },

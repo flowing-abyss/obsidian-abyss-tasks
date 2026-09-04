@@ -67,6 +67,7 @@ function snapshot(revision: string, title = revision): TaskSnapshot {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {
@@ -248,6 +249,7 @@ describe('revision-aware nested selection rebuild', () => {
           onCompletionExplicit: false,
           planning: {},
           tags: [],
+          dependsOn: [],
           subtasks: [],
           comments: [],
         },
@@ -366,6 +368,7 @@ describe('revision-aware nested selection rebuild', () => {
         onCompletionExplicit: false,
         planning: {},
         tags: [],
+        dependsOn: [],
         subtasks: [],
         comments: [],
       };
@@ -406,6 +409,7 @@ describe('revision-aware nested selection rebuild', () => {
         onCompletionExplicit: false,
         planning: {},
         tags: [],
+        dependsOn: [],
         subtasks: [],
         comments: [],
       };

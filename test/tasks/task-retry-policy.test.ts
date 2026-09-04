@@ -35,6 +35,7 @@ function snapshot(markdownTitle = 'Task', revision = 'old'): TaskSnapshot {
     onCompletionExplicit: false,
     planning: { due: localDate('2026-08-11') },
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {
@@ -86,6 +87,7 @@ function subtask(root: TaskSnapshot, overrides: Partial<SubtaskSnapshot> = {}): 
     priority: 'D',
     planning: {},
     tags: [],
+    dependsOn: [],
     onCompletion: 'keep',
     onCompletionExplicit: false,
     subtasks: [],
@@ -227,6 +229,7 @@ describe('prepareRetry', () => {
       priority: 'D' as const,
       planning: {},
       tags: [],
+      dependsOn: [],
       onCompletion: 'keep' as const,
       onCompletionExplicit: false,
       subtasks: [],

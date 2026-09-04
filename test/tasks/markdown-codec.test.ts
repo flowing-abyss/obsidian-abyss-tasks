@@ -43,6 +43,8 @@ type AuthoritativePartition = Pick<
   | 'statusSymbol'
   | 'markdownTitle'
   | 'tags'
+  | 'dependencyId'
+  | 'dependsOn'
   | 'spans'
   | 'occurrences'
   | 'planning'
@@ -57,6 +59,8 @@ function authoritativePartition(parsed: AuthoritativePartition): readonly unknow
     parsed.statusSymbol,
     parsed.markdownTitle,
     parsed.tags,
+    parsed.dependencyId,
+    parsed.dependsOn,
     parsed.spans,
     parsed.occurrences,
     parsed.planning,
@@ -1146,6 +1150,30 @@ describe('TaskMarkdownCodec', () => {
     expect(spanText(parsed, 'task-id')).toEqual(['🆔 review-1']);
     expect(spanText(parsed, 'depends-on')).toEqual(['⛔ prep-1, prep_2']);
     expect(spanText(parsed, 'block-id')).toEqual(['^review']);
+    expectLosslessPartition(parsed);
+  });
+
+  it.each([
+    ['root', '- [ ] Build API 🆔 build-api 🆔 ignored-id ⛔ schema, auth, schema ⛔ ignored'],
+    ['nested', '  - [ ] Build API 🆔 build-api 🆔 ignored-id ⛔ schema, auth, schema ⛔ ignored'],
+  ])('projects Tasks-compatible dependency metadata from a %s task line', (_kind, source) => {
+    const parsed = parse(source);
+
+    expect(parsed.markdownTitle).toBe('Build API');
+    expect(parsed.dependencyId).toBe('build-api');
+    expect(parsed.dependsOn).toEqual(['schema', 'auth', 'schema']);
+    expectLosslessPartition(parsed);
+  });
+
+  it.each([
+    ['malformed task ID', '🆔 bad.id'],
+    ['malformed dependency list', '⛔ schema,,auth'],
+  ])('keeps a %s as unknown source without projecting dependency metadata', (_kind, carrier) => {
+    const parsed = parse(`- [ ] Build API ${carrier}`);
+
+    expect(parsed.dependencyId).toBeUndefined();
+    expect(parsed.dependsOn).toEqual([]);
+    expect(spanText(parsed, 'malformed-known')).toEqual([carrier]);
     expectLosslessPartition(parsed);
   });
 

@@ -22,6 +22,7 @@ function snapshot(
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {

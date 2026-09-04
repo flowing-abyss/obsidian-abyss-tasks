@@ -527,6 +527,7 @@ describe('RightPanel planning API delegation', () => {
       onCompletionExplicit: false,
       planning: {},
       tags: [],
+      dependsOn: [],
       subtasks: [
         {
           ref: freshChildRef,
@@ -539,6 +540,7 @@ describe('RightPanel planning API delegation', () => {
           onCompletionExplicit: false,
           planning: { due: '2026-07-20' as LocalDate },
           tags: [],
+          dependsOn: [],
           subtasks: [],
           comments: [],
         },
@@ -662,6 +664,7 @@ describe('RightPanel planning API delegation', () => {
         onCompletionExplicit: false,
         planning: selection === 'root' ? { due: '2026-07-20' as LocalDate } : {},
         tags: [],
+        dependsOn: [],
         subtasks:
           selection === 'child'
             ? [
@@ -680,6 +683,7 @@ describe('RightPanel planning API delegation', () => {
                   onCompletionExplicit: false,
                   planning: { due: '2026-07-20' as LocalDate },
                   tags: [],
+                  dependsOn: [],
                   subtasks: [],
                   comments: [],
                 },

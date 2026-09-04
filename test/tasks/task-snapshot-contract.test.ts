@@ -91,6 +91,40 @@ describe('TaskSnapshot contract', () => {
     index.destroy();
   });
 
+  it('projects ordered de-duplicated dependency metadata for roots and nested subtasks', async () => {
+    const content = [
+      '- [ ] Build API 🆔 build-api ⛔ schema, auth, schema',
+      '  - [ ] Integrate client 🆔 client ⛔ build-api, auth, build-api',
+    ].join('\n');
+    const { index } = await snapshotIndex(content);
+
+    expect(index.list()[0]).toMatchObject({
+      markdownTitle: 'Build API',
+      dependencyId: 'build-api',
+      dependsOn: ['schema', 'auth'],
+      subtasks: [
+        {
+          markdownTitle: 'Integrate client',
+          dependencyId: 'client',
+          dependsOn: ['build-api', 'auth'],
+        },
+      ],
+    });
+    index.destroy();
+  });
+
+  it('initializes empty dependency lists when Tasks-compatible carriers are absent', async () => {
+    const { index } = await snapshotIndex('- [ ] root\n  - [ ] child');
+    const root = expectDefined(index.list()[0]);
+    const child = expectDefined(root.subtasks[0]);
+
+    expect(root.dependencyId).toBeUndefined();
+    expect(root.dependsOn).toEqual([]);
+    expect(child.dependencyId).toBeUndefined();
+    expect(child.dependsOn).toEqual([]);
+    index.destroy();
+  });
+
   it('returns detached arrays, task objects, nested values, and calendar buckets', async () => {
     const content = [
       '- [ ] root #tag 📅 2026-07-13',
@@ -104,6 +138,7 @@ describe('TaskSnapshot contract', () => {
     (first as unknown as unknown[]).length = 0;
     (task as unknown as { title: string }).title = 'Mutated';
     (task.tags as unknown as string[]).push('#bad');
+    (task.dependsOn as unknown as string[]).push('bad-id');
     (task.planning as unknown as { due: string }).due = '2099-01-01';
     (task.source as unknown as { filePath: string }).filePath = 'bad.md';
     (task.subtasks as unknown as unknown[]).length = 0;
@@ -114,6 +149,7 @@ describe('TaskSnapshot contract', () => {
     const fresh = expectDefined(index.list()[0]);
     expect(fresh.title).toBe('root');
     expect(fresh.tags).toEqual(['#tag']);
+    expect(fresh.dependsOn).toEqual([]);
     expect(fresh.planning.due).toBe('2026-07-13');
     expect(fresh.source.filePath).toBe('tasks.md');
     expect(fresh.subtasks).toHaveLength(1);

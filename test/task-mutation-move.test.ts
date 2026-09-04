@@ -27,6 +27,7 @@ function snapshot(filePath: string): TaskSnapshot {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {

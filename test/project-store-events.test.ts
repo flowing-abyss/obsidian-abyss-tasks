@@ -26,6 +26,7 @@ function task(status: TaskSnapshot['status']): TaskSnapshot {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {

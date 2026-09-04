@@ -132,6 +132,8 @@ export interface ParsedTaskLine {
   readonly markdownTitle: string;
   readonly title: string;
   readonly tags: readonly string[];
+  readonly dependencyId?: string;
+  readonly dependsOn: readonly string[];
   readonly spans: readonly SourceSpan[];
   readonly occurrences: ReadonlyMap<TaskSpanKind, readonly SourceSpan[]>;
   readonly planning: {
@@ -1070,6 +1072,8 @@ export class TaskMarkdownCodec {
       markdownTitle: model.markdownTitle,
       title: collapseLinks(model.markdownTitle),
       tags: model.tags,
+      ...(model.dependencyId !== undefined && { dependencyId: model.dependencyId }),
+      dependsOn: model.dependsOn,
       spans: model.spans,
       occurrences: model.occurrences,
       planning: model.planning,

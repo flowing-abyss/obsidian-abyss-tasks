@@ -30,6 +30,7 @@ function snapshot(revision: string, description = 'old description'): TaskSnapsh
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [
       {
@@ -78,6 +79,7 @@ function snapshotWithChildren(revision: string, titles: readonly string[]): Task
       onCompletionExplicit: false,
       planning: {},
       tags: [],
+      dependsOn: [],
       subtasks: [],
       comments: [],
     })),
@@ -108,6 +110,7 @@ function snapshotWithNestedChildren(revision: string): TaskSnapshot {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
   }));

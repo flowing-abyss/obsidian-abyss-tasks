@@ -347,6 +347,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     onCompletionExplicit: false,
     planning: {},
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {

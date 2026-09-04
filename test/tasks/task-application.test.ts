@@ -33,6 +33,7 @@ function snapshot(): TaskSnapshot {
     onCompletionExplicit: false,
     planning: { due: localDate('2026-07-20') },
     tags: [],
+    dependsOn: [],
     subtasks: [],
     comments: [],
     source: {
@@ -974,6 +975,7 @@ describe('TaskApplicationService planning commands', () => {
       onCompletionExplicit: false,
       planning: {},
       tags: [],
+      dependsOn: [],
       subtasks: [],
       comments: [],
     };
@@ -1497,6 +1499,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
       priority: 'D',
       planning: {},
       tags: [],
+      dependsOn: [],
       recurrence: 'every day',
       onCompletion: 'keep',
       onCompletionExplicit: false,
