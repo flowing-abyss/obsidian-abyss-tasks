@@ -6,6 +6,48 @@ import {
 import { expectDefined } from './../helpers';
 
 describe('TaskRefAuthority', () => {
+  it('publishes distinct predecessors for a multi-root batch and removes them on abort', () => {
+    const authority = new TaskRefAuthority('batch');
+    const first = authority.revision('- [ ] First');
+    const second = authority.revision('- [ ] Second');
+    const candidate = '- [ ] First 🆔 first\n- [ ] Second ⛔ first\n';
+    const roots = [
+      {
+        line: 0,
+        source: '- [ ] First 🆔 first',
+        previousRevision: first,
+        revision: expectDefined(authority.successor(first, '- [ ] First 🆔 first')),
+      },
+      {
+        line: 1,
+        source: '- [ ] Second ⛔ first',
+        previousRevision: second,
+        revision: expectDefined(authority.successor(second, '- [ ] Second ⛔ first')),
+      },
+    ];
+    const transition = {
+      filePath: 'tasks.md',
+      candidateFingerprint: taskRefContentFingerprint(candidate),
+      candidateLength: candidate.length,
+      roots,
+    };
+
+    expect(authority.stageBatch(transition, [first, first])).toEqual({ type: 'conflict' });
+    expect(authority.observeTransition('tasks.md', candidate)).toBeUndefined();
+    const staged = authority.stageBatch(transition, [first, second]);
+    expect(staged.type).toBe('staged');
+    expect(authority.observeTransition('tasks.md', candidate)?.transitions).toEqual(roots);
+    if (staged.type !== 'staged') throw new Error('missing batch token');
+    authority.abort(staged.token);
+    expect(authority.observeTransition('tasks.md', candidate)).toBeUndefined();
+    const retried = authority.stageBatch(transition, [first, second]);
+    if (retried.type !== 'staged') throw new Error('missing retry token');
+    authority.commit(retried.token);
+    expect(authority.observeTransition('tasks.md', candidate)?.transitions).toEqual(roots);
+    authority.acknowledge('tasks.md', candidate);
+    expect(authority.observeTransition('tasks.md', candidate)).toBeUndefined();
+  });
+
   it('keeps ordinary revisions deterministic within one session and rejects foreign evidence', () => {
     const authority = new TaskRefAuthority('session-a');
     const source = '- [ ] task\n';

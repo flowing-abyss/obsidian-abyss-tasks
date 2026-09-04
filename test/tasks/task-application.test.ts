@@ -97,7 +97,7 @@ function service(
       : vi.fn<TaskRepository['completeRecurrence']>();
   return new TaskApplicationService(
     taskQueries,
-    { completeRecurrence, create: vi.fn(), move: vi.fn(), ...repository, edit },
+    { editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn(), ...repository, edit },
     statuses,
     clock,
   );
@@ -112,7 +112,7 @@ describe('TaskApplicationService planning commands', () => {
     });
     const application = new TaskApplicationService(
       queries(),
-      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
       undefined,
@@ -301,7 +301,7 @@ describe('TaskApplicationService planning commands', () => {
     };
     const application = new TaskApplicationService(
       queries(),
-      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       preciseClock,
     );
@@ -591,7 +591,7 @@ describe('TaskApplicationService planning commands', () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
     const service = new TaskApplicationService(
       queries(),
-      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -623,6 +623,7 @@ describe('TaskApplicationService planning commands', () => {
   ])('preserves the structured repository result $type', async (result) => {
     const repository: TaskRepository = {
       edit: vi.fn().mockResolvedValue(result),
+      editBatch: vi.fn(),
       completeRecurrence: vi.fn(),
       create: vi.fn(),
       move: vi.fn(),
@@ -637,6 +638,7 @@ describe('TaskApplicationService planning commands', () => {
   it('maps an unexpected adapter rejection without leaking task Markdown', async () => {
     const repository: TaskRepository = {
       edit: vi.fn().mockRejectedValue(new Error('- [ ] secret task')),
+      editBatch: vi.fn(),
       completeRecurrence: vi.fn(),
       create: vi.fn(),
       move: vi.fn(),
@@ -677,7 +679,7 @@ describe('TaskApplicationService planning commands', () => {
     const edit = vi.fn<TaskRepository['edit']>().mockResolvedValue(committed);
     const service = new TaskApplicationService(
       queries(),
-      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -1187,7 +1189,7 @@ describe('TaskApplicationService planning commands', () => {
     clock.today.mockClear();
     const application = new TaskApplicationService(
       exactQueries,
-      { edit, completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create: vi.fn(), move: vi.fn() },
       custom,
       clock,
     );
@@ -1295,7 +1297,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     }));
     const application = new TaskApplicationService(
       exactQueries(current),
-      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn() },
       statuses,
       { today },
       undefined,
@@ -1386,7 +1388,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     const today = vi.fn(() => localDate('2026-07-14'));
     const application = new TaskApplicationService(
       exactQueries(recurringSnapshot()),
-      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn() },
       catalog,
       { today },
     );
@@ -1440,7 +1442,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     };
     const application = new TaskApplicationService(
       laggingQueries,
-      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -1551,7 +1553,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     };
     const application = new TaskApplicationService(
       laggingQueries,
-      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );
@@ -1612,7 +1614,7 @@ describe('TaskApplicationService recurrence completion routing', () => {
     };
     const application = new TaskApplicationService(
       laggingQueries,
-      { edit, completeRecurrence, create: vi.fn(), move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence, create: vi.fn(), move: vi.fn() },
       statuses,
       clock,
     );

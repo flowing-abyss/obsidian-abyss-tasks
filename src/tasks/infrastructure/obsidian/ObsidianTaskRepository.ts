@@ -6,6 +6,7 @@ import {
   type RecurrenceCompletionRevisionRequest,
   type RevisionPrecondition,
   type TaskDraft,
+  type TaskEditBatchRequest,
   type TaskEditCommand,
   type TaskEditRequest,
   type TaskMoveRequest,
@@ -27,6 +28,7 @@ import {
   prepareRecurrenceIteration,
   recurrenceMarkerCountInOwnedSubtree,
 } from '../../domain/recurrenceIteration';
+import type { ProvenRootRevisionOverride } from '../../domain/taskReconciliation';
 import type {
   CommentRef,
   LocalDate,
@@ -46,6 +48,7 @@ import type { TaskBlockEdit, TaskBlockTarget, TaskRootBlock } from '../markdown/
 import { type TaskBlockEditor } from '../markdown/TaskBlockEditor';
 import { type TaskLocator } from '../markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../markdown/TaskMarkdownCodec';
+import { prepareTaskEditBatch, stageTaskEditBatch, taskEditBatchIssues } from '../TaskEditBatch';
 import {
   taskRefContentFingerprint,
   type RootRevisionOverride,
@@ -1394,8 +1397,122 @@ export class ObsidianTaskRepository implements TaskRepository {
       await this.rejectMutation(file, rootRef, transaction);
       return this.processError(rootRef.filePath);
     }
-    this.commitEdit(input, transaction);
+    this.commitEdit(rootRef.filePath, transaction);
     return transaction.result ?? this.processError(rootRef.filePath);
+  }
+
+  async editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult> {
+    const issues = taskEditBatchIssues(request);
+    if (issues.length > 0) return { type: 'invalid', issues };
+    const file = this.app.vault.getAbstractFileByPath(request.filePath);
+    if (!(file instanceof TFile)) return { type: 'not-found', target: request.outcomeTarget };
+    const transaction: EditTransaction = {
+      result: undefined,
+      transitionToken: undefined,
+      committedContent: undefined,
+    };
+    try {
+      await this.processFile(file, (content) =>
+        this.editBatchContent(request, transaction, content),
+      );
+    } catch {
+      await this.rejectBatch(file, request, transaction);
+      return this.processError(request.filePath);
+    }
+    this.commitEdit(request.filePath, transaction);
+    return transaction.result ?? this.processError(request.filePath);
+  }
+
+  private editBatchContent(
+    request: TaskEditBatchRequest,
+    transaction: EditTransaction,
+    content: string,
+  ): string {
+    const prepared = prepareTaskEditBatch(request, content, {
+      ...this.options,
+      resolve: (edit) =>
+        this.resolveEditLocation(
+          { prepared: edit, command: edit.command, rootRef: edit.baseRoot.ref },
+          content,
+        ),
+    });
+    if (prepared.type !== 'prepared') {
+      transaction.result = prepared;
+      return content;
+    }
+    transaction.result = {
+      type: 'committed',
+      outcome: { type: 'task', task: prepared.outcomeRoot },
+      changed: prepared.content !== content,
+    };
+    if (prepared.content === content) return content;
+    const staged = stageTaskEditBatch(
+      request.filePath,
+      prepared,
+      this.options.refAuthority,
+      this.options.snapshotState,
+    );
+    if (staged.type !== 'staged') {
+      transaction.result = staged;
+      return content;
+    }
+    transaction.transitionToken = staged.token;
+    transaction.committedContent = prepared.content;
+    return prepared.content;
+  }
+
+  private async rejectBatch(
+    file: TFile,
+    request: TaskEditBatchRequest,
+    transaction: EditTransaction,
+  ): Promise<void> {
+    if (transaction.transitionToken === undefined) return;
+    this.options.refAuthority?.abort(transaction.transitionToken);
+    for (const { baseRoot } of request.edits) {
+      this.options.snapshotState?.discardAuthoritySuccessor?.(baseRoot.ref);
+    }
+    try {
+      const content = await this.app.vault.read(file);
+      this.restoreBatchReferences(request, content);
+    } catch {
+      // The I/O result records that final content state is unknown.
+    }
+  }
+
+  private restoreBatchReferences(request: TaskEditBatchRequest, content: string): void {
+    const authority = this.options.refAuthority;
+    const snapshotState = this.options.snapshotState;
+    const roots = new Map<number, ProvenRootRevisionOverride>();
+    for (const { baseRoot } of request.edits) {
+      const context = this.rejectedRollbackContext(request.filePath, content, baseRoot.ref);
+      if (context !== undefined)
+        roots.set(context.block.line, {
+          line: context.block.line,
+          source: context.block.source,
+          revision: baseRoot.ref.revision,
+          previousRevision: context.expectedRevision,
+        });
+    }
+    if (roots.size === 0 || authority === undefined) {
+      this.installContentSafely(snapshotState, request.filePath, content);
+      return;
+    }
+    const overrides = [...roots.values()];
+    const staged = authority.stageBatch(
+      {
+        filePath: request.filePath,
+        candidateFingerprint: taskRefContentFingerprint(content),
+        candidateLength: content.length,
+        roots: overrides,
+      },
+      overrides.map((root) => root.previousRevision),
+    );
+    if (staged.type !== 'staged') return;
+    try {
+      this.installContentSafely(snapshotState, request.filePath, content);
+    } finally {
+      authority.abort(staged.token);
+    }
   }
 
   private reorderParentIssue(command: TaskEditCommand): TaskRepositoryResult | undefined {
@@ -1644,17 +1761,14 @@ export class ObsidianTaskRepository implements TaskRepository {
     }
   }
 
-  private commitEdit(input: EditProcessInput, transaction: EditTransaction): void {
+  private commitEdit(path: string, transaction: EditTransaction): void {
     const result = transaction.result;
     const content = transaction.committedContent;
     if (result?.type !== 'committed' || !result.changed || content === undefined) return;
     const token = transaction.transitionToken;
     if (token != null) this.options.refAuthority?.commit(token);
-    const installed = this.options.snapshotState?.installCommittedContent(
-      input.rootRef.filePath,
-      content,
-    );
-    if (token != null) this.options.refAuthority?.acknowledge(input.rootRef.filePath, content);
+    const installed = this.options.snapshotState?.installCommittedContent(path, content);
+    if (token != null) this.options.refAuthority?.acknowledge(path, content);
     transaction.result = this.rebaseEditResult(result, installed);
   }
 

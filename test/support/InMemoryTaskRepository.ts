@@ -5,6 +5,7 @@ import {
   type RecurrenceCompletionRevisionRequest,
   type RevisionPrecondition,
   type TaskDraft,
+  type TaskEditBatchRequest,
   type TaskEditCommand,
   type TaskEditRequest,
   type TaskMoveRequest,
@@ -46,6 +47,11 @@ import {
 } from '../../src/tasks/infrastructure/markdown/TaskBlockEditor';
 import { TaskLocator } from '../../src/tasks/infrastructure/markdown/TaskLocator';
 import { type TaskMarkdownCodec } from '../../src/tasks/infrastructure/markdown/TaskMarkdownCodec';
+import {
+  prepareTaskEditBatch,
+  stageTaskEditBatch,
+  taskEditBatchIssues,
+} from '../../src/tasks/infrastructure/TaskEditBatch';
 import {
   taskRefContentFingerprint,
   type RootRevisionOverride,
@@ -1153,6 +1159,50 @@ export class InMemoryTaskRepository implements TaskRepository {
     const location = this.resolveEditLocation(input);
     if (location.type === 'result') return location.result;
     return this.applyLocatedEdit(input, location);
+  }
+
+  async editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult> {
+    const issues = taskEditBatchIssues(request);
+    if (issues.length > 0) return { type: 'invalid', issues };
+    const content = this.files.get(request.filePath);
+    if (content === undefined) return { type: 'not-found', target: request.outcomeTarget };
+    let token: object | undefined;
+    try {
+      const prepared = prepareTaskEditBatch(request, content, {
+        ...this.options,
+        editor: this.editor,
+        resolve: (edit) => this.resolveEditLocation(editRequestInput(edit)),
+      });
+      if (prepared.type !== 'prepared') return prepared;
+      if (prepared.content === content)
+        return {
+          type: 'committed',
+          outcome: { type: 'task', task: prepared.outcomeRoot },
+          changed: false,
+        };
+      const staged = stageTaskEditBatch(
+        request.filePath,
+        prepared,
+        this.options.refAuthority,
+        this.options.snapshotState,
+      );
+      if (staged.type !== 'staged') return staged;
+      token = staged.token;
+      return this.installSurvivingRoot(
+        request.filePath,
+        prepared.content,
+        prepared.outcomeRoot,
+        token,
+      );
+    } catch {
+      this.abortTransition(token);
+      return {
+        type: 'io-error',
+        cause: 'process-error',
+        path: request.filePath,
+        contentState: 'unknown',
+      };
+    }
   }
 
   private reorderParentIssue(command: TaskEditCommand): TaskRepositoryResult | undefined {

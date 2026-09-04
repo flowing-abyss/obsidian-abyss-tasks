@@ -205,6 +205,25 @@ replacement to `TaskBlockEditor`, preserving the rest of the root aggregate and 
 commands are storage primitives; public dependency orchestration remains an application-layer
 responsibility.
 
+`TaskRepository.editBatch()` groups these two metadata edit commands within one file. It validates
+every revision precondition and complete root-to-subtask reference against the original content,
+then the shared infrastructure batch preparer composes one candidate through the existing codec
+and block editor. Both repository adapters use this preparation. The Obsidian adapter performs the
+entire operation in one synchronous `Vault.process()` callback. Unsupported command kinds,
+cross-file requests, inconsistent preconditions, and unavailable outcome targets cannot publish a
+partial edit. The result contains the freshly indexed root owning `outcomeTarget`, including fresh
+references for its changed descendants. An unchanged batch preserves the existing revisions.
+
+The batch stages one authority transition with an explicit predecessor revision for each consumed
+root. `TaskIndex` passes those individual mappings into reconciliation, so either edited root can
+converge to its own successor through the normal index event. The legacy one-source authority
+staging path retains its recurrence fan-out semantics. A rejected processor aborts the batch and
+revokes any early-observed forward mappings. The repository rereads authoritative content and
+restores the original refs when the original bytes remain. If a processor reports an error after
+persisting the complete candidate, the repository preserves the actual bytes and returns the
+existing I/O error with unknown content state; it does not retain the failed operation's writable
+provenance or attempt a compensating file write.
+
 ### Creating a task
 
 1. The interface chooses a capture context and asks `TaskCaptureApplicationApi` to plan a

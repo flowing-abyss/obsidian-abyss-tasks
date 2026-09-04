@@ -1150,12 +1150,7 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     );
     const overrides = authorityObservation?.roots ?? [];
     if (authorityObservation != null) {
-      input.captureAuthorityTransitions?.(
-        overrides.map((override) => ({
-          ...override,
-          previousRevision: authorityObservation.expectedRevision,
-        })),
-      );
+      input.captureAuthorityTransitions?.(authorityObservation.transitions);
     }
     return overrides;
   }
@@ -1246,6 +1241,15 @@ export class TaskIndex implements TaskQueryApi, TaskSnapshotState {
     return transition?.evidence === 'authority-transition'
       ? { ...transition.current.ref }
       : undefined;
+  }
+
+  discardAuthoritySuccessor(consumed: TaskRef): void {
+    const transitions = this.reconciliationTransitions.get(consumed.filePath);
+    const key = taskReconciliationKey(consumed);
+    if (transitions?.writable.get(key)?.evidence !== 'authority-transition') return;
+    const writable = new Map(transitions.writable);
+    writable.delete(key);
+    this.reconciliationTransitions.set(consumed.filePath, { ...transitions, writable });
   }
 
   previewContent(filePath: string, content: string): readonly TaskSnapshot[] {

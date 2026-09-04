@@ -989,6 +989,7 @@ function repositoryWith(
   return {
     supportsRevisionPreconditions: true,
     edit,
+    editBatch: vi.fn(),
     completeRecurrence: vi.fn(),
     create: vi.fn(),
     move: vi.fn(),

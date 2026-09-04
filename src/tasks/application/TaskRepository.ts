@@ -97,6 +97,12 @@ export interface TaskEditRequest extends RevisionPrecondition {
   readonly command: TaskEditCommand;
 }
 
+export interface TaskEditBatchRequest {
+  readonly filePath: string;
+  readonly edits: readonly TaskEditRequest[];
+  readonly outcomeTarget: TaskNodeRef;
+}
+
 export interface TaskMoveRequest extends RevisionPrecondition {
   readonly destination: TaskDestination;
 }
@@ -135,6 +141,8 @@ export interface TaskRepository {
   /** Production adapters opt in to immutable revision preconditions. */
   readonly supportsRevisionPreconditions?: true;
   edit(request: TaskEditRequest | TaskEditCommand): Promise<TaskRepositoryResult>;
+  /** Atomically edits dependency metadata and returns the outcome target's fresh root. */
+  editBatch(request: TaskEditBatchRequest): Promise<TaskRepositoryResult>;
   completeRecurrence(
     request: RecurrenceCompletionRevisionRequest | RecurrenceCompletionRequest,
   ): Promise<TaskRepositoryResult>;

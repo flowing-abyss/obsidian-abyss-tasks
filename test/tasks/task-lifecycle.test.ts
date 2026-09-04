@@ -377,7 +377,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     };
     const application = new TaskApplicationService(
       queries,
-      { edit, completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit, editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       destinationProvider,
@@ -425,7 +425,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     };
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       provider,
@@ -481,7 +481,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     });
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
     );
@@ -524,7 +524,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     } satisfies TaskDestinationProvider;
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       destinationProvider,
@@ -573,7 +573,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     }));
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       { today: clock },
       destinationProvider,
@@ -619,7 +619,7 @@ describe('TaskApplicationService lifecycle routing', () => {
     } satisfies TaskDestinationProvider;
     const application = new TaskApplicationService(
       queries,
-      { edit: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
+      { edit: vi.fn(), editBatch: vi.fn(), completeRecurrence: vi.fn(), create, move: vi.fn() },
       catalog,
       clock,
       destinationProvider,

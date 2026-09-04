@@ -1,4 +1,7 @@
-import type { RootRevisionOverride } from '../domain/taskReconciliation';
+import type {
+  ProvenRootRevisionOverride,
+  RootRevisionOverride,
+} from '../domain/taskReconciliation';
 import type { TaskRef, TaskSnapshot } from '../domain/types';
 
 export type { RootRevisionOverride } from '../domain/taskReconciliation';
@@ -18,8 +21,15 @@ export interface TaskRefTransition {
 }
 
 export interface TaskRefAuthorityObservation {
-  readonly expectedRevision: string;
   readonly roots: readonly RootRevisionOverride[];
+  readonly transitions: readonly ProvenRootRevisionOverride[];
+}
+
+export interface TaskRefBatchTransition {
+  readonly filePath: string;
+  readonly candidateFingerprint: string;
+  readonly candidateLength: number;
+  readonly roots: readonly ProvenRootRevisionOverride[];
 }
 
 export type TaskRefStageResult =
@@ -28,6 +38,7 @@ export type TaskRefStageResult =
 export interface TaskSnapshotState {
   currentRoot(filePath: string, line: number, source: string): TaskRef | undefined;
   authoritySuccessor?(consumed: TaskRef): TaskRef | undefined;
+  discardAuthoritySuccessor?(consumed: TaskRef): void;
   previewContent(filePath: string, content: string): readonly TaskSnapshot[];
   installCommittedContent(filePath: string, content: string): readonly TaskSnapshot[];
 }
@@ -39,8 +50,8 @@ interface PendingTransition {
   readonly filePath: string;
   readonly candidateFingerprint: string;
   readonly candidateLength: number;
-  readonly expectedRevision: string;
   readonly roots: readonly RootRevisionOverride[];
+  readonly transitions: readonly ProvenRootRevisionOverride[];
   phase: 'staged' | 'committed';
   observed: boolean;
 }
@@ -121,19 +132,50 @@ export class TaskRefAuthority {
   stage(transition: TaskRefTransition, currentRevision: string): TaskRefStageResult {
     if (
       currentRevision !== transition.expectedRevision ||
-      this.evidence(transition.expectedRevision) == null ||
-      this.transitions.has(transition.filePath)
+      this.evidence(transition.expectedRevision) == null
     ) {
       return { type: 'conflict' };
     }
+    return this.stageTransition({
+      ...transition,
+      roots: transition.roots.map((root) => ({
+        ...root,
+        previousRevision: transition.expectedRevision,
+      })),
+    });
+  }
+
+  stageBatch(
+    transition: TaskRefBatchTransition,
+    currentRevisions: readonly string[],
+  ): TaskRefStageResult {
+    if (
+      transition.roots.length === 0 ||
+      transition.roots.length !== currentRevisions.length ||
+      transition.roots.some(
+        (root, index) =>
+          root.previousRevision !== currentRevisions[index] ||
+          this.evidence(root.previousRevision) == null,
+      )
+    )
+      return { type: 'conflict' };
+    return this.stageTransition(transition);
+  }
+
+  private stageTransition(transition: TaskRefBatchTransition): TaskRefStageResult {
+    if (this.transitions.has(transition.filePath)) return { type: 'conflict' };
     const token = Object.freeze({});
     const pending: PendingTransition = {
       token,
       filePath: transition.filePath,
       candidateFingerprint: transition.candidateFingerprint,
       candidateLength: transition.candidateLength,
-      expectedRevision: transition.expectedRevision,
-      roots: Object.freeze(transition.roots.map((root) => Object.freeze({ ...root }))),
+      roots: Object.freeze(
+        transition.roots.map(({ line, source, revision }) =>
+          Object.freeze({ line, source, revision }),
+        ),
+      ),
+      transitions: Object.freeze(transition.roots.map((root) => Object.freeze({ ...root }))),
       phase: 'staged',
       observed: false,
     };
@@ -150,7 +192,7 @@ export class TaskRefAuthority {
     const transition = this.transitions.get(filePath);
     if (transition == null || !matches(transition, content)) return undefined;
     transition.observed = true;
-    return { expectedRevision: transition.expectedRevision, roots: transition.roots };
+    return { roots: transition.roots, transitions: transition.transitions };
   }
 
   commit(token: object): void {
