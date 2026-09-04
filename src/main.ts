@@ -44,7 +44,14 @@ export default class TaskCalendarPlugin extends Plugin {
     this.initializeTaskServices();
     const commentTimeContext: CommentTimeContextProvider = systemCommentTimeContext;
     this.registerPanel(commentTimeContext);
-    registerCodeBlock(this, this.settings, this.queries, this.tasks, this.statusRegistry);
+    registerCodeBlock(
+      this,
+      this.settings,
+      this.queries,
+      this.tasks,
+      this.statusRegistry,
+      commentTimeContext,
+    );
     this.registerCommands();
     this.addSettingTab(new CalendarSettingsTab(this.app, this));
     this.initializeIndexWhenReady();

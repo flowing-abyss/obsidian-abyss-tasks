@@ -3,10 +3,17 @@ import { registerCodeBlock, resolveConfig } from '../src/code-block/registerCode
 import { DEFAULT_SETTINGS } from '../src/settings/defaults';
 import type { CalendarSettings, CodeBlockParams } from '../src/settings/types';
 import { StatusRegistry } from '../src/status/StatusRegistry';
-import type { TaskApplicationApi, TaskSnapshot } from '../src/tasks';
+import { localDate, type TaskApplicationApi, type TaskSnapshot } from '../src/tasks';
 import { expectDefined, objectMatching, queryApiForTasks, task, useRealMoment } from './helpers';
 
 useRealMoment();
+
+const commentTimeContext = () => ({
+  nowEpochMs: Date.UTC(2026, 8, 4, 12),
+  today: localDate('2026-09-04'),
+  locale: 'en',
+  timeZone: 'UTC',
+});
 
 interface CapturedProcessor {
   (source: string, el: HTMLElement, ctx: { addChild: (child: unknown) => void }): void;
@@ -33,6 +40,7 @@ function setupCodeBlock(settings: CalendarSettings = DEFAULT_SETTINGS): {
     queries,
     tasks,
     new StatusRegistry(settings.taskStatuses),
+    commentTimeContext,
   );
   return { processor: expectDefined(captured[0], 'processor not registered') };
 }
@@ -107,6 +115,7 @@ describe('registerCodeBlock processor', () => {
       queries,
       { queries, execute },
       new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      commentTimeContext,
     );
     if (processor == null) throw new Error('processor not registered');
 
@@ -145,6 +154,7 @@ describe('registerCodeBlock processor', () => {
           .mockResolvedValue({ type: 'invalid', issues: [{ code: 'invalid-target' }] }),
       },
       new StatusRegistry(DEFAULT_SETTINGS.taskStatuses),
+      commentTimeContext,
     );
     expect(registered).toBe(true);
   });
