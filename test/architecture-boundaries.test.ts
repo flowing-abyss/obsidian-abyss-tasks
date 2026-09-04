@@ -274,7 +274,11 @@ function importsFromSyntax(module: ts.SourceFile): ImportRecord[] {
 
 function rruleImportViolationsFor(path: string, records: readonly ImportRecord[]): string[] {
   return records
-    .filter(({ specifier }) => specifier === 'rrule' && path !== RECURRENCE_ENGINE)
+    .filter(({ specifier }) => {
+      const isRrulePackage = specifier === 'rrule' || specifier.startsWith('rrule/');
+      const isExactAllowedPair = path === RECURRENCE_ENGINE && specifier === 'rrule';
+      return isRrulePackage && !isExactAllowedPair;
+    })
     .map(({ specifier }) => `${path} -> ${specifier}`);
 }
 
@@ -638,6 +642,16 @@ describe('task architecture boundaries', () => {
     expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', rruleImport)).toEqual([]);
     expect(rruleImportViolationsFor('src/tasks/domain/validation.ts', rruleImport)).toEqual([
       'src/tasks/domain/validation.ts -> rrule',
+    ]);
+
+    const deepRruleImport = importsFromSyntax(
+      syntaxFromText(
+        'src/tasks/domain/recurrence.ts',
+        "import { RRule } from 'rrule/dist/es5/rrule';",
+      ),
+    );
+    expect(rruleImportViolationsFor('src/tasks/domain/recurrence.ts', deepRruleImport)).toEqual([
+      'src/tasks/domain/recurrence.ts -> rrule/dist/es5/rrule',
     ]);
   });
 

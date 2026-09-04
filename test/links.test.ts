@@ -167,14 +167,21 @@ describe('parseLinks', () => {
     const large = denseSource(6_000);
     parseLinks(small);
     parseLinks(large);
-    const ratios = Array.from({ length: 5 }, () => {
-      const smallStartedAt = performance.now();
-      for (let iteration = 0; iteration < 3; iteration++) parseLinks(small);
-      const smallMs = performance.now() - smallStartedAt;
-
-      const largeStartedAt = performance.now();
-      for (let iteration = 0; iteration < 3; iteration++) parseLinks(large);
-      const largeMs = performance.now() - largeStartedAt;
+    const batchDuration = (source: string): number => {
+      const startedAt = performance.now();
+      for (let iteration = 0; iteration < 20; iteration++) parseLinks(source);
+      return performance.now() - startedAt;
+    };
+    const ratios = Array.from({ length: 7 }, (_, round) => {
+      let smallMs: number;
+      let largeMs: number;
+      if (round % 2 === 0) {
+        smallMs = batchDuration(small);
+        largeMs = batchDuration(large);
+      } else {
+        largeMs = batchDuration(large);
+        smallMs = batchDuration(small);
+      }
       return largeMs / smallMs;
     });
 
